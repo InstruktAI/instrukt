@@ -54,6 +54,10 @@ use super::TestEnv;
 /// The login the fake attributes the client's own writes to.
 const DEFAULT_LOGIN: &str = "instrukt-test";
 
+/// The `author_association` GitHub reports for the client's own comments:
+/// the token's user has write access to the repository.
+const CLIENT_ASSOCIATION: &str = "COLLABORATOR";
+
 /// One request the fake received, with the status it answered.
 #[derive(Debug, Clone)]
 pub struct RecordedRequest {
@@ -290,11 +294,20 @@ impl FakeGitHub {
         issue.updated_at = now;
     }
 
-    /// Adds a comment by `login` (an approver, another computer); returns
-    /// its id.
-    pub fn seed_comment(&self, repo: &str, number: u64, login: &str, body: &str) -> u64 {
+    /// Adds a comment by `login` (an approver, another computer, a
+    /// stranger), whose relationship to the repository GitHub reports as
+    /// `association` (`author_association`: `OWNER`, `MEMBER`,
+    /// `COLLABORATOR`, `CONTRIBUTOR`, `NONE`, …); returns its id.
+    pub fn seed_comment(
+        &self,
+        repo: &str,
+        number: u64,
+        login: &str,
+        association: &str,
+        body: &str,
+    ) -> u64 {
         self.lock()
-            .create_comment(repo, number, login, body)
+            .create_comment(repo, number, login, association, body)
             .unwrap()
     }
 
@@ -599,7 +612,14 @@ impl State {
         number
     }
 
-    fn create_comment(&mut self, repo: &str, number: u64, login: &str, body: &str) -> Option<u64> {
+    fn create_comment(
+        &mut self,
+        repo: &str,
+        number: u64,
+        login: &str,
+        association: &str,
+        body: &str,
+    ) -> Option<u64> {
         let id = self.next_id();
         let now = self.now();
         let r = self.repo(repo);
@@ -612,6 +632,7 @@ impl State {
                 issue: number,
                 body: body.to_owned(),
                 login: login.to_owned(),
+                association: association.to_owned(),
                 created_at: now.clone(),
                 updated_at: now,
             },
@@ -665,6 +686,8 @@ struct Comment {
     issue: u64,
     body: String,
     login: String,
+    /// GitHub's `author_association` for the comment's author.
+    association: String,
     created_at: String,
     updated_at: String,
 }
@@ -885,6 +908,7 @@ impl Comment {
             "issue_url": format!("{base}/repos/{full}/issues/{}", self.issue),
             "body": self.body,
             "user": actor(&self.login),
+            "author_association": self.association,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         })
@@ -1498,7 +1522,7 @@ fn issue_route(
             let Some(body) = input["body"].as_str() else {
                 return Reply::invalid("body is required");
             };
-            match state.create_comment(full, n, login, body) {
+            match state.create_comment(full, n, login, CLIENT_ASSOCIATION, body) {
                 Some(id) => Reply::created(
                     state
                         .repo(full)

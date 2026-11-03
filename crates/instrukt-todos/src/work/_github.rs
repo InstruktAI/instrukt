@@ -74,6 +74,9 @@ impl GitHub {
             .timeout_global(Some(REQUEST_TIMEOUT))
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .user_agent("instrukt")
+            // The token goes only to the configured API host: a redirect
+            // elsewhere (or to a weaker scheme) drops `Authorization`.
+            .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
             .build()
             .into();
         Self {
