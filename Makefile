@@ -1,4 +1,4 @@
-.PHONY: hooks format lint test check
+.PHONY: hooks format lint test coverage check
 
 # Point git at the repository's checked-in hooks (pre-commit: fmt, clippy, test).
 hooks:
@@ -15,4 +15,7 @@ lint:
 test:
 	cargo test --workspace --locked
 
-check: lint test
+coverage:
+	scripts/check-coverage.sh
+
+check: lint test coverage
