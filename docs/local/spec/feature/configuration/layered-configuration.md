@@ -134,6 +134,15 @@ Then their configuration is brought to the current schema with every setting kep
 And the commands that read it work as before
 ```
 
+#### UC-CL4: An older instrukt refuses configuration written by a newer one
+
+```gherkin
+Given a developer's configuration was written by a newer instrukt than the one they run
+When they read, change or validate that configuration
+Then each command refuses and tells them to upgrade instrukt
+And the configuration is unchanged
+```
+
 ### Configuration value shapes
 
 | Key | Type / allowed values | Default |

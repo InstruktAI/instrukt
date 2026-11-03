@@ -138,10 +138,44 @@ And the documentation of both projects is as it was before
 
 ```gherkin
 Given a developer's project whose published documentation includes a snippet and a domain
-When the developer deletes the snippet, stops publishing the domain and commits to main
+And a directory of the project holds agent instructions compiled from a source in that directory
+When the developer deletes the snippet, stops publishing the domain, deletes that instruction source and commits to main
 And publication runs for the project
 Then the published corpus and index no longer contain the retired snippet or domain
+And the compiled agent instructions of the deleted source are gone
+And instructions compiled from sources that still exist are unchanged
 And another project's published documentation is unchanged
+```
+
+#### UC-PUB4: Publishing again changes nothing until something new is committed
+
+```gherkin
+Given a developer's project whose committed main is already published
+When publication runs for the project again
+Then nothing in the published corpus, the index or the project changes
+When the developer asks for the project to be republished regardless
+Then its documentation is published again from its committed main
+```
+
+#### UC-PUB5: A developer who commits invalid docs keeps the last good publication
+
+```gherkin
+Given a developer's project whose documentation is published
+When the developer commits documentation that fails validation
+And publication runs for the project
+Then publication is refused and names each finding
+And the previously published documentation and index are unchanged
+And the next publication of the project tries that commit again
+```
+
+#### UC-PUB6: A failing command in compiled instructions stops publication
+
+```gherkin
+Given a developer's project whose compiled agent instructions run a command when they are published
+And that command fails
+When publication runs for the project
+Then publication fails and names the file and the command
+And the previously published documentation is unchanged
 ```
 
 ## Known caveats
