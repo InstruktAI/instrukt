@@ -10,7 +10,6 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use instrukt_core::config::{self, Env, Module};
@@ -350,11 +349,7 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let Some(root) = root else {
         bail!("the work record belongs to a project; run this inside its git repository");
     };
-    let work = Work::new(
-        ctx.home.clone(),
-        Env::from_process(),
-        Arc::new(Timestamp::now),
-    );
+    let work = Work::new(ctx.home.clone(), Env::from_process(), ctx.clock.shared());
     let project = work.project_at(&root)?;
     let session = Session {
         work: &work,

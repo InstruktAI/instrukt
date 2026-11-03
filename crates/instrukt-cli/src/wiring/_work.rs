@@ -60,11 +60,7 @@ pub(super) fn evidence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn WorkEvidence>
 /// The work record of this invocation: the process environment supplies
 /// credentials and the caller's session, the system clock the time.
 pub(crate) fn work(ctx: &Ctx) -> Work {
-    Work::new(
-        ctx.home.clone(),
-        Env::from_process(),
-        Arc::new(jiff::Timestamp::now),
-    )
+    Work::new(ctx.home.clone(), Env::from_process(), ctx.clock.shared())
 }
 
 /// Whether `modules.todos` is on where the caller stands.

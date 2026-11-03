@@ -19,7 +19,6 @@ use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
 use instrukt_runner::sessions::{Observation, Sessions, StartRequest};
 use instrukt_runner::state::RunnerState;
 use instrukt_runner::{launch, ticks};
-use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use serde_json::json;
 
@@ -46,7 +45,8 @@ pub fn run_run(_args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         tz: &tz,
         wiring: &wiring,
     };
-    runner::run(&cx, Timestamp::now, RUN_INTERVAL)?;
+    let clock = ctx.clock;
+    runner::run(&cx, move || clock.now(), RUN_INTERVAL)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -66,7 +66,7 @@ pub fn run_tick(_args: TickArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         tz: &tz,
         wiring: &wiring,
     };
-    match runner::tick(&cx, Timestamp::now())? {
+    match runner::tick(&cx, ctx.clock.now())? {
         TickOutcome::Done => {}
         TickOutcome::Busy => ctx
             .out
@@ -98,7 +98,7 @@ pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         TicksCommand::Status(args) => {
             let state = RunnerState::new(&ctx.home);
-            let status = ticks::status(ticks::last_wakeup(&state)?, Timestamp::now());
+            let status = ticks::status(ticks::last_wakeup(&state)?, ctx.clock.now());
             if args.json {
                 ctx.out.json(&status)?;
             } else {

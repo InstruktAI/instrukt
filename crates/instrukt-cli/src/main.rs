@@ -4,6 +4,7 @@
 //! the invocation context and hands each command to its context's command
 //! module under `commands/`.
 
+mod clock;
 mod commands;
 mod context;
 mod output;
