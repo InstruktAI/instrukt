@@ -141,6 +141,8 @@ mod tests {
             "{refused:?}"
         );
         drop(held);
-        assert!(LockGuard::try_acquire(&lock).unwrap().is_some());
+        // A child forked by another thread may hold a copy of the lock's
+        // descriptor until it execs, so freeing is observed with a bound.
+        assert!(LockGuard::acquire(&lock, Duration::from_secs(5)).is_ok());
     }
 }
