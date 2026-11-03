@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde_yaml_ng::{Mapping, Value};
 use sha2::{Digest, Sha256};
@@ -183,7 +184,10 @@ pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, C
 pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
     let path = layer.path(home);
     match read(&path)? {
-        Some(doc) => Ok(Revision::of(&doc.bytes)),
+        Some(doc) => {
+            require_usable(layer, &path, &doc.value)?;
+            Ok(Revision::of(&doc.bytes))
+        }
         None => Err(ConfigError::NoLayer {
             path,
             door: layer.init_door(),
@@ -214,6 +218,7 @@ pub fn patch(
     if !patch.is_mapping() {
         return Err(ConfigError::PatchNotAMapping);
     }
+    let started = Instant::now();
     let path = layer.path(home);
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     let Some(doc) = read(&path)? else {
@@ -236,7 +241,19 @@ pub fn patch(
     if !findings.is_empty() {
         return Err(ConfigError::Invalid(Findings(findings)));
     }
-    write(&path, &next)
+    let revision = write(&path, &next)?;
+    tracing::debug!(
+        event = "config_patched",
+        path = %path.display(),
+        from_revision = %expected,
+        revision = %revision,
+        duration_ms = elapsed_ms(started),
+    );
+    Ok(revision)
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// What [`init`] did to a layer.
@@ -263,6 +280,7 @@ pub enum MigrationOutcome {
 /// patch; a current one is left untouched; a newer one is refused.
 /// Publication and `init` run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
+    let started = Instant::now();
     let path = layer.path(home);
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     let Some(doc) = read(&path)? else {
@@ -278,7 +296,15 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
             let migrated = migrate_value(doc.value, from);
-            write(&path, &migrated)?;
+            let revision = write(&path, &migrated)?;
+            tracing::debug!(
+                event = "config_migrated",
+                path = %path.display(),
+                from_version = from,
+                to_version = CURRENT_SCHEMA_VERSION,
+                revision = %revision,
+                duration_ms = elapsed_ms(started),
+            );
             Ok(MigrationOutcome::Migrated { from })
         }
     }
@@ -306,6 +332,7 @@ pub fn init(
     layer: &Layer,
     slug: Option<&ProjectSlug>,
 ) -> Result<InitOutcome, ConfigError> {
+    let started = Instant::now();
     let path = layer.path(home);
     if path.exists() {
         return match migrate(home, layer)? {
@@ -334,7 +361,14 @@ pub fn init(
     if path.exists() {
         return Ok(InitOutcome::AlreadyCurrent);
     }
-    write(&path, &Value::Mapping(doc))?;
+    let revision = write(&path, &Value::Mapping(doc))?;
+    tracing::debug!(
+        event = "config_initialized",
+        path = %path.display(),
+        schema_version = CURRENT_SCHEMA_VERSION,
+        revision = %revision,
+        duration_ms = elapsed_ms(started),
+    );
     Ok(InitOutcome::Created)
 }
 
@@ -395,10 +429,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn folder_names_normalize_to_slugs() {
-        assert_eq!(normalize_slug("My Project_v2"), "my-project-v2");
-        assert_eq!(normalize_slug("--Ünïcode--"), "n-code");
-        assert_eq!(normalize_slug("___"), "");
+    fn folder_names_normalize_to_valid_slugs() {
+        for folder in ["My Project_v2", "--Ünïcode--", "a  b", "UPPER.case"] {
+            let slug = normalize_slug(folder);
+            assert!(ProjectSlug::parse(&slug).is_ok(), "{folder}");
+            assert_eq!(normalize_slug(&slug), slug, "normalizing is idempotent");
+        }
+        assert!(normalize_slug("___").is_empty());
+    }
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml_ng::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn only_a_document_of_the_current_or_an_unknown_version_is_usable() {
+        let layer = Layer::Global;
+        let path = Path::new("instrukt.yaml");
+        let newer = format!("schema_version: {}\n", CURRENT_SCHEMA_VERSION + 1);
+        assert!(matches!(
+            require_usable(&layer, path, &yaml(&newer)),
+            Err(ConfigError::NewerSchema { .. })
+        ));
+        let current = format!("schema_version: {CURRENT_SCHEMA_VERSION}\n");
+        assert!(require_usable(&layer, path, &yaml(&current)).is_ok());
+        assert!(require_usable(&layer, path, &yaml("project: p\n")).is_ok());
+    }
+
+    #[test]
+    fn the_revision_of_a_newer_document_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        std::fs::create_dir_all(home.root()).unwrap();
+        let newer = format!("schema_version: {}\n", CURRENT_SCHEMA_VERSION + 1);
+        std::fs::write(home.global_config(), newer).unwrap();
+        assert!(matches!(
+            revision(&home, &Layer::Global),
+            Err(ConfigError::NewerSchema { .. })
+        ));
     }
 
     #[test]

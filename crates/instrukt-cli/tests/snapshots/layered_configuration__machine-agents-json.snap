@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/layered-configuration.rs
+expression: "read(&[\"config\", \"get\", \"--json\", \"agents\"])"
+---
+{
+  "order": [
+    "claude"
+  ],
+  "thinking_mode": "med"
+}

@@ -11,19 +11,28 @@ mod common;
 
 use std::path::Path;
 
+use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use predicates::str::contains;
+use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use serde_yaml_ng::Value;
 
-fn stdout(assert: &assert_cmd::assert::Assert) -> String {
-    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+/// Emitted text with the test's temporary directory shown as `[TMP]`.
+fn stderr(env: &TestEnv, assert: &Assert) -> String {
+    let base = env.path("").display().to_string();
+    String::from_utf8_lossy(&assert.get_output().stderr)
+        .replace(base.trim_end_matches('/'), "[TMP]")
 }
 
-fn revision(env: &TestEnv, cwd: &Path, global: bool) -> String {
-    let mut args = vec!["config", "get", "--revision"];
-    if global {
-        args.push("--global");
-    }
-    stdout(&env.run(cwd, &args).success()).trim().to_owned()
+fn revision(env: &TestEnv, cwd: &Path) -> String {
+    let out = env.run(cwd, ["config", "get", "--revision"]).success();
+    let text = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let revision = text.trim().to_owned();
+    assert!(!revision.is_empty(), "a revision is printed");
+    revision
+}
+
+fn layer(repo: &Repo) -> Value {
+    serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap()
 }
 
 fn initialized(env: &TestEnv, name: &str) -> Repo {
@@ -32,39 +41,47 @@ fn initialized(env: &TestEnv, name: &str) -> Repo {
     repo
 }
 
+fn patch(env: &TestEnv, repo: &Repo, revision: &str, yaml: &str) -> Assert {
+    env.run(
+        repo.path(),
+        ["config", "patch", "--revision", revision, "--yaml", yaml],
+    )
+}
+
 // spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn a_patch_from_the_current_revision_changes_only_what_it_names() {
     let env = TestEnv::new();
     let repo = initialized(&env, "demo");
-    let before = revision(&env, repo.path(), false);
+    let before = revision(&env, repo.path());
     assert_eq!(
-        revision(&env, repo.path(), false),
+        revision(&env, repo.path()),
         before,
         "stable while unchanged"
     );
+    let untouched = layer(&repo);
 
-    env.run(
-        repo.path(),
-        [
-            "config",
-            "patch",
-            "--revision",
-            &before,
-            "--yaml",
-            "board: true\nactions:\n  test: make test {runtime.session_id}\n",
-        ],
+    let patched = patch(
+        &env,
+        &repo,
+        &before,
+        "board: true\nactions:\n  test: make test {runtime.session_id}\n",
     )
     .success();
+    assert!(
+        patched.get_output().stdout.is_empty(),
+        "a patch prints nothing"
+    );
 
-    let after = revision(&env, repo.path(), false);
+    let after = revision(&env, repo.path());
     assert_ne!(after, before);
-    let layer: serde_yaml_ng::Value = serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
-    assert_eq!(layer["project"], "demo");
-    assert_eq!(layer["schema_version"], 1);
-    assert_eq!(layer["board"], true);
+    let changed = layer(&repo);
+    assert_eq!(changed["project"], untouched["project"]);
+    assert_eq!(changed["schema_version"], untouched["schema_version"]);
+    assert_eq!(changed["board"], Value::Bool(true));
+    let stored: Value = serde_yaml_ng::from_str("make test {runtime.session_id}").unwrap();
     assert_eq!(
-        layer["actions"]["test"], "make test {runtime.session_id}",
+        changed["actions"]["test"], stored,
         "references are stored unexpanded"
     );
 
@@ -83,19 +100,15 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
         ],
     )
     .success();
-    let third = revision(&env, repo.path(), false);
+    assert!(layer(&repo).get("board").is_none());
+    let third = revision(&env, repo.path());
     env.instrukt(repo.path())
         .args(["config", "patch", "--revision", &third])
         .write_stdin("approvals:\n  prd: peer\n")
         .assert()
         .success();
-    env.run(repo.path(), ["config", "get", "approvals.prd"])
-        .success()
-        .stdout("peer\n");
-    env.run(repo.path(), ["config", "get", "board"])
-        .success()
-        .stdout("false\n");
-    assert!(!repo.read("instrukt.yaml").contains("board"));
+    let approvals: Value = serde_yaml_ng::from_str("{prd: peer}").unwrap();
+    assert_eq!(layer(&repo)["approvals"], approvals);
 }
 
 // spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
@@ -103,37 +116,12 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
 fn a_patch_from_a_stale_revision_is_refused_and_writes_nothing() {
     let env = TestEnv::new();
     let repo = initialized(&env, "demo");
-    let read = revision(&env, repo.path(), false);
-    env.run(
-        repo.path(),
-        [
-            "config",
-            "patch",
-            "--revision",
-            &read,
-            "--yaml",
-            "board: true",
-        ],
-    )
-    .success();
-    let current = revision(&env, repo.path(), false);
+    let read = revision(&env, repo.path());
+    patch(&env, &repo, &read, "board: true").success();
     let content = repo.read("instrukt.yaml");
 
-    env.run(
-        repo.path(),
-        [
-            "config",
-            "patch",
-            "--revision",
-            &read,
-            "--yaml",
-            "board: false",
-        ],
-    )
-    .failure()
-    .stderr(contains(format!("revision {read}")))
-    .stderr(contains(format!("current revision {current}")))
-    .stderr(contains("read it again"));
+    let refused = patch(&env, &repo, &read, "board: false").failure();
+    insta::assert_snapshot!("stale-revision", stderr(&env, &refused));
     assert_eq!(repo.read("instrukt.yaml"), content);
 }
 
@@ -142,7 +130,7 @@ fn a_patch_from_a_stale_revision_is_refused_and_writes_nothing() {
 fn of_two_patches_from_one_revision_exactly_one_lands() {
     let env = TestEnv::new();
     let repo = initialized(&env, "demo");
-    let read = revision(&env, repo.path(), false);
+    let read = revision(&env, repo.path());
     let outcomes: Vec<bool> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..2)
             .map(|i| {
@@ -167,101 +155,96 @@ fn of_two_patches_from_one_revision_exactly_one_lands() {
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
     assert_eq!(outcomes.iter().filter(|ok| **ok).count(), 1, "{outcomes:?}");
-    let content = repo.read("instrukt.yaml");
-    assert_eq!(content.matches("writer").count(), 1, "{content}");
+    let actions = layer(&repo)["actions"].as_mapping().map(|m| m.len());
+    assert_eq!(actions, Some(1), "only the winning patch is stored");
 }
 
 // spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
-fn a_patch_leaving_the_document_invalid_is_refused_naming_the_finding() {
+fn a_patch_leaving_the_configuration_invalid_is_refused_naming_what_is_wrong() {
     let env = TestEnv::new();
     let repo = initialized(&env, "demo");
-    let read = revision(&env, repo.path(), false);
+    let read = revision(&env, repo.path());
     let content = repo.read("instrukt.yaml");
 
-    env.run(
-        repo.path(),
-        [
-            "config",
-            "patch",
-            "--revision",
-            &read,
-            "--yaml",
-            "runtimes: []\nboard: maybe\n",
-        ],
+    let refused = patch(
+        &env,
+        &repo,
+        &read,
+        "runtimes: []\nboard: maybe\nactions:\n  echo: {command: echo, takes_files: not-a-bool}\n",
     )
-    .failure()
-    .stderr(contains("nothing was written"))
-    .stderr(contains("runtimes: not permitted in the project layer"))
-    .stderr(contains("board: expected true or false"));
-    env.run(
-        repo.path(),
-        ["config", "patch", "--revision", &read, "--yaml", "- a list"],
-    )
-    .failure()
-    .stderr(contains("not a YAML mapping"));
+    .failure();
+    insta::assert_snapshot!("invalid-patch", stderr(&env, &refused));
+    let not_a_mapping = patch(&env, &repo, &read, "- a list").failure();
+    insta::assert_snapshot!(stderr(&env, &not_a_mapping), @"instrukt: the patch is not a YAML mapping");
     assert_eq!(repo.read("instrukt.yaml"), content);
-    assert_eq!(revision(&env, repo.path(), false), read);
-}
-
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
-#[test]
-fn a_patch_needs_an_existing_layer_and_a_project() {
-    let env = TestEnv::new();
-    let repo = env.git_repo("bare");
-    env.run(
-        repo.path(),
-        [
-            "config",
-            "patch",
-            "--revision",
-            "r",
-            "--yaml",
-            "board: true",
-        ],
-    )
-    .failure()
-    .stderr(contains("instrukt config init"));
-    env.run(
-        env.path("").as_path(),
-        [
-            "config",
-            "patch",
-            "--revision",
-            "r",
-            "--yaml",
-            "board: true",
-        ],
-    )
-    .failure()
-    .stderr(contains("not inside a git repository"));
-    assert!(!repo.path().join("instrukt.yaml").exists());
+    assert_eq!(revision(&env, repo.path()), read);
 }
 
 // spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
-fn initialization_creates_a_valid_machine_and_project_configuration() {
+fn a_machine_without_configuration_is_initialized_without_a_project_identity() {
     let env = TestEnv::new();
     let outside = env.path("");
+    let before = env
+        .run(
+            &outside,
+            [
+                "config",
+                "patch",
+                "--global",
+                "--revision",
+                "r",
+                "--yaml",
+                "ticks: 'off'",
+            ],
+        )
+        .failure();
+    insta::assert_snapshot!("global-patch-before-init", stderr(&env, &before));
+
     env.run(&outside, ["config", "init", "--global"]).success();
-    let global = std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap();
+    let global: Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        global, "schema_version: 1\n",
+        global["schema_version"],
+        Value::from(CURRENT_SCHEMA_VERSION)
+    );
+    assert!(
+        global.get("project").is_none(),
         "a machine needs no project identity"
     );
     env.run(&outside, ["config", "validate", "--global"])
         .success();
+}
 
+// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+#[test]
+fn a_project_without_configuration_is_named_after_its_folder() {
+    let env = TestEnv::new();
     let repo = env.git_repo("My Project_v2");
+    let before = env
+        .run(
+            repo.path(),
+            [
+                "config",
+                "patch",
+                "--revision",
+                "r",
+                "--yaml",
+                "board: true",
+            ],
+        )
+        .failure();
+    insta::assert_snapshot!("project-patch-before-init", stderr(&env, &before));
+
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(
         repo.read("instrukt.yaml"),
-        "schema_version: 1\nproject: my-project-v2\n"
+        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: my-project-v2\n")
     );
     env.run(repo.path(), ["config", "validate"]).success();
-    env.run(repo.path(), ["config", "get", "workflow.domain"])
-        .success()
-        .stdout("sdlc\n");
 }
 
 // spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
@@ -283,7 +266,7 @@ fn a_linked_worktree_is_named_after_the_primary_worktree() {
     env.run(&linked, ["config", "init"]).success();
     assert_eq!(
         std::fs::read_to_string(linked.join("instrukt.yaml")).unwrap(),
-        "schema_version: 1\nproject: primary-checkout\n"
+        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: primary-checkout\n")
     );
 }
 
@@ -292,53 +275,33 @@ fn a_linked_worktree_is_named_after_the_primary_worktree() {
 fn an_empty_project_identity_is_refused() {
     let env = TestEnv::new();
     let repo = env.git_repo("___");
-    env.run(repo.path(), ["config", "init"])
-        .failure()
-        .stderr(contains("instrukt init --slug <slug>"));
+    let refused = env.run(repo.path(), ["config", "init"]).failure();
+    insta::assert_snapshot!("empty-slug", stderr(&env, &refused));
     assert!(!repo.path().join("instrukt.yaml").exists());
 }
 
 // spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
-fn existing_configuration_is_kept_and_a_newer_schema_is_refused() {
+fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
     let repo = env.git_repo("demo");
     let layer = "# my notes\nschema_version: 1\nproject: chosen\nboard: true\n";
     repo.write("instrukt.yaml", layer);
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(repo.read("instrukt.yaml"), layer);
-
-    let newer = env.git_repo("newer");
-    newer.write("instrukt.yaml", "schema_version: 99\nproject: newer\n");
-    env.run(newer.path(), ["config", "init"])
-        .failure()
-        .stderr(contains("upgrade instrukt"));
-    assert_eq!(
-        newer.read("instrukt.yaml"),
-        "schema_version: 99\nproject: newer\n"
-    );
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
-fn get_prints_scalars_bare_structures_as_yaml_or_json_and_names_a_missing_segment() {
+fn existing_configuration_of_a_newer_schema_is_refused() {
     let env = TestEnv::new();
-    let repo = env.git_repo("demo");
-    repo.write(
-        "instrukt.yaml",
-        "schema_version: 1\nproject: demo\ngithub:\n  approvers: [ann, bob]\n",
+    let repo = env.git_repo("newer");
+    let layer = format!(
+        "schema_version: {}\nproject: newer\n",
+        CURRENT_SCHEMA_VERSION + 1
     );
-    env.run(repo.path(), ["config", "get", "project"])
-        .success()
-        .stdout("demo\n");
-    env.run(repo.path(), ["config", "get", "github.approvers"])
-        .success()
-        .stdout("- ann\n- bob\n");
-    let json = stdout(&env.run(repo.path(), ["config", "get", "--json"]).success());
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["github"]["approvers"][1], "bob");
-    assert_eq!(parsed["github"]["api_url"], "https://api.github.com");
-    env.run(repo.path(), ["config", "get", "github.owner.name"])
-        .failure()
-        .stderr(contains("no `owner` in `github`"));
+    repo.write("instrukt.yaml", &layer);
+    let refused = env.run(repo.path(), ["config", "init"]).failure();
+    insta::assert_snapshot!("newer-schema", stderr(&env, &refused));
+    assert_eq!(repo.read("instrukt.yaml"), layer);
 }

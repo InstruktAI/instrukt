@@ -3,7 +3,9 @@
 
 use serde_yaml_ng::{Mapping, Value};
 
-use super::_interpolate::{join, key_text};
+use super::_error::FindingKind;
+use super::_interpolate::{join, key_text, mask_references};
+use super::_module::Module;
 use super::_runtime::{OPTIONAL_FIELDS, REQUIRED_FIELDS};
 use crate::ids::{DomainName, ProjectSlug};
 
@@ -12,9 +14,6 @@ pub const CURRENT_SCHEMA_VERSION: u64 = 1;
 
 /// The default `github.api_url`.
 pub(crate) const DEFAULT_GITHUB_API_URL: &str = "https://api.github.com";
-
-/// The modules a switch or `requires` may name. Core has no switch.
-pub(crate) const MODULE_KEYS: [&str; 3] = ["blueprint", "todos", "events"];
 
 /// One of the two layers of configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,9 +66,10 @@ enum Shape {
     StrList,
     ModuleList,
     Actions,
-    NonEmptyList,
-    /// A key whose value shape the specs do not settle yet.
-    Unchecked,
+    AgentOrder,
+    ThinkingMode,
+    Identity,
+    Publishes,
 }
 
 enum Node {
@@ -94,7 +94,7 @@ fn schema() -> Node {
     map(vec![
         ("schema_version", Leaf(Both, Shape::Version)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
-        ("publishes", Leaf(ProjectOnly, Shape::Unchecked)),
+        ("publishes", Leaf(ProjectOnly, Shape::Publishes)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("actions", Leaf(ProjectOnly, Shape::Actions)),
         ("board", Leaf(ProjectOnly, Shape::Bool)),
@@ -118,9 +118,9 @@ fn schema() -> Node {
         ),
         (
             "modules",
-            map(MODULE_KEYS
+            map(Module::ALL
                 .iter()
-                .map(|key| (*key, Leaf(Both, Shape::Bool)))
+                .map(|module| (module.key(), Leaf(Both, Shape::Bool)))
                 .collect()),
         ),
         (
@@ -141,18 +141,37 @@ fn schema() -> Node {
         (
             "agents",
             Node::Map {
-                children: vec![("order", Leaf(GlobalOnly, Shape::NonEmptyList))],
+                children: vec![
+                    ("order", Leaf(GlobalOnly, Shape::AgentOrder)),
+                    ("thinking_mode", Leaf(GlobalOnly, Shape::ThinkingMode)),
+                ],
                 open: Some(Box::new(map(vec![(
                     "git_author",
-                    Leaf(GlobalOnly, Shape::Str),
+                    Leaf(GlobalOnly, Shape::Identity),
                 )]))),
             },
         ),
     ])
 }
 
-/// A structural finding: the dotted key and what is wrong with it.
-pub(crate) type KeyFinding = (String, String);
+/// A finding before it is attached to its document: the dotted key, the
+/// rule it breaks and a message for the reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KeyFinding {
+    pub(crate) key: String,
+    pub(crate) kind: FindingKind,
+    pub(crate) message: String,
+}
+
+impl KeyFinding {
+    pub(crate) fn new(key: &str, kind: FindingKind, message: impl Into<String>) -> Self {
+        Self {
+            key: key.to_owned(),
+            kind,
+            message: message.into(),
+        }
+    }
+}
 
 /// The structural findings of a layer document: keys in a layer that does
 /// not permit them, unknown keys, values of the wrong shape and a missing
@@ -160,11 +179,19 @@ pub(crate) type KeyFinding = (String, String);
 pub(crate) fn check(doc: &Value, layer: LayerKind) -> Vec<KeyFinding> {
     let mut findings = Vec::new();
     let Some(mapping) = doc.as_mapping() else {
-        findings.push((String::new(), "the document is not a mapping".to_owned()));
+        findings.push(KeyFinding::new(
+            "",
+            FindingKind::InvalidValue,
+            "the document is not a mapping",
+        ));
         return findings;
     };
     if !mapping.contains_key("schema_version") {
-        findings.push(("schema_version".to_owned(), "missing".to_owned()));
+        findings.push(KeyFinding::new(
+            "schema_version",
+            FindingKind::Missing,
+            "missing",
+        ));
     }
     check_node(&schema(), doc, "", layer, &mut findings);
     findings
@@ -180,8 +207,9 @@ fn check_node(node: &Node, value: &Value, path: &str, layer: LayerKind, out: &mu
                     LayerKind::Global => LayerKind::Project,
                     LayerKind::Project => LayerKind::Global,
                 };
-                out.push((
-                    path.to_owned(),
+                out.push(KeyFinding::new(
+                    path,
+                    FindingKind::NotPermittedInLayer,
                     format!(
                         "not permitted in the {} layer ({} layer only)",
                         layer.name(),
@@ -192,133 +220,193 @@ fn check_node(node: &Node, value: &Value, path: &str, layer: LayerKind, out: &mu
         }
         Node::Map { children, open } => {
             let Some(mapping) = value.as_mapping() else {
-                out.push((path.to_owned(), "expected a mapping".to_owned()));
+                out.push(KeyFinding::new(
+                    path,
+                    FindingKind::InvalidValue,
+                    "expected a mapping",
+                ));
                 return;
             };
             for (key, child) in mapping {
                 let Some(name) = key.as_str() else {
-                    out.push((
-                        join(path, &key_text(key)),
-                        "keys must be strings".to_owned(),
+                    out.push(KeyFinding::new(
+                        &join(path, &key_text(key)),
+                        FindingKind::InvalidValue,
+                        "keys must be strings",
                     ));
                     continue;
                 };
                 let child_path = join(path, name);
-                let schema = children
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, node)| node)
-                    .or(open.as_deref());
-                match schema {
+                match child_schema(children, open.as_deref(), name) {
                     Some(schema) => check_node(schema, child, &child_path, layer, out),
-                    None => out.push((child_path, "unknown key".to_owned())),
+                    None => out.push(KeyFinding::new(
+                        &child_path,
+                        FindingKind::UnknownKey,
+                        "unknown key",
+                    )),
                 }
             }
         }
     }
 }
 
+fn child_schema<'a>(
+    children: &'a [(&'static str, Node)],
+    open: Option<&'a Node>,
+    name: &str,
+) -> Option<&'a Node> {
+    children
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, node)| node)
+        .or(open)
+}
+
+/// The shape of one field of a record (a runtime entry, a watched ref, an
+/// action declaration, a published domain) or of a simple leaf.
+#[derive(Debug, Clone, Copy)]
+enum Field {
+    Str,
+    NonEmptyStr,
+    Bool,
+    Domain,
+}
+
 fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
-    let mut fail = |message: &str| out.push((path.to_owned(), message.to_owned()));
+    let invalid = |message: &str| KeyFinding::new(path, FindingKind::InvalidValue, message);
     match shape {
         Shape::Version => {
             if value.as_u64().is_none_or(|v| v < 1) {
-                fail("expected a positive integer");
+                out.push(invalid("expected a positive integer"));
             }
         }
         Shape::Slug => match value.as_str() {
             Some(s) => {
                 if let Err(err) = ProjectSlug::parse(s) {
-                    fail(&err.to_string());
+                    out.push(invalid(&err.to_string()));
                 }
             }
-            None => fail("expected a project slug string"),
+            None => out.push(invalid("expected a project slug string")),
         },
-        Shape::Domain => match value.as_str() {
-            Some(s) => {
-                if let Err(err) = DomainName::parse(s) {
-                    fail(&err.to_string());
-                }
-            }
-            None => fail("expected a domain name string"),
-        },
-        Shape::Bool => {
-            if !value.is_bool() {
-                fail("expected true or false");
-            }
-        }
-        Shape::Str => {
-            if !value.is_string() {
-                fail("expected a string");
-            }
-        }
+        Shape::Domain => check_field(Field::Domain, value, path, out),
+        Shape::Bool => check_field(Field::Bool, value, path, out),
+        Shape::Str => check_field(Field::Str, value, path, out),
         Shape::OnOff => {
             if !matches!(value.as_str(), Some("on" | "off")) {
-                fail("expected `on` or `off`");
+                out.push(invalid("expected `on` or `off`"));
             }
         }
         Shape::Approver => {
             if !matches!(value.as_str(), Some("human" | "peer")) {
-                fail("expected `human` or `peer`");
+                out.push(invalid("expected `human` or `peer`"));
             }
         }
+        Shape::ThinkingMode => {
+            if !matches!(value.as_str(), Some("fast" | "med" | "slow")) {
+                out.push(invalid("expected `fast`, `med` or `slow`"));
+            }
+        }
+        Shape::Identity => match value.as_str() {
+            Some(text) if is_identity_template(text) => {}
+            Some(_) => out.push(invalid("expected a git author identity `Name <email>`")),
+            None => out.push(invalid("expected a string")),
+        },
         Shape::Autostart => match value {
             Value::Bool(_) => {}
             Value::Mapping(map) => {
                 for (kind, on) in map {
                     if !kind.is_string() || !on.is_bool() {
-                        out.push((
-                            join(path, &key_text(kind)),
-                            "expected a kind mapped to true or false".to_owned(),
+                        out.push(KeyFinding::new(
+                            &join(path, &key_text(kind)),
+                            FindingKind::InvalidValue,
+                            "expected a kind mapped to true or false",
                         ));
                     }
                 }
             }
-            _ => fail("expected true, false or a mapping of kind to true or false"),
+            _ => out.push(invalid(
+                "expected true, false or a mapping of kind to true or false",
+            )),
         },
         Shape::StrList => {
             if !value
                 .as_sequence()
                 .is_some_and(|seq| seq.iter().all(Value::is_string))
             {
-                fail("expected a list of strings");
+                out.push(invalid("expected a list of strings"));
             }
         }
         Shape::ModuleList => match value.as_sequence() {
             Some(seq) => {
+                let names: Vec<&str> = Module::ALL.iter().map(|m| m.key()).collect();
                 for (i, item) in seq.iter().enumerate() {
-                    if !item.as_str().is_some_and(|m| MODULE_KEYS.contains(&m)) {
-                        out.push((
-                            join(path, &i.to_string()),
-                            "expected one of `blueprint`, `todos`, `events`".to_owned(),
+                    if item.as_str().and_then(Module::from_key).is_none() {
+                        out.push(KeyFinding::new(
+                            &join(path, &i.to_string()),
+                            FindingKind::InvalidValue,
+                            format!("expected one of {}", names.join(", ")),
                         ));
                     }
                 }
             }
-            None => fail("expected a list of modules"),
+            None => out.push(invalid("expected a list of modules")),
         },
-        Shape::NonEmptyList => {
-            if value.as_sequence().is_none_or(|seq| seq.is_empty()) {
-                fail("expected a non-empty list");
+        Shape::AgentOrder => match value.as_sequence() {
+            Some(seq) if !seq.is_empty() => {
+                for (i, item) in seq.iter().enumerate() {
+                    check_field(Field::NonEmptyStr, item, &join(path, &i.to_string()), out);
+                }
             }
-        }
+            _ => out.push(invalid("expected a non-empty list of agent names")),
+        },
         Shape::Actions => match value.as_mapping() {
             Some(map) => {
                 for (name, action) in map {
-                    let ok = action.is_string()
-                        || action
-                            .as_mapping()
-                            .is_some_and(|decl| decl.get("command").is_some_and(Value::is_string));
-                    if !ok {
-                        out.push((
-                            join(path, &key_text(name)),
-                            "expected a command string or a declaration with a `command` string"
-                                .to_owned(),
-                        ));
+                    let action_path = join(path, &key_text(name));
+                    match action {
+                        Value::String(_) => {}
+                        Value::Mapping(_) => check_record(
+                            action,
+                            &action_path,
+                            &[("command", Field::Str)],
+                            &[("takes_files", Field::Bool)],
+                            out,
+                        ),
+                        _ => out.push(KeyFinding::new(
+                            &action_path,
+                            FindingKind::InvalidValue,
+                            "expected a command string or `{command, takes_files}`",
+                        )),
                     }
                 }
             }
-            None => fail("expected a mapping of action name to command"),
+            None => out.push(invalid("expected a mapping of action name to command")),
+        },
+        Shape::Publishes => match value.as_sequence() {
+            Some(seq) => {
+                let mut seen: Vec<&str> = Vec::new();
+                for (i, item) in seq.iter().enumerate() {
+                    let item_path = join(path, &i.to_string());
+                    check_record(
+                        item,
+                        &item_path,
+                        &[("slug", Field::Domain), ("trigger", Field::NonEmptyStr)],
+                        &[],
+                        out,
+                    );
+                    if let Some(slug) = item.get("slug").and_then(Value::as_str) {
+                        if seen.contains(&slug) {
+                            out.push(KeyFinding::new(
+                                &join(&item_path, "slug"),
+                                FindingKind::DuplicateDomain,
+                                format!("domain `{slug}` is published twice"),
+                            ));
+                        }
+                        seen.push(slug);
+                    }
+                }
+            }
+            None => out.push(invalid("expected a list of `{slug, trigger}`")),
         },
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
@@ -326,63 +414,117 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                     check_record(
                         item,
                         &join(path, &i.to_string()),
-                        &["remote", "ref"],
+                        &[("remote", Field::Str), ("ref", Field::Str)],
                         &[],
                         out,
                     );
                 }
             }
-            None => fail("expected a list of `{remote, ref}`"),
+            None => out.push(invalid("expected a list of `{remote, ref}`")),
         },
         Shape::Runtimes => match value.as_sequence() {
             Some(seq) => {
+                let required: Vec<(&str, Field)> =
+                    REQUIRED_FIELDS.iter().map(|f| (*f, Field::Str)).collect();
+                let optional: Vec<(&str, Field)> =
+                    OPTIONAL_FIELDS.iter().map(|f| (*f, Field::Str)).collect();
                 for (i, item) in seq.iter().enumerate() {
-                    check_record(
-                        item,
-                        &join(path, &i.to_string()),
-                        &REQUIRED_FIELDS,
-                        &OPTIONAL_FIELDS,
-                        out,
-                    );
+                    check_record(item, &join(path, &i.to_string()), &required, &optional, out);
                 }
             }
-            None => fail("expected a list of runtime entries"),
+            None => out.push(invalid("expected a list of runtime entries")),
         },
-        Shape::Unchecked => {}
     }
 }
 
-/// A mapping of string fields: every required field present, no field
-/// outside required and optional.
+fn check_field(field: Field, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+    let message = match (field, value) {
+        (Field::Str, Value::String(_)) | (Field::Bool, Value::Bool(_)) => None,
+        (Field::Str, _) => Some("expected a string".to_owned()),
+        (Field::Bool, _) => Some("expected true or false".to_owned()),
+        (Field::NonEmptyStr, Value::String(s)) if !s.trim().is_empty() => None,
+        (Field::NonEmptyStr, _) => Some("expected a non-empty string".to_owned()),
+        (Field::Domain, Value::String(s)) => DomainName::parse(s).err().map(|e| e.to_string()),
+        (Field::Domain, _) => Some("expected a domain name string".to_owned()),
+    };
+    if let Some(message) = message {
+        out.push(KeyFinding::new(path, FindingKind::InvalidValue, message));
+    }
+}
+
+/// A mapping of fields: every required field present, no field outside
+/// required and optional, each of its shape.
 fn check_record(
     value: &Value,
     path: &str,
-    required: &[&str],
-    optional: &[&str],
+    required: &[(&str, Field)],
+    optional: &[(&str, Field)],
     out: &mut Vec<KeyFinding>,
 ) {
     let Some(map) = value.as_mapping() else {
-        out.push((path.to_owned(), "expected a mapping".to_owned()));
+        out.push(KeyFinding::new(
+            path,
+            FindingKind::InvalidValue,
+            "expected a mapping",
+        ));
         return;
     };
-    for field in required {
+    for (field, _) in required {
         if !map.contains_key(*field) {
-            out.push((join(path, field), "missing".to_owned()));
+            out.push(KeyFinding::new(
+                &join(path, field),
+                FindingKind::Missing,
+                "missing",
+            ));
         }
     }
-    for (key, field) in map {
+    for (key, field_value) in map {
         let name = key_text(key);
         let child = join(path, &name);
-        if !required.contains(&name.as_str()) && !optional.contains(&name.as_str()) {
-            out.push((child, "unknown key".to_owned()));
-        } else if !field.is_string() {
-            out.push((child, "expected a string".to_owned()));
+        let shape = required
+            .iter()
+            .chain(optional)
+            .find(|(n, _)| *n == name)
+            .map(|(_, shape)| *shape);
+        match shape {
+            Some(shape) => check_field(shape, field_value, &child, out),
+            None => out.push(KeyFinding::new(
+                &child,
+                FindingKind::UnknownKey,
+                "unknown key",
+            )),
         }
     }
 }
 
-/// `doc` without the keys its layer does not permit; unknown keys stay.
-/// A mapping emptied by the removal is removed too.
+/// Whether `text` is a git author identity `Name <email>` once its
+/// references are expanded. References are judged when read; here each
+/// stands for a value that fits, and a value made only of references is
+/// accepted.
+fn is_identity_template(text: &str) -> bool {
+    let (masked, only_references) = mask_references(text, "r@r");
+    only_references || is_identity(&masked)
+}
+
+fn is_identity(text: &str) -> bool {
+    let Some(inner) = text.strip_suffix('>') else {
+        return false;
+    };
+    let Some((name, email)) = inner.split_once(" <") else {
+        return false;
+    };
+    let name_ok = !name.trim().is_empty() && !name.contains(['<', '>']);
+    let email_ok = !email.contains(['<', '>']) && !email.contains(char::is_whitespace);
+    let at_ok = email
+        .split_once('@')
+        .is_some_and(|(local, domain)| !local.is_empty() && !domain.is_empty());
+    name_ok && email_ok && at_ok
+}
+
+/// `doc` without the keys its layer does not permit; unknown keys stay. A
+/// mapping emptied by the removal is removed too, and so is a malformed
+/// container (anything but a mapping where the schema has one): it is a
+/// finding of its own and must not hide the other layer's keys below it.
 pub(crate) fn permitted(doc: &Value, layer: LayerKind) -> Value {
     filter_node(&schema(), doc, layer).unwrap_or(Value::Mapping(Mapping::new()))
 }
@@ -391,18 +533,12 @@ fn filter_node(node: &Node, value: &Value, layer: LayerKind) -> Option<Value> {
     match node {
         Node::Leaf(rule, _) => rule.permits(layer).then(|| value.clone()),
         Node::Map { children, open } => {
-            let Some(mapping) = value.as_mapping() else {
-                return Some(value.clone());
-            };
+            let mapping = value.as_mapping()?;
             let mut out = Mapping::new();
             for (key, child) in mapping {
-                let schema = key.as_str().and_then(|name| {
-                    children
-                        .iter()
-                        .find(|(n, _)| *n == name)
-                        .map(|(_, node)| node)
-                        .or(open.as_deref())
-                });
+                let schema = key
+                    .as_str()
+                    .and_then(|name| child_schema(children, open.as_deref(), name));
                 let kept = match schema {
                     Some(schema) => filter_node(schema, child, layer),
                     None => Some(child.clone()),
@@ -418,19 +554,44 @@ fn filter_node(node: &Node, value: &Value, layer: LayerKind) -> Option<Value> {
 
 /// The values reads answer for unset keys of `layer`'s own keys.
 pub(crate) fn defaults(layer: LayerKind) -> Value {
-    let text = match layer {
-        LayerKind::Global => format!(
-            "modules: {{blueprint: false, todos: false, events: false}}\n\
-             ticks: 'on'\n\
-             github: {{api_url: '{DEFAULT_GITHUB_API_URL}'}}\n\
-             runner: {{autostart: false}}\n"
-        ),
-        LayerKind::Project => "board: false\n\
-             approvals: {prd: human, task: human}\n\
-             workflow: {domain: sdlc}\n"
-            .to_owned(),
+    let mut root = Mapping::new();
+    let text = |s: &str| Value::String(s.to_owned());
+    match layer {
+        LayerKind::Global => {
+            for module in Module::ALL {
+                insert_at(&mut root, &["modules", module.key()], Value::Bool(false));
+            }
+            insert_at(&mut root, &["ticks"], text("on"));
+            insert_at(
+                &mut root,
+                &["github", "api_url"],
+                text(DEFAULT_GITHUB_API_URL),
+            );
+            insert_at(&mut root, &["runner", "autostart"], Value::Bool(false));
+        }
+        LayerKind::Project => {
+            insert_at(&mut root, &["board"], Value::Bool(false));
+            insert_at(&mut root, &["approvals", "prd"], text("human"));
+            insert_at(&mut root, &["approvals", "task"], text("human"));
+            insert_at(&mut root, &["workflow", "domain"], text("sdlc"));
+        }
+    }
+    Value::Mapping(root)
+}
+
+fn insert_at(root: &mut Mapping, path: &[&str], value: Value) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
     };
-    serde_yaml_ng::from_str(&text).unwrap_or(Value::Mapping(Mapping::new()))
+    let mut node = root;
+    for key in parents {
+        let entry = node
+            .entry(Value::String((*key).to_owned()))
+            .or_insert_with(|| Value::Mapping(Mapping::new()));
+        let Value::Mapping(next) = entry else { return };
+        node = next;
+    }
+    node.insert(Value::String((*last).to_owned()), value);
 }
 
 #[cfg(test)]
@@ -441,48 +602,68 @@ mod tests {
         serde_yaml_ng::from_str(text).unwrap()
     }
 
-    fn keys(findings: &[KeyFinding]) -> Vec<&str> {
-        findings.iter().map(|(k, _)| k.as_str()).collect()
+    fn judged(findings: &[KeyFinding]) -> Vec<(&str, FindingKind)> {
+        findings.iter().map(|f| (f.key.as_str(), f.kind)).collect()
+    }
+
+    const GLOBAL_ONLY: &str = "runtimes: []\n\
+        agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
+        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
+        github: {api_url: 'http://x'}\n";
+    const PROJECT_ONLY: &str = "project: demo\npublishes: [{slug: sdlc, trigger: code}]\n\
+        requires: [todos]\nactions: {test: make test, lint: {command: lint, takes_files: true}}\n\
+        board: true\ngithub: {approvers: [me]}\napprovals: {prd: peer, task: human}\n\
+        workflow: {domain: sdlc}\nevents: {watch: [{remote: origin, ref: main}]}\n\
+        runner: {autostart: {build: true}}\n";
+    const BOTH: &str = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\
+        blueprint: {engine: shipped}\n";
+
+    #[test]
+    fn every_key_of_the_layer_table_is_permitted_in_its_layer() {
+        assert_eq!(
+            check(&yaml(&format!("{BOTH}{GLOBAL_ONLY}")), LayerKind::Global),
+            []
+        );
+        assert_eq!(
+            check(&yaml(&format!("{BOTH}{PROJECT_ONLY}")), LayerKind::Project),
+            []
+        );
     }
 
     #[test]
-    fn every_key_of_the_layer_table_is_judged_by_its_layer() {
-        let global_only = "runtimes: []\nagents: {order: [a], claude: {git_author: 'A <a@x>'}}\n\
-            ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\ngithub: {api_url: 'http://x'}\n";
-        let project_only = "project: demo\npublishes: {}\nrequires: [todos]\nactions: {test: make test}\n\
-            board: true\ngithub: {approvers: [me]}\napprovals: {prd: peer, task: human}\n\
-            workflow: {domain: sdlc}\nevents: {watch: [{remote: origin, ref: main}]}\nrunner: {autostart: {build: true}}\n";
-        let both = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\
-            blueprint: {engine: shipped}\n";
-        assert!(check(&yaml(&format!("{both}{global_only}")), LayerKind::Global).is_empty());
-        assert!(check(&yaml(&format!("{both}{project_only}")), LayerKind::Project).is_empty());
-
-        let in_project = check(
-            &yaml(&format!("schema_version: 1\n{global_only}")),
+    fn every_global_only_key_is_refused_in_a_project() {
+        let findings = check(
+            &yaml(&format!("schema_version: 1\n{GLOBAL_ONLY}")),
             LayerKind::Project,
         );
+        use FindingKind::NotPermittedInLayer as N;
         assert_eq!(
-            keys(&in_project),
+            judged(&findings),
             [
-                "runtimes",
-                "agents.order",
-                "agents.claude.git_author",
-                "ticks",
-                "runner.notify",
-                "runner.runtime",
-                "github.api_url"
+                ("runtimes", N),
+                ("agents.order", N),
+                ("agents.thinking_mode", N),
+                ("agents.claude.git_author", N),
+                ("ticks", N),
+                ("runner.notify", N),
+                ("runner.runtime", N),
+                ("github.api_url", N),
             ]
         );
-        assert!(
-            in_project[0]
-                .1
-                .contains("not permitted in the project layer")
-        );
-        let in_global = check(
-            &yaml(&format!("schema_version: 1\n{project_only}")),
+    }
+
+    #[test]
+    fn every_project_only_key_is_refused_in_the_global_layer() {
+        let findings = check(
+            &yaml(&format!("schema_version: 1\n{PROJECT_ONLY}")),
             LayerKind::Global,
         );
-        assert_eq!(in_global.len(), 10, "{in_global:?}");
+        assert_eq!(findings.len(), 10, "{findings:?}");
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.kind == FindingKind::NotPermittedInLayer)
+        );
     }
 
     #[test]
@@ -491,47 +672,137 @@ mod tests {
             &yaml(
                 "modules: {core: true, todos: 'yes'}\nticks: true\nrunner: {autostart: 3}\n\
                  runtimes: [{name: a, session_id_env: A, start: s, send: s, alive: a, bogus: x}]\n\
-                 nope: 1\n",
+                 agents: {thinking_mode: deep, order: [claude, true, {a: b}]}\nnope: 1\n",
             ),
             LayerKind::Global,
         );
+        use FindingKind::{InvalidValue as I, Missing as M, UnknownKey as U};
         assert_eq!(
-            keys(&findings),
+            judged(&findings),
             [
-                "schema_version",
-                "modules.core",
-                "modules.todos",
-                "ticks",
-                "runner.autostart",
-                "runtimes.0.conversation",
-                "runtimes.0.bogus",
-                "nope"
+                ("schema_version", M),
+                ("modules.core", U),
+                ("modules.todos", I),
+                ("ticks", I),
+                ("runner.autostart", I),
+                ("runtimes.0.conversation", M),
+                ("runtimes.0.bogus", U),
+                ("agents.thinking_mode", I),
+                ("agents.order.1", I),
+                ("agents.order.2", I),
+                ("nope", U),
+            ]
+        );
+        let empty_order = check(
+            &yaml("schema_version: 1\nagents: {order: []}\n"),
+            LayerKind::Global,
+        );
+        assert_eq!(judged(&empty_order), [("agents.order", I)]);
+    }
+
+    #[test]
+    fn every_thinking_mode_is_accepted() {
+        for mode in ["fast", "med", "slow"] {
+            let doc = yaml(&format!(
+                "schema_version: 1\nagents: {{thinking_mode: {mode}}}\n"
+            ));
+            assert_eq!(check(&doc, LayerKind::Global), []);
+        }
+    }
+
+    #[test]
+    fn an_action_is_a_string_or_a_declaration_of_command_and_takes_files() {
+        let findings = check(
+            &yaml(
+                "schema_version: 1\nactions:\n  plain: make\n  files: {command: lint}\n  \
+                 bad_flag: {command: echo, takes_files: not-a-bool}\n  \
+                 no_command: {takes_files: true}\n  \
+                 extra: {command: x, shell: bash}\n  number: 3\n",
+            ),
+            LayerKind::Project,
+        );
+        use FindingKind::{InvalidValue as I, Missing as M, UnknownKey as U};
+        assert_eq!(
+            judged(&findings),
+            [
+                ("actions.bad_flag.takes_files", I),
+                ("actions.no_command.command", M),
+                ("actions.extra.shell", U),
+                ("actions.number", I),
             ]
         );
     }
 
     #[test]
-    fn reads_drop_keys_of_the_other_layer_and_keep_the_rest() {
-        let doc = yaml(
-            "schema_version: 1\nproject: demo\nruntimes: [x]\nrunner: {notify: n}\nmodules: {todos: true}\n",
+    fn publishes_is_a_list_of_distinct_domains_with_their_trigger() {
+        let findings = check(
+            &yaml(
+                "schema_version: 1\npublishes:\n  - {slug: sdlc, trigger: code}\n  \
+                 - {slug: sdlc, trigger: again}\n  - {slug: local, trigger: x}\n  \
+                 - {slug: ok, trigger: '  '}\n  - {slug: other}\n  \
+                 - {slug: more, trigger: t, extra: 1}\n",
+            ),
+            LayerKind::Project,
         );
+        use FindingKind::{DuplicateDomain as D, InvalidValue as I, Missing as M, UnknownKey as U};
         assert_eq!(
-            permitted(&doc, LayerKind::Project),
-            yaml("schema_version: 1\nproject: demo\nmodules: {todos: true}\n")
+            judged(&findings),
+            [
+                ("publishes.1.slug", D),
+                ("publishes.2.slug", I),
+                ("publishes.3.trigger", I),
+                ("publishes.4.trigger", M),
+                ("publishes.5.extra", U),
+            ]
         );
+        let mapping = check(
+            &yaml("schema_version: 1\npublishes: {sdlc: code}\n"),
+            LayerKind::Project,
+        );
+        assert_eq!(judged(&mapping), [("publishes", I)]);
     }
 
     #[test]
-    fn on_and_off_stay_strings() {
-        assert_eq!(
-            yaml("ticks: on").get("ticks").and_then(Value::as_str),
-            Some("on")
+    fn a_git_author_is_an_identity_with_references_standing_for_their_values() {
+        for good in [
+            "Claude <claude@example.test>",
+            "${AUTHOR_NAME} <${AUTHOR_EMAIL}>",
+            "Claude <{agents.domain}>",
+            "{agents.identity}",
+        ] {
+            assert!(is_identity_template(good), "{good}");
+        }
+        for bad in [
+            "anonymous",
+            "<a@b>",
+            "Claude <claude>",
+            "Claude <@b>",
+            "Claude <a b@c>",
+            "Claude a@b",
+            "{agents.name} anonymous",
+        ] {
+            assert!(!is_identity_template(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn reads_drop_keys_of_the_other_layer_and_malformed_containers() {
+        let doc = yaml(
+            "schema_version: 1\nproject: demo\nruntimes: [x]\nrunner: text\ngithub: ~\n\
+             agents: ~\nmodules: {todos: true}\nunknown: 1\n",
         );
         assert_eq!(
-            defaults(LayerKind::Global)
-                .get("ticks")
-                .and_then(Value::as_str),
-            Some("on")
+            permitted(&doc, LayerKind::Project),
+            yaml("schema_version: 1\nproject: demo\nmodules: {todos: true}\nunknown: 1\n")
         );
+        let findings = check(&doc, LayerKind::Project);
+        for key in ["runner", "github", "agents"] {
+            assert!(
+                findings
+                    .iter()
+                    .any(|f| f.key == key && f.kind == FindingKind::InvalidValue),
+                "{key}: {findings:?}"
+            );
+        }
     }
 }

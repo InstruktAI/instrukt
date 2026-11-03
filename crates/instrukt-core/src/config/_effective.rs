@@ -10,28 +10,26 @@ use super::_error::ConfigError;
 use super::_interpolate::{Interpolator, Mode};
 use super::_layer::{Layer, read_usable};
 use super::_merge::overlay;
+use super::_module::Module;
 use super::_runtime::{self, Env, RuntimeEntry};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 
-/// A switchable module. Core has no switch.
+/// One thinking mode for the whole agent preference list
+/// (`agents.thinking_mode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Module {
-    Blueprint,
-    Todos,
-    Events,
+pub enum ThinkingMode {
+    Fast,
+    Med,
+    Slow,
 }
 
-impl Module {
-    /// The key below `modules` that switches it.
-    pub fn key(self) -> &'static str {
-        match self {
-            Module::Blueprint => "blueprint",
-            Module::Todos => "todos",
-            Module::Events => "events",
-        }
-    }
+/// A domain the project publishes, with its trigger line (`publishes`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedDomain {
+    pub domain: DomainName,
+    pub trigger: String,
 }
 
 /// A gate whose approver the project configures (`approvals.<gate>`).
@@ -196,6 +194,63 @@ impl Configuration {
         self.str_at(&["agents", agent, "git_author"])
     }
 
+    /// `agents.order`: the default ordered agent preferences, below a
+    /// task's own preference and a procedure's `dispatch` (empty when
+    /// unset). Templates are not expanded.
+    pub fn agents_order(&self) -> Result<Vec<&str>, ConfigError> {
+        let Some(list) = self.at(&["agents", "order"]) else {
+            return Ok(Vec::new());
+        };
+        list.as_sequence()
+            .ok_or_else(|| invalid("agents.order", "is not a list"))?
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .ok_or_else(|| invalid("agents.order", "holds a non-string agent"))
+            })
+            .collect()
+    }
+
+    /// `agents.thinking_mode`, the mode of the whole `agents.order` list.
+    pub fn agents_thinking_mode(&self) -> Result<Option<ThinkingMode>, ConfigError> {
+        match self.str_at(&["agents", "thinking_mode"])? {
+            None => Ok(None),
+            Some("fast") => Ok(Some(ThinkingMode::Fast)),
+            Some("med") => Ok(Some(ThinkingMode::Med)),
+            Some("slow") => Ok(Some(ThinkingMode::Slow)),
+            Some(_) => Err(invalid(
+                "agents.thinking_mode",
+                "is not `fast`, `med` or `slow`",
+            )),
+        }
+    }
+
+    /// `publishes`: the domains the project publishes, in order.
+    pub fn publishes(&self) -> Result<Vec<PublishedDomain>, ConfigError> {
+        let Some(list) = self.at(&["publishes"]) else {
+            return Ok(Vec::new());
+        };
+        list.as_sequence()
+            .ok_or_else(|| invalid("publishes", "is not a list"))?
+            .iter()
+            .map(|item| {
+                let slug = item.get("slug").and_then(Value::as_str);
+                let trigger = item.get("trigger").and_then(Value::as_str);
+                match (slug, trigger) {
+                    (Some(slug), Some(trigger)) => Ok(PublishedDomain {
+                        domain: DomainName::parse(slug)
+                            .map_err(|err| invalid("publishes", &err.to_string()))?,
+                        trigger: trigger.to_owned(),
+                    }),
+                    _ => Err(invalid(
+                        "publishes",
+                        "holds an entry without `slug` and `trigger`",
+                    )),
+                }
+            })
+            .collect()
+    }
+
     /// `github.api_url` (default `https://api.github.com`).
     pub fn github_api_url(&self) -> Result<&str, ConfigError> {
         Ok(self
@@ -299,11 +354,10 @@ impl Configuration {
         list.as_sequence()
             .ok_or_else(|| invalid("requires", "is not a list"))?
             .iter()
-            .map(|item| match item.as_str() {
-                Some("blueprint") => Ok(Module::Blueprint),
-                Some("todos") => Ok(Module::Todos),
-                Some("events") => Ok(Module::Events),
-                _ => Err(invalid("requires", "names an unknown module")),
+            .map(|item| {
+                item.as_str()
+                    .and_then(Module::from_key)
+                    .ok_or_else(|| invalid("requires", "names an unknown module"))
             })
             .collect()
     }
@@ -364,19 +418,20 @@ mod tests {
         Configuration::from_value(effective_value(Some(&yaml(global)), project.as_ref()), None)
     }
 
+    const GLOBAL: &str = "schema_version: 1\nmodules: {todos: true, blueprint: true}\n\
+        runner: {autostart: true, runtime: b, notify: 'notify-me'}\n\
+        github: {api_url: 'http://github.local'}\n\
+        runtimes: [{name: a, session_id_env: A}, {name: b, session_id_env: B, agent: claude}]\n\
+        agents: {order: [claude], thinking_mode: slow, claude: {git_author: 'C <c@x>'}}\n";
+
     #[test]
-    fn the_project_overrides_where_permitted_and_defaults_fill_the_rest() {
-        let global = "schema_version: 1\nmodules: {todos: true, blueprint: true}\n\
-            runner: {autostart: true, runtime: b}\n\
-            runtimes: [{name: a, session_id_env: A}, {name: b, session_id_env: B, agent: claude}]\n\
-            agents: {claude: {git_author: 'C <c@x>'}}\n";
+    fn the_project_overrides_where_permitted_and_never_the_machines_keys() {
         let project = "schema_version: 1\nproject: demo\nmodules: {todos: false}\n\
             runner: {autostart: {build: true}, runtime: a}\nruntimes: []\nticks: 'off'\n\
-            approvals: {task: peer}\n";
-        let cfg = config(global, Some(project));
+            approvals: {task: peer}\nagents: {order: [other]}\n";
+        let cfg = config(GLOBAL, Some(project));
         assert!(!cfg.module_enabled(Module::Todos).unwrap());
         assert!(cfg.module_enabled(Module::Blueprint).unwrap());
-        assert!(!cfg.module_enabled(Module::Events).unwrap());
         assert!(cfg.runner_autostart("build").unwrap());
         assert!(!cfg.runner_autostart("bug").unwrap());
         assert_eq!(
@@ -384,24 +439,104 @@ mod tests {
             2,
             "a project never supplies the runtime mapping"
         );
-        assert_eq!(cfg.runner_runtime().unwrap().unwrap().name, "b");
-        assert!(cfg.ticks_enabled().unwrap());
+        let global = config(GLOBAL, None);
+        assert_eq!(
+            cfg.runner_runtime().unwrap(),
+            global.runner_runtime().unwrap()
+        );
+        assert_eq!(
+            cfg.ticks_enabled().unwrap(),
+            global.ticks_enabled().unwrap()
+        );
+        assert_eq!(cfg.agents_order().unwrap(), global.agents_order().unwrap());
         assert_eq!(cfg.approver(ApprovalGate::Task).unwrap(), Approver::Peer);
-        assert_eq!(cfg.approver(ApprovalGate::Prd).unwrap(), Approver::Human);
-        assert_eq!(cfg.workflow_domain().unwrap().as_str(), "sdlc");
-        assert_eq!(cfg.github_api_url().unwrap(), "https://api.github.com");
-        assert_eq!(cfg.agent_git_author("claude").unwrap(), Some("C <c@x>"));
-        assert_eq!(cfg.project().unwrap().unwrap().as_str(), "demo");
-        assert_eq!(cfg.runner_notify().unwrap(), Notify::RuntimeDefault);
-        let env = Env::from_pairs([("B", "1")]);
-        assert_eq!(cfg.active_agent(&env).unwrap().name, "b");
+        assert_eq!(
+            cfg.active_agent(&Env::from_pairs([("B", "1")]))
+                .map(|e| e.index),
+            Some(1)
+        );
     }
 
     #[test]
-    fn the_global_layer_alone_has_no_project_defaults() {
+    fn a_malformed_project_container_does_not_hide_the_machines_settings() {
+        let global = config(GLOBAL, None);
+        for project in [
+            "schema_version: 1\nproject: p\nrunner: text\ngithub: ~\nagents: ~\n",
+            "schema_version: 1\nproject: p\nrunner: [1]\ngithub: 3\nagents: text\n",
+        ] {
+            let cfg = config(GLOBAL, Some(project));
+            assert_eq!(
+                cfg.runner_notify().unwrap(),
+                global.runner_notify().unwrap()
+            );
+            assert_eq!(
+                cfg.github_api_url().unwrap(),
+                global.github_api_url().unwrap()
+            );
+            assert_eq!(
+                cfg.agent_git_author("claude").unwrap(),
+                global.agent_git_author("claude").unwrap()
+            );
+            assert_eq!(
+                cfg.runner_runtime().unwrap(),
+                global.runner_runtime().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn the_agent_preferences_carry_one_thinking_mode() {
+        let cfg = config(GLOBAL, None);
+        assert_eq!(cfg.agents_order().unwrap().len(), 1);
+        assert_eq!(
+            cfg.agents_thinking_mode().unwrap(),
+            Some(ThinkingMode::Slow)
+        );
+    }
+
+    #[test]
+    fn published_domains_are_read_in_order() {
+        let cfg = config(
+            "schema_version: 1\n",
+            Some(
+                "schema_version: 1\npublishes: [{slug: sdlc, trigger: t1}, {slug: general, trigger: t2}]\n",
+            ),
+        );
+        let domains: Vec<DomainName> = cfg
+            .publishes()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.domain)
+            .collect();
+        assert_eq!(
+            domains,
+            [
+                DomainName::parse("sdlc").unwrap(),
+                DomainName::parse("general").unwrap()
+            ]
+        );
+    }
+
+    #[test]
+    fn requires_decodes_every_module_by_its_key() {
+        let names: Vec<&str> = Module::ALL.iter().map(|m| m.key()).collect();
+        let cfg = config(
+            "schema_version: 1\n",
+            Some(&format!(
+                "schema_version: 1\nrequires: [{}]\n",
+                names.join(", ")
+            )),
+        );
+        assert_eq!(cfg.requires().unwrap(), Module::ALL);
+    }
+
+    #[test]
+    fn the_global_layer_alone_reads_no_project_keys() {
         let cfg = config("schema_version: 1\n", None);
-        assert!(cfg.get(Some("board"), &Env::default()).is_err());
-        assert!(!cfg.board().unwrap());
+        assert!(matches!(
+            cfg.get(Some("board"), &Env::default()),
+            Err(ConfigError::MissingKey { .. })
+        ));
         assert!(cfg.runner_runtime().unwrap().is_none());
     }
 }
