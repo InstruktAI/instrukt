@@ -30,6 +30,13 @@ carries a session-bound value.
 `${VAR}` has no default form. Expansion happens on every `get`; nothing is
 cached and nothing expanded is written back.
 
+The runtime mapping itself is the exception. Its entries hold templates the
+runner fills per session, not values: reading the mapping (`config get
+runtimes`, or any path under it) prints the entries as stored, with every
+template unexpanded, `{…}` and `${VAR}` alike. `{runtime.*}` references
+expand only through the active-runtime view, `config get runtime.<field>`.
+Every other value expands on every `get`.
+
 ### Active runtime
 
 The runtime mapping (`runtimes`, global layer) is an ordered list. The active
@@ -37,8 +44,8 @@ runtime is the first entry whose `session_id_env` is set in the caller's
 environment. A runtime that hosts agent CLIs is listed before those CLIs,
 because a session inside it also carries the hosted CLI's own variable.
 
-When no entry's variable is set, any `runtime.*` path or reference fails
-non-zero with an error stating that no configured runtime's session variable
+When no entry's variable is set, any `runtime.*` path or reference (the
+active-runtime view, not the stored mapping) fails non-zero with an error stating that no configured runtime's session variable
 is set; no runtime is guessed.
 
 Example (values are illustrative):

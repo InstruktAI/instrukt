@@ -57,7 +57,9 @@ The global layer supplies a non-empty ordered agent preference list,
 procedure's `dispatch` (`agent: [<agent>, …]`, `thinking_mode`). Precedence,
 first to last: a task's own preference (`--agent <name> [--thinking …]`, one
 agent with its own mode), then the procedure's `dispatch`, then
-`agents.order` with `agents.thinking_mode`. Agent names validate against the
+`agents.order` with `agents.thinking_mode`. `agents.thinking_mode` has no
+default: it is required whenever `agents.order` is set, and a missing mode is a
+validation finding, as for `dispatch`. Agent names validate against the
 agents the configured runtime mapping can start, rather than a fixed set or
 the shorter set of agents receiving deployed instructions.
 

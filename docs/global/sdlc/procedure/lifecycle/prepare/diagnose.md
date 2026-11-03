@@ -2,6 +2,7 @@
 eval: true
 description: Prepare-driver procedure for bug diagnosis. Triage before dispatch, challenge the peer-authored mechanism, and stamp only a settled or explicitly unresolved outcome.
 visibility: public
+role: diagnosis-driver
 ---
 
 # Bug Diagnose — Procedure

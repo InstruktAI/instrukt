@@ -9,6 +9,7 @@ roles:
   - coordinator
   - deferrer
   - diagnoser
+  - diagnosis-driver
   - drift-analyzer
   - finalizer
   - intaker
