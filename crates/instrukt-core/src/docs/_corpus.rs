@@ -332,7 +332,8 @@ pub struct ThirdPartyDoc {
 }
 
 impl ThirdPartyDoc {
-    /// Its identity: the path below the third-party root, without `.md`.
+    /// Its identity: `third-party/` and its path below the third-party
+    /// root, without `.md`.
     pub fn id(&self) -> &ThirdPartyId {
         &self.id
     }
@@ -492,18 +493,7 @@ impl Corpus {
                 });
             }
             Some(Placement::Baseline { owner, progressive }) => {
-                let project = self.project.clone();
-                let lines = text
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(|line| match line.strip_prefix('@') {
-                        Some(raw) if !raw.is_empty() && !raw.contains(char::is_whitespace) => {
-                            ManifestLine::Entry(_refs::parse(raw, project.as_ref(), &user_home))
-                        }
-                        _ => ManifestLine::Invalid(line.to_owned()),
-                    })
-                    .collect();
+                let lines = manifest_lines(text, self.project.as_ref(), &user_home);
                 self.baselines.push(BaselineManifest {
                     owner,
                     progressive,
@@ -657,12 +647,16 @@ fn owned_domain(path: &str) -> Option<DomainName> {
 
 /// Every Markdown file below `<repo_root>/docs/`, skipping `_` directories.
 pub(super) fn read_tree(repo_root: &Path) -> Result<Vec<SourceFile>, DocsError> {
-    let docs = repo_root.join("docs");
+    let docs = confined_docs(repo_root)?;
     if !docs.is_dir() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
+    // Symbolic links below `docs/` are not followed: their entries are not
+    // files, so nothing outside the repository is read or later rewritten.
     let walker = walkdir::WalkDir::new(&docs)
+        .follow_links(false)
+        .follow_root_links(false)
         .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| {
@@ -672,7 +666,7 @@ pub(super) fn read_tree(repo_root: &Path) -> Result<Vec<SourceFile>, DocsError> 
         });
     for entry in walker {
         let entry = entry.map_err(|err| DocsError::Walk {
-            path: docs.clone(),
+            path: err.path().unwrap_or(&docs).to_path_buf(),
             message: err.to_string(),
         })?;
         if !entry.file_type().is_file() || entry.path().extension().is_none_or(|e| e != "md") {
@@ -686,6 +680,39 @@ pub(super) fn read_tree(repo_root: &Path) -> Result<Vec<SourceFile>, DocsError> 
         out.push(SourceFile { path: rel, text });
     }
     Ok(out)
+}
+
+/// `<repo_root>/docs`, refused when it is a symbolic link: documentation is
+/// read and folded only inside the repository.
+pub(super) fn confined_docs(repo_root: &Path) -> Result<PathBuf, DocsError> {
+    let docs = repo_root.join("docs");
+    match std::fs::symlink_metadata(&docs) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(DocsError::OutsideRepository { path: docs })
+        }
+        Ok(_) => Ok(docs),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(docs),
+        Err(source) => Err(DocsError::Read { path: docs, source }),
+    }
+}
+
+/// The lines of a baseline manifest: each non-empty line is one `@`
+/// reference, or invalid.
+pub(super) fn manifest_lines(
+    text: &str,
+    project: Option<&ProjectSlug>,
+    user_home: &Path,
+) -> Vec<ManifestLine> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| match line.strip_prefix('@') {
+            Some(raw) if !raw.is_empty() && !raw.contains(char::is_whitespace) => {
+                ManifestLine::Entry(_refs::parse(raw, project, user_home))
+            }
+            _ => ManifestLine::Invalid(line.to_owned()),
+        })
+        .collect()
 }
 
 /// `path` relative to `root`, `/`-separated.
@@ -726,50 +753,58 @@ mod tests {
         )
     }
 
-    const LIVE: &str = "---\ndescription: d\n---\n\n# A — Spec\n\n## What it is\n\nx\n\
-                        <!-- planned:add-it -->\nadded\n<!-- /planned:add-it -->\n\n## Canonical fields\n\ny\n";
+    fn slug(s: &str) -> TodoSlug {
+        TodoSlug::parse(s).unwrap()
+    }
+
+    const BEFORE: &str = "\n# A — Spec\n\n## What it is\n\nx\n";
+    const ADDED: &str = "added\n";
+    const AFTER: &str = "\n## Canonical fields\n\ny\n";
+    const NEXT: &str = "next\n";
+
+    fn live() -> String {
+        format!(
+            "---\ndescription: d\n---\n{BEFORE}<!-- planned:add-it -->\n{ADDED}<!-- /planned:add-it -->\n{AFTER}"
+        )
+    }
+
+    fn with_companions() -> Corpus {
+        corpus(&[
+            ("docs/local/spec/a.md", &live()),
+            (
+                "docs/local/spec/a.rework.md",
+                &format!("---\ndescription: d\n---\n{NEXT}"),
+            ),
+            ("docs/local/spec/a.retire-it.md", ""),
+        ])
+    }
 
     #[test]
     fn companions_and_planned_blocks_supersede_a_live_snippet() {
-        let c = corpus(&[
-            ("docs/local/spec/a.md", LIVE),
-            (
-                "docs/local/spec/a.rework.md",
-                "---\ndescription: d\n---\n\n# A — Spec\n\nnext\n",
-            ),
-            ("docs/local/spec/a.retire-it.md", ""),
-        ]);
+        let c = with_companions();
         assert_eq!(c.snippets().len(), 1);
-        let snippet = &c.snippets()[0];
-        let slugs: Vec<_> = snippet
-            .superseded_by()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(slugs, ["add-it", "retire-it", "rework"]);
+        let expected: BTreeSet<TodoSlug> =
+            [slug("add-it"), slug("retire-it"), slug("rework")].into();
+        assert_eq!(c.snippets()[0].superseded_by(), expected);
     }
 
     #[test]
     fn lenses_show_current_target_and_retired_views() {
-        let c = corpus(&[
-            ("docs/local/spec/a.md", LIVE),
-            (
-                "docs/local/spec/a.rework.md",
-                "---\ndescription: d\n---\nnext\n",
-            ),
-            ("docs/local/spec/a.retire-it.md", ""),
-        ]);
+        let c = with_companions();
         let s = &c.snippets()[0];
         let body = |view: View<'_>| match view {
             View::Visible { body, .. } => body,
             other => panic!("{other:?}"),
         };
-        assert!(!body(s.view(Lens::Current)).contains("added"));
-        let add = TodoSlug::parse("add-it").unwrap();
-        assert!(body(s.view(Lens::Target(&add))).contains("added\n"));
-        let rework = TodoSlug::parse("rework").unwrap();
-        assert_eq!(body(s.view(Lens::Target(&rework))), "next\n");
-        let retire = TodoSlug::parse("retire-it").unwrap();
+        assert_eq!(body(s.view(Lens::Current)), format!("{BEFORE}{AFTER}"));
+        let add = slug("add-it");
+        assert_eq!(
+            body(s.view(Lens::Target(&add))),
+            format!("{BEFORE}{ADDED}{AFTER}")
+        );
+        let rework = slug("rework");
+        assert_eq!(body(s.view(Lens::Target(&rework))), NEXT);
+        let retire = slug("retire-it");
         assert_eq!(s.view(Lens::Target(&retire)), View::Retired);
     }
 
@@ -781,12 +816,12 @@ mod tests {
         )]);
         let s = &c.snippets()[0];
         assert!(matches!(s.view(Lens::Current), View::Withheld { .. }));
-        let other = TodoSlug::parse("other").unwrap();
+        let other = slug("other");
         assert!(matches!(
             s.view(Lens::Target(&other)),
             View::Withheld { .. }
         ));
-        let mine = TodoSlug::parse("build-it").unwrap();
+        let mine = slug("build-it");
         assert!(matches!(s.view(Lens::Target(&mine)), View::Visible { .. }));
     }
 
@@ -797,22 +832,43 @@ mod tests {
             "---\ndescription: d\n---\n# P — Policy\n\n## Required reads\n\n- @docs/local/policy/q.md\n\
              - @~/.instrukt/docs/sdlc/bundle.md\n\n## Rules\n\n@docs/local/policy/r.md\n",
         )]);
-        let reads: Vec<_> = c.snippets()[0]
+        let targets: Vec<_> = c.snippets()[0]
             .current()
             .required_reads()
             .iter()
-            .map(|r| r.raw.as_str())
+            .map(|r| r.target.clone())
             .collect();
         assert_eq!(
-            reads,
-            ["docs/local/policy/q.md", "~/.instrukt/docs/sdlc/bundle.md"]
+            targets,
+            [
+                Some(RefTarget::Snippet(
+                    SnippetId::parse("local/projects/demo/policy/q").unwrap()
+                )),
+                Some(RefTarget::Bundle(DomainName::parse("sdlc").unwrap())),
+            ]
         );
     }
 
+    const SHARED: &str = "shared text\n";
+
     #[test]
     fn fragments_are_found_by_their_include_path() {
-        let c = corpus(&[("docs/global/snippets/step.md", "shared text\n")]);
-        assert_eq!(c.fragment("docs/snippets/step.md"), Some("shared text\n"));
+        let c = corpus(&[("docs/global/snippets/step.md", SHARED)]);
+        assert_eq!(c.fragment("docs/snippets/step.md"), Some(SHARED));
         assert_eq!(c.fragment("docs/snippets/none.md"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_docs_directory_is_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("local/spec")).unwrap();
+        std::fs::write(outside.path().join("local/spec/x.md"), "x\n").unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), repo.path().join("docs")).unwrap();
+        assert!(matches!(
+            Corpus::load(repo.path(), &home()),
+            Err(DocsError::OutsideRepository { .. })
+        ));
     }
 }

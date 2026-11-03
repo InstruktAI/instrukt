@@ -8,15 +8,9 @@
 //! accepted marker is one the fold can resolve.
 
 use std::collections::BTreeSet;
-use std::sync::LazyLock;
 
-use regex::Regex;
-
-use super::_text::{compile, mask_inline_code};
+use super::_text::visible_comments;
 use crate::ids::TodoSlug;
-
-static MARKER: LazyLock<Regex> =
-    LazyLock::new(|| compile(r"<!--[ \t]*(/)?(planned-change|planned|change):([^>\s]+)[ \t]*-->"));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -85,27 +79,42 @@ fn is_placeholder(slug: &str) -> bool {
     (slug.starts_with('{') && slug.ends_with('}')) || slug.starts_with('<')
 }
 
+/// Reads the text between `<!--` and `-->` as a marker:
+/// `[/](planned-change|planned|change):<slug>`, padded by spaces or tabs
+/// only, the slug free of whitespace and `>`.
+fn parse_marker(inner: &str) -> Option<(bool, Kind, &str)> {
+    let inner = inner.trim_matches([' ', '\t']);
+    let (closing, rest) = match inner.strip_prefix('/') {
+        Some(rest) => (true, rest),
+        None => (false, inner),
+    };
+    let (kind, slug) = if let Some(slug) = rest.strip_prefix("planned-change:") {
+        (Kind::PlannedChange, slug)
+    } else if let Some(slug) = rest.strip_prefix("planned:") {
+        (Kind::Planned, slug)
+    } else if let Some(slug) = rest.strip_prefix("change:") {
+        (Kind::Change, slug)
+    } else {
+        return None;
+    };
+    let valid = !slug.is_empty() && !slug.contains(|c: char| c.is_whitespace() || c == '>');
+    valid.then_some((closing, kind, slug))
+}
+
 fn markers(body: &str) -> (Vec<Marker>, Vec<Problem>) {
     let mut found = Vec::new();
     let mut problems = Vec::new();
     for (index, raw) in body.split_inclusive('\n').enumerate() {
         let line = raw.trim_end_matches(['\n', '\r']);
-        let masked = mask_inline_code(line);
-        let on_line: Vec<_> = MARKER
-            .captures_iter(&masked)
-            .filter_map(|caps| {
-                let whole = caps.get(0)?;
-                let kind = match caps.get(2)?.as_str() {
-                    "planned" => Kind::Planned,
-                    "planned-change" => Kind::PlannedChange,
-                    _ => Kind::Change,
-                };
-                let slug = caps.get(3)?.as_str().to_owned();
-                (!is_placeholder(&slug)).then(|| Marker {
-                    closing: caps.get(1).is_some(),
+        let on_line: Vec<_> = visible_comments(line)
+            .into_iter()
+            .filter_map(|comment| {
+                let (closing, kind, slug) = parse_marker(&line[comment.inner.clone()])?;
+                (!is_placeholder(slug)).then(|| Marker {
+                    closing,
                     kind,
-                    slug,
-                    text: whole.as_str().to_owned(),
+                    slug: slug.to_owned(),
+                    text: line[comment.whole].to_owned(),
                     line: index,
                 })
             })
@@ -113,7 +122,7 @@ fn markers(body: &str) -> (Vec<Marker>, Vec<Problem>) {
         let own_line = on_line.len() == 1
             && on_line
                 .first()
-                .is_some_and(|marker| masked.trim() == marker.text);
+                .is_some_and(|marker| line.trim() == marker.text);
         for marker in on_line {
             if TodoSlug::parse(&marker.slug).is_err() {
                 problems.push(Problem::InvalidSlug(marker.slug.clone()));
@@ -271,13 +280,23 @@ mod tests {
 
     use super::*;
 
-    const BODY: &str = "a\n<!-- planned:x -->\nadd\n<!-- /planned:x -->\nb\n\
-                        <!-- planned-change:y -->\nold\n<!-- change:y -->\nnew\n\
-                        <!-- /planned-change:y -->\nc\n";
+    const A: &str = "a\n";
+    const ADD: &str = "add\n";
+    const B: &str = "b\n";
+    const OLD: &str = "old\n";
+    const NEW: &str = "new\n";
+    const C: &str = "c\n";
+
+    fn body() -> String {
+        format!(
+            "{A}<!-- planned:x -->\n{ADD}<!-- /planned:x -->\n{B}<!-- planned-change:y -->\n{OLD}\
+             <!-- change:y -->\n{NEW}<!-- /planned-change:y -->\n{C}"
+        )
+    }
 
     #[test]
     fn well_formed_blocks_are_found_without_problems() {
-        let scan = scan(BODY);
+        let scan = scan(&body());
         assert!(scan.problems.is_empty(), "{:?}", scan.problems);
         assert_eq!(scan.blocks.len(), 2);
         assert_eq!(scan.slugs.len(), 2);
@@ -285,13 +304,23 @@ mod tests {
 
     #[test]
     fn current_and_delivered_sides_resolve_each_block() {
-        let s = scan(BODY);
-        assert_eq!(resolve(BODY, &s, |_| Side::Current), "a\nb\nold\nc\n");
+        let text = body();
+        let s = scan(&text);
         assert_eq!(
-            resolve(BODY, &s, |_| Side::Delivered),
-            "a\nadd\nb\nnew\nc\n"
+            resolve(&text, &s, |_| Side::Current),
+            format!("{A}{B}{OLD}{C}")
         );
-        assert_eq!(resolve(BODY, &s, |_| Side::Untouched), BODY);
+        assert_eq!(
+            resolve(&text, &s, |_| Side::Delivered),
+            format!("{A}{ADD}{B}{NEW}{C}")
+        );
+        assert_eq!(resolve(&text, &s, |_| Side::Untouched), text);
+    }
+
+    #[test]
+    fn a_marker_after_inline_code_on_its_line_is_inline() {
+        let s = scan("`x` <!-- planned:a -->\n");
+        assert!(matches!(s.problems[..], [Problem::Inline(_)]));
     }
 
     #[test]
@@ -328,7 +357,10 @@ mod tests {
     #[test]
     fn a_malformed_slug_is_reported_and_the_block_still_reads() {
         let s = scan("<!-- planned:Bad_Slug -->\nx\n<!-- /planned:Bad_Slug -->\n");
-        assert_eq!(s.problems, vec![Problem::InvalidSlug("Bad_Slug".into()); 2]);
+        assert!(matches!(
+            s.problems[..],
+            [Problem::InvalidSlug(_), Problem::InvalidSlug(_)]
+        ));
         assert_eq!(s.blocks.len(), 1);
     }
 

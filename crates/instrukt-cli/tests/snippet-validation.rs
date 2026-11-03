@@ -49,10 +49,27 @@ fn snippet(taxonomy: &str, extra: &str, body: &str) -> String {
     text
 }
 
-/// A repository declaring project `demo` that publishes the `acme` domain.
+/// The machine's runtime mapping: one agent CLI, `claude`, that dispatch
+/// defaults may name.
+const MACHINE: &str = r#"schema_version: 1
+runtimes:
+  - name: claude-cli
+    agent: claude
+    session_id_env: CLAUDE_SESSION
+    start: claude
+    send: claude send
+    alive: claude alive
+    conversation: claude history
+"#;
+
+/// A repository declaring project `demo` that publishes the `acme` domain,
+/// on a machine whose runtime mapping can start `claude`.
 fn project(env: &TestEnv) -> Repo {
+    let config = env.instrukt_home().join("instrukt.yaml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(config, MACHINE).unwrap();
     let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", "project: demo\n");
+    repo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
     repo
 }
 
@@ -131,12 +148,24 @@ fn valid_tree(repo: &Repo) {
         .write("docs/global/acme/workflow/templates/step.md", "A template, not a snippet.\n");
 }
 
-fn stdout(env: &TestEnv, repo: &Repo, args: &[&str]) -> (String, i32) {
-    let output = env.instrukt(repo.path()).args(args).output().unwrap();
-    (
-        String::from_utf8(output.stdout).unwrap(),
-        output.status.code().unwrap_or(-1),
-    )
+struct Run {
+    out: String,
+    err: String,
+    success: bool,
+}
+
+fn validate(env: &TestEnv, repo: &Repo, args: &[&str]) -> Run {
+    let output = env
+        .instrukt(repo.path())
+        .args(["docs", "validate"])
+        .args(args)
+        .output()
+        .unwrap();
+    Run {
+        out: String::from_utf8(output.stdout).unwrap(),
+        err: String::from_utf8(output.stderr).unwrap(),
+        success: output.status.success(),
+    }
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -145,9 +174,9 @@ fn documentation_that_keeps_the_contract_validates_successfully() {
     let env = TestEnv::new();
     let repo = project(&env);
     valid_tree(&repo);
-    env.run(repo.path(), ["docs", "validate"])
-        .success()
-        .stdout("");
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}", run.err);
+    insta::assert_snapshot!("clean_run", run.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -160,9 +189,9 @@ fn a_snippet_without_a_description_is_reported_not_left_out() {
         "docs/global/acme/concept/bare.md",
         "---\nvisibility: public\n---\n\n# Bare — Concept\n\n## What\n\nx\n\n## Why\n\ny\n",
     );
-    env.run(repo.path(), ["docs", "validate"])
-        .failure()
-        .stdout("docs/global/acme/concept/bare.md: frontmatter-description-missing\n");
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("description_missing", run.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -196,9 +225,25 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             ),
         )
         .write(
+            "docs/global/acme/procedure/ghostly.md",
+            &snippet(
+                "procedure",
+                "role: haunter\nactivation_trigger: At night.\n\
+                 dispatch:\n  agent: [claude, ghost]\n  thinking_mode: slow\n",
+                "",
+            ),
+        )
+        .write(
             "docs/local/adr/0001-choice.md",
             "---\ndescription: A choice.\n---\n\n# Choice — ADR\n\n## Context\n\n## Decision\n\n## Consequences\n",
         )
+        .write(
+            "docs/local/adr/0002-pending.md",
+            "---\ndescription: Pending.\ndate: 2026-01-02\nnumber: 2\ndelivered_by: [later]\n---\n\n\
+             # Pending — ADR\n\n## Context\n\n<!-- planned:later -->\nx\n<!-- /planned:later -->\n\n\
+             ## Decision\n\n## Consequences\n",
+        )
+        .write("docs/local/adr/0002-pending.later.md", "")
         // Structure
         .write(
             "docs/global/acme/principle/shape.md",
@@ -236,14 +281,19 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             "docs/global/acme/baseline-progressive.md",
             "@~/.instrukt/docs/acme/policy/rules.md\n@~/.instrukt/docs/acme/principle/shape.md\nnot a reference\n",
         )
+        .write(
+            "docs/local/baseline.md",
+            "@~/.instrukt/docs/acme/bundle.md\n@docs/local/design/shape.md\n\
+             @~/.instrukt/docs/acme/principle/care.md\n",
+        )
         // Third-party
         .write(
             "docs/third-party/tool/broken.md",
-            "---\nvisibility: public\n---\n\n# Broken\n\n## Sources\n\n- somewhere on the web\n",
+            "---\nvisibility: public\ntype: spec\n---\n\n# Broken\n\n## Sources\n\n- somewhere on the web\n",
         );
-    let (out, code) = stdout(&env, &repo, &["docs", "validate"]);
-    assert_ne!(code, 0);
-    insta::assert_snapshot!(out);
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!(run.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -256,22 +306,15 @@ fn findings_print_as_a_json_list_with_file_code_and_value() {
         "docs/global/acme/concept/fields.md",
         &snippet("concept", "visibility: secret\n", ""),
     );
-    let (out, code) = stdout(&env, &repo, &["docs", "validate", "--json"]);
-    assert_ne!(code, 0);
-    let findings: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(
-        findings,
-        serde_json::json!([{
-            "path": "docs/global/acme/concept/fields.md",
-            "code": "frontmatter-visibility-invalid",
-            "value": "secret",
-        }])
-    );
+    let run = validate(&env, &repo, &["--json"]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("json_findings", run.out);
     let clean = env.git_repo("clean");
-    clean.write("instrukt.yaml", "project: clean\n");
+    clean.write("instrukt.yaml", "schema_version: 1\nproject: clean\n");
     valid_tree(&clean);
-    let (out, code) = stdout(&env, &clean, &["docs", "validate", "--json"]);
-    assert_eq!((out.as_str(), code), ("[]\n", 0));
+    let run = validate(&env, &clean, &["--json"]);
+    assert!(run.success, "{}", run.err);
+    insta::assert_snapshot!("json_clean", run.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -292,32 +335,17 @@ fn named_paths_limit_the_run_to_those_files_and_their_cross_snippet_checks() {
         "docs/global/acme/procedure/rival.md",
         &snippet("procedure", "role: worker\nactivation_trigger: Also.\n", ""),
     );
-    env.run(
-        repo.path(),
-        ["docs", "validate", "docs/global/acme/concept/one.md"],
-    )
-    .failure()
-    .stdout("docs/global/acme/concept/one.md: frontmatter-visibility-invalid: x\n");
+    let one = validate(&env, &repo, &["docs/global/acme/concept/one.md"]);
+    assert!(!one.success);
+    insta::assert_snapshot!("scoped_one_file", one.out);
     // The rival shares a role with the work overview: naming either file
-    // reports the collision.
-    let (out, _) = stdout(
-        &env,
-        &repo,
-        &["docs", "validate", "docs/global/acme/procedure/rival.md"],
-    );
-    assert_eq!(
-        out,
-        "docs/global/acme/procedure/rival.md: procedure-role-shared: worker \
-         (acme/procedure/rival, acme/procedure/work/overview)\n\
-         docs/global/acme/procedure/work/overview.md: procedure-role-shared: worker \
-         (acme/procedure/rival, acme/procedure/work/overview)\n"
-    );
-    env.run(
-        repo.path(),
-        ["docs", "validate", "docs/global/acme/policy/rules.md"],
-    )
-    .success()
-    .stdout("");
+    // reports the collision on both.
+    let rival = validate(&env, &repo, &["docs/global/acme/procedure/rival.md"]);
+    assert!(!rival.success);
+    insta::assert_snapshot!("scoped_role_clash", rival.out);
+    let untouched = validate(&env, &repo, &["docs/global/acme/policy/rules.md"]);
+    assert!(untouched.success);
+    insta::assert_snapshot!("scoped_clean_file", untouched.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -335,10 +363,9 @@ fn an_entry_procedure_requiring_its_own_sub_procedure_is_reported() {
                     "# Sample — Procedure\n\n## Required reads\n\n- @~/.instrukt/docs/acme/procedure/work/step.md\n",
                 ),
         );
-    env.run(repo.path(), ["docs", "validate"]).failure().stdout(
-        "docs/global/acme/procedure/work/overview.md: procedure-subprocedure-required: \
-         acme/procedure/work/overview requires acme/procedure/work/step\n",
-    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("subprocedure_required", run.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -359,10 +386,9 @@ fn references_to_domains_published_elsewhere_resolve_through_the_home() {
              - @~/.instrukt/docs/nowhere/bundle.md\n",
         ),
     );
-    env.run(repo.path(), ["docs", "validate"]).failure().stdout(
-        "docs/global/acme/concept/borrowing.md: reference-unresolved: ~/.instrukt/docs/general/principle/absent.md\n\
-         docs/global/acme/concept/borrowing.md: reference-unresolved: ~/.instrukt/docs/nowhere/bundle.md\n",
-    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("home_references", run.out);
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -371,7 +397,7 @@ fn local_snippets_in_a_repository_without_a_project_have_no_identity() {
     let env = TestEnv::new();
     let repo = env.git_repo("anonymous");
     repo.write("docs/local/spec/x.md", &snippet("spec", "", ""));
-    env.run(repo.path(), ["docs", "validate"])
-        .failure()
-        .stdout("docs/local/spec/x.md: identity-undeclared-project\n");
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("undeclared_project", run.out);
 }

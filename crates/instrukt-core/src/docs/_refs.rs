@@ -90,38 +90,37 @@ mod tests {
 
     use super::*;
 
-    fn target(raw: &str) -> Option<String> {
+    fn target(raw: &str) -> Option<RefTarget> {
         let project = ProjectSlug::parse("demo").unwrap();
-        parse(raw, Some(&project), &PathBuf::from("/u"))
-            .target
-            .map(|t| match t {
-                RefTarget::Snippet(id) => format!("snippet {id}"),
-                RefTarget::Bundle(d) => format!("bundle {d}"),
-                RefTarget::LocalFile(p) => format!("file {p}"),
-            })
+        parse(raw, Some(&project), &PathBuf::from("/u")).target
+    }
+
+    fn snippet(id: &str) -> Option<RefTarget> {
+        Some(RefTarget::Snippet(SnippetId::parse(id).unwrap()))
     }
 
     #[test]
     fn valid_forms_name_their_targets() {
         assert_eq!(
-            target("~/.instrukt/docs/sdlc/policy/x.md").as_deref(),
-            Some("snippet sdlc/policy/x")
+            target("~/.instrukt/docs/sdlc/policy/x.md"),
+            snippet("sdlc/policy/x")
         );
         assert_eq!(
-            target("/u/.instrukt/docs/sdlc/policy/x.md").as_deref(),
-            Some("snippet sdlc/policy/x")
+            target("/u/.instrukt/docs/sdlc/policy/x.md"),
+            snippet("sdlc/policy/x")
         );
         assert_eq!(
-            target("~/.instrukt/docs/sdlc/bundle.md").as_deref(),
-            Some("bundle sdlc")
+            target("~/.instrukt/docs/sdlc/bundle.md"),
+            Some(RefTarget::Bundle(DomainName::parse("sdlc").unwrap()))
         );
         assert_eq!(
-            target("docs/local/spec/a.md").as_deref(),
-            Some("snippet local/projects/demo/spec/a")
+            target("docs/local/spec/a.md"),
+            snippet("local/projects/demo/spec/a")
         );
+        let manifest = "docs/local/baseline.md";
         assert_eq!(
-            target("docs/local/baseline.md").as_deref(),
-            Some("file docs/local/baseline.md")
+            target(manifest),
+            Some(RefTarget::LocalFile(manifest.to_owned()))
         );
     }
 

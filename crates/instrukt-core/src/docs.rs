@@ -75,6 +75,11 @@ pub enum DocsError {
     Write(#[from] FsError),
     #[error("no such file or directory: {}", path.display())]
     NoSuchPath { path: PathBuf },
+    #[error(
+        "{} is a symbolic link or lies outside the repository; documentation is read and changed only inside it",
+        path.display()
+    )]
+    OutsideRepository { path: PathBuf },
     #[error("cannot fold {}: {reason}", path.display())]
     FoldRefused { path: PathBuf, reason: String },
     #[error(transparent)]
