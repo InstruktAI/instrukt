@@ -30,8 +30,8 @@ pub enum StampRequest {
     /// `--verdict approve|changes_requested --phase build_review`.
     BuildVerdict { verdict: BuildVerdict },
     /// `--prd-approved|--task-approved --by human|peer [--session
-    /// <runtime:id>] [--reasoning <text>]`; a peer approval names its
-    /// session and reasoning.
+    /// <runtime:id>] [--reason <text>]`; a peer approval names its
+    /// session and reason.
     Approval {
         gate: ApprovalGate,
         by: ApprovedBy,
@@ -166,12 +166,12 @@ pub(crate) fn resolve(
                 }
                 if reasoning.is_none() {
                     return Err(WorkError::refused(
-                        "a peer approval records the peer's reasoning with `--reasoning <text>`",
+                        "a peer approval states the peer's reason with `--reason <text>`",
                     ));
                 }
             } else if reasoning.is_some() {
                 return Err(WorkError::refused(
-                    "`--reasoning` records a peer's judgment; a human approval carries none",
+                    "a human approval states no reason; `--reason` records a peer's judgment",
                 ));
             }
             Resolved {

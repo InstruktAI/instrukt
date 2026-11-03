@@ -971,15 +971,60 @@ fn release_resources(
         .map(std::path::PathBuf::from)
         .collect();
     let main = worktrees.first().cloned();
-    let mut released = Vec::new();
+    let mut owned: Vec<std::path::PathBuf> = Vec::new();
     for binding in &record.bindings {
-        let Some(path) = &binding.worktree else {
-            continue;
-        };
-        let owned = worktrees.iter().any(|w| w == path) && main.as_ref() != Some(path);
-        if !owned || released.contains(path) {
-            continue;
+        if let Some(path) = &binding.worktree
+            && worktrees.iter().any(|w| w == path)
+            && main.as_ref() != Some(path)
+            && !owned.contains(path)
+        {
+            owned.push(path.clone());
         }
+    }
+    // Check everything before releasing anything: work that would be lost
+    // refuses the withdrawal and names where it is.
+    for path in &owned {
+        let changes = git::run(path, ["status", "--porcelain"])?;
+        if !changes.trim().is_empty() {
+            return Err(WorkError::refused(format!(
+                "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
+                path.display()
+            )));
+        }
+    }
+    let workspace = root.join("workspace").join(record.slug.as_str());
+    let workspace_present = match std::fs::symlink_metadata(&workspace) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(WorkError::Symlink { path: workspace });
+        }
+        Ok(meta) if meta.is_dir() => true,
+        Ok(_) => false,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(source) => {
+            return Err(WorkError::Io {
+                path: workspace,
+                source,
+            });
+        }
+    };
+    if workspace_present {
+        let mut entries = std::fs::read_dir(&workspace).map_err(|source| WorkError::Io {
+            path: workspace.clone(),
+            source,
+        })?;
+        if entries.next().is_some() {
+            return Err(WorkError::refused(format!(
+                "the workspace {} still holds files; keep or remove them, then withdraw again",
+                workspace.display()
+            )));
+        }
+        std::fs::remove_dir(&workspace).map_err(|source| WorkError::Io {
+            path: workspace.clone(),
+            source,
+        })?;
+    }
+    let mut released = Vec::new();
+    for path in &owned {
         let target = path.to_string_lossy().into_owned();
         match git::run(root, ["worktree", "remove", target.as_str()]) {
             Ok(_) => released.push(path.clone()),
