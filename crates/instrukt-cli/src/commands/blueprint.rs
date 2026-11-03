@@ -140,18 +140,31 @@ fn path(ctx: &mut Ctx, root: Option<&Path>, from: &str, to: &str) -> anyhow::Res
 /// a project slug, with no graph yet, or with an unreadable one.
 fn latest_graph(ctx: &Ctx, root: Option<&Path>) -> anyhow::Result<Option<(PathBuf, LatestGraph)>> {
     let Some(root) = root else {
-        tracing::info!("blueprint: not inside a git repository");
+        tracing::debug!(
+            event = "blueprint_no_repository",
+            cwd = %ctx.cwd.display(),
+            "no graph to answer from outside a repository"
+        );
         return Ok(None);
     };
     let Some(project) = config::project_slug(root).context("cannot read the project slug")? else {
-        tracing::info!("blueprint: {} declares no project slug", root.display());
+        tracing::warn!(
+            event = "blueprint_no_project_slug",
+            repo_root = %root.display(),
+            "no graph to answer from: the project layer declares no project slug"
+        );
         return Ok(None);
     };
     match GraphStore::new(&ctx.home, &project).latest() {
         Ok(Some(latest)) => Ok(Some((root.to_path_buf(), latest))),
         Ok(None) => Ok(None),
         Err(err) => {
-            tracing::warn!("blueprint: the latest graph of {project} is unreadable: {err}");
+            tracing::warn!(
+                event = "blueprint_graph_unreadable",
+                project = %project,
+                error = %err,
+                "the latest graph cannot be read; answering as unavailable"
+            );
             Ok(None)
         }
     }

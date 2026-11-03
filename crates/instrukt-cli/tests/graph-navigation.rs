@@ -57,12 +57,13 @@ fn seed(env: &TestEnv, graph: Value) {
         &Home::at_user_home(env.home().to_path_buf()),
         &ProjectSlug::parse("demo").unwrap(),
     );
-    store
+    let published = store
         .publish(
             &CommitSha::parse(SHA).unwrap(),
             &Graph::from_value(graph).unwrap(),
         )
         .unwrap();
+    assert!(published.cleanup_failures.is_empty());
 }
 
 fn stdout(assert: assert_cmd::assert::Assert) -> String {
@@ -147,8 +148,9 @@ fn an_endpoint_naming_no_node_is_refused_as_unknown() {
     let assert = env
         .run(repo.path(), ["blueprint", "path", "cli::main", "nowhere"])
         .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(stderr.contains("unknown endpoint `nowhere`"), "{stderr}");
+    let output = assert.get_output();
+    assert!(output.stdout.is_empty());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"instrukt: in the blueprint graph of 0123456789abcdef0123456789abcdef01234567: unknown endpoint `nowhere`: it names no node id or source file in the graph");
 }
 
 // spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
@@ -160,16 +162,12 @@ fn with_no_graph_or_the_module_off_path_answers_as_blast_radius_does() {
         env.run(repo.path(), ["blueprint", "path", "a", "b"])
             .success(),
     );
-    assert_eq!(
-        out,
-        "blueprint unavailable: no graph of this project to answer from; explore by hand\n"
-    );
+    insta::assert_snapshot!(out, @"blueprint unavailable: no graph of this project to answer from; explore by hand");
 
     let env = TestEnv::new();
     let repo = project(&env, false);
     let assert = env
         .run(repo.path(), ["blueprint", "path", "a", "b"])
         .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(stderr.contains("modules.blueprint"), "{stderr}");
+    insta::assert_snapshot!(String::from_utf8_lossy(&assert.get_output().stderr), @"instrukt: the blueprint module is off; switch it on with `modules.blueprint: true` in instrukt.yaml");
 }

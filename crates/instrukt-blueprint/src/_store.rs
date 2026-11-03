@@ -16,16 +16,21 @@
 //! # Invariants
 //!
 //! - A `<sha>/` directory only ever appears complete: its graph is written
-//!   and synced in `.staging-<sha>/`, which is then renamed into place.
+//!   and synced in `.staging-<sha>/`, which is then renamed into place. A
+//!   `<sha>/` whose graph does not satisfy the contract counts as absent and
+//!   is replaced by the next publication of that revision.
 //! - The latest graph changes in one step: `latest.json` is replaced
 //!   atomically, so a reader sees the old pointer or the new one.
 //! - Only a graph that satisfies the contract is published; a failed or
 //!   interrupted publication leaves the pointer and the graphs it names as
 //!   they were.
 //! - After a publication only the latest graph and the one before it remain;
-//!   older `<sha>/` directories are removed. A reader that resolved the
-//!   pointer just before a publication still finds its graph, which became
-//!   the one before.
+//!   older `<sha>/` directories are removed. The pointer swap is the commit
+//!   point: a failure to remove an old graph afterwards does not undo the
+//!   publication and is reported in [`Published`].
+//! - A reader whose resolved graph was removed by later publications
+//!   resolves the pointer again, so it answers from the old graph or a newer
+//!   one, never fails because of a swap.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -35,16 +40,21 @@ use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{ContractError, Graph};
+use crate::_contract::{ContractError, Graph};
 
 /// How long publishing waits for another publish of the same project's
-/// store; a publish holds the lock only to swap and prune.
+/// store. The lock covers the whole publication: serializing and writing
+/// the graph with its `sync_all`, the rename into place, the pointer swap
+/// and pruning.
 const PUBLISH_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 const GRAPH_FILE: &str = "graph.json";
 const POINTER_FILE: &str = "latest.json";
 const LOCK_FILE: &str = ".lock";
 const STAGING_PREFIX: &str = ".staging-";
+/// How many times a reader resolves the pointer again when the graph it
+/// named was pruned by later publications before it could be read.
+const RESOLVE_ATTEMPTS: usize = 8;
 
 /// The store could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -74,7 +84,23 @@ pub struct LatestGraph {
     pub graph: Graph,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// A publication that committed: the graph is the latest. Old graphs that
+/// could not be removed afterwards are listed; they cost space, not
+/// correctness, and the next publication tries again.
+#[derive(Debug, Default)]
+#[must_use]
+pub struct Published {
+    pub cleanup_failures: Vec<CleanupFailure>,
+}
+
+/// An old graph directory pruning could not remove.
+#[derive(Debug)]
+pub struct CleanupFailure {
+    pub path: PathBuf,
+    pub error: io::Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Pointer {
     latest: CommitSha,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,31 +129,64 @@ impl GraphStore {
     /// error means a pointer or graph exists but cannot be read or does not
     /// satisfy the contract.
     pub fn latest(&self) -> Result<Option<LatestGraph>, StoreError> {
-        let Some(pointer) = self.pointer()? else {
-            return Ok(None);
-        };
-        let path = self.graph_file(&pointer.latest);
-        let bytes = std::fs::read(&path).map_err(|source| StoreError::Read { path, source })?;
-        let graph = Graph::from_json(&bytes).map_err(|source| StoreError::Contract {
-            sha: pointer.latest.clone(),
-            source,
-        })?;
-        Ok(Some(LatestGraph {
-            sha: pointer.latest,
-            graph,
-        }))
+        match self.pointer()? {
+            Some(pointer) => self.load_resolved(pointer).map(Some),
+            None => Ok(None),
+        }
     }
 
-    /// Whether a complete graph of `sha` is stored.
+    /// Loads the graph `resolved` names. When that graph is gone — pruned by
+    /// publications since the pointer was read — the pointer is read again
+    /// and the newer latest graph is loaded instead.
+    fn load_resolved(&self, mut resolved: Pointer) -> Result<LatestGraph, StoreError> {
+        let mut attempts = 1;
+        loop {
+            let path = self.graph_file(&resolved.latest);
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    let graph =
+                        Graph::from_json(&bytes).map_err(|source| StoreError::Contract {
+                            sha: resolved.latest.clone(),
+                            source,
+                        })?;
+                    return Ok(LatestGraph {
+                        sha: resolved.latest,
+                        graph,
+                    });
+                }
+                Err(err)
+                    if err.kind() == io::ErrorKind::NotFound && attempts < RESOLVE_ATTEMPTS =>
+                {
+                    match self.pointer()? {
+                        Some(again) if again != resolved => {
+                            resolved = again;
+                            attempts += 1;
+                        }
+                        _ => return Err(StoreError::Read { path, source: err }),
+                    }
+                }
+                Err(source) => return Err(StoreError::Read { path, source }),
+            }
+        }
+    }
+
+    /// Whether a complete graph of `sha` is stored: present, readable and
+    /// satisfying the contract.
     pub fn has_graph(&self, sha: &CommitSha) -> bool {
-        self.graph_file(sha).is_file()
+        std::fs::read(self.graph_file(sha))
+            .ok()
+            .is_some_and(|bytes| Graph::from_json(&bytes).is_ok())
     }
 
     /// Makes `graph` the complete graph of `sha` and the latest graph, in
     /// one step, then removes every graph but the latest and the one before
-    /// it. A graph of `sha` already stored is kept as it is. Serialized with
-    /// other publications of the same project by the store's lock.
-    pub fn publish(&self, sha: &CommitSha, graph: &Graph) -> Result<(), StoreError> {
+    /// it. A complete graph of `sha` already stored is kept as it is; one
+    /// that does not satisfy the contract is replaced by `graph`. Serialized
+    /// with other publications of the same project by the store's lock.
+    ///
+    /// `Ok` means the pointer now names `sha`; `Err` means it is unchanged.
+    /// Pruning failures after the swap are reported in [`Published`].
+    pub fn publish(&self, sha: &CommitSha, graph: &Graph) -> Result<Published, StoreError> {
         let _lock = LockGuard::acquire(&self.dir.join(LOCK_FILE), PUBLISH_LOCK_TIMEOUT)?;
         if !self.has_graph(sha) {
             self.write_complete(sha, graph)?;
@@ -138,7 +197,12 @@ impl GraphStore {
             Ok(None) => None,
             Err(err) => {
                 // The store is a cache: an unreadable pointer is replaced.
-                tracing::warn!("replacing an unreadable blueprint pointer: {err}");
+                tracing::warn!(
+                    event = "blueprint_pointer_replaced",
+                    store = %self.dir.display(),
+                    error = %err,
+                    "replacing an unreadable latest-graph pointer"
+                );
                 None
             }
         };
@@ -151,7 +215,7 @@ impl GraphStore {
             source,
         })?;
         fsx::atomic_write(&self.dir.join(POINTER_FILE), &bytes)?;
-        self.prune(&pointer)
+        Ok(self.prune(&pointer))
     }
 
     fn write_complete(&self, sha: &CommitSha, graph: &Graph) -> Result<(), StoreError> {
@@ -179,16 +243,32 @@ impl GraphStore {
         Ok(())
     }
 
-    fn prune(&self, keep: &Pointer) -> Result<(), StoreError> {
-        let entries = std::fs::read_dir(&self.dir).map_err(|source| StoreError::Read {
-            path: self.dir.clone(),
-            source,
-        })?;
+    /// Removes every graph but the two `keep` names. Runs after the
+    /// pointer swap, so it never fails the publication; what it could not
+    /// remove is returned and logged.
+    fn prune(&self, keep: &Pointer) -> Published {
+        let mut published = Published::default();
+        let entries = match std::fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                published.cleanup_failures.push(CleanupFailure {
+                    path: self.dir.clone(),
+                    error,
+                });
+                return self.logged(published);
+            }
+        };
         for entry in entries {
-            let entry = entry.map_err(|source| StoreError::Read {
-                path: self.dir.clone(),
-                source,
-            })?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    published.cleanup_failures.push(CleanupFailure {
+                        path: self.dir.clone(),
+                        error,
+                    });
+                    continue;
+                }
+            };
             let name = entry.file_name();
             let Some(sha) = name.to_str().and_then(|n| CommitSha::parse(n).ok()) else {
                 continue;
@@ -197,9 +277,25 @@ impl GraphStore {
                 continue;
             }
             let path = entry.path();
-            std::fs::remove_dir_all(&path).map_err(|source| StoreError::Write { path, source })?;
+            if let Err(error) = std::fs::remove_dir_all(&path) {
+                published
+                    .cleanup_failures
+                    .push(CleanupFailure { path, error });
+            }
         }
-        Ok(())
+        self.logged(published)
+    }
+
+    fn logged(&self, published: Published) -> Published {
+        for failure in &published.cleanup_failures {
+            tracing::warn!(
+                event = "blueprint_prune_failed",
+                path = %failure.path.display(),
+                error = %failure.error,
+                "an old graph could not be removed after publication"
+            );
+        }
+        published
     }
 
     fn pointer(&self) -> Result<Option<Pointer>, StoreError> {
@@ -252,6 +348,12 @@ mod tests {
         (dir, store)
     }
 
+    /// Publishes and requires a clean publication.
+    fn publish_ok(store: &GraphStore, sha: &CommitSha, graph: &Graph) {
+        let published = store.publish(sha, graph).unwrap();
+        assert!(published.cleanup_failures.is_empty(), "{published:?}");
+    }
+
     fn shas_on_disk(store: &GraphStore) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(store.dir())
             .unwrap()
@@ -271,7 +373,7 @@ mod tests {
     #[test]
     fn publishing_makes_the_graph_latest_and_names_its_sha() {
         let (_dir, store) = store();
-        store.publish(&sha('a'), &graph("first")).unwrap();
+        publish_ok(&store, &sha('a'), &graph("first"));
         let latest = store.latest().unwrap().unwrap();
         assert_eq!(latest.sha, sha('a'));
         assert_eq!(latest.graph.nodes()[0].id, "first");
@@ -282,15 +384,15 @@ mod tests {
     #[test]
     fn only_the_latest_and_the_one_before_are_kept() {
         let (_dir, store) = store();
-        store.publish(&sha('a'), &graph("a")).unwrap();
-        store.publish(&sha('b'), &graph("b")).unwrap();
-        store.publish(&sha('c'), &graph("c")).unwrap();
+        publish_ok(&store, &sha('a'), &graph("a"));
+        publish_ok(&store, &sha('b'), &graph("b"));
+        publish_ok(&store, &sha('c'), &graph("c"));
         assert_eq!(
             shas_on_disk(&store),
             [sha('b').to_string(), sha('c').to_string()]
         );
         // Republishing the latest keeps the one before.
-        store.publish(&sha('c'), &graph("ignored")).unwrap();
+        publish_ok(&store, &sha('c'), &graph("ignored"));
         assert_eq!(
             shas_on_disk(&store),
             [sha('b').to_string(), sha('c').to_string()]
@@ -301,7 +403,7 @@ mod tests {
     #[test]
     fn an_interrupted_publication_leaves_the_latest_graph_in_place() {
         let (_dir, store) = store();
-        store.publish(&sha('a'), &graph("a")).unwrap();
+        publish_ok(&store, &sha('a'), &graph("a"));
         // A staging directory and a half-made sha directory, as a crash
         // before the rename or a stray copy would leave them.
         std::fs::create_dir_all(store.dir().join(format!(".staging-{}", sha('b')))).unwrap();
@@ -316,7 +418,7 @@ mod tests {
         let latest = store.latest().unwrap().unwrap();
         assert_eq!(latest.sha, sha('a'));
         // The next publication of that revision completes normally.
-        store.publish(&sha('b'), &graph("b")).unwrap();
+        publish_ok(&store, &sha('b'), &graph("b"));
         assert_eq!(store.latest().unwrap().unwrap().sha, sha('b'));
         assert!(!store.dir().join(format!(".staging-{}", sha('b'))).exists());
     }
@@ -324,13 +426,82 @@ mod tests {
     #[test]
     fn a_graph_breaking_the_contract_on_disk_is_unreadable_not_absent() {
         let (_dir, store) = store();
-        store.publish(&sha('a'), &graph("a")).unwrap();
+        publish_ok(&store, &sha('a'), &graph("a"));
         std::fs::write(
             store.dir().join(sha('a').as_str()).join("graph.json"),
             b"[]",
         )
         .unwrap();
         assert!(matches!(store.latest(), Err(StoreError::Contract { .. })));
+        std::fs::remove_dir_all(store.dir().join(sha('a').as_str())).unwrap();
+        assert!(matches!(store.latest(), Err(StoreError::Read { .. })));
+    }
+
+    #[test]
+    fn an_invalid_graph_already_on_disk_is_replaced_not_promoted() {
+        let (_dir, store) = store();
+        publish_ok(&store, &sha('a'), &graph("a"));
+        let stray = store.dir().join(sha('b').as_str());
+        std::fs::create_dir_all(&stray).unwrap();
+        std::fs::write(stray.join("graph.json"), b"[]").unwrap();
+        assert!(!store.has_graph(&sha('b')));
+
+        publish_ok(&store, &sha('b'), &graph("b"));
+        let latest = store.latest().unwrap().unwrap();
+        assert_eq!(latest.sha, sha('b'));
+        assert_eq!(latest.graph.nodes()[0].id, "b");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pruning_failure_after_the_swap_is_reported_and_the_publication_stands() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, store) = store();
+        publish_ok(&store, &sha('a'), &graph("a"));
+        publish_ok(&store, &sha('b'), &graph("b"));
+        let old = store.dir().join(sha('a').as_str());
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let published = store.publish(&sha('c'), &graph("c"));
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let published = published.unwrap();
+        let failed: Vec<_> = published
+            .cleanup_failures
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        assert_eq!(failed, [old]);
+        assert_eq!(store.latest().unwrap().unwrap().sha, sha('c'));
+        // The next publication removes what was left.
+        publish_ok(&store, &sha('d'), &graph("d"));
+        assert_eq!(
+            shas_on_disk(&store),
+            [sha('c').to_string(), sha('d').to_string()]
+        );
+    }
+
+    #[test]
+    fn a_reader_whose_graph_was_pruned_resolves_the_newer_latest() {
+        let (_dir, store) = store();
+        publish_ok(&store, &sha('a'), &graph("a"));
+        // The reader resolved the pointer while `a` was latest ...
+        let resolved = store.pointer().unwrap().unwrap();
+        // ... then `b` and `c` were published, pruning `a`.
+        publish_ok(&store, &sha('b'), &graph("b"));
+        publish_ok(&store, &sha('c'), &graph("c"));
+        assert!(!store.dir().join(sha('a').as_str()).exists());
+
+        let latest = store.load_resolved(resolved).unwrap();
+        assert_eq!(latest.sha, sha('c'));
+        assert_eq!(latest.graph.nodes()[0].id, "c");
+    }
+
+    #[test]
+    fn a_missing_graph_the_pointer_still_names_is_unreadable() {
+        let (_dir, store) = store();
+        publish_ok(&store, &sha('a'), &graph("a"));
         std::fs::remove_dir_all(store.dir().join(sha('a').as_str())).unwrap();
         assert!(matches!(store.latest(), Err(StoreError::Read { .. })));
     }

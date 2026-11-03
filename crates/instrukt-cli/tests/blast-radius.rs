@@ -70,9 +70,10 @@ fn store(env: &TestEnv) -> GraphStore {
 
 fn seed(env: &TestEnv, sha: &str, graph: Value) {
     let graph = Graph::from_value(graph).unwrap();
-    store(env)
+    let published = store(env)
         .publish(&CommitSha::parse(sha).unwrap(), &graph)
         .unwrap();
+    assert!(published.cleanup_failures.is_empty());
 }
 
 fn stdout(assert: assert_cmd::assert::Assert) -> String {
@@ -205,10 +206,32 @@ fn an_unreadable_graph_is_answered_as_no_graph() {
         env.run(repo.path(), ["blueprint", "affected", "src/a.rs"])
             .success(),
     );
-    assert_eq!(
-        out,
-        "blueprint unavailable: no graph of this project to answer from; explore by hand\n"
+    insta::assert_snapshot!(out, @"blueprint unavailable: no graph of this project to answer from; explore by hand");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+#[test]
+fn a_file_the_engine_spells_differently_is_still_known() {
+    let env = TestEnv::new();
+    let repo = project(&env, true);
+    seed(
+        &env,
+        SHA,
+        GraphBuilder::default()
+            .node("a", "./src/a.rs")
+            .node("b", "src//b.rs")
+            .link("b", "a", "calls")
+            .build(),
     );
+    let out = stdout(
+        env.run(repo.path(), ["blueprint", "affected", "src/a.rs"])
+            .success(),
+    );
+    insta::assert_snapshot!(out, @r"
+    blueprint graph of 0123456789abcdef0123456789abcdef01234567
+    dependents of 1 changed file:
+      src//b.rs b
+    ");
 }
 
 // spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
@@ -222,7 +245,5 @@ fn with_the_module_off_the_command_refuses_and_names_the_switch() {
         .failure();
     let output = assert.get_output();
     assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("blueprint module is off"), "{stderr}");
-    assert!(stderr.contains("modules.blueprint"), "{stderr}");
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"instrukt: the blueprint module is off; switch it on with `modules.blueprint: true` in instrukt.yaml");
 }

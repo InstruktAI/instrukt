@@ -5,8 +5,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::contract::{Graph, Link, Node};
-use crate::traversal::Direction;
+use crate::_contract::{Graph, Link, Node, normalize_path};
+use crate::_traversal::Direction;
 
 /// The dependents of a set of changed files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,17 +23,19 @@ pub struct BlastRadius {
 /// `changed` files define, outside those files. `changed` are
 /// repository-relative paths ([`repo_relative`]).
 pub fn blast_radius<S: AsRef<str>>(graph: &Graph, changed: &[S]) -> BlastRadius {
-    let mut files: Vec<&str> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
     for file in changed {
-        if !files.contains(&file.as_ref()) {
-            files.push(file.as_ref());
+        let file = normalize_path(file.as_ref());
+        if !files.contains(&file) {
+            files.push(file);
         }
     }
-    let changed_set: BTreeSet<&str> = files.iter().copied().collect();
+    let changed_set: BTreeSet<&str> = files.iter().map(String::as_str).collect();
+    let in_changed = |node: &Node| changed_set.contains(normalize_path(&node.source_file).as_str());
     let seeds: BTreeSet<&str> = graph
         .nodes()
         .iter()
-        .filter(|node| changed_set.contains(node.source_file.as_str()))
+        .filter(|node| in_changed(node))
         .map(|node| node.id.as_str())
         .collect();
     let reached = graph.reach(seeds.iter().copied(), Direction::Backward);
@@ -41,7 +43,7 @@ pub fn blast_radius<S: AsRef<str>>(graph: &Graph, changed: &[S]) -> BlastRadius 
         .nodes()
         .iter()
         .filter(|node| reached.contains(node.id.as_str()))
-        .filter(|node| !changed_set.contains(node.source_file.as_str()))
+        .filter(|node| !in_changed(node))
         .cloned()
         .collect();
     dependents.sort_by(|a, b| {
@@ -60,7 +62,7 @@ pub fn blast_radius<S: AsRef<str>>(graph: &Graph, changed: &[S]) -> BlastRadius 
     let unknown_files = files
         .iter()
         .filter(|file| graph.nodes_in_file(file).next().is_none())
-        .map(|file| (*file).to_owned())
+        .cloned()
         .collect();
     BlastRadius {
         changed_files: files.len(),
@@ -70,8 +72,9 @@ pub fn blast_radius<S: AsRef<str>>(graph: &Graph, changed: &[S]) -> BlastRadius 
 }
 
 /// A file argument as a repository-relative path: an absolute path inside
-/// `root` is made relative to it, a leading `./` is dropped; anything else
-/// is taken as given (and so matches no node unless the graph has it).
+/// `root` is made relative to it and a relative one is normalized
+/// ([`normalize_path`]); an absolute path outside `root` is taken as given
+/// (and so matches no node).
 pub fn repo_relative(root: &Path, arg: &str) -> String {
     let path = Path::new(arg);
     if path.is_absolute() {
@@ -88,15 +91,11 @@ pub fn repo_relative(root: &Path, arg: &str) -> String {
                     .map(Path::to_path_buf)
             });
         if let Some(relative) = inside {
-            return relative.to_string_lossy().into_owned();
+            return normalize_path(&relative.to_string_lossy());
         }
         return arg.to_owned();
     }
-    let mut rest = arg;
-    while let Some(stripped) = rest.strip_prefix("./") {
-        rest = stripped;
-    }
-    rest.to_owned()
+    normalize_path(arg)
 }
 
 /// A `path` endpoint that names no node.
@@ -140,7 +139,7 @@ fn endpoint<'g>(graph: &'g Graph, name: &str) -> Result<Vec<&'g str>, UnknownEnd
     let by_file: Vec<&str> = graph
         .nodes()
         .iter()
-        .filter(|node| node.source_file == name)
+        .filter(|node| node.is_in_file(name))
         .map(|node| node.id.as_str())
         .collect();
     if by_file.is_empty() {
@@ -189,6 +188,25 @@ mod tests {
         assert_eq!(ids, ["b1", "b2", "c"]);
         assert_eq!(answer.unknown_files, ["src/new.rs"]);
         assert_eq!(answer.changed_files, 2);
+    }
+
+    #[test]
+    fn equivalent_spellings_of_a_file_match_on_both_sides() {
+        let g = Graph::from_value(json!({
+            "nodes": [node("a", "./src/a.rs"), node("b", "src//b.rs"), node("c", "src/c.rs")],
+            "links": [link("b", "a", "calls"), link("c", "b", "calls")]
+        }))
+        .unwrap();
+        let answer = blast_radius(&g, &["src/a.rs"]);
+        let ids: Vec<_> = answer.dependents.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["b", "c"]);
+        assert!(answer.unknown_files.is_empty());
+        let answer = blast_radius(&g, &["./src//b.rs"]);
+        let ids: Vec<_> = answer.dependents.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["c"]);
+        assert!(
+            matches!(path(&g, "src/c.rs", "src/a.rs"), Ok(PathAnswer::Found(chain)) if chain.len() == 2)
+        );
     }
 
     #[test]
