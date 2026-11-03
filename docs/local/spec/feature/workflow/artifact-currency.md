@@ -43,6 +43,26 @@ artifacts. Obtaining current repository evidence is an orchestrator command;
 the pure evaluator receives its result. Artifact age is not a drift trigger
 in the shipped flow.
 
+An artifact declares its grounding in its own content:
+
+- **Code:** a fenced `referenced-paths` block, one repository path or
+  directory prefix per line; lines beginning with `#` are ignored.
+- **Snippets:** its inline `@` snippet references, in the form validation
+  accepts.
+
+When a version is written, its provenance records the canonical branch's head
+commit, the referenced paths, the digest of each referenced snippet, and,
+derived without declaration, the digests of the snippets the todo owns and of
+its prerequisites' artifacts.
+
+An artifact has drifted when a non-merge commit between its recorded head and
+the current canonical head changes a referenced path (exactly, or under a
+directory prefix), when a referenced or owned snippet's digest changed, or
+when a prerequisite artifact's digest changed. When git cannot compare the two
+commits, or there is no current canonical head, the classification is
+pending. An artifact that references no paths has no code drift. A referenced
+path or snippet that cannot be resolved is incomplete provenance.
+
 Each tracked artifact has one effective drift classification: fresh, pending
 analysis, cosmetic or substantive. Where evidence classes disagree,
 substantive takes precedence over pending, then cosmetic, then fresh. A
