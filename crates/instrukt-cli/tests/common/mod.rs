@@ -10,6 +10,10 @@
 //! - on drop it fails the test when anything on the live machine that
 //!   instrukt could write — `~/.instrukt`, the agent CLIs' entrypoints and
 //!   settings, the user's git configuration — changed while it ran.
+//!
+//! [`github::FakeGitHub`] (or [`TestEnv::with_fake_github`]) stands in for
+//! GitHub's API at the network line for the work, workflow and runner
+//! tests.
 #![allow(
     dead_code,
     reason = "each test crate uses the part of the harness it needs"
@@ -20,6 +24,8 @@
     clippy::panic,
     reason = "test harness: a failed setup step fails the test"
 )]
+
+pub mod github;
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;

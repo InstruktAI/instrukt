@@ -9,8 +9,10 @@ pub mod eval;
 pub mod repository;
 pub mod runner;
 pub mod specs;
+pub mod specs_trace;
 pub mod sync;
 pub mod todo;
+pub mod todo_flow;
 
 use std::process::ExitCode;
 

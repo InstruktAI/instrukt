@@ -25,7 +25,7 @@ mod _testing;
 pub use _derive::{
     Derivation, EvaluationError, Obligation, OwedEffect, Responsible, SelectedTransition, Subject,
 };
-pub use _facts::{BoundSession, FactError, FactName, FactType, FactValue, Facts};
+pub use _facts::{FactError, FactName, FactType, FactValue, Facts};
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError};
 pub use _names::{ActionId, EffectName, FlowName, StateName};

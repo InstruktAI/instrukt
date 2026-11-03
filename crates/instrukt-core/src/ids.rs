@@ -145,6 +145,79 @@ identifier!(
     "non-empty text on one line, without leading or trailing whitespace"
 );
 
+identifier!(
+    /// The `name` of a runtime-mapping entry (`runtimes.<n>.name`), the
+    /// first half of a [`SessionRef`].
+    RuntimeName,
+    "runtime name",
+    is_runtime_name,
+    "non-empty text without whitespace, control characters or `:`"
+);
+
+identifier!(
+    /// A runtime-native session id, as the runtime reports it; instrukt
+    /// never mints a second identity for the same session
+    /// (`session-continuity`, "Identity and reuse").
+    SessionId,
+    "session id",
+    is_session_id,
+    "non-empty text without whitespace or control characters"
+);
+
+/// One session of one runtime, written `{runtime}:{id}`: the form artifact
+/// writers, stamps and `--session <runtime:id>` use (`session-continuity`,
+/// "Identity and reuse"; `approvals`, "Command boundary"). Shared by work's
+/// session bindings and stamp actors, workflow's `sessions.bound` fact and
+/// the runner's sessions facade.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SessionRef {
+    pub runtime: RuntimeName,
+    pub id: SessionId,
+}
+
+impl SessionRef {
+    /// Parses `{runtime}:{id}`, splitting at the first `:`; the id may
+    /// itself contain `:`.
+    pub fn parse(value: &str) -> Result<Self, IdError> {
+        let refused = || IdError {
+            kind: "session reference",
+            value: value.to_owned(),
+            rule: "`<runtime>:<id>`, a runtime name, `:`, then a session id",
+        };
+        let (runtime, id) = value.split_once(':').ok_or_else(refused)?;
+        Ok(Self {
+            runtime: RuntimeName::parse(runtime).map_err(|_| refused())?,
+            id: SessionId::parse(id).map_err(|_| refused())?,
+        })
+    }
+}
+
+impl fmt::Display for SessionRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.runtime, self.id)
+    }
+}
+
+impl FromStr for SessionRef {
+    type Err = IdError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl Serialize for SessionRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
 /// The id a test binding names: a feature spec plus one of its use cases.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UseCaseRef {
@@ -246,6 +319,14 @@ impl UseCaseId {
         }
         None
     }
+}
+
+fn is_session_id(value: &str) -> bool {
+    !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+fn is_runtime_name(value: &str) -> bool {
+    is_session_id(value) && !value.contains(':')
 }
 
 fn is_full_sha(value: &str) -> bool {
@@ -353,6 +434,22 @@ mod tests {
         assert!(CommitSha::parse(&"0".repeat(64)).is_ok());
         assert!(CommitSha::parse("abc1234").is_err());
         assert!(CommitSha::parse(&"A".repeat(40)).is_err());
+    }
+
+    #[test]
+    fn session_refs_split_at_the_first_colon() {
+        let session = SessionRef::parse("tmux:main:3").unwrap();
+        assert_eq!(session.runtime.as_str(), "tmux");
+        assert_eq!(session.id.as_str(), "main:3");
+        assert_eq!(session.to_string(), "tmux:main:3");
+        for bad in ["", "tmux", ":id", "tmux:", "tm ux:id", "tmux:a b"] {
+            assert!(SessionRef::parse(bad).is_err(), "{bad:?} should be refused");
+        }
+        let round: SessionRef = serde_yaml_ng::from_str("claude:abc").unwrap();
+        assert_eq!(
+            serde_yaml_ng::to_string(&round).unwrap().trim(),
+            "claude:abc"
+        );
     }
 
     #[test]

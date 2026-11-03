@@ -157,7 +157,7 @@ fn repo_root(cwd: &Path) -> anyhow::Result<PathBuf> {
 fn validate(args: ValidateArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = repo_root(&ctx.cwd)?;
     let paths: Vec<PathBuf> = args.paths.iter().map(|p| ctx.cwd.join(p)).collect();
-    let wiring = core_wiring(ctx);
+    let wiring = core_wiring(ctx)?;
     let findings = docs::validate(&ValidationRequest {
         repo_root: &root,
         home: &ctx.home,

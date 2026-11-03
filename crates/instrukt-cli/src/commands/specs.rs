@@ -1,5 +1,5 @@
-//! Specs commands: `instrukt specs coverage|reserve` and blueprint's
-//! `instrukt specs trace`.
+//! Specs commands: `instrukt specs coverage|reserve`. Blueprint's
+//! `instrukt specs trace` lives in [`specs_trace`].
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,7 +11,7 @@ use instrukt_core::specs::{
     Answer, Coverage, Debt, Ratchet, RequestedBinding, Reservation, Verdict,
 };
 
-use crate::commands::not_built;
+use crate::commands::specs_trace;
 use crate::context::Ctx;
 
 /// `reserve`: a requested binding is held by another todo.
@@ -47,10 +47,7 @@ enum SpecsCommand {
     /// todos with no in-body markers.
     Reserve(ReserveArgs),
     /// Use cases joined with the structural graph (blueprint module).
-    Trace {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
+    Trace(specs_trace::TraceArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -78,7 +75,7 @@ pub fn run(args: SpecsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         SpecsCommand::Coverage(args) => coverage(args, ctx),
         SpecsCommand::Reserve(args) => reserve(args, ctx),
-        SpecsCommand::Trace { .. } => not_built("specs trace"),
+        SpecsCommand::Trace(args) => specs_trace::run(args, ctx),
     }
 }
 

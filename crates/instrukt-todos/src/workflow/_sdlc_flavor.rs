@@ -3,11 +3,11 @@
 
 use std::collections::BTreeSet;
 
-use instrukt_core::ids::{RoleName, SnippetId};
+use instrukt_core::ids::{RoleName, SessionRef, SnippetId};
 use proptest::prelude::*;
 
 use super::_derive::{Derivation, Obligation, Responsible, Subject};
-use super::_facts::{BoundSession, FactName, FactType, FactValue, Facts};
+use super::_facts::{FactName, FactType, FactValue, Facts};
 use super::_flavor::Flavor;
 use super::_render::{ConfigLookup, RenderFailure, RenderFinding};
 use super::_testing::{facts, no_config, sdlc_dir, session_config, sha, subject, text};
@@ -584,13 +584,9 @@ fn value_for(name: FactName, pick: u8) -> FactValue {
         FactType::Sha => FactValue::Sha(sha(['a', 'b'][n % 2])),
         FactType::Enum(members) => text(members[n % members.len()]),
         FactType::ShaList => FactValue::ShaList(vec![sha('a'); n % 3]),
-        FactType::SessionList => FactValue::Sessions(vec![
-            BoundSession {
-                runtime: "rt".into(),
-                session_id: "s".into(),
-            };
-            n % 2
-        ]),
+        FactType::SessionList => {
+            FactValue::Sessions(vec![SessionRef::parse("rt:s").unwrap(); n % 2])
+        }
     }
 }
 

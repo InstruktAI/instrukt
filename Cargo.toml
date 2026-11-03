@@ -25,6 +25,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 hex = "0.4"
 indexmap = { version = "2", features = ["serde"] }
+jiff = { version = "0.2", features = ["serde"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -34,6 +35,7 @@ tempfile = "3"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ureq = "3"
 walkdir = "2"
 
 # test-only
@@ -41,6 +43,7 @@ assert_cmd = "2"
 insta = { version = "1", features = ["yaml", "json"] }
 predicates = "3"
 proptest = "1"
+tiny_http = "0.12"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

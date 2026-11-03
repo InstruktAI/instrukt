@@ -6,6 +6,12 @@
 //! into [`CoreWiring`] only when that module is switched on. A `None` slot
 //! means the module is off, and the core context behaves as the spec says
 //! for that case.
+//!
+//! Implementors: [`TodoExistence`] — work (`instrukt_todos::work`);
+//! [`FlavorRoles`] — workflow (`instrukt_todos::workflow`); [`FlavorSchema`]
+//! — workflow's `WorkflowSchema`, always wired; [`GraphGeneration`] —
+//! blueprint (`instrukt_blueprint`). The CLI fills each slot from its
+//! module's wiring file (`crates/instrukt-cli/src/wiring/`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

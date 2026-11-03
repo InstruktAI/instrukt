@@ -180,7 +180,7 @@ fn start_hook_run(hook: Hook, args: &RunArgs, ctx: &Ctx) -> anyhow::Result<()> {
         env: &env,
         exe: &exe,
     };
-    repository::run_hook(&ctx.home, &ctx.cwd, &core_wiring(ctx), &invocation)?;
+    repository::run_hook(&ctx.home, &ctx.cwd, &core_wiring(ctx)?, &invocation)?;
     Ok(())
 }
 
@@ -402,7 +402,7 @@ fn commit(args: CommitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         &ctx.home,
         &ctx.cwd,
         &Env::from_process(),
-        &core_wiring(ctx),
+        &core_wiring(ctx)?,
         &request,
     )?;
     ctx.out.line(sha.as_str())?;

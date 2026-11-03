@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use instrukt_core::ids::CommitSha;
+use instrukt_core::ids::{CommitSha, SessionRef};
 
 /// Members of the `kind` fact.
 const KINDS: &[&str] = &["feature", "change", "bug", "task"];
@@ -165,13 +165,6 @@ impl fmt::Display for FactName {
     }
 }
 
-/// One runtime/id session binding, as `sessions.bound` lists them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoundSession {
-    pub runtime: String,
-    pub session_id: String,
-}
-
 /// A fact's value as the provider supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactValue {
@@ -181,7 +174,8 @@ pub enum FactValue {
     Text(String),
     Sha(CommitSha),
     ShaList(Vec<CommitSha>),
-    Sessions(Vec<BoundSession>),
+    /// The runtime/id session bindings `sessions.bound` lists.
+    Sessions(Vec<SessionRef>),
 }
 
 impl FactValue {
@@ -234,7 +228,7 @@ impl FactValue {
                 .join(" "),
             FactValue::Sessions(list) => list
                 .iter()
-                .map(|session| format!("{}/{}", session.runtime, session.session_id))
+                .map(|session| format!("{}/{}", session.runtime, session.id))
                 .collect::<Vec<_>>()
                 .join(" "),
         }

@@ -23,7 +23,7 @@ pub struct SyncArgs {
 /// validation findings are printed one per line, the leftovers likewise,
 /// then the refusal or failure is reported on stderr.
 pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let wiring = core_wiring(ctx);
+    let wiring = core_wiring(ctx)?;
     let synced = publication::sync(&SyncRequest {
         home: &ctx.home,
         cwd: &ctx.cwd,
