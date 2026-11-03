@@ -134,6 +134,13 @@ impl Home {
     pub fn locks_dir(&self) -> PathBuf {
         self.root.join("locks")
     }
+
+    /// `~/.instrukt/state/publication/outputs/` — per project, the files
+    /// outside the home its last publication wrote (compiled `AGENTS.md`
+    /// files, global agent entrypoints), so a later sync can retract them.
+    pub fn publication_outputs_dir(&self) -> PathBuf {
+        self.publication_state_dir().join("outputs")
+    }
 }
 
 #[cfg(test)]
@@ -152,6 +159,7 @@ mod tests {
             home.fragments_dir(),
             home.third_party_dir(),
             home.publication_state_dir(),
+            home.publication_outputs_dir(),
             home.hooks_state_dir(&project),
             home.runner_state_dir(),
             home.eval_fingerprint_dir(),

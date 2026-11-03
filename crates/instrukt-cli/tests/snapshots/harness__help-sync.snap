@@ -4,8 +4,9 @@ expression: help
 ---
 Publish the current project's committed docs into the home
 
-Usage: instrukt sync
+Usage: instrukt sync [OPTIONS]
 
 Options:
+      --force    Republish even when main equals the commit last published
   -h, --help     Print help
   -V, --version  Print version

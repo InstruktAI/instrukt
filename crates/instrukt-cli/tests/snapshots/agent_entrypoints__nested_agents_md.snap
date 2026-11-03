@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/agent-entrypoints.rs
+expression: "repo.read(\"tools/AGENTS.md\")"
+---
+## Tools
+
+Only the tools.

@@ -44,6 +44,10 @@ pub struct GlobalIndex {
     /// Third-party docs, indexed apart from taxonomy snippets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub third_party: Vec<ThirdPartyEntry>,
+    /// Published include fragments, each with its owner. Not retrievable
+    /// by id; recorded so publication patches and retracts them by owner.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fragments: Vec<FragmentEntry>,
 }
 
 /// Whether an entry is of a published domain or a project's local half.
@@ -120,6 +124,17 @@ pub struct ThirdPartyEntry {
     pub source_project: ProjectSlug,
 }
 
+/// One published include fragment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FragmentEntry {
+    /// Its path below `docs/global/snippets/`, without `.md` (`@include:
+    /// docs/snippets/<name>.md`).
+    pub name: String,
+    /// Relative to `~/.instrukt/docs/`.
+    pub path: PathBuf,
+    pub source_project: ProjectSlug,
+}
+
 impl GlobalIndex {
     /// The home's index; `None` when nothing has been published yet.
     pub fn load(home: &Home) -> Result<Option<Self>, IndexError> {
@@ -187,6 +202,7 @@ mod tests {
         let index = GlobalIndex {
             snippets: vec![entry("sdlc/policy/testing", "instrukt")],
             third_party: Vec::new(),
+            fragments: Vec::new(),
         };
         index.save(&home).unwrap();
         assert_eq!(GlobalIndex::load(&home).unwrap(), Some(index));

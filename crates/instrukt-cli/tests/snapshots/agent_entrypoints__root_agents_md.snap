@@ -1,0 +1,51 @@
+---
+source: crates/instrukt-cli/tests/agent-entrypoints.rs
+expression: "repo.read(\"AGENTS.md\")"
+---
+id: local/projects/demo/policy/house
+
+# House — Policy
+
+## Rules
+
+House: Rules.
+
+## Rationale
+
+House: Rationale.
+
+## Scope
+
+House: Scope.
+
+## Enforcement
+
+House: Enforcement.
+
+## Exceptions
+
+House: Exceptions.
+
+---
+
+## Purpose
+
+The demo project.
+
+## Notes
+
+Shared guidance.
+
+```
+computed-at-publish
+```
+
+---
+
+## Project baseline index — load via `instrukt docs get <id>` when relevant
+
+- `local/projects/demo/policy/style` — About Style.
+
+## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
+
+- `local/projects/demo/procedure/release` — About Release. — When cutting a release.

@@ -1,0 +1,20 @@
+---
+source: crates/instrukt-cli/tests/agent-entrypoints.rs
+expression: claude_after
+---
+{
+  "theme": "dark",
+  "pluginConfigs": {
+    "other@market": {
+      "enabled": true
+    },
+    "agents-md@builtin": {
+      "options": {
+        "instructionFiles": "claude-md-and-agents-md"
+      }
+    }
+  },
+  "permissions": {
+    "defaultMode": "ask"
+  }
+}

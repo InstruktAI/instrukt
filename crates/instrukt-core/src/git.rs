@@ -100,6 +100,47 @@ where
     Ok(output.stdout)
 }
 
+/// Runs `git <args>` in `dir` with `input` on its standard input and
+/// returns stdout as bytes (`cat-file --batch` and other streaming
+/// commands). A non-zero exit is an error carrying stderr.
+pub fn run_with_input<I, S>(dir: &Path, args: I, input: &[u8]) -> Result<Vec<u8>, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let (args_text, mut command) = command(dir, args);
+    let spawn_err = |source| GitError::Spawn {
+        dir: dir.to_path_buf(),
+        source,
+    };
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(spawn_err)?;
+    let stdin = child.stdin.take();
+    let output = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || match stdin {
+            Some(mut stdin) => stdin.write_all(input),
+            None => Ok(()),
+        });
+        let output = child.wait_with_output();
+        let written = writer
+            .join()
+            .unwrap_or_else(|_| Err(std::io::Error::other("the stdin writer panicked")));
+        output.and_then(|output| written.map(|()| output))
+    })
+    .map_err(spawn_err)?;
+    if !output.status.success() {
+        return Err(failed(dir, args_text, &output));
+    }
+    Ok(output.stdout)
+}
+
 /// The top-level directory of the working tree containing `dir`, or `None`
 /// when git positively reports that `dir` is not inside a working tree.
 /// Any other failure (a corrupt configuration, an unreadable repository) is
@@ -132,7 +173,9 @@ fn failed(dir: &Path, args: String, output: &Output) -> GitError {
     }
 }
 
-fn raw<I, S>(dir: &Path, args: I) -> Result<(String, Output), GitError>
+/// The `git <args>` command for `dir`, with the repository-locating
+/// variables removed, and its arguments as text for error messages.
+fn command<I, S>(dir: &Path, args: I) -> (String, Command)
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -147,14 +190,20 @@ where
     for var in REPOSITORY_ENV {
         command.env_remove(var);
     }
-    let output = command
-        .args(&args)
-        .current_dir(dir)
-        .output()
-        .map_err(|source| GitError::Spawn {
-            dir: dir.to_path_buf(),
-            source,
-        })?;
+    command.args(&args).current_dir(dir);
+    (args_text, command)
+}
+
+fn raw<I, S>(dir: &Path, args: I) -> Result<(String, Output), GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let (args_text, mut command) = command(dir, args);
+    let output = command.output().map_err(|source| GitError::Spawn {
+        dir: dir.to_path_buf(),
+        source,
+    })?;
     Ok((args_text, output))
 }
 
