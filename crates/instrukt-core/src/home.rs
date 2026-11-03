@@ -69,6 +69,19 @@ impl Home {
         self.docs_dir().join(domain.as_str())
     }
 
+    /// `~/.instrukt/docs/snippets/` — published include fragments, named by
+    /// their path below a project's `docs/global/snippets/` (`@include:
+    /// docs/snippets/<name>.md` resolves to `<this>/<name>.md`).
+    pub fn fragments_dir(&self) -> PathBuf {
+        self.docs_dir().join("snippets")
+    }
+
+    /// `~/.instrukt/docs/third-party/` — published third-party docs, at
+    /// their path below a project's `docs/third-party/`.
+    pub fn third_party_dir(&self) -> PathBuf {
+        self.docs_dir().join("third-party")
+    }
+
     /// `~/.instrukt/docs/index.yaml` — the global index.
     pub fn index_file(&self) -> PathBuf {
         self.docs_dir().join("index.yaml")
@@ -136,6 +149,8 @@ mod tests {
             home.global_config(),
             home.domain_dir(&domain),
             home.index_file(),
+            home.fragments_dir(),
+            home.third_party_dir(),
             home.publication_state_dir(),
             home.hooks_state_dir(&project),
             home.runner_state_dir(),
