@@ -16,6 +16,7 @@
 use std::ffi::OsStr;
 
 use assert_cmd::assert::Assert;
+use instrukt_todos::evidence::artifact_names;
 
 use crate::common::github::FakeGitHub;
 use crate::common::{Repo, TestEnv};
@@ -223,7 +224,7 @@ impl Tracked {
             "artifacts",
             "write",
             slug,
-            "task_plan",
+            artifact_names::TASK_PLAN,
             "Collect the week's merged work and post a summary.",
         ]);
         self.todo(["stamp", slug, "--task-approved", "--by", "human"]);
