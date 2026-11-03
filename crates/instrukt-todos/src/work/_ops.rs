@@ -1281,12 +1281,10 @@ impl Work {
         let Some(evidence) = read(parent)? else {
             return Ok(None);
         };
-        let mut others = Vec::new();
-        for slug in crate::workflow::related_todos(&evidence) {
-            if let Some(other) = read(&slug)? {
-                others.push(other);
-            }
-        }
+        // Prerequisites by slug, grounding dependencies by durable identity:
+        // a reused slug never stands in for the todo a grounding recorded.
+        let others = crate::workflow::related_evidence(self, project, &evidence)
+            .map_err(|err| WorkError::refused(err.to_string()))?;
         crate::workflow::preparation_complete(self.home(), &project.root, &evidence, &others)
             .map_err(|err| {
                 WorkError::refused(format!(
