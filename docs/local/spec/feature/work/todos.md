@@ -163,6 +163,28 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the command refuses and names the switch that would enable it
 ```
 
+#### UC-TD4: A developer reaches earlier work whose name was reused
+
+```gherkin
+  Given a developer delivered a todo and later filed new work under the same name
+  When they ask for the todo by its name
+  Then they get the new work
+  But when they ask for a name that only earlier delivered or withdrawn work carried
+  Then they are refused and shown the address of each earlier todo with that name
+  And asking for one of those addresses shows its retained record
+```
+
+#### UC-TD5: A developer withdraws work without losing what it produced
+
+```gherkin
+  Given a developer has a todo with work committed on its own branch
+  When they withdraw the todo
+  Then its working copies and branch are released
+  And the branch's last commit is kept as evidence for recovering the todo
+  But when one of its working copies holds uncommitted changes, or its task workspace still holds files
+  Then the withdrawal is refused and names where that work is
+```
+
 ## Known caveats
 
 None.

@@ -104,6 +104,29 @@ reviewer's conclusion; it introduces no separate command form.
   And subsequent recipients can accept it without asking the developer to repeat it
 ```
 
+#### UC-AP3: An earlier approval carries to a revised outcome only under a current review
+
+```gherkin
+  Given a developer approved an outcome that was later revised
+  When an agent carries that approval to the revised outcome
+  Then the carry is accepted only when a current review approves the revised outcome
+  And the approval remains attributed to the developer who gave it
+  But when no current review approves the revised outcome
+  Then the carry is refused and names the missing review
+```
+
+#### UC-AP4: A peer approves where the project allows it, with its reason on record
+
+```gherkin
+  Given a developer's project lets a peer approve a gate
+  When an agent in a peer session approves that gate and states its reason
+  Then the approval is recorded as the peer's, with that session and reason
+  But when the approval comes from no peer session or states no reason
+  Then it is refused
+  And when the project requires the developer for that gate
+  Then a peer's approval does not satisfy it
+```
+
 ## Known caveats
 
 None.
