@@ -50,6 +50,8 @@ pub enum RepositoryError {
         revision: String,
         source: Box<GitError>,
     },
+    #[error("the review note of {commit} holds `{line}`, which records no stamp")]
+    MalformedNote { commit: String, line: String },
     #[error("a stamp needs at least one commit")]
     NoCommits,
     #[error("an exemption needs a non-empty reason")]

@@ -9,7 +9,8 @@
 //!   point and returns without waiting; [`run_hook_worker`] is the detached
 //!   process that waits for the sync it started and records the outcome.
 //! - [`commit`] makes an attributed commit; [`stamp()`] records a
-//!   commit-review verdict as a git note.
+//!   commit-review verdict as a git note and pushes the notes ref;
+//!   [`read_review_notes`] fetches it and reads the verdicts.
 //! - [`apply_docs_filter`] is the docs reference filter git runs.
 
 mod _adoption;
@@ -19,6 +20,7 @@ mod _filter;
 mod _git;
 mod _hook;
 mod _hooks;
+mod _notes;
 mod _run;
 mod _section;
 mod _stamp;
@@ -35,9 +37,10 @@ pub use _hooks::{
     HookChange, HookStatus, HooksReport, HooksStatus, SectionChange, SectionStatus, hooks_status,
     install_hooks, remove_hooks,
 };
+pub use _notes::{NotesFetch, NotesPush, PendingReason, REVIEW_NOTES_REF};
 pub use _run::{
     GenerationOutcome, HOOK_WORKER_COMMAND, HookInvocation, HookRunRecord, SyncOutcome, last_run,
     run_hook, run_hook_worker,
 };
 pub use _section::{SECTION_END, SECTION_START, SectionError, hook_run_line};
-pub use _stamp::{REVIEW_NOTES_REF, Stamp, stamp};
+pub use _stamp::{ReviewNotes, Stamp, StampOutcome, read_review_notes, stamp};

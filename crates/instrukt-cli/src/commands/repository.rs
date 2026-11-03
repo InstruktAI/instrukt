@@ -13,8 +13,8 @@ use instrukt_core::config::Env;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
 use instrukt_core::repository::{
     self, CommitRequest, FilterDirection, GENERATED_FILE, GenerationOutcome, Hook, HookChange,
-    HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, MASTER_FILE, PartOutcome,
-    SectionChange, SectionStatus, Stamp, SyncOutcome,
+    HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, MASTER_FILE, NotesPush,
+    PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -309,7 +309,8 @@ enum RepoCommand {
     /// session the commit is the git user's own. Prints the commit's id.
     Commit(CommitArgs),
     /// Record a commit-review verdict with the report's digest, or an
-    /// exemption with its reason, as a git note on each named commit.
+    /// exemption with its reason, as a git note on each named commit, and
+    /// push the notes to the remote the default branch tracks.
     Stamp(StampArgs),
     /// The docs reference filter git runs on checkout and commit.
     #[command(hide = true)]
@@ -424,10 +425,26 @@ fn stamp(args: StampArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             anyhow::bail!("--verdict approve|needs_work takes --report <file> and no --reason")
         }
     };
-    let commits = repository::stamp(&ctx.cwd, &args.commits, &stamp)?;
-    for commit in commits {
+    let outcome = repository::stamp(&ctx.cwd, &args.commits, &stamp)?;
+    for commit in &outcome.commits {
         ctx.out.line(&format!("{commit}: {}", stamp.verdict()))?;
     }
+    let push = match &outcome.push {
+        NotesPush::Pushed { remote } => format!("review notes pushed to {remote}"),
+        NotesPush::Pending { remote, reason } => {
+            let why = match reason {
+                PendingReason::Unreachable => "the remote could not be reached",
+                PendingReason::StillRejected => "the remote kept rejecting it after merging",
+            };
+            format!(
+                "review notes push to {remote} pending: {why}; the stamp is recorded locally and the next stamp that reaches {remote} delivers every note"
+            )
+        }
+        NotesPush::NoRemote { branch } => {
+            format!("review notes kept locally: {branch} tracks no remote")
+        }
+    };
+    ctx.out.line(&push)?;
     Ok(ExitCode::SUCCESS)
 }
 
