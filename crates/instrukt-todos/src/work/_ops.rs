@@ -571,6 +571,12 @@ impl Work {
             if resolved.branch.is_some() {
                 record.branch = resolved.branch;
             }
+            // Ruling H: a claim covers one occurrence; recording that
+            // occurrence's outcome releases it, so the task returns to
+            // pickup (a recurring task fires again, a failed one is seen).
+            if matches!(stamp.fact, StampFact::TaskOutcome { .. }) {
+                record.claim = None;
+            }
             record.stamps.push(stamp);
             Ok(())
         })?;
