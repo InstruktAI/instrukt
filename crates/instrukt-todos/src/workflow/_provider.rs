@@ -19,7 +19,7 @@ use crate::evidence::{
     upstream_of,
 };
 
-use super::_facts::{FactError, FactValue, Facts};
+use super::_facts::{FactError, FactValue, Facts, member};
 
 /// The artifact a build review's complete report is written to.
 #[cfg(test)]
@@ -214,6 +214,22 @@ pub(crate) fn current_build_verdict(
     })
 }
 
+/// `build_review.baseline_commit`: the build-start base commit current
+/// when the current build-review verdict was stamped (the latest build
+/// start before it in the ledger).
+fn baseline_commit<'e>(ledger: &Ledger<'e>) -> Option<&'e CommitSha> {
+    let verdict = ledger
+        .latest_at(|fact| matches!(fact, StampFact::BuildVerdict { .. }).then_some(()))?
+        .0;
+    ledger.evidence.stamps[..verdict]
+        .iter()
+        .rev()
+        .find_map(|stamp| match &stamp.fact {
+            StampFact::BuildStarted { base, .. } => Some(base),
+            _ => None,
+        })
+}
+
 fn text(value: &str) -> FactValue {
     FactValue::Text(value.to_owned())
 }
@@ -243,10 +259,32 @@ impl<'e> Ledger<'e> {
             .map(|artifact| artifact.versions.as_slice())
     }
 
-    /// Whether artifact `name` has a version created after `at`.
+    /// Whether artifact `name` has a version written after the stamp made
+    /// at `at`.
     fn rewritten_after(&self, name: &str, at: Timestamp) -> bool {
-        self.history(name)
-            .is_some_and(|versions| versions.iter().any(|version| version.created > at))
+        self.history(name).is_some_and(|versions| {
+            versions
+                .iter()
+                .any(|version| self.later(version.created, at))
+        })
+    }
+
+    /// Whether a mutation made at `first` came after one made at `second`.
+    /// The evidence orders artifact versions and stamps against each other
+    /// only by their times; mutations recorded in the same instant cannot
+    /// be ordered (reported to work: a shared record sequence).
+    fn later(&self, first: Timestamp, second: Timestamp) -> bool {
+        first > second
+    }
+
+    /// The latest stamp `pick` selects, with its ledger position.
+    fn latest_at<T>(&self, pick: impl Fn(&'e StampFact) -> Option<T>) -> Option<(usize, T)> {
+        self.evidence
+            .stamps
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, stamp)| pick(&stamp.fact).map(|value| (index, value)))
     }
 
     /// The latest stamp `pick` selects from, with its value.
@@ -366,8 +404,8 @@ fn preparation_reviews(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), Fac
             })
         {
             let verdict = match verdict {
-                ReviewVerdict::Approve => "approve",
-                ReviewVerdict::NeedsWork => "needs_work",
+                ReviewVerdict::Approve => member::APPROVE,
+                ReviewVerdict::NeedsWork => member::NEEDS_WORK,
             };
             facts.insert(&format!("{prefix}.verdict"), text(verdict))?;
             facts.insert(
@@ -413,35 +451,66 @@ fn eligible(approver: Approver, by: ApprovedBy) -> bool {
 }
 
 /// `prd_approval.*` and `task_approved.*`: the latest approval of each gate
-/// from an eligible approver.
+/// from an eligible approver, while it still binds the evidence it approved
+/// (`artifact-currency`, "Substantive settlement"; `approvals`, carry):
+///
+/// - an invalidation of the gate's review after the approval revokes it, so
+///   re-deriving the same bytes does not revive it;
+/// - it binds the version current when it was stamped: a later version of
+///   the artifact, even one with an equal digest, is not approved by it.
+///
+/// An earlier approval reaches a later version only through a carry, which
+/// work records as a new approval stamp (`--carry-from`) under a current
+/// `approve` verdict on that version.
 fn approvals(
     ledger: &Ledger<'_>,
     approvers: Approvers,
     facts: &mut Facts,
 ) -> Result<(), FactError> {
-    let latest = |gate: ApprovalGate, approver: Approver| {
-        ledger.latest(|fact| match fact {
-            StampFact::Approval {
-                gate: stamped,
-                by,
-                target,
-                ..
-            } if *stamped == gate && eligible(approver, *by) => Some((*by, target)),
-            _ => None,
-        })
-    };
-    if let Some((by, target)) = latest(ApprovalGate::Prd, approvers.prd) {
+    let current =
+        |gate: ApprovalGate, approver: Approver, artifact: &str, revoked: Option<usize>| {
+            let (position, (by, target)) = ledger.latest_at(|fact| match fact {
+                StampFact::Approval {
+                    gate: stamped,
+                    by,
+                    target,
+                    ..
+                } if *stamped == gate && eligible(approver, *by) => Some((*by, target)),
+                _ => None,
+            })?;
+            if revoked.is_some_and(|revoked| revoked > position) {
+                return None;
+            }
+            let approved_current = ledger
+                .history(artifact)
+                .and_then(|versions| versions.last())
+                .zip(ledger.at(position))
+                .is_some_and(|(version, at)| !ledger.later(version.created, at));
+            approved_current.then_some((by, target))
+        };
+    let prd_revoked = ledger.invalidations(PreparationReview::PrdReview).last();
+    if let Some((by, target)) = current(
+        ApprovalGate::Prd,
+        approvers.prd,
+        artifact_names::PRD,
+        prd_revoked,
+    ) {
         facts.insert("prd_approval.digest", text(target.as_str()))?;
         facts.insert(
             "prd_approval.by_human",
             FactValue::Bool(by == ApprovedBy::Human),
         )?;
     }
-    if let Some((by, target)) = latest(ApprovalGate::Task, approvers.task) {
+    if let Some((by, target)) = current(
+        ApprovalGate::Task,
+        approvers.task,
+        artifact_names::TASK_PLAN,
+        None,
+    ) {
         facts.insert("task_approved.target_digest", text(target.as_str()))?;
         let by = match by {
-            ApprovedBy::Human => "human",
-            ApprovedBy::Peer => "peer",
+            ApprovedBy::Human => member::HUMAN,
+            ApprovedBy::Peer => member::PEER,
         };
         facts.insert("task_approved.by", text(by))?;
     }
@@ -483,21 +552,21 @@ fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
             .iter()
             .any(|upstream| ledger.current(upstream.artifact.as_str()) != upstream.digest.as_ref());
         let class = match judged {
-            Some((DriftClass::Substantive, _)) => Some("substantive"),
+            Some((DriftClass::Substantive, _)) => Some(member::SUBSTANTIVE),
             Some((DriftClass::Cosmetic, at)) if drifted => {
                 let upstream_changed = upstream_of(name)
                     .iter()
                     .any(|upstream| ledger.rewritten_after(upstream, at));
                 Some(if upstream_changed {
-                    "pending"
+                    member::PENDING
                 } else {
-                    "cosmetic"
+                    member::COSMETIC
                 })
             }
-            Some((DriftClass::Cosmetic, _)) => Some("cosmetic"),
-            None if drifted => Some("pending"),
+            Some((DriftClass::Cosmetic, _)) => Some(member::COSMETIC),
+            None if drifted => Some(member::PENDING),
             None if version.derived_from.is_empty() => None,
-            None => Some("fresh"),
+            None => Some(member::FRESH),
         };
         if let Some(class) = class {
             facts.insert(fact, text(class))?;
@@ -528,8 +597,8 @@ fn build(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Res
     )?;
     if let Some((verdict, target, report)) = current_build_verdict(ledger.evidence) {
         let verdict = match verdict {
-            BuildVerdict::Approve => "approve",
-            BuildVerdict::ChangesRequested => "changes_requested",
+            BuildVerdict::Approve => member::APPROVE,
+            BuildVerdict::ChangesRequested => member::CHANGES_REQUESTED,
         };
         facts.insert("build_review.verdict", text(verdict))?;
         facts.insert("build_review.target_digest", FactValue::Sha(target.clone()))?;
@@ -537,6 +606,9 @@ fn build(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Res
             "build_review.binding",
             text(binding(ledger, report, observed.reviewed_change)),
         )?;
+        if let Some(base) = baseline_commit(ledger) {
+            facts.insert("build_review.baseline_commit", FactValue::Sha(base.clone()))?;
+        }
     }
     let rounds = ledger
         .evidence
@@ -567,10 +639,10 @@ fn build(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Res
     });
     match finalized {
         Some(commit) => {
-            facts.insert("finalize.status", text("ready"))?;
+            facts.insert("finalize.status", text(member::READY))?;
             facts.insert("finalize.sha", FactValue::Sha(commit.clone()))?;
         }
-        None => facts.insert("finalize.status", text("pending"))?,
+        None => facts.insert("finalize.status", text(member::PENDING))?,
     }
     Ok(())
 }
@@ -605,13 +677,13 @@ fn binding(
     change: Option<ChangeSinceReview>,
 ) -> &'static str {
     match ledger.current(artifact_names::REVIEW_FINDINGS) {
-        None => "unbound",
-        Some(current) if current != report => "report_changed",
+        None => member::UNBOUND,
+        Some(current) if current != report => member::REPORT_CHANGED,
         Some(_) => match change {
-            Some(ChangeSinceReview::Unchanged) => "exact_target",
-            Some(ChangeSinceReview::CleanUpstreamMerges) => "clean_upstream_merges",
-            Some(ChangeSinceReview::TodoChanged) => "todo_changed",
-            Some(ChangeSinceReview::Undetermined) | None => "undetermined",
+            Some(ChangeSinceReview::Unchanged) => member::EXACT_TARGET,
+            Some(ChangeSinceReview::CleanUpstreamMerges) => member::CLEAN_UPSTREAM_MERGES,
+            Some(ChangeSinceReview::TodoChanged) => member::TODO_CHANGED,
+            Some(ChangeSinceReview::Undetermined) | None => member::UNDETERMINED,
         },
     }
 }
@@ -675,8 +747,8 @@ pub(crate) fn standings<E>(
 mod tests {
     use instrukt_runner::interfaces::TodoKind;
 
-    use super::super::_facts::FactName;
-    use super::super::_testing::{EvidenceBuilder, digest, session, sha, text, todo};
+    use super::super::_facts::{FactName, member};
+    use super::super::_testing::{EvidenceBuilder, digest, session, sha, todo};
     use super::*;
 
     const HUMAN_GATES: Approvers = Approvers {
@@ -705,6 +777,21 @@ mod tests {
 
     fn get<'f>(facts: &'f Facts, name: &str) -> Option<&'f FactValue> {
         facts.get(FactName::parse(name).unwrap())
+    }
+
+    /// An enum-typed fact's member, as the provider supplies it.
+    fn value(member: &str) -> FactValue {
+        FactValue::Text(member.to_owned())
+    }
+
+    /// The fact value of the evidence digest built from `fixture`.
+    fn digest_value(fixture: &str) -> FactValue {
+        FactValue::Text(digest(fixture).as_str().to_owned())
+    }
+
+    /// The fact value of a retained worktree path.
+    fn path_value(path: &str) -> FactValue {
+        FactValue::Text(std::path::Path::new(path).display().to_string())
     }
 
     fn yes() -> Option<FactValue> {
@@ -807,8 +894,8 @@ mod tests {
             .artifact(artifact_names::PRD, "prd-2")
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "prd.digest"), Some(&text("prd-2")));
-        assert_eq!(get(&facts, "kind"), Some(&text("feature")));
+        assert_eq!(get(&facts, "prd.digest"), Some(&digest_value("prd-2")));
+        assert_eq!(get(&facts, "kind"), Some(&value(member::FEATURE)));
     }
 
     #[test]
@@ -822,7 +909,10 @@ mod tests {
         assert_eq!(get(&facts, "build.complete").cloned(), no());
         assert_eq!(get(&facts, "deferrals.pending").cloned(), no());
         assert_eq!(get(&facts, "plan_review.rounds"), Some(&FactValue::Int(0)));
-        assert_eq!(get(&facts, "finalize.status"), Some(&text("pending")));
+        assert_eq!(
+            get(&facts, "finalize.status"),
+            Some(&value(member::PENDING))
+        );
         assert_eq!(get(&facts, "deps.delivered").cloned(), yes());
     }
 
@@ -862,14 +952,17 @@ mod tests {
             ))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "prd_review.verdict"), Some(&text("approve")));
+        assert_eq!(
+            get(&facts, "prd_review.verdict"),
+            Some(&value(member::APPROVE))
+        );
         assert_eq!(
             get(&facts, "prd_review.target_digest"),
-            Some(&text("prd-2"))
+            Some(&digest_value("prd-2"))
         );
         assert_eq!(
             get(&facts, "prd_review.report_digest"),
-            Some(&text("findings-1"))
+            Some(&digest_value("findings-1"))
         );
         assert_eq!(get(&facts, "prd_review.rounds"), Some(&FactValue::Int(2)));
         assert_eq!(get(&facts, "plan_review.verdict"), None);
@@ -893,7 +986,7 @@ mod tests {
             .stamp(substantive(artifact_names::PRD))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "drift.prd"), Some(&text("substantive")));
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::SUBSTANTIVE)));
         assert_eq!(get(&facts, "prd_review.verdict"), None);
         assert_eq!(get(&facts, "architecture_review.verdict"), None);
         for review in ["prd_review", "architecture_review", "plan_review"] {
@@ -939,7 +1032,7 @@ mod tests {
         let facts = facts_of(&evidence, &Observations::default());
         assert_eq!(
             get(&facts, "drift.implementation_plan"),
-            Some(&text("cosmetic"))
+            Some(&value(member::COSMETIC))
         );
         assert_eq!(
             get(&facts, "plan_review.cleared_by_substantive_drift").cloned(),
@@ -970,12 +1063,16 @@ mod tests {
         );
         assert_eq!(get(&facts, "build.complete").cloned(), no());
         assert_eq!(get(&facts, "build_review.verdict"), None);
-        assert_eq!(get(&facts, "finalize.status"), Some(&text("pending")));
+        assert_eq!(
+            get(&facts, "finalize.status"),
+            Some(&value(member::PENDING))
+        );
     }
 
     #[test]
     fn a_peer_approval_does_not_satisfy_a_human_gate() {
         let evidence = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-1")
             .stamp(approval(ApprovalGate::Prd, ApprovedBy::Peer, "prd-1"))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
@@ -985,6 +1082,7 @@ mod tests {
     #[test]
     fn a_peer_gate_admits_the_peer_approval() {
         let evidence = todo(TodoKind::Task)
+            .artifact(artifact_names::TASK_PLAN, "task-1")
             .stamp(approval(ApprovalGate::Task, ApprovedBy::Peer, "task-1"))
             .build();
         let gates = Approvers {
@@ -994,18 +1092,22 @@ mod tests {
         let facts = facts_with(&evidence, &[], gates, &Observations::default());
         assert_eq!(
             get(&facts, "task_approved.target_digest"),
-            Some(&text("task-1"))
+            Some(&digest_value("task-1"))
         );
-        assert_eq!(get(&facts, "task_approved.by"), Some(&text("peer")));
+        assert_eq!(get(&facts, "task_approved.by"), Some(&value(member::PEER)));
     }
 
     #[test]
     fn a_human_approval_is_attributed_to_a_human() {
         let evidence = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-1")
             .stamp(approval(ApprovalGate::Prd, ApprovedBy::Human, "prd-1"))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "prd_approval.digest"), Some(&text("prd-1")));
+        assert_eq!(
+            get(&facts, "prd_approval.digest"),
+            Some(&digest_value("prd-1"))
+        );
         assert_eq!(get(&facts, "prd_approval.by_human").cloned(), yes());
     }
 
@@ -1067,14 +1169,17 @@ mod tests {
     fn a_verdict_on_the_current_head_with_its_report_is_bound_exactly() {
         let observed = observed_change('a', ChangeSinceReview::Unchanged);
         let facts = facts_of(&reviewed().build(), &observed);
-        assert_eq!(get(&facts, "build_review.verdict"), Some(&text("approve")));
+        assert_eq!(
+            get(&facts, "build_review.verdict"),
+            Some(&value(member::APPROVE))
+        );
         assert_eq!(
             get(&facts, "build_review.target_digest"),
             Some(&FactValue::Sha(sha('a')))
         );
         assert_eq!(
             get(&facts, "build_review.binding"),
-            Some(&text("exact_target"))
+            Some(&value(member::EXACT_TARGET))
         );
     }
 
@@ -1084,7 +1189,7 @@ mod tests {
         let facts = facts_of(&reviewed().build(), &observed);
         assert_eq!(
             get(&facts, "build_review.binding"),
-            Some(&text("clean_upstream_merges"))
+            Some(&value(member::CLEAN_UPSTREAM_MERGES))
         );
     }
 
@@ -1094,7 +1199,7 @@ mod tests {
         let facts = facts_of(&reviewed().build(), &observed);
         assert_eq!(
             get(&facts, "build_review.binding"),
-            Some(&text("todo_changed"))
+            Some(&value(member::TODO_CHANGED))
         );
     }
 
@@ -1107,7 +1212,7 @@ mod tests {
         let facts = facts_of(&evidence, &observed);
         assert_eq!(
             get(&facts, "build_review.binding"),
-            Some(&text("report_changed"))
+            Some(&value(member::REPORT_CHANGED))
         );
     }
 
@@ -1117,7 +1222,10 @@ mod tests {
             .stamp(build_verdict(BuildVerdict::Approve, 'a', "report-1"))
             .build();
         let facts = facts_of(&evidence, &at_head('a'));
-        assert_eq!(get(&facts, "build_review.binding"), Some(&text("unbound")));
+        assert_eq!(
+            get(&facts, "build_review.binding"),
+            Some(&value(member::UNBOUND))
+        );
     }
 
     #[test]
@@ -1126,7 +1234,7 @@ mod tests {
         let facts = facts_of(&reviewed().build(), &observed);
         assert_eq!(
             get(&facts, "build_review.binding"),
-            Some(&text("undetermined"))
+            Some(&value(member::UNDETERMINED))
         );
     }
 
@@ -1161,7 +1269,7 @@ mod tests {
             .stamp(StampFact::FinalizeReady { commit: sha('a') })
             .build();
         let facts = facts_of(&evidence, &at_head('a'));
-        assert_eq!(get(&facts, "finalize.status"), Some(&text("ready")));
+        assert_eq!(get(&facts, "finalize.status"), Some(&value(member::READY)));
         assert_eq!(get(&facts, "finalize.sha"), Some(&FactValue::Sha(sha('a'))));
     }
 
@@ -1172,7 +1280,10 @@ mod tests {
             .stamp(completed('b'))
             .build();
         let facts = facts_of(&evidence, &at_head('b'));
-        assert_eq!(get(&facts, "finalize.status"), Some(&text("pending")));
+        assert_eq!(
+            get(&facts, "finalize.status"),
+            Some(&value(member::PENDING))
+        );
         assert_eq!(get(&facts, "finalize.sha"), None);
     }
 
@@ -1186,7 +1297,10 @@ mod tests {
             .bound("builder", "build-1", Some("/work/add-login"))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "worktree.path"), Some(&text("/work/add-login")));
+        assert_eq!(
+            get(&facts, "worktree.path"),
+            Some(&path_value("/work/add-login"))
+        );
         assert_eq!(get(&facts, "worktree.exists"), None);
         assert_eq!(get(&facts, "claim.held").cloned(), yes());
         assert_eq!(
@@ -1290,7 +1404,7 @@ mod tests {
     #[test]
     fn provenance_matching_its_upstream_is_fresh() {
         let facts = facts_of(&derived_prd().build(), &Observations::default());
-        assert_eq!(get(&facts, "drift.prd"), Some(&text("fresh")));
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::FRESH)));
     }
 
     #[test]
@@ -1299,7 +1413,7 @@ mod tests {
             .artifact(artifact_names::INPUT, "input-2")
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "drift.prd"), Some(&text("pending")));
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::PENDING)));
     }
 
     #[test]
@@ -1313,7 +1427,10 @@ mod tests {
             .artifact(artifact_names::PRD, "prd-1")
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "drift.architecture"), Some(&text("pending")));
+        assert_eq!(
+            get(&facts, "drift.architecture"),
+            Some(&value(member::PENDING))
+        );
     }
 
     #[test]
@@ -1323,7 +1440,7 @@ mod tests {
             .stamp(cosmetic(artifact_names::PRD))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "drift.prd"), Some(&text("cosmetic")));
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::COSMETIC)));
     }
 
     #[test]
@@ -1334,7 +1451,7 @@ mod tests {
             .artifact(artifact_names::INPUT, "input-3")
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "drift.prd"), Some(&text("pending")));
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::PENDING)));
     }
 
     #[test]
@@ -1344,7 +1461,7 @@ mod tests {
             .stamp(substantive(artifact_names::PRD))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
-        assert_eq!(get(&facts, "drift.prd"), Some(&text("substantive")));
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::SUBSTANTIVE)));
     }
 
     #[test]
@@ -1375,5 +1492,109 @@ mod tests {
             .build();
         let facts = facts_of(&evidence, &Observations::default());
         assert_eq!(get(&facts, "implementation_plan.seeded").cloned(), no());
+    }
+
+    // ---- approval currency ----
+
+    /// A feature whose PRD `prd-1` was reviewed and approved by a human.
+    fn approved_prd() -> EvidenceBuilder {
+        todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-1")
+            .stamp(verdict(
+                PreparationReview::PrdReview,
+                ReviewVerdict::Approve,
+                "prd-1",
+            ))
+            .stamp(approval(ApprovalGate::Prd, ApprovedBy::Human, "prd-1"))
+    }
+
+    #[test]
+    fn re_deriving_the_same_bytes_after_substantive_drift_needs_approval_again() {
+        let evidence = approved_prd()
+            .stamp(substantive(artifact_names::PRD))
+            .artifact(artifact_names::PRD, "prd-1")
+            .stamp(verdict(
+                PreparationReview::PrdReview,
+                ReviewVerdict::Approve,
+                "prd-1",
+            ))
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(
+            get(&facts, "prd_review.verdict"),
+            Some(&value(member::APPROVE))
+        );
+        assert_eq!(get(&facts, "prd_approval.digest"), None);
+    }
+
+    #[test]
+    fn an_approval_does_not_reach_a_later_version_with_an_equal_digest() {
+        let evidence = approved_prd()
+            .artifact(artifact_names::PRD, "prd-2")
+            .artifact(artifact_names::PRD, "prd-1")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "prd_approval.digest"), None);
+    }
+
+    #[test]
+    fn a_carry_after_re_review_approves_the_re_derived_version() {
+        let evidence = approved_prd()
+            .stamp(substantive(artifact_names::PRD))
+            .artifact(artifact_names::PRD, "prd-1")
+            .stamp(verdict(
+                PreparationReview::PrdReview,
+                ReviewVerdict::Approve,
+                "prd-1",
+            ))
+            .stamp(StampFact::Approval {
+                gate: ApprovalGate::Prd,
+                by: ApprovedBy::Human,
+                target: digest("prd-1"),
+                carried_from: Some(digest("prd-1")),
+            })
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(
+            get(&facts, "prd_approval.digest"),
+            Some(&digest_value("prd-1"))
+        );
+        assert_eq!(get(&facts, "prd_approval.by_human").cloned(), yes());
+    }
+
+    #[test]
+    fn a_kickback_of_the_prd_review_revokes_its_approval() {
+        let evidence = approved_prd()
+            .stamp(StampFact::Kickback {
+                reason: "offline use is missing".into(),
+                input: digest("input-2"),
+                invalidated_plan: None,
+                invalidated_reviews: vec![PreparationReview::PrdReview],
+            })
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "prd_approval.digest"), None);
+    }
+
+    #[test]
+    fn the_baseline_is_the_build_start_current_when_the_verdict_was_stamped() {
+        let evidence = todo(TodoKind::Change)
+            .stamp(StampFact::BuildStarted {
+                base: sha('1'),
+                plan: digest("plan-1"),
+            })
+            .stamp(completed('a'))
+            .artifact(BUILD_REVIEW_FINDINGS, "report-1")
+            .stamp(build_verdict(BuildVerdict::Approve, 'a', "report-1"))
+            .stamp(StampFact::BuildStarted {
+                base: sha('2'),
+                plan: digest("plan-2"),
+            })
+            .build();
+        let facts = facts_of(&evidence, &at_head('a'));
+        assert_eq!(
+            get(&facts, "build_review.baseline_commit"),
+            Some(&FactValue::Sha(sha('1')))
+        );
     }
 }

@@ -205,12 +205,11 @@ fn classify(
         return Ok(ChangeSinceReview::TodoChanged);
     }
     let main = git::default_branch(project_root, REMOTE)?;
-    let canonical = match resolve(dir, &format!("refs/remotes/{REMOTE}/{main}"))? {
-        Some(sha) => sha,
-        None => match resolve(dir, &format!("refs/heads/{main}"))? {
-            Some(sha) => sha,
-            None => return Ok(ChangeSinceReview::Undetermined),
-        },
+    // Upstream is the published canonical branch. Local main is not
+    // upstream evidence: an unpublished merge of it is not a clean upstream
+    // merge, so without the remote-tracking branch nothing is determined.
+    let Some(canonical) = resolve(dir, &format!("refs/remotes/{REMOTE}/{main}"))? else {
+        return Ok(ChangeSinceReview::Undetermined);
     };
     let range = format!("{reviewed}..{head}");
     let listing = git::run(
