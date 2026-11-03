@@ -103,6 +103,10 @@ envelopes, artifact-version references and stamp ledger within the
 artifacts-and-stamps boundary. A mutation spanning several todos is reflected
 per item, not atomically.
 
+A record comment is applied only when GitHub reports its author's association
+with the repository as owner, member or collaborator; a record comment by
+anyone else is logged and never applied.
+
 Inbound approvals and change requests are accepted only from logins in the
 project layer’s `github.approvers`. Other edits change no work record and are
 answered on the issue.
@@ -148,8 +152,19 @@ the remote record before creating duplicate evidence.
   And after refreshing they can record their progress against the current todo
 ```
 
+#### UC-GR4: Records posted by someone without write access never change a developer's work
+
+```gherkin
+  Given a developer's project is public and its todos are reflected to GitHub
+  When someone without write access to the repository posts what looks like a record update on a todo
+  Then the developer's work record is unchanged by it
+  And records posted by people with write access are still applied
+```
+
 ## Known caveats
 
+- A GitHub App bot posts with association `NONE`, so a record it wrote would be
+  ignored; instrukt never writes records as an App.
 - GitHub reconstruction is limited to the artifact versions the provider
   retains and serves. An older version retained only locally is not promised
   on a replacement computer. Native artifact availability and accepted
