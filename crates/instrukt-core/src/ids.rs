@@ -120,11 +120,12 @@ identifier!(
 );
 
 identifier!(
-    /// A use-case id within one feature spec: `UC-<area><n>`.
+    /// A use-case id within one feature spec: `UC-` then a letter or digit,
+    /// then letters, digits or hyphens (conventionally `UC-<area><n>`).
     UseCaseId,
     "use-case id",
     is_use_case_id,
-    "`UC-` followed by an uppercase area code and a number"
+    "`UC-` followed by a letter or digit, then letters, digits or hyphens"
 );
 
 identifier!(
@@ -206,13 +207,45 @@ fn is_path_id(value: &str) -> bool {
         })
 }
 
+/// `UC-`, then a letter or digit, then letters, digits or hyphens
+/// (`use-case-coverage`, "Use cases").
 fn is_use_case_id(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("UC-") else {
         return false;
     };
-    let area_len = rest.chars().take_while(|c| c.is_ascii_uppercase()).count();
-    let number = &rest[area_len..];
-    area_len > 0 && !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
+    rest.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && rest.chars().all(is_use_case_char)
+}
+
+fn is_use_case_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-'
+}
+
+impl UseCaseId {
+    /// The first use-case id token in `text`: `UC-` where no letter, digit,
+    /// `_` or `-` precedes it, extended over the id characters that follow.
+    /// A token that is not a well-formed id (`UC-` followed by no letter or
+    /// digit) is passed over.
+    pub fn first_in(text: &str) -> Option<Self> {
+        let mut from = 0;
+        while let Some(at) = text[from..].find("UC-").map(|i| from + i) {
+            let after = at + 3;
+            let starts_token = text[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_use_case_char(c) && c != '_');
+            let len = text[after..]
+                .find(|c: char| !is_use_case_char(c))
+                .unwrap_or(text.len() - after);
+            if starts_token && let Ok(id) = Self::parse(&text[at..after + len]) {
+                return Some(id);
+            }
+            from = after;
+        }
+        None
+    }
 }
 
 fn is_full_sha(value: &str) -> bool {
@@ -281,12 +314,37 @@ mod tests {
     }
 
     #[test]
-    fn use_case_ids_need_area_and_number() {
-        assert!(UseCaseId::parse("UC-CL1").is_ok());
-        assert!(UseCaseId::parse("UC-ST12").is_ok());
-        for bad in ["UC-1", "UC-CL", "uc-CL1", "CL1", "UC-cl1"] {
+    fn use_case_ids_are_uc_then_a_letter_or_digit_then_letters_digits_or_hyphens() {
+        for good in [
+            "UC-CL1",
+            "UC-ST12",
+            "UC-TH1-alt",
+            "UC-SFV1b",
+            "UC-1",
+            "UC-cl1",
+        ] {
+            assert!(UseCaseId::parse(good).is_ok(), "{good} should be accepted");
+        }
+        for bad in [
+            "uc-CL1", "CL1", "UC-", "UC--1", "UC-TH 1", "UC-TH_1", "UC-TH1:",
+        ] {
             assert!(UseCaseId::parse(bad).is_err(), "{bad} should be refused");
         }
+    }
+
+    #[test]
+    fn the_first_use_case_token_of_a_text_is_found_whole() {
+        let heading = "#### UC-TH1-alt: and UC-TH2";
+        assert_eq!(
+            UseCaseId::first_in(heading),
+            Some(UseCaseId::parse(&heading[5..15]).unwrap())
+        );
+        let glued = "XUC-AB1 then UC-CD2.";
+        assert_eq!(
+            UseCaseId::first_in(glued),
+            Some(UseCaseId::parse(&glued[13..19]).unwrap())
+        );
+        assert_eq!(UseCaseId::first_in("UC- and UC-- only"), None);
     }
 
     #[test]

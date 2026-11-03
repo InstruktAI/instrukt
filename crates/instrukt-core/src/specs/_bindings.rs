@@ -74,6 +74,20 @@ pub struct Binding {
     pub cites: Citation,
 }
 
+impl Binding {
+    /// Whether a test function follows the binding. A detached citation
+    /// binds no test.
+    pub fn is_attached(&self) -> bool {
+        self.test.function.is_some()
+    }
+
+    /// The use case this binding establishes coverage for: a well-formed
+    /// citation attached to a test function. `None` makes it an orphan.
+    pub fn use_case(&self) -> Option<&UseCaseRef> {
+        self.cites.use_case().filter(|_| self.is_attached())
+    }
+}
+
 /// Every binding in the project's tests, read from its working tree: every
 /// `.rs` file and every Python test file (`test_*.py`, `*_test.py`) git
 /// does not ignore.
@@ -99,6 +113,12 @@ impl BindingSet {
             .filter(|name| !name.is_empty())
             .map(|name| String::from_utf8_lossy(name).into_owned())
             .collect();
+        let root = repo_root
+            .canonicalize()
+            .map_err(|source| SpecsError::Read {
+                path: repo_root.to_path_buf(),
+                source,
+            })?;
         let mut bindings = Vec::new();
         for file in files {
             let language = match Language::of(&file) {
@@ -106,11 +126,28 @@ impl BindingSet {
                 None => continue,
             };
             let path = repo_root.join(&file);
-            let text = match std::fs::read(&path) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                // Listed by the index but deleted from the working tree.
+            // Every symlink, of the file and of its directories, resolved:
+            // only files inside the repository are its tests.
+            let real = match path.canonicalize() {
+                Ok(real) => real,
+                // Listed by the index but deleted from the working tree, or
+                // a dangling link.
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(source) => return Err(SpecsError::Read { path, source }),
+            };
+            if !real.starts_with(&root) {
+                tracing::warn!(
+                    event = "specs_test_file_outside_repository",
+                    file = %file,
+                    target = %real.display(),
+                    "skipping a test file that resolves outside the repository"
+                );
+                continue;
+            }
+            let text = match std::fs::read(&real) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(source) => return Err(SpecsError::Read { path: real, source }),
             };
             let found = match language {
                 Language::Rust => rust_bindings(&text),
@@ -363,229 +400,305 @@ fn rust_fn_name(item: &str) -> Option<String> {
 
 // ---- Python -----------------------------------------------------------
 
-fn python_bindings(text: &str) -> Vec<Found> {
-    let lines: Vec<&str> = text.lines().collect();
-    let in_code = python_code_lines(&lines);
-    let constants = python_constants(&lines, &in_code);
-    let mut found = Vec::new();
-    let mut index = 0;
-    while index < lines.len() {
-        let trimmed = lines[index].trim_start();
-        let start = index;
-        index += 1;
-        if !in_code[start] {
+/// A Python token, as far as bindings need one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PyToken {
+    /// An identifier, keyword or number.
+    Name(String),
+    /// A string literal: its value for a plain, raw or unicode literal;
+    /// `None` for a bytes literal or an f-string, which are no string
+    /// constants.
+    Str(Option<String>),
+    Op(char),
+}
+
+/// One logical line: the column of its first token and its tokens, each
+/// with its 1-based line. Comments, line continuations and the line breaks
+/// inside brackets and strings are already resolved.
+struct LogicalLine {
+    indent: usize,
+    tokens: Vec<(usize, PyToken)>,
+}
+
+impl LogicalLine {
+    fn kinds(&self) -> Vec<&PyToken> {
+        self.tokens.iter().map(|(_, t)| t).collect()
+    }
+}
+
+fn is_name_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
+fn is_name_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Splits Python source into logical lines of tokens.
+fn python_logical_lines(text: &str) -> Vec<LogicalLine> {
+    let chars: Vec<char> = text.chars().collect();
+    let at = |i: usize| chars.get(i).copied();
+    let mut lines = Vec::new();
+    let mut current = LogicalLine {
+        indent: 0,
+        tokens: Vec::new(),
+    };
+    let mut line = 1;
+    let mut line_start = 0;
+    let mut depth = 0usize;
+    let mut i = 0;
+    while let Some(c) = at(i) {
+        let column = i - line_start;
+        let token_line = line;
+        let push = |current: &mut LogicalLine, token: PyToken| {
+            if current.tokens.is_empty() {
+                current.indent = column;
+            }
+            current.tokens.push((token_line, token));
+        };
+        match c {
+            '\n' => {
+                line += 1;
+                i += 1;
+                line_start = i;
+                if depth == 0 && !current.tokens.is_empty() {
+                    lines.push(std::mem::replace(
+                        &mut current,
+                        LogicalLine {
+                            indent: 0,
+                            tokens: Vec::new(),
+                        },
+                    ));
+                }
+            }
+            '#' => {
+                while at(i).is_some_and(|c| c != '\n') {
+                    i += 1;
+                }
+            }
+            '\\' if at(i + 1) == Some('\n') => {
+                line += 1;
+                i += 2;
+                line_start = i;
+            }
+            '\'' | '"' => {
+                let (value, end, newlines) = python_string(&chars, i, "");
+                push(&mut current, PyToken::Str(value));
+                i = end;
+                line += newlines;
+            }
+            c if is_name_start(c) => {
+                let mut end = i;
+                while at(end).is_some_and(is_name_char) {
+                    end += 1;
+                }
+                let word: String = chars[i..end].iter().collect();
+                let prefix = word.to_ascii_lowercase();
+                let is_prefix = matches!(
+                    prefix.as_str(),
+                    "r" | "u" | "b" | "f" | "br" | "rb" | "fr" | "rf"
+                );
+                if is_prefix && matches!(at(end), Some('\'' | '"')) {
+                    let (value, after, newlines) = python_string(&chars, end, &prefix);
+                    push(&mut current, PyToken::Str(value));
+                    i = after;
+                    line += newlines;
+                } else {
+                    push(&mut current, PyToken::Name(word));
+                    i = end;
+                }
+            }
+            c if c.is_ascii_digit() => {
+                let mut end = i;
+                while at(end).is_some_and(|c| is_name_char(c) || c == '.') {
+                    end += 1;
+                }
+                push(&mut current, PyToken::Name(chars[i..end].iter().collect()));
+                i = end;
+            }
+            c if c.is_whitespace() => i += 1,
+            c => {
+                match c {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                push(&mut current, PyToken::Op(c));
+                i += 1;
+            }
+        }
+    }
+    if !current.tokens.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// Reads the string literal whose opening quote is at `start`: its value
+/// (for a plain, raw or unicode literal), the index after it and the line
+/// breaks it spans. An unterminated one-line string ends at its line.
+fn python_string(chars: &[char], start: usize, prefix: &str) -> (Option<String>, usize, usize) {
+    let quote = chars[start];
+    let triple = chars.get(start + 1) == Some(&quote) && chars.get(start + 2) == Some(&quote);
+    let raw = prefix.contains('r');
+    let constant = !prefix.contains('b') && !prefix.contains('f');
+    let mut value = String::new();
+    let mut newlines = 0;
+    let mut i = start + if triple { 3 } else { 1 };
+    while let Some(&c) = chars.get(i) {
+        if c == quote
+            && (!triple || (chars.get(i + 1) == Some(&quote) && chars.get(i + 2) == Some(&quote)))
+        {
+            let end = i + if triple { 3 } else { 1 };
+            return (constant.then_some(value), end, newlines);
+        }
+        if c == '\n' {
+            if !triple {
+                return (None, i, newlines);
+            }
+            newlines += 1;
+            value.push(c);
+            i += 1;
             continue;
         }
-        let Some(after) = trimmed.strip_prefix("@pytest.mark.spec(") else {
+        if c == '\\'
+            && let Some(&escaped) = chars.get(i + 1)
+        {
+            if escaped == '\n' {
+                newlines += 1;
+            }
+            if raw {
+                value.push(c);
+                value.push(escaped);
+            } else {
+                match escaped {
+                    '\n' => {}
+                    'n' => value.push('\n'),
+                    't' => value.push('\t'),
+                    other => value.push(other),
+                }
+            }
+            i += 2;
+            continue;
+        }
+        value.push(c);
+        i += 1;
+    }
+    (None, i, newlines)
+}
+
+fn python_bindings(text: &str) -> Vec<Found> {
+    let lines = python_logical_lines(text);
+    let constants = python_constants(&lines);
+    let mut found = Vec::new();
+    for (index, logical) in lines.iter().enumerate() {
+        let Some(args) = spec_decorator_args(logical) else {
             continue;
         };
-        // The argument list may span lines; it ends at the closing paren.
-        let mut args = after.to_owned();
-        while !balanced_call(&args) && index < lines.len() {
-            args.push('\n');
-            args.push_str(lines[index]);
-            index += 1;
-        }
         let Some(values) = python_arguments(&args, &constants) else {
             continue;
         };
         let [spec, use_case] = values.as_slice() else {
             continue;
         };
-        let function = following_python_def(&lines, index);
-        found.push((start + 1, function, Citation::read(spec, use_case)));
+        let line = logical.tokens.first().map_or(1, |(line, _)| *line);
+        let function = following_python_def(lines.get(index + 1..).unwrap_or_default());
+        found.push((line, function, Citation::read(spec, use_case)));
     }
     found
 }
 
-/// Whether each line starts outside a triple-quoted string.
-fn python_code_lines(lines: &[&str]) -> Vec<bool> {
-    let mut open: Option<&str> = None;
-    lines
-        .iter()
-        .map(|line| {
-            let starts_in_code = open.is_none();
-            let mut rest = *line;
-            loop {
-                let next = match open {
-                    Some(quote) => rest.find(quote).map(|at| (at, quote)),
-                    None => ["\"\"\"", "'''"]
-                        .iter()
-                        .filter_map(|q| rest.find(q).map(|at| (at, *q)))
-                        .min_by_key(|(at, _)| *at),
-                };
-                let Some((at, quote)) = next else { break };
-                open = match open {
-                    Some(_) => None,
-                    None => Some(quote),
-                };
-                rest = &rest[at + 3..];
-            }
-            starts_in_code
-        })
-        .collect()
-}
-
-/// Module-level `NAME = "text"` (or `NAME: str = "text"`) assignments.
-fn python_constants(lines: &[&str], in_code: &[bool]) -> HashMap<String, String> {
+/// Module-level `NAME = "text"` (or `NAME: <annotation> = "text"`)
+/// assignments.
+fn python_constants(lines: &[LogicalLine]) -> HashMap<String, String> {
     let mut constants = HashMap::new();
-    for (line, code) in lines.iter().zip(in_code) {
-        if !code || line.starts_with(char::is_whitespace) {
-            continue;
-        }
-        let Some((target, value)) = line.split_once('=') else {
+    for logical in lines.iter().filter(|l| l.indent == 0) {
+        let tokens = logical.kinds();
+        let Some(assign) = tokens.iter().position(|t| **t == PyToken::Op('=')) else {
             continue;
         };
-        let name = target.split(':').next().unwrap_or_default().trim();
-        let is_name = name
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphabetic() || c == '_')
-            && name.chars().all(|c| c.is_alphanumeric() || c == '_');
-        if !is_name || value.starts_with('=') {
-            continue;
-        }
-        if let Some((text, rest)) = python_string(value.trim())
-            && (rest.trim().is_empty() || rest.trim_start().starts_with('#'))
-        {
-            constants.insert(name.to_owned(), text);
+        let target = match tokens.as_slice() {
+            [PyToken::Name(name), PyToken::Op('=' | ':'), ..] => name,
+            _ => continue,
+        };
+        if let [PyToken::Str(Some(value))] = &tokens[assign + 1..] {
+            constants.insert(target.clone(), value.clone());
         }
     }
     constants
 }
 
-/// Whether the text after `spec(` has reached its closing paren.
-fn balanced_call(args: &str) -> bool {
-    split_call(args).is_some()
+/// The argument tokens of `@pytest.mark.spec(…)` when `logical` is that
+/// decorator and nothing else.
+fn spec_decorator_args(logical: &LogicalLine) -> Option<Vec<&PyToken>> {
+    let tokens = logical.kinds();
+    let name = |t: &PyToken, n: &str| matches!(t, PyToken::Name(w) if w == n);
+    let [at, pytest, dot, mark, dot2, spec, open, inner @ .., close] = tokens.as_slice() else {
+        return None;
+    };
+    let decorator = **at == PyToken::Op('@')
+        && name(pytest, "pytest")
+        && **dot == PyToken::Op('.')
+        && name(mark, "mark")
+        && **dot2 == PyToken::Op('.')
+        && name(spec, "spec")
+        && **open == PyToken::Op('(')
+        && **close == PyToken::Op(')');
+    decorator.then(|| inner.to_vec())
 }
 
-/// The arguments before the call's closing paren, split at top-level
-/// commas; `None` while the paren is not reached.
-fn split_call(args: &str) -> Option<Vec<String>> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0usize;
-    let mut quote: Option<char> = None;
-    let mut chars = args.chars();
-    while let Some(c) = chars.next() {
-        if let Some(q) = quote {
-            current.push(c);
-            if c == '\\' {
-                if let Some(escaped) = chars.next() {
-                    current.push(escaped);
-                }
-            } else if c == q {
-                quote = None;
-            }
-            continue;
-        }
-        match c {
-            '\'' | '"' => {
-                quote = Some(c);
-                current.push(c);
-            }
-            '(' | '[' | '{' => {
-                depth += 1;
-                current.push(c);
-            }
-            ')' if depth == 0 => {
-                parts.push(current);
-                return Some(parts);
-            }
-            ')' | ']' | '}' => {
-                depth = depth.saturating_sub(1);
-                current.push(c);
-            }
-            ',' if depth == 0 => parts.push(std::mem::take(&mut current)),
-            _ => current.push(c),
-        }
-    }
-    None
-}
-
-/// The values of a `spec(...)` call whose every argument is a string
-/// literal or a module-level string constant; `None` otherwise.
-fn python_arguments(args: &str, constants: &HashMap<String, String>) -> Option<Vec<String>> {
-    let mut parts = split_call(args)?;
+/// The values of a `spec(…)` call whose every argument is one string
+/// literal or one module-level string constant; `None` otherwise.
+fn python_arguments(args: &[&PyToken], constants: &HashMap<String, String>) -> Option<Vec<String>> {
+    let mut parts: Vec<&[&PyToken]> = args.split(|t| **t == PyToken::Op(',')).collect();
     // A trailing comma leaves one empty part.
-    if parts.last().is_some_and(|p| p.trim().is_empty()) {
+    if parts.len() > 1 && parts.last().is_some_and(|p| p.is_empty()) {
         parts.pop();
     }
     parts
-        .iter()
-        .map(|part| {
-            let part = part.trim();
-            match python_string(part) {
-                Some((text, rest)) if rest.trim().is_empty() => Some(text),
-                Some(_) => None,
-                None => constants.get(part).cloned(),
-            }
+        .into_iter()
+        .map(|part| match part {
+            [PyToken::Str(Some(value))] => Some(value.clone()),
+            [PyToken::Name(name)] => constants.get(name).cloned(),
+            _ => None,
         })
         .collect()
 }
 
-/// A one-line Python string literal at the start of `text` (optionally
-/// `r`/`u`-prefixed): its value and the text after it.
-fn python_string(text: &str) -> Option<(String, &str)> {
-    let (raw, body) = match text.chars().next()? {
-        'r' | 'R' => (true, &text[1..]),
-        'u' | 'U' => (false, &text[1..]),
-        _ => (false, text),
-    };
-    let quote = body.chars().next().filter(|c| *c == '"' || *c == '\'')?;
-    let mut value = String::new();
-    let mut chars = body[1..].char_indices();
-    while let Some((at, c)) = chars.next() {
-        if c == quote {
-            return Some((value, &body[1 + at + 1..]));
-        }
-        if c == '\\' && !raw {
-            let (_, escaped) = chars.next()?;
-            value.push(match escaped {
-                'n' => '\n',
-                't' => '\t',
-                other => other,
-            });
-        } else {
-            value.push(c);
-        }
+/// The name of the function the decorators end at.
+fn following_python_def(after: &[LogicalLine]) -> Option<String> {
+    let item = after
+        .iter()
+        .find(|l| l.tokens.first().map(|(_, t)| t) != Some(&PyToken::Op('@')))?;
+    match item.kinds().as_slice() {
+        [PyToken::Name(def), PyToken::Name(name), ..] if def == "def" => Some(name.clone()),
+        [
+            PyToken::Name(a),
+            PyToken::Name(def),
+            PyToken::Name(name),
+            ..,
+        ] if a == "async" && def == "def" => Some(name.clone()),
+        _ => None,
     }
-    None
-}
-
-/// The name of the function the decorators end at, from line `from`.
-fn following_python_def(lines: &[&str], from: usize) -> Option<String> {
-    for line in lines.iter().skip(from) {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('@') {
-            continue;
-        }
-        let after = trimmed
-            .strip_prefix("async def ")
-            .or_else(|| trimmed.strip_prefix("def "))?;
-        let name: String = after
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        return (!name.is_empty()).then_some(name);
-    }
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn functions(found: &[Found]) -> Vec<Option<String>> {
-        found.iter().map(|(_, f, _)| f.clone()).collect()
-    }
-
     fn reference(spec: &str, use_case: &str) -> Citation {
         Citation::UseCase(UseCaseRef {
             spec: SnippetId::parse(spec).unwrap(),
             use_case: UseCaseId::parse(use_case).unwrap(),
         })
+    }
+
+    /// The identifier starting at `column` of 0-based line `line` of
+    /// `text`: the fixture's own text, taken by position.
+    fn ident_at(text: &str, line: usize, column: usize) -> Option<String> {
+        let from = &text.lines().nth(line).unwrap()[column..];
+        let len = from.find(|c: char| !is_name_char(c)).unwrap_or(from.len());
+        Some(from[..len].to_owned())
     }
 
     #[test]
@@ -597,7 +710,7 @@ mod tests {
             found,
             vec![(
                 1,
-                Some("realizes_it".to_owned()),
+                ident_at(text, 7, 13),
                 reference("acme/spec/feature/x/y", "UC-XY1")
             )]
         );
@@ -610,7 +723,9 @@ mod tests {
                     /* outer /* inner */\n// spec: acme/spec/feature/x/y UC-XY3\n*/\n\
                     fn f<'a>(c: char) -> bool { c == '\"' }\n// spec: acme/spec/feature/x/y UC-XY4\nfn g() {}\n";
         let found = rust_bindings(text);
-        assert_eq!(functions(&found), vec![Some("g".to_owned())]);
+        let lines: Vec<usize> = found.iter().map(|(line, _, _)| *line).collect();
+        assert_eq!(lines, vec![11]);
+        assert_eq!(found[0].1, ident_at(text, 11, 3));
     }
 
     #[test]
@@ -620,14 +735,14 @@ mod tests {
     }
 
     #[test]
-    fn a_binding_of_another_shape_is_malformed_and_one_with_no_function_has_none() {
+    fn a_binding_of_another_shape_is_malformed_and_one_with_no_function_is_detached() {
         let found = rust_bindings("// spec: docs/x.md UC-XY1\nstruct S;\n// spec: only-one\n");
         let malformed: Vec<bool> = found
             .iter()
             .map(|(_, _, c)| matches!(c, Citation::Malformed(_)))
             .collect();
         assert_eq!(malformed, vec![true, true]);
-        assert_eq!(functions(&found), vec![None, None]);
+        assert!(found.iter().all(|(_, function, _)| function.is_none()));
     }
 
     #[test]
@@ -641,16 +756,40 @@ mod tests {
             vec![
                 (
                     3,
-                    Some("test_it".to_owned()),
+                    ident_at(text, 4, 10),
                     reference("acme/spec/feature/x/y", "UC-XY1")
                 ),
                 (
                     8,
-                    Some("test_other".to_owned()),
+                    ident_at(text, 11, 4),
                     reference("acme/spec/feature/x/y", "UC-XY2")
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn comments_inside_decorator_arguments_do_not_hide_a_binding() {
+        let text = "@pytest.mark.spec(  # the use case\n    'acme/spec/feature/x/y',  # spec\n    \
+                    'UC-XY1',  # ) not the end\n)\ndef test_it():\n    pass\n";
+        let found = python_bindings(text);
+        assert_eq!(
+            found,
+            vec![(
+                1,
+                ident_at(text, 4, 4),
+                reference("acme/spec/feature/x/y", "UC-XY1")
+            )]
+        );
+    }
+
+    #[test]
+    fn triple_quotes_inside_a_comment_do_not_open_a_string() {
+        let text = "# a comment with \"\"\" in it\n@pytest.mark.spec('acme/spec/feature/x/y', 'UC-XY1')\n\
+                    def test_it():\n    pass\n";
+        let found = python_bindings(text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, ident_at(text, 2, 4));
     }
 
     #[test]
@@ -665,5 +804,14 @@ mod tests {
     fn a_decorator_inside_a_docstring_is_not_a_binding() {
         let text = "\"\"\"Example:\n@pytest.mark.spec('acme/spec/feature/x/y', 'UC-XY1')\ndef test_x(): ...\n\"\"\"\n";
         assert!(python_bindings(text).is_empty());
+    }
+
+    #[test]
+    fn a_python_binding_followed_by_no_function_is_detached() {
+        let found = python_bindings(
+            "@pytest.mark.spec('acme/spec/feature/x/y', 'UC-XY1')\nclass TestIt:\n    pass\n",
+        );
+        assert_eq!(found.len(), 1);
+        assert!(found[0].1.is_none());
     }
 }

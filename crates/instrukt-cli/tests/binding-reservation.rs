@@ -73,14 +73,14 @@ fn planned_use_cases_free_or_held_by_the_requesting_todo_pass() {
     let env = TestEnv::new();
     let body = format!(
         "{}{}{}",
-        use_case("UC-TH1"),
+        use_case("UC-TH1-alt"),
         planned("build-thing", "UC-TH2"),
         restated("build-thing", "UC-TH3")
     );
     let repo = project(&env, &spec("", &body));
-    insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH1", "UC-TH2", "UC-TH3"]), @r"
+    insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH1-alt", "UC-TH2", "UC-TH3"]), @r"
     exit: 0
-    clear: local/projects/demo/spec/feature/things/thing UC-TH1
+    clear: local/projects/demo/spec/feature/things/thing UC-TH1-alt
     clear: local/projects/demo/spec/feature/things/thing UC-TH2
     clear: local/projects/demo/spec/feature/things/thing UC-TH3
     ");

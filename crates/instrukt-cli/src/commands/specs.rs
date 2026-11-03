@@ -151,7 +151,15 @@ fn report(coverage: &Coverage, ctx: &mut Ctx) -> anyhow::Result<()> {
         out.line(&format!("{label}: {value}"))?;
     }
     for orphan in coverage.orphans() {
-        out.line(&format!("orphan: {} cites {}", orphan.test, orphan.cites))?;
+        let detached = if orphan.is_attached() {
+            ""
+        } else {
+            " (no test function follows it)"
+        };
+        out.line(&format!(
+            "orphan: {} cites {}{detached}",
+            orphan.test, orphan.cites
+        ))?;
     }
     for scenario in coverage.anonymous() {
         out.line(&format!(

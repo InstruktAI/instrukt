@@ -314,3 +314,94 @@ fn a_second_unnamed_scenario_under_one_heading_is_anonymous() {
     unbound: local/projects/demo/spec/feature/things/thing UC-TH2
     ");
 }
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[test]
+fn a_citation_no_test_function_follows_is_an_orphan_not_coverage() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    repo.write(
+        "tests/thing.rs",
+        &format!("// spec: {SPEC_ID} UC-TH1\nstruct NotATest;\n"),
+    );
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 3
+    bindable use cases: 3
+    anonymous scenarios: 0
+    bound: 0
+    unbound: 3
+    multi-bound: 0
+    orphans: 1
+    orphan: tests/thing.rs:1 cites local/projects/demo/spec/feature/things/thing UC-TH1 (no test function follows it)
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[cfg(unix)]
+#[test]
+fn tracked_symlinks_resolving_outside_the_repository_are_not_its_tests() {
+    use std::os::unix::fs::symlink;
+
+    let env = TestEnv::new();
+    let repo = project(&env);
+    let outside = env.path("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("thing.rs"), rust_tests(&[(SPEC_ID, "UC-TH1")])).unwrap();
+    std::fs::create_dir_all(repo.path().join("tests")).unwrap();
+    symlink(
+        outside.join("thing.rs"),
+        repo.path().join("tests/linked.rs"),
+    )
+    .unwrap();
+    symlink(&outside, repo.path().join("tests/linked_dir")).unwrap();
+    repo.commit("track links that leave the repository");
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 3
+    bindable use cases: 3
+    anonymous scenarios: 0
+    bound: 0
+    unbound: 3
+    multi-bound: 0
+    orphans: 0
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[test]
+fn a_use_case_id_with_letters_and_hyphens_after_its_number_is_bindable() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    repo.write(
+        SPEC_PATH,
+        &spec(&format!(
+            "{}{}",
+            use_case("UC-TH1-alt", "an alternative"),
+            use_case("UC-TH2b", "a variant")
+        )),
+    )
+    .write(
+        "tests/thing.rs",
+        &rust_tests(&[(SPEC_ID, "UC-TH1-alt"), (SPEC_ID, "UC-TH2b")]),
+    );
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 2
+    bindable use cases: 2
+    anonymous scenarios: 0
+    bound: 2
+    unbound: 0
+    multi-bound: 0
+    orphans: 0
+    ");
+}
