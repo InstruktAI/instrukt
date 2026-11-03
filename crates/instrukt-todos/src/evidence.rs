@@ -36,11 +36,23 @@ pub trait WorkEvidence: Send + Sync {
         project: &ProjectRef,
         todo: &TodoSlug,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError>;
+
+    /// The record of the todo with durable identity `id` in `project`, as
+    /// [`WorkEvidence::evidence`] reads it, retained entries included; `None`
+    /// when the project has no todo with that identity. A slug may be
+    /// reused; an identity names one todo for good.
+    fn evidence_by_id(
+        &self,
+        project: &ProjectRef,
+        id: &crate::work::TodoId,
+    ) -> Result<Option<TodoEvidence>, WorkInterfaceError>;
 }
 
 /// A todo's record as evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TodoEvidence {
+    /// The todo's durable identity, stable across renames and never reused.
+    pub id: crate::work::TodoId,
     pub project: ProjectSlug,
     pub slug: TodoSlug,
     pub kind: TodoKind,

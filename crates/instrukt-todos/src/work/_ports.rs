@@ -401,6 +401,26 @@ impl WorkEvidence for Work {
         let prerequisites = expand(&mut s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
     }
+
+    fn evidence_by_id(
+        &self,
+        project: &ProjectRef,
+        id: &TodoId,
+    ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
+        let mut s = Session::open(self, project)?;
+        let record = match s.find_id(id) {
+            Some(index) => {
+                s.pull_through(index, PullFor::Read)?;
+                s.items[index].record.clone()
+            }
+            None => match s.remote_matching(|r| &r.id == id)? {
+                Some(item) => item.record,
+                None => return Ok(None),
+            },
+        };
+        let prerequisites = expand(&mut s, &record);
+        Ok(Some(to_evidence(record, prerequisites)))
+    }
 }
 
 /// Core's todo-existence question for one project, answered by work.
@@ -491,6 +511,7 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
     let implementation_plan_seeded = seeded(&record);
     TodoEvidence {
         timing: timing(&record),
+        id: record.id,
         project: record.project,
         slug: record.slug,
         kind: record.kind,
