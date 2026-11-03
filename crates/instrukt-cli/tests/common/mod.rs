@@ -31,6 +31,10 @@ use assert_cmd::Command;
 use assert_cmd::assert::Assert;
 use tempfile::TempDir;
 
+/// The git identity every test's git configuration carries.
+pub const DEVELOPER_NAME: &str = "Test Developer";
+pub const DEVELOPER_EMAIL: &str = "developer@example.test";
+
 /// A temporary machine: a user home, a place for repositories, and the
 /// environment every subprocess of the test runs with.
 pub struct TestEnv {
@@ -56,9 +60,11 @@ impl TestEnv {
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
             home.join(".gitconfig"),
-            "[user]\n\tname = Test Developer\n\temail = developer@example.test\n\
-             [init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n\
-             [tag]\n\tgpgsign = false\n",
+            format!(
+                "[user]\n\tname = {DEVELOPER_NAME}\n\temail = {DEVELOPER_EMAIL}\n\
+                 [init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n\
+                 [tag]\n\tgpgsign = false\n"
+            ),
         )
         .unwrap();
         let mut vars = BTreeMap::new();

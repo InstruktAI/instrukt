@@ -4,7 +4,9 @@
 
 mod common;
 
-use common::{LiveGuard, TestEnv};
+use std::collections::BTreeMap;
+
+use common::{DEVELOPER_EMAIL, DEVELOPER_NAME, LiveGuard, TestEnv};
 
 const COMMANDS: [&str; 15] = [
     "config",
@@ -43,6 +45,10 @@ fn every_command_prints_its_contract_with_help_and_does_nothing_else() {
 /// for every test run), which no child may inherit.
 const AMBIENT: &str = "CARGO_MANIFEST_DIR";
 
+/// A variable the test injects, and the value it injects.
+const INJECTED: &str = "FAKE_SESSION_ID";
+const SENTINEL: &str = "s-1";
+
 #[test]
 fn git_children_see_only_the_injected_environment() {
     assert!(
@@ -50,19 +56,16 @@ fn git_children_see_only_the_injected_environment() {
         "precondition: {AMBIENT} is ambient"
     );
     let mut env = TestEnv::new();
-    env.set_env("FAKE_SESSION_ID", "s-1");
+    env.set_env(INJECTED, SENTINEL);
     let repo = env.git_repo("demo");
-    let seen = repo.git(["-c", "alias.envdump=!env", "envdump"]);
-    let vars: Vec<&str> = seen.lines().collect();
-    assert!(vars.contains(&"FAKE_SESSION_ID=s-1"), "{seen}");
-    assert!(
-        vars.contains(&format!("HOME={}", env.home().display()).as_str()),
-        "{seen}"
-    );
-    assert!(
-        !vars.iter().any(|v| v.starts_with(&format!("{AMBIENT}="))),
-        "{seen}"
-    );
+    let dump = repo.git(["-c", "alias.envdump=!env", "envdump"]);
+    let seen: BTreeMap<&str, &str> = dump
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect();
+    assert_eq!(seen.get(INJECTED), Some(&SENTINEL));
+    assert_eq!(seen.get("HOME").map(std::path::Path::new), Some(env.home()));
+    assert!(!seen.contains_key(AMBIENT));
 }
 
 #[test]
@@ -72,21 +75,19 @@ fn instrukt_children_see_only_the_injected_environment() {
         "precondition: {AMBIENT} is ambient"
     );
     let mut env = TestEnv::new();
-    env.set_env("FAKE_SESSION_ID", "s-1");
+    env.set_env(INJECTED, SENTINEL);
     let repo = env.git_repo("demo");
     repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: 1\nproject: demo\nactions:\n  injected: \"${{FAKE_SESSION_ID}}\"\n  ambient: \"${{{AMBIENT}}}\"\n"
+            "schema_version: 1\nproject: demo\nactions:\n  injected: \"${{{INJECTED}}}\"\n  ambient: \"${{{AMBIENT}}}\"\n"
         ),
     );
     let injected = env
         .run(repo.path(), ["config", "get", "actions.injected"])
         .success();
-    assert_eq!(
-        String::from_utf8_lossy(&injected.get_output().stdout).trim(),
-        "s-1"
-    );
+    let value = String::from_utf8_lossy(&injected.get_output().stdout).into_owned();
+    assert_eq!(value.trim_end(), SENTINEL);
     env.run(repo.path(), ["config", "get", "actions.ambient"])
         .failure();
 }
@@ -98,8 +99,8 @@ fn commits_carry_the_isolated_git_identity() {
     repo.write("README.md", "demo\n");
     let sha = repo.commit("feat: start");
     assert_eq!(sha.len(), 40);
-    let author = repo.git(["log", "-1", "--format=%an <%ae>"]);
-    assert_eq!(author, "Test Developer <developer@example.test>");
+    assert_eq!(repo.git(["log", "-1", "--format=%an"]), DEVELOPER_NAME);
+    assert_eq!(repo.git(["log", "-1", "--format=%ae"]), DEVELOPER_EMAIL);
 }
 
 #[test]

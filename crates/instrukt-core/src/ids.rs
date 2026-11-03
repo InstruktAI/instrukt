@@ -9,6 +9,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::docs::Taxonomy;
+
 /// A value was not a well-formed identifier of the named kind.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid {kind} `{value}`: {rule}")]
@@ -164,17 +166,6 @@ fn is_slug(value: &str) -> bool {
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
 }
 
-/// The taxonomy directory names an identity's taxonomy segment may take.
-const TAXONOMIES: [&str; 7] = [
-    "principle",
-    "concept",
-    "policy",
-    "procedure",
-    "design",
-    "spec",
-    "adr",
-];
-
 /// Names the identity grammar and the docs tree reserve; no published
 /// domain carries one.
 const RESERVED_DOMAINS: [&str; 4] = ["local", "projects", "project", "snippets"];
@@ -194,10 +185,10 @@ fn is_snippet_id(value: &str) -> bool {
     let segments: Vec<&str> = value.split('/').collect();
     match segments.as_slice() {
         ["local", "projects", slug, taxonomy, rest @ ..] => {
-            is_slug(slug) && TAXONOMIES.contains(taxonomy) && !rest.is_empty()
+            is_slug(slug) && Taxonomy::from_dir(taxonomy).is_some() && !rest.is_empty()
         }
         [domain, taxonomy, rest @ ..] => {
-            is_domain(domain) && TAXONOMIES.contains(taxonomy) && !rest.is_empty()
+            is_domain(domain) && Taxonomy::from_dir(taxonomy).is_some() && !rest.is_empty()
         }
         _ => false,
     }
