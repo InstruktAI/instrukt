@@ -346,7 +346,8 @@ impl CronExpr {
             && parts.iter().all(|part| {
                 part.chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '*' | ',' | '-' | '/'))
-            });
+            })
+            && crate::timing::CronSpec::parse(fields).is_ok();
         if well_formed {
             Ok(Self(parts.join(" ")))
         } else {

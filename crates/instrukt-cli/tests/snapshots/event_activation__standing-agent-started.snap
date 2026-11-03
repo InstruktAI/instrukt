@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/event-activation.rs
+expression: "rt.opening(\"s1\").replace(&first, \"<revision>\")"
+---
+Run `instrukt docs get fork/procedure/upstream-watch --closure` and execute that procedure.
+
+instrukt events:
+{"event":"runner.upstream_changed","project":"fork","remote":"upstream","ref":"refs/heads/main","revision":"<revision>"}
