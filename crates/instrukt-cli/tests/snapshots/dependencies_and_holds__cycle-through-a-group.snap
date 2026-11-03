@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/dependencies-and-holds.rs
+expression: refused
+---
+instrukt: this change makes `renderer` wait on itself: renderer → list-depth → nested-lists → renderer

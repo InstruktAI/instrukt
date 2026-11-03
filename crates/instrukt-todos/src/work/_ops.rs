@@ -143,6 +143,10 @@ impl Work {
             ));
         }
         ensure_slug_free(&mut s, &request.slug, None)?;
+        if !request.after.is_empty() || request.group.is_some() {
+            // A relationship is judged against the current graph.
+            s.pull_all()?;
+        }
         let actor = s.actor()?;
         let after = resolve_refs(&mut s, &request.after)?;
         if request.after.contains(&request.slug) {
@@ -309,6 +313,10 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
+        if request.after.is_some() || request.group.is_some() {
+            // A relationship is judged against the current graph.
+            s.pull_all()?;
+        }
         let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
         s.flush()?;
         Ok(Outcome {
@@ -1046,24 +1054,16 @@ fn ancestors(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoId> {
 /// holder above it, no cycle. Returns a warning per iceboxed prerequisite.
 fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>, WorkError> {
     let record = s.items[index].record.clone();
-    let above = ancestors(s, &record.id);
+    if let Some(cycle) = cycle_through(s, &record) {
+        let names: Vec<String> = cycle.iter().map(ToString::to_string).collect();
+        return Err(WorkError::refused(format!(
+            "this change makes `{}` wait on itself: {}",
+            record.slug,
+            names.join(" → ")
+        )));
+    }
     let mut warnings = Vec::new();
     for prerequisite in &record.after {
-        if above.contains(&prerequisite.id) {
-            return Err(WorkError::refused(format!(
-                "`{todo}` would wait on itself: {todo} → {group} → {todo} (`{group}` is the group `{todo}` belongs to)",
-                todo = record.slug,
-                group = prerequisite.slug
-            )));
-        }
-        if let Some(path) = path_to(s, prerequisite, &record.id) {
-            let mut names: Vec<String> = vec![record.slug.to_string()];
-            names.extend(path.iter().map(ToString::to_string));
-            return Err(WorkError::refused(format!(
-                "these prerequisites make a cycle: {}",
-                names.join(" → ")
-            )));
-        }
         if s.record_by_id(&prerequisite.id)
             .is_some_and(|r| r.status == TodoStatus::Iceboxed)
         {
@@ -1076,28 +1076,63 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     Ok(warnings)
 }
 
-/// The prerequisite chain from `from` back to `target`, if one exists.
-fn path_to(s: &mut Session<'_>, from: &TodoRef, target: &TodoId) -> Option<Vec<TodoSlug>> {
-    let mut stack: Vec<(TodoRef, Vec<TodoSlug>)> = vec![(from.clone(), vec![from.slug.clone()])];
+/// What a todo waits on: its prerequisites, and for a structural holder
+/// its children (a holder's milestone is every child's).
+fn waits_on(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoRef> {
+    let Some(record) = s.record_by_id(id) else {
+        return Vec::new();
+    };
+    let mut next = record.after.clone();
+    if record.status == TodoStatus::StructuralHolder {
+        let mut children: Vec<TodoRef> = s
+            .items
+            .iter()
+            .map(|it| &it.record)
+            .filter(|r| r.group.as_ref().is_some_and(|g| &g.id == id))
+            .map(TodoRecord::reference)
+            .collect();
+        for (remote, _) in s.remote_live() {
+            if remote.group.as_ref().is_some_and(|g| &g.id == id)
+                && !children.iter().any(|c| c.id == remote.id)
+            {
+                children.push(remote.reference());
+            }
+        }
+        next.extend(children);
+    }
+    next
+}
+
+/// A cycle of waiting through `record`, if the project graph has one: the
+/// slugs from `record` back to itself. A holder waits on its children, so
+/// reaching one of `record`'s holders closes the cycle through its group.
+fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
+    let above = ancestors(s, &record.id);
+    let mut stack: Vec<(TodoRef, Vec<TodoSlug>)> = waits_on(s, &record.id)
+        .into_iter()
+        .map(|next| {
+            let path = vec![record.slug.clone(), next.slug.clone()];
+            (next, path)
+        })
+        .collect();
     let mut seen: BTreeSet<TodoId> = BTreeSet::new();
     while let Some((current, path)) = stack.pop() {
-        if &current.id == target {
+        if current.id == record.id {
+            return Some(path);
+        }
+        if above.contains(&current.id) {
+            // The holder waits on its children down to `record`.
+            let mut path = path;
+            path.push(record.slug.clone());
             return Some(path);
         }
         if !seen.insert(current.id.clone()) {
             continue;
         }
-        let next = if let Some(index) = s.find_id(&current.id) {
-            s.items[index].record.after.clone()
-        } else {
-            s.record_by_id(&current.id)
-                .map(|r| r.after)
-                .unwrap_or_default()
-        };
-        for reference in next {
+        for next in waits_on(s, &current.id) {
             let mut longer = path.clone();
-            longer.push(reference.slug.clone());
-            stack.push((reference, longer));
+            longer.push(next.slug.clone());
+            stack.push((next, longer));
         }
     }
     None
