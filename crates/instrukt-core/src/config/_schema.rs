@@ -12,6 +12,12 @@ use crate::ids::{DomainName, ProjectSlug};
 /// The schema version this instrukt writes. The first is 1.
 pub const CURRENT_SCHEMA_VERSION: u64 = 1;
 
+/// The `blueprint.engine` values that name a shipped adapter: the only
+/// values a project layer may give it. Any other value is a command, which
+/// only the global layer may configure — a cloned repository does not
+/// decide what runs on a machine.
+pub const SHIPPED_BLUEPRINT_ENGINES: [&str; 1] = ["graphify"];
+
 /// The default `github.api_url`.
 pub(crate) const DEFAULT_GITHUB_API_URL: &str = "https://api.github.com";
 
@@ -38,16 +44,25 @@ enum Rule {
     GlobalOnly,
     ProjectOnly,
     Both,
+    /// Both layers may name a shipped adapter; the command form is global
+    /// only (`blueprint.engine`).
+    ShippedAdapterInProject,
 }
 
 impl Rule {
-    fn permits(self, layer: LayerKind) -> bool {
-        matches!(
-            (self, layer),
+    fn permits(self, layer: LayerKind, value: &Value) -> bool {
+        match (self, layer) {
             (Rule::Both, _)
-                | (Rule::GlobalOnly, LayerKind::Global)
-                | (Rule::ProjectOnly, LayerKind::Project)
-        )
+            | (Rule::GlobalOnly, LayerKind::Global)
+            | (Rule::ProjectOnly, LayerKind::Project)
+            | (Rule::ShippedAdapterInProject, LayerKind::Global) => true,
+            (Rule::ShippedAdapterInProject, LayerKind::Project) => value
+                .as_str()
+                .is_some_and(|name| SHIPPED_BLUEPRINT_ENGINES.contains(&name.trim())),
+            (Rule::GlobalOnly, LayerKind::Project) | (Rule::ProjectOnly, LayerKind::Global) => {
+                false
+            }
+        }
     }
 }
 
@@ -90,7 +105,7 @@ fn map(children: Vec<(&'static str, Node)>) -> Node {
 
 fn schema() -> Node {
     use Node::Leaf;
-    use Rule::{Both, GlobalOnly, ProjectOnly};
+    use Rule::{Both, GlobalOnly, ProjectOnly, ShippedAdapterInProject};
     map(vec![
         ("schema_version", Leaf(Both, Shape::Version)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
@@ -129,7 +144,10 @@ fn schema() -> Node {
             map(vec![("watch", Leaf(ProjectOnly, Shape::WatchList))]),
         ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
-        ("blueprint", map(vec![("engine", Leaf(Both, Shape::Str))])),
+        (
+            "blueprint",
+            map(vec![("engine", Leaf(ShippedAdapterInProject, Shape::Str))]),
+        ),
         (
             "runner",
             map(vec![
@@ -200,8 +218,23 @@ pub(crate) fn check(doc: &Value, layer: LayerKind) -> Vec<KeyFinding> {
 
 fn check_node(node: &Node, value: &Value, path: &str, layer: LayerKind, out: &mut Vec<KeyFinding>) {
     match node {
+        Node::Leaf(Rule::ShippedAdapterInProject, shape) => {
+            if Rule::ShippedAdapterInProject.permits(layer, value) || !value.is_string() {
+                check_shape(*shape, value, path, out);
+            } else {
+                out.push(KeyFinding::new(
+                    path,
+                    FindingKind::NotPermittedInLayer,
+                    format!(
+                        "a command is not permitted in the project layer (global layer only); \
+                         a project may only name a shipped adapter ({})",
+                        SHIPPED_BLUEPRINT_ENGINES.join(", ")
+                    ),
+                ));
+            }
+        }
         Node::Leaf(rule, shape) => {
-            if rule.permits(layer) {
+            if rule.permits(layer, value) {
                 check_shape(*shape, value, path, out);
             } else {
                 let other = match layer {
@@ -532,7 +565,7 @@ pub(crate) fn permitted(doc: &Value, layer: LayerKind) -> Value {
 
 fn filter_node(node: &Node, value: &Value, layer: LayerKind) -> Option<Value> {
     match node {
-        Node::Leaf(rule, _) => rule.permits(layer).then(|| value.clone()),
+        Node::Leaf(rule, _) => rule.permits(layer, value).then(|| value.clone()),
         Node::Map { children, open } => {
             let mapping = value.as_mapping()?;
             let mut out = Mapping::new();
@@ -617,7 +650,7 @@ mod tests {
         workflow: {domain: sdlc}\nevents: {watch: [{remote: origin, ref: main}]}\n\
         runner: {autostart: {build: true}}\n";
     const BOTH: &str = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\
-        blueprint: {engine: shipped}\n";
+        blueprint: {engine: graphify}\n";
 
     #[test]
     fn every_key_of_the_layer_table_is_permitted_in_its_layer() {
@@ -651,6 +684,23 @@ mod tests {
                 ("github.api_url", N),
             ]
         );
+    }
+
+    #[test]
+    fn an_engine_command_is_global_only_and_a_project_may_name_a_shipped_adapter() {
+        let command = yaml("schema_version: 1\nblueprint: {engine: ./map --json}\n");
+        assert_eq!(check(&command, LayerKind::Global), []);
+        assert_eq!(
+            judged(&check(&command, LayerKind::Project)),
+            [("blueprint.engine", FindingKind::NotPermittedInLayer)]
+        );
+        assert_eq!(
+            permitted(&command, LayerKind::Project),
+            yaml("schema_version: 1\n")
+        );
+        let shipped = yaml("schema_version: 1\nblueprint: {engine: graphify}\n");
+        assert_eq!(check(&shipped, LayerKind::Project), []);
+        assert_eq!(permitted(&shipped, LayerKind::Project), shipped);
     }
 
     #[test]

@@ -23,10 +23,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use instrukt_core::config::SHIPPED_BLUEPRINT_ENGINES;
+
 use crate::_contract::{ContractError, Graph};
 
-/// The `blueprint.engine` value naming the shipped adapter.
-pub const SHIPPED_ENGINE: &str = "graphify";
+/// The `blueprint.engine` value naming the shipped adapter; configuration
+/// owns the list of shipped adapter names a project layer may give.
+pub const SHIPPED_ENGINE: &str = SHIPPED_BLUEPRINT_ENGINES[0];
 
 /// The shipped adapter's program.
 const GRAPHIFY: &str = "graphify";
@@ -98,8 +101,9 @@ pub enum EngineError {
 }
 
 impl Engine {
-    /// The engine a `blueprint.engine` value selects; unset is the shipped
-    /// adapter.
+    /// The engine an effective `blueprint.engine` value selects; unset is
+    /// the shipped adapter. A command reaches here only from the global
+    /// layer: configuration drops a project layer's command.
     pub fn from_setting(setting: Option<&str>) -> Self {
         match setting.map(str::trim) {
             None | Some("") | Some(SHIPPED_ENGINE) => Self::Shipped,
