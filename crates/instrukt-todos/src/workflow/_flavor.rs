@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use instrukt_core::ids::RoleName;
+use instrukt_core::ids::{RoleName, SnippetId};
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_condition::Condition;
@@ -39,11 +39,24 @@ fn list(findings: &[Finding]) -> String {
         .join("\n")
 }
 
-/// A configured action: its command and its template's text.
+/// A configured action: its command, the procedure that command names (if
+/// any), and its template's text.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Action {
     pub command: String,
+    pub procedure: Option<SnippetId>,
     pub template: String,
+}
+
+/// The procedure id a command names as written: the word after
+/// `--procedure`, or after `docs get`; the first such naming wins.
+fn named_procedure(command: &str) -> Option<&str> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words.iter().enumerate().find_map(|(i, word)| match *word {
+        "--procedure" => words.get(i + 1).copied(),
+        "docs" if words.get(i + 1) == Some(&"get") => words.get(i + 2).copied(),
+        _ => None,
+    })
 }
 
 /// A configured effect.
@@ -79,6 +92,7 @@ pub(crate) struct Definition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Flavor {
     pub(crate) roles: Vec<RoleName>,
+    pub(crate) actions: BTreeMap<ActionId, Arc<Action>>,
     pub(crate) flows: BTreeMap<FlowName, Definition>,
 }
 
@@ -122,6 +136,12 @@ impl Flavor {
         match catalog {
             Some(catalog) if findings.is_empty() => Ok(Flavor {
                 roles: catalog.roles,
+                // Without findings, every declared action is valid.
+                actions: catalog
+                    .actions
+                    .into_iter()
+                    .filter_map(|(id, action)| action.map(|action| (id, action)))
+                    .collect(),
                 flows,
             }),
             _ => Err(FlavorError::Invalid {
@@ -134,6 +154,14 @@ impl Flavor {
     /// The roles `actions.yaml` declares, in declaration order.
     pub fn roles(&self) -> &[RoleName] {
         &self.roles
+    }
+
+    /// Each action whose command names a procedure, with that procedure, in
+    /// action-id order.
+    pub fn action_procedures(&self) -> impl Iterator<Item = (&ActionId, &SnippetId)> {
+        self.actions
+            .iter()
+            .filter_map(|(id, action)| action.procedure.as_ref().map(|p| (id, p)))
     }
 
     /// The orchestrator role a flow declares; `None` for an unknown flow.
@@ -338,12 +366,29 @@ fn parse_action(dir: &Path, id: &str, value: &Value, report: &mut Report<'_>) ->
     let fields = fields(value, id, &["command", "template"], report)?;
     let command = required_string(fields, "command", id, report);
     let template_path = required_string(fields, "template", id, report);
+    let procedure =
+        command
+            .and_then(named_procedure)
+            .and_then(|named| match SnippetId::parse(named) {
+                Ok(procedure) => Some(procedure),
+                Err(err) => {
+                    report.push(
+                        &format!("{id}.command"),
+                        Problem::InvalidProcedure {
+                            id: named.to_owned(),
+                            reason: err.rule.to_owned(),
+                        },
+                    );
+                    None
+                }
+            });
     let template = template_path.and_then(|path| read_template(dir, path, id, report));
     if report.count() > before {
         return None;
     }
     Some(Action {
         command: command?.to_owned(),
+        procedure,
         template: template?,
     })
 }
