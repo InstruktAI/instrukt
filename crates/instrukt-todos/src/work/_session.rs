@@ -94,6 +94,10 @@ pub(crate) struct Session<'w> {
     pub base: String,
     /// Local items whose recovery window expired when the session opened.
     pub purged: Vec<TodoSlug>,
+    /// Documentation files this command rewrote in the working tree.
+    pub docs_changed: Vec<std::path::PathBuf>,
+    /// A group parent's pending documentation owed to its first child.
+    pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
 }
 
 impl<'w> Session<'w> {
@@ -134,6 +138,8 @@ impl<'w> Session<'w> {
             now,
             base,
             purged: Vec::new(),
+            docs_changed: Vec::new(),
+            pending_transfer: None,
         };
         session.purge()?;
         Ok(session)

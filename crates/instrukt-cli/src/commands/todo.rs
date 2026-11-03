@@ -811,6 +811,10 @@ fn admission(slug: &TodoSlug) -> String {
 
 /// The reflection line every change prints.
 fn reflection<T>(ctx: &mut Ctx, outcome: &Outcome<T>) -> anyhow::Result<ExitCode> {
+    for path in &outcome.docs_changed {
+        ctx.out
+            .line(&format!("documentation to commit: {}", path.display()))?;
+    }
     ctx.out.line(&format!(
         "reflection: {}",
         reflection_word(&outcome.reflection)

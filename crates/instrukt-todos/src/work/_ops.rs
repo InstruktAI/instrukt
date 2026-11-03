@@ -76,6 +76,10 @@ pub enum Selection {
 pub struct Outcome<T> {
     pub value: T,
     pub reflection: ReflectionStatus,
+    /// Documentation files the change rewrote in the working tree (a
+    /// group parent's pending documentation moving to its first child),
+    /// repository-relative, for the caller to commit.
+    pub docs_changed: Vec<std::path::PathBuf>,
 }
 
 /// What `instrukt todo update` changed, with the warnings it raised.
@@ -220,12 +224,14 @@ impl Work {
                 join_group(s, index, parent, &actor)?;
             }
             check_prerequisites(s, index)?;
+            transfer_documentation(s)?;
             Ok(index)
         })?;
         s.flush()?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -330,6 +336,7 @@ impl Work {
                 warnings,
             },
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -345,6 +352,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -411,6 +419,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -482,6 +491,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -525,6 +535,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -602,6 +613,7 @@ impl Work {
             return Ok(Outcome {
                 value: stamp,
                 reflection: s.status(index),
+                docs_changed: std::mem::take(&mut s.docs_changed),
             });
         }
         let now = s.now;
@@ -645,6 +657,7 @@ impl Work {
                 .cloned()
                 .ok_or_else(|| WorkError::refused("the stamp was not recorded"))?,
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -740,6 +753,7 @@ impl Work {
         Ok(Outcome {
             value: written,
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -808,6 +822,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 }
@@ -944,6 +959,7 @@ fn apply_update(
         }
         record.claim = None;
     }
+    transfer_documentation(s)?;
     Ok(warnings)
 }
 
@@ -1155,6 +1171,10 @@ fn join_group(
     match holder.status {
         TodoStatus::StructuralHolder => {}
         TodoStatus::Active | TodoStatus::Iceboxed if !prepared(holder) => {
+            // Its pending documentation moves to its first child once the
+            // whole change has validated (see `transfer_documentation`).
+            s.pending_transfer = Some((holder.slug.clone(), child.slug.clone()));
+            let holder = &mut s.items[p].record;
             holder.status = TodoStatus::StructuralHolder;
             holder.claim = None;
             if let Some(hold) = holder.hold.take() {
@@ -1172,9 +1192,38 @@ fn join_group(
             )));
         }
     }
-    let reference = holder.reference();
+    let reference = s.items[p].record.reference();
     s.items[index].record.group = Some(reference);
     Ok(())
+}
+
+/// Moves a new structural holder's pending documentation to its first
+/// child (`dependencies-and-holds`, "Structural holders"), the last step of
+/// a validated change: the files are rewritten in the working tree and
+/// listed for the caller to commit. A docs refusal refuses the conversion.
+fn transfer_documentation(s: &mut Session<'_>) -> Result<(), WorkError> {
+    let Some((parent, child)) = s.pending_transfer.take() else {
+        return Ok(());
+    };
+    match instrukt_core::docs::transfer_pending(&s.project.root, &parent, &child) {
+        Ok(outcome) => {
+            s.docs_changed.extend(outcome.written);
+            s.docs_changed.extend(
+                outcome
+                    .renamed
+                    .into_iter()
+                    .flat_map(|(from, to)| [from, to]),
+            );
+            Ok(())
+        }
+        Err(instrukt_core::docs::DocsError::TransferRefused { path, reason }) => {
+            Err(WorkError::refused(format!(
+                "`{parent}` cannot become a group: its pending documentation cannot move to `{child}` ({}: {reason})",
+                path.display()
+            )))
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 /// Whether preparation completed: an approved plan review or task
