@@ -63,6 +63,9 @@ Given a project with the blueprint module on
 When a developer pushes a revision to main
 Then the push completes without waiting for the map
 And once mapping finishes, agents' structural answers reflect that revision and name it
+When several revisions are pushed while a mapping is still running
+Then the newest of them is mapped next and the ones between are skipped
+And agents' answers name the newest mapped revision
 ```
 
 Extension of UC-BG1: if mapping fails or is interrupted, agents continue

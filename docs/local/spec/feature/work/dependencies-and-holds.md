@@ -98,6 +98,8 @@ holders carry no dispatch hold; each child carries its own.
   Given a developer has a todo that needs other project work to be delivered first
   When they record those prerequisites
   Then the record retains every prerequisite needed for that delivery
+  But when a prerequisite or a grouping would make the todo wait on itself, directly or indirectly
+  Then the change is refused, names the cycle, and leaves the todo's prerequisites and group as they were
 ```
 
 #### UC-DH2: Pause work with a reason others can inspect
