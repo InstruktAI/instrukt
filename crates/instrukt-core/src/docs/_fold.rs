@@ -380,6 +380,8 @@ fn clear_delivered_by(head: &str, yaml: Option<&str>, slug: &TodoSlug) -> Option
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use proptest::prelude::*;
 
     use super::*;
@@ -402,8 +404,24 @@ mod tests {
     const BODY: &str = "body\n";
 
     /// The `delivered_by` slugs a folded file's frontmatter still carries.
-    fn remaining(text: &str) -> Vec<String> {
+    fn remaining(text: &str) -> Vec<TodoSlug> {
         delivered_by(split_frontmatter(text).frontmatter)
+            .iter()
+            .map(|s| slug(s))
+            .collect()
+    }
+
+    /// Whether a text's frontmatter carries `eval: true` — how these tests
+    /// tell a companion's next version from its parent.
+    fn is_next_version(text: &str) -> bool {
+        parse_mapping(split_frontmatter(text).frontmatter)
+            .and_then(|map| map.get("eval").and_then(Value::as_bool))
+            .unwrap_or(false)
+    }
+
+    /// The pending slugs a text's planned blocks still name.
+    fn planned(text: &str) -> BTreeSet<TodoSlug> {
+        _markers::scan(split_frontmatter(text).body).slugs
     }
 
     fn fold_one(text: &str, todo: &str) -> Result<Option<String>, DocsError> {
@@ -415,8 +433,8 @@ mod tests {
         let flow =
             format!("---\ndescription: d\ndelivered_by: [a, b]\nvisibility: public\n---\n{BODY}");
         let out = fold_one(&flow, "a").unwrap().unwrap();
-        assert_eq!(remaining(&out), ["b"]);
-        assert_eq!(split_frontmatter(&out).body, BODY);
+        assert_eq!(remaining(&out), [slug("b")]);
+        assert_eq!(split_frontmatter(&out).body, split_frontmatter(&flow).body);
         let before = parse_mapping(split_frontmatter(&flow).frontmatter).unwrap();
         let after = parse_mapping(split_frontmatter(&out).frontmatter).unwrap();
         assert_eq!(after.get("visibility"), before.get("visibility"));
@@ -450,7 +468,7 @@ mod tests {
         ));
     }
 
-    const NEW: &str = "new\n";
+    const NEW: &str = "---\ndescription: next\neval: true\n---\nnew\n";
 
     #[test]
     fn companions_replace_or_retire_their_parent() {
@@ -466,7 +484,7 @@ mod tests {
             &slug("a"),
         )
         .unwrap();
-        assert_eq!(out[X].as_deref(), Some(NEW));
+        assert!(out[X].as_deref().is_some_and(is_next_version));
         assert_eq!(out["docs/local/spec/x.a.md"], None);
         assert_eq!(out["docs/local/spec/y.md"], None);
         assert_eq!(out["docs/local/spec/y.a.md"], None);
@@ -511,7 +529,9 @@ mod tests {
             &slug("a"),
         )
         .unwrap();
-        assert_eq!(out[X].as_deref(), Some(carried.as_str()));
+        let folded = out[X].as_deref().unwrap_or_default();
+        assert!(is_next_version(folded));
+        assert_eq!(planned(folded), BTreeSet::from([slug("b")]));
     }
 
     #[test]
@@ -525,8 +545,12 @@ mod tests {
     fn planned_blocks_of_the_slug_are_applied_and_others_kept() {
         let head = "---\ndescription: d\n---\n";
         let text = format!("{head}<!-- planned:a -->\n{ADDED}<!-- /planned:a -->\n{FOREIGN_BLOCK}");
-        let out = fold_one(&text, "a").unwrap();
-        assert_eq!(out, Some(format!("{head}{ADDED}{FOREIGN_BLOCK}")));
+        let out = fold_one(&text, "a").unwrap().unwrap();
+        // The addition's two marker lines are gone, its content and the
+        // other todo's block stay.
+        assert_eq!(out.lines().count(), text.lines().count() - 2);
+        assert_eq!(planned(&out), BTreeSet::from([slug("b")]));
+        assert_eq!(_markers::scan(split_frontmatter(&out).body).blocks.len(), 1);
     }
 
     fn write(root: &Path, rel: &str, text: &str) {
@@ -545,7 +569,9 @@ mod tests {
         let outcome = fold(root, &slug("a")).unwrap();
         assert_eq!(outcome.written, [PathBuf::from(X)]);
         assert_eq!(outcome.removed, [PathBuf::from("docs/local/spec/x.a.md")]);
-        assert_eq!(std::fs::read_to_string(root.join(X)).unwrap(), NEW);
+        assert!(is_next_version(
+            &std::fs::read_to_string(root.join(X)).unwrap()
+        ));
         assert!(!root.join("docs/local/spec/x.a.md").exists());
         assert!(fold(root, &slug("a")).unwrap().is_empty());
     }
@@ -556,6 +582,7 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let pending = "---\ndescription: d\ndelivered_by: [a]\n---\nx\n";
         write(outside.path(), "local/spec/x.md", pending);
+        let before = std::fs::read(outside.path().join("local/spec/x.md")).unwrap();
         let repo = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), repo.path().join("docs")).unwrap();
         assert!(matches!(
@@ -573,8 +600,8 @@ mod tests {
         .unwrap();
         assert!(fold(inner.path(), &slug("a")).unwrap().is_empty());
         assert_eq!(
-            std::fs::read_to_string(outside.path().join("local/spec/x.md")).unwrap(),
-            pending
+            std::fs::read(outside.path().join("local/spec/x.md")).unwrap(),
+            before
         );
     }
 

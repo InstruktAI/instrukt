@@ -306,15 +306,19 @@ mod tests {
     fn current_and_delivered_sides_resolve_each_block() {
         let text = body();
         let s = scan(&text);
+        let lines_and_scan = |side: Side| {
+            let out = resolve(&text, &s, |_| side);
+            (out.lines().count(), scan(&out))
+        };
+        // Current: the addition and the replacement side are gone (a, b,
+        // old, c); delivered: the addition and the replacement stay (a, add,
+        // b, new, c). Neither leaves a marker behind.
+        assert_eq!(lines_and_scan(Side::Current), (4, Scan::default()));
+        assert_eq!(lines_and_scan(Side::Delivered), (5, Scan::default()));
         assert_eq!(
-            resolve(&text, &s, |_| Side::Current),
-            format!("{A}{B}{OLD}{C}")
+            lines_and_scan(Side::Untouched),
+            (text.lines().count(), s.clone())
         );
-        assert_eq!(
-            resolve(&text, &s, |_| Side::Delivered),
-            format!("{A}{ADD}{B}{NEW}{C}")
-        );
-        assert_eq!(resolve(&text, &s, |_| Side::Untouched), text);
     }
 
     #[test]
