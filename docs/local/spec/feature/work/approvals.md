@@ -34,7 +34,12 @@ Every recorded approval is eligible for carry only on a current independent
 reviewer's conclusion, under
 `local/projects/instrukt/spec/feature/workflow/preparation`. Carry retains the
 earlier source, identity and evidence and binds the current target. A carried
-peer approval remains a peer approval.
+peer approval remains a peer approval. A carry is recorded with
+`instrukt todo stamp <slug> --prd-approved --carry-from <stamp-id>` (or
+`--task-approved`), accepted only when a current review verdict `approve` binds
+the new digest; the new stamp records `carried_from`, so the original approver
+stays attributed. Without that verdict the carry is refused, naming the missing
+verdict.
 
 ### Intent check by position
 

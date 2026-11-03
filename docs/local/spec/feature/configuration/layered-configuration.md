@@ -179,7 +179,7 @@ introduced.
 - `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
-- Runtime entries carry `name`, `session_id_env`, `start`, `send`, `alive`, `conversation`, and optional command templates `notify`, `link`, `end` and `available`. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
+- Runtime entries carry `name`, `session_id_env`, `start`, `send`, `alive`, `conversation`, and optional command templates `notify`, `link`, `end`, `available` and `model`. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
 
 ## See Also
 

@@ -47,7 +47,7 @@ entry, a caller-relative `runtime.*` lookup fails clearly.
 An OS-started runner uses global `runner.runtime`, defaulting to the first
 entry in `runtimes`. Each global runtime entry declares `name`,
 `session_id_env`, and command templates `start`, `send`, `alive`,
-`conversation`, with optional `notify`, `link`, `end` and `available`. An entry with `agent: <name>` is an
+`conversation`, with optional `notify`, `link`, `end`, `available` and `model`. An entry with `agent: <name>` is an
 agent CLI; its git author comes from `agents.<name>.git_author`.
 One runner per computer uses its own runtime; targeting another computer's
 sessions is outside this contract.

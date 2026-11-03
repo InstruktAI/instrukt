@@ -147,7 +147,7 @@ Absent or empty evidence is absent; false and zero remain typed values.
 | `build_review.target_digest` | SHA |
 | `build_review.binding` | exact_target\|clean_upstream_merges\|todo_changed\|report_changed\|unbound\|undetermined |
 | `build_review.round` | int, informational |
-| `build_review.baseline_commit` | SHA, informational |
+| `build_review.baseline_commit` | SHA, informational: the build-start base commit current when the build-review verdict was stamped |
 | `deferrals.pending` | bool |
 | `finalize.status` | pending\|ready |
 | `finalize.sha` | SHA |

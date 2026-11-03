@@ -36,8 +36,10 @@ still serves. Unreflected local writes have no remote recovery guarantee.
 
 Every todo, including a task, an iceboxed todo and a structural holder, is
 reflected as an issue in its project's GitHub repository. The issue shows the
-current intent, kind where applicable, lifecycle position, hold or icebox state,
-group relationships and prerequisites. Delivery closes it as completed and
+current intent, kind where applicable, the record's status (active, iceboxed,
+held, delivered or withdrawn; never a workflow phase), hold or icebox state,
+group relationships and prerequisites, and beside each open approval gate a
+short prefix of the current evidence digest. Delivery closes it as completed and
 names the delivery evidence; removal closes it as withdrawn; restoration
 reopens it.
 
@@ -108,8 +110,18 @@ with the repository as owner, member or collaborator; a record comment by
 anyone else is logged and never applied.
 
 Inbound approvals and change requests are accepted only from logins in the
-project layer’s `github.approvers`. Other edits change no work record and are
-answered on the issue.
+project layer’s `github.approvers` with write access to the repository. An
+approver comments on the todo's issue:
+
+- `/instrukt approve <prd|task> <digest-prefix>` — applied by the next pull or
+  tick only when the prefix matches the current evidence digest of that gate,
+  with GitHub attribution. On a mismatch the issue is answered that the
+  evidence changed and must be approved again, and the record is unchanged.
+- `/instrukt request-changes <prd|task>` followed by the reason — needs no
+  digest.
+
+A comment from anyone else changes no work record and is answered on the
+issue.
 
 Reflection retains unfinished work across retries. Rate limiting defers
 reflection until the provider permits it; it does not lose local work. Issue,
@@ -163,6 +175,8 @@ the remote record before creating duplicate evidence.
 
 ## Known caveats
 
+- Records written by the predecessor's GitHub store are not read; the envelope
+  format is new and carries no compatibility with it.
 - A GitHub App bot posts with association `NONE`, so a record it wrote would be
   ignored; instrukt never writes records as an App.
 - GitHub reconstruction is limited to the artifact versions the provider

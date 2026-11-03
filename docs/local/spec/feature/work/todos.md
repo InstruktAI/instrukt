@@ -18,7 +18,10 @@ what was requested and the evidence produced while fulfilling it.
 A todo has a durable identity and a project-local slug. The slug is unique
 among addressable active, iceboxed and structural-holder entries. Retained
 delivered or removed entries keep their identities even when a later todo
-uses the same slug. An identity-addressed action acts on that exact entry.
+uses the same slug. An identity-addressed action acts on that exact entry: a
+retained item is addressed as `<slug>@<identity-prefix>`, and a plain slug
+always means the live item. Prerequisites are stored by durable identity and a
+delivered one is shown as `<slug> (delivered)`.
 
 `instrukt todo create <slug> <content> --kind <kind>` requires substantive
 content and an explicit kind. Without `--approved`, it prints the admission

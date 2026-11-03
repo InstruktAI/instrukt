@@ -106,6 +106,15 @@ Then due work can run without an interactive runner
 And missed-run decisions remain governed by each task’s policy
 ```
 
+#### UC-TT4: Recurring work continues after each run
+
+```gherkin
+Given a developer has an authorized recurring task
+And the project permits automatic pickup
+When an occurrence's run completes or fails and its outcome is recorded
+Then the next occurrence is dispatched when its time arrives
+```
+
 ## Known caveats
 
 None.
