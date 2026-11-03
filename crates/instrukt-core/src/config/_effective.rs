@@ -363,9 +363,24 @@ impl Configuration {
         }
     }
 
-    /// Whether the work board is on (`board`, default off).
-    pub fn board(&self) -> Result<bool, ConfigError> {
-        Ok(self.bool_at(&["board"])?.unwrap_or(false))
+    /// The GitHub project todos are reflected to (`board`: `false`, the
+    /// default, or `<owner>/<number>`). `true` names no project and is
+    /// refused, asking for the reference.
+    pub fn board(&self) -> Result<Option<BoardRef>, ConfigError> {
+        match self.at(&["board"]) {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => Ok(None),
+            Some(Value::Bool(true)) => Err(invalid(
+                "board",
+                "names no project; set it to the GitHub project `<owner>/<number>`, or `false`",
+            )),
+            Some(Value::String(text)) => board_ref(text)
+                .map(Some)
+                .ok_or_else(|| invalid("board", "is not `<owner>/<number>`")),
+            Some(_) => Err(invalid(
+                "board",
+                "is not `false` or a GitHub project `<owner>/<number>`",
+            )),
+        }
     }
 
     /// The modules the project's flavor requires (`requires`).
@@ -404,6 +419,25 @@ impl Configuration {
             Some(_) => Err(invalid(&path.join("."), "is not true or false")),
         }
     }
+}
+
+/// A GitHub project (Projects v2): its owner's login and its number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardRef {
+    pub owner: String,
+    pub number: u64,
+}
+
+/// `<owner>/<number>` read as a project reference.
+pub(crate) fn board_ref(text: &str) -> Option<BoardRef> {
+    let (owner, number) = text.split_once('/')?;
+    let owner_ok =
+        !owner.is_empty() && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let number: u64 = number.parse().ok().filter(|n| *n > 0)?;
+    owner_ok.then(|| BoardRef {
+        owner: owner.to_owned(),
+        number,
+    })
 }
 
 fn invalid(key: &str, message: &str) -> ConfigError {

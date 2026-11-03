@@ -179,7 +179,7 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     let env = TestEnv::new();
     let global = format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n");
     write_global(&env, &global);
-    let layer = "schema_version: 1\nproject: kept\nboard: true\nactions:\n  test: make test\n";
+    let layer = "schema_version: 1\nproject: kept\nboard: acme/7\nactions:\n  test: make test\n";
     let repo = project(&env, "kept", layer);
 
     env.run(repo.path(), ["config", "init"]).success();
@@ -201,7 +201,7 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
 /// layer's bytes.
 fn written_by_a_newer_instrukt(env: &TestEnv) -> (Repo, Vec<u8>) {
     let layer = format!(
-        "schema_version: {}\nproject: future\nboard: true\n",
+        "schema_version: {}\nproject: future\nboard: acme/7\n",
         CURRENT_SCHEMA_VERSION + 1
     );
     let repo = project(env, "future", &layer);
