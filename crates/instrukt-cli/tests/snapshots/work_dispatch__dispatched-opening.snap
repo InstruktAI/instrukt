@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/work-dispatch.rs
+expression: "project.rt.opening(\"s1\")"
+---
+Run `instrukt docs get acme/procedure/prepare-overview --closure` and execute that procedure.
+
+slug: tidy-imports
+$ARGUMENTS: tidy-imports

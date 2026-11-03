@@ -87,6 +87,11 @@ impl RunnerState {
         self.dir.join("validators").join(format!("{project}.json"))
     }
 
+    /// The failed task firings already reported as anomalies.
+    pub(crate) fn failed_firings(&self) -> PathBuf {
+        self.dir.join("failed-firings.json")
+    }
+
     /// Standing-agent session bindings, keyed by (procedure, project).
     pub(crate) fn standing(&self) -> PathBuf {
         self.dir.join("standing.json")
