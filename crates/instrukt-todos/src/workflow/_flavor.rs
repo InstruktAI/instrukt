@@ -3,9 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
-use instrukt_core::ids::RoleName;
+use instrukt_core::ids::{RoleName, SnippetId};
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_condition::Condition;
@@ -39,11 +38,24 @@ fn list(findings: &[Finding]) -> String {
         .join("\n")
 }
 
-/// A configured action: its command and its template's text.
+/// A configured action: its command, the procedure that command names (if
+/// any), and its template's text.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Action {
     pub command: String,
+    pub procedure: Option<SnippetId>,
     pub template: String,
+}
+
+/// The procedure id a command names as written: the word after
+/// `--procedure`, or after `docs get`; the first such naming wins.
+fn named_procedure(command: &str) -> Option<&str> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words.iter().enumerate().find_map(|(i, word)| match *word {
+        "--procedure" => words.get(i + 1).copied(),
+        "docs" if words.get(i + 1) == Some(&"get") => words.get(i + 2).copied(),
+        _ => None,
+    })
 }
 
 /// A configured effect.
@@ -53,15 +65,17 @@ pub(crate) struct Effect {
     pub done_when: Option<Condition>,
 }
 
-/// One ordered transition of a definition, its references resolved. Actions
-/// and effects are shared by every transition naming them.
+/// One ordered transition of a definition, its references resolved. Each
+/// transition owns a copy of the action and effects it names: a flavor is
+/// loaded once per call and is small, and owned copies keep evaluation free
+/// of lookups that could fail.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Transition {
     pub from: StateName,
     pub to: StateName,
     pub when: Condition,
-    pub action: (ActionId, Arc<Action>),
-    pub effects: Vec<(EffectName, Arc<Effect>)>,
+    pub action: (ActionId, Action),
+    pub effects: Vec<(EffectName, Effect)>,
 }
 
 /// A flow definition. States are validated at load; evaluation needs only
@@ -79,6 +93,7 @@ pub(crate) struct Definition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Flavor {
     pub(crate) roles: Vec<RoleName>,
+    pub(crate) actions: BTreeMap<ActionId, Action>,
     pub(crate) flows: BTreeMap<FlowName, Definition>,
 }
 
@@ -122,6 +137,12 @@ impl Flavor {
         match catalog {
             Some(catalog) if findings.is_empty() => Ok(Flavor {
                 roles: catalog.roles,
+                // Without findings, every declared action is valid.
+                actions: catalog
+                    .actions
+                    .into_iter()
+                    .filter_map(|(id, action)| action.map(|action| (id, action)))
+                    .collect(),
                 flows,
             }),
             _ => Err(FlavorError::Invalid {
@@ -134,6 +155,14 @@ impl Flavor {
     /// The roles `actions.yaml` declares, in declaration order.
     pub fn roles(&self) -> &[RoleName] {
         &self.roles
+    }
+
+    /// Each action whose command names a procedure, with that procedure, in
+    /// action-id order.
+    pub fn action_procedures(&self) -> impl Iterator<Item = (&ActionId, &SnippetId)> {
+        self.actions
+            .iter()
+            .filter_map(|(id, action)| action.procedure.as_ref().map(|p| (id, p)))
     }
 
     /// The orchestrator role a flow declares; `None` for an unknown flow.
@@ -226,8 +255,8 @@ fn read_yaml(dir: &Path, file: &str, findings: &mut Vec<Finding>) -> Option<Valu
 /// reported again as unknown.
 struct Catalog {
     roles: Vec<RoleName>,
-    actions: BTreeMap<ActionId, Option<Arc<Action>>>,
-    effects: BTreeMap<EffectName, Option<Arc<Effect>>>,
+    actions: BTreeMap<ActionId, Option<Action>>,
+    effects: BTreeMap<EffectName, Option<Effect>>,
 }
 
 fn parse_actions(dir: &Path, doc: &Value, findings: &mut Vec<Finding>) -> Option<Catalog> {
@@ -257,7 +286,7 @@ fn parse_actions(dir: &Path, doc: &Value, findings: &mut Vec<Finding>) -> Option
             }
             "effects" => catalog.effects = parse_effects(value, &mut report),
             id => {
-                let action = parse_action(dir, id, value, &mut report).map(Arc::new);
+                let action = parse_action(dir, id, value, &mut report);
                 catalog.actions.insert(ActionId::new(id), action);
             }
         }
@@ -292,10 +321,7 @@ fn parse_roles(value: &Value, report: &mut Report<'_>) -> Vec<RoleName> {
     roles
 }
 
-fn parse_effects(
-    value: &Value,
-    report: &mut Report<'_>,
-) -> BTreeMap<EffectName, Option<Arc<Effect>>> {
+fn parse_effects(value: &Value, report: &mut Report<'_>) -> BTreeMap<EffectName, Option<Effect>> {
     let mut effects = BTreeMap::new();
     let Value::Mapping(map) = value else {
         report.push("effects", Problem::Shape("a map of effects"));
@@ -307,7 +333,7 @@ fn parse_effects(
             continue;
         };
         let effect = parse_effect(value, &format!("effects.{name}"), report);
-        effects.insert(EffectName::new(name), effect.map(Arc::new));
+        effects.insert(EffectName::new(name), effect);
     }
     effects
 }
@@ -338,12 +364,29 @@ fn parse_action(dir: &Path, id: &str, value: &Value, report: &mut Report<'_>) ->
     let fields = fields(value, id, &["command", "template"], report)?;
     let command = required_string(fields, "command", id, report);
     let template_path = required_string(fields, "template", id, report);
+    let procedure =
+        command
+            .and_then(named_procedure)
+            .and_then(|named| match SnippetId::parse(named) {
+                Ok(procedure) => Some(procedure),
+                Err(err) => {
+                    report.push(
+                        &format!("{id}.command"),
+                        Problem::InvalidProcedure {
+                            id: named.to_owned(),
+                            reason: err.rule.to_owned(),
+                        },
+                    );
+                    None
+                }
+            });
     let template = template_path.and_then(|path| read_template(dir, path, id, report));
     if report.count() > before {
         return None;
     }
     Some(Action {
         command: command?.to_owned(),
+        procedure,
         template: template?,
     })
 }
@@ -359,12 +402,28 @@ fn read_template(dir: &Path, path: &str, id: &str, report: &mut Report<'_>) -> O
         report.push(&at, Problem::TemplateOutside(path.to_owned()));
         return None;
     }
-    let text = match std::fs::read_to_string(dir.join(relative)) {
-        Ok(text) => text,
+    // The lexical check cannot see symlinks: resolve both sides and require
+    // the resolved template inside the resolved directory before reading.
+    let resolved = dir
+        .canonicalize()
+        .and_then(|root| Ok((root, dir.join(relative).canonicalize()?)));
+    let target = match resolved {
+        Ok((root, target)) if target.starts_with(&root) => target,
+        Ok(_) => {
+            report.push(&at, Problem::TemplateOutside(path.to_owned()));
+            return None;
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             report.push(&at, Problem::TemplateMissing(path.to_owned()));
             return None;
         }
+        Err(err) => {
+            report.push(&at, Problem::Unreadable(format!("{path}: {err}")));
+            return None;
+        }
+    };
+    let text = match std::fs::read_to_string(&target) {
+        Ok(text) => text,
         Err(err) => {
             report.push(&at, Problem::Unreadable(format!("{path}: {err}")));
             return None;
@@ -517,7 +576,7 @@ fn parse_transition(
                 );
                 None
             }
-            Some((id, action)) => action.as_ref().map(|a| (id.clone(), Arc::clone(a))),
+            Some((id, action)) => action.as_ref().map(|a| (id.clone(), a.clone())),
         }
     });
     let effects = match fields.get("effects") {
@@ -532,9 +591,7 @@ fn parse_transition(
                             report.push(&item_at, Problem::UnknownEffect(name.to_owned()));
                             None
                         }
-                        Some((name, effect)) => {
-                            effect.as_ref().map(|e| (name.clone(), Arc::clone(e)))
-                        }
+                        Some((name, effect)) => effect.as_ref().map(|e| (name.clone(), e.clone())),
                     }
                 });
                 match (resolved, effects.as_mut()) {
@@ -632,38 +689,44 @@ transitions:
   effects: [refresh]
 ";
 
-    fn findings(files: &[(&str, &str)]) -> Vec<String> {
+    const TEMPLATE: (&str, &str) = ("templates/build.md", "x");
+
+    fn findings(files: &[(&str, &str)]) -> Vec<Finding> {
         let dir = flavor_dir(files);
         match Flavor::load(dir.path()) {
             Ok(_) => Vec::new(),
-            Err(FlavorError::Invalid { findings, .. }) => {
-                findings.iter().map(ToString::to_string).collect()
-            }
-            Err(err) => vec![err.to_string()],
+            Err(FlavorError::Invalid { findings, .. }) => findings,
+            Err(err) => panic!("not a validation outcome: {err:?}"),
         }
+    }
+
+    fn finding(file: &str, location: &str, problem: Problem) -> Finding {
+        Finding {
+            file: PathBuf::from(file),
+            location: location.to_owned(),
+            problem,
+        }
+    }
+
+    fn role(name: &str) -> RoleName {
+        RoleName::parse(name).unwrap()
     }
 
     #[test]
     fn a_valid_flavor_loads_with_its_roles_and_flows() {
-        let dir = flavor_dir(&[
-            ("actions.yaml", ACTIONS),
-            ("work.yaml", FLOW),
-            ("templates/build.md", "Build {slug}"),
-        ]);
+        let dir = flavor_dir(&[("actions.yaml", ACTIONS), ("work.yaml", FLOW), TEMPLATE]);
         let flavor = Flavor::load(dir.path()).unwrap();
-        let roles: Vec<_> = flavor.roles().iter().map(RoleName::as_str).collect();
-        assert_eq!(roles, ["builder", "reviewer"]);
-        let flows: Vec<_> = flavor.flows().map(FlowName::as_str).collect();
-        assert_eq!(flows, ["work"]);
+        assert_eq!(flavor.roles(), [role("builder"), role("reviewer")]);
+        let flows: Vec<_> = flavor.flows().cloned().collect();
+        assert_eq!(flows, [FlowName::new("work")]);
     }
 
     #[test]
     fn the_sdlc_flavor_loads_without_findings() {
         let flavor = Flavor::load(&sdlc_dir()).unwrap_or_else(|err| panic!("{err}"));
-        let flows: Vec<_> = flavor.flows().map(FlowName::as_str).collect();
-        assert_eq!(flows, ["prepare", "work"]);
-        assert_eq!(flavor.roles().len(), 25);
-        assert!(flavor.roles().iter().any(|r| r.as_str() == "integrator"));
+        let flows: Vec<_> = flavor.flows().cloned().collect();
+        assert_eq!(flows, [FlowName::new("prepare"), FlowName::new("work")]);
+        assert!(flavor.roles().contains(&role("integrator")));
     }
 
     #[test]
@@ -675,50 +738,52 @@ transitions:
 
     #[test]
     fn every_flow_declares_an_orchestrator_role_from_roles() {
-        let template = ("templates/build.md", "x");
         let actions = ("actions.yaml", ACTIONS);
         let without = FLOW.replace("orchestrator: builder\n", "");
         assert_eq!(
-            findings(&[actions, ("work.yaml", &without), template]),
-            ["work.yaml: required key `orchestrator` is missing"]
+            findings(&[actions, ("work.yaml", &without), TEMPLATE]),
+            [finding(
+                "work.yaml",
+                "",
+                Problem::MissingKey("orchestrator")
+            )]
         );
         let undeclared = FLOW.replace("orchestrator: builder", "orchestrator: integrator");
         assert_eq!(
-            findings(&[actions, ("work.yaml", &undeclared), template]),
-            [
-                "work.yaml: orchestrator: orchestrator role `integrator` is not declared under `roles` in actions.yaml"
-            ]
+            findings(&[actions, ("work.yaml", &undeclared), TEMPLATE]),
+            [finding(
+                "work.yaml",
+                "orchestrator",
+                Problem::UndeclaredOrchestrator("integrator".into())
+            )]
         );
-        let dir = flavor_dir(&[actions, ("work.yaml", FLOW), template]);
+        let dir = flavor_dir(&[actions, ("work.yaml", FLOW), TEMPLATE]);
         let flavor = Flavor::load(dir.path()).unwrap();
-        assert_eq!(
-            flavor.orchestrator("work").map(RoleName::as_str),
-            Some("builder")
-        );
+        assert_eq!(flavor.orchestrator("work"), Some(&role("builder")));
         assert_eq!(flavor.orchestrator("prepare"), None);
     }
 
     #[test]
     fn roles_must_be_present_non_empty_unique_and_well_formed() {
-        let template = ("templates/build.md", "x");
         let flow = ("work.yaml", FLOW);
         let without = ACTIONS.replace("roles: [builder, reviewer]\n", "");
-        assert_eq!(
-            findings(&[("actions.yaml", &without), flow, template]),
-            ["actions.yaml: required key `roles` is missing"]
-        );
+        let got = findings(&[("actions.yaml", &without), flow, TEMPLATE]);
+        assert!(got.contains(&finding("actions.yaml", "", Problem::MissingKey("roles"))));
         let empty = ACTIONS.replace("[builder, reviewer]", "[]");
-        assert_eq!(
-            findings(&[("actions.yaml", &empty), flow, template]),
-            ["actions.yaml: roles: `roles` must list at least one role"]
-        );
+        let got = findings(&[("actions.yaml", &empty), flow, TEMPLATE]);
+        assert!(got.contains(&finding("actions.yaml", "roles", Problem::NoRoles)));
         let duplicate = ACTIONS.replace("[builder, reviewer]", "[builder, ' padded', builder]");
-        let got = findings(&[("actions.yaml", &duplicate), flow, template]);
+        let got = findings(&[("actions.yaml", &duplicate), flow, TEMPLATE]);
         assert_eq!(got.len(), 2);
-        assert!(got[0].starts_with("actions.yaml: roles[1]: invalid role ` padded`"));
+        assert_eq!(got[0].location, "roles[1]");
+        assert!(matches!(got[0].problem, Problem::InvalidRole(_)));
         assert_eq!(
             got[1],
-            "actions.yaml: roles[2]: role `builder` is declared more than once"
+            finding(
+                "actions.yaml",
+                "roles[2]",
+                Problem::DuplicateRole("builder".into())
+            )
         );
     }
 
@@ -736,19 +801,125 @@ other:
         assert_eq!(
             findings(&[("actions.yaml", actions)]),
             [
-                "actions.yaml: build: unknown key `extra`",
-                "actions.yaml: build: required key `command` is missing",
-                "actions.yaml: build.template: template path `../outside.md` must stay within workflow/",
-                "actions.yaml: other.template: template `templates/missing.md` does not exist",
+                finding("actions.yaml", "build", Problem::UnknownKey("extra".into())),
+                finding("actions.yaml", "build", Problem::MissingKey("command")),
+                finding(
+                    "actions.yaml",
+                    "build.template",
+                    Problem::TemplateOutside("../outside.md".into())
+                ),
+                finding(
+                    "actions.yaml",
+                    "other.template",
+                    Problem::TemplateMissing("templates/missing.md".into())
+                ),
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_template_symlinked_outside_the_workflow_directory_is_refused() {
+        let outside = flavor_dir(&[("secret.md", "outside {slug}")]);
+        let dir = flavor_dir(&[("actions.yaml", ACTIONS), ("work.yaml", FLOW)]);
+        std::fs::create_dir_all(dir.path().join("templates")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.md"),
+            dir.path().join("templates/build.md"),
+        )
+        .unwrap();
+        let err = Flavor::load(dir.path()).unwrap_err();
+        let FlavorError::Invalid { findings, .. } = err else {
+            panic!("expected findings");
+        };
+        assert_eq!(
+            findings,
+            [finding(
+                "actions.yaml",
+                "build.template",
+                Problem::TemplateOutside("templates/build.md".into())
+            )]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_template_symlinked_within_the_workflow_directory_loads() {
+        let dir = flavor_dir(&[
+            ("actions.yaml", ACTIONS),
+            ("work.yaml", FLOW),
+            ("shared/build.md", "x"),
+        ]);
+        std::fs::create_dir_all(dir.path().join("templates")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("shared/build.md"),
+            dir.path().join("templates/build.md"),
+        )
+        .unwrap();
+        assert!(Flavor::load(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn a_command_names_its_procedure_through_either_form() {
+        let actions = "\
+roles: [builder]
+run:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug}
+  template: templates/build.md
+read:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  template: templates/build.md
+show:
+  command: instrukt todo show {slug}
+  template: templates/build.md
+";
+        let dir = flavor_dir(&[("actions.yaml", actions), TEMPLATE]);
+        let flavor = Flavor::load(dir.path()).unwrap();
+        let procedures: Vec<(ActionId, SnippetId)> = flavor
+            .action_procedures()
+            .map(|(id, p)| (id.clone(), p.clone()))
+            .collect();
+        assert_eq!(
+            procedures,
+            [
+                (
+                    ActionId::new("read"),
+                    SnippetId::parse("sdlc/procedure/lifecycle/prepare/intake").unwrap()
+                ),
+                (
+                    ActionId::new("run"),
+                    SnippetId::parse("sdlc/procedure/lifecycle/work/build").unwrap()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_command_naming_an_invalid_procedure_id_is_a_finding() {
+        let actions = "\
+roles: [builder]
+build:
+  command: instrukt sessions run --procedure not/a-taxonomy/x --brief -
+  template: templates/build.md
+";
+        let got = findings(&[("actions.yaml", actions), TEMPLATE]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].location, "build.command");
+        assert!(matches!(
+            &got[0].problem,
+            Problem::InvalidProcedure { id, .. } if id == "not/a-taxonomy/x"
+        ));
     }
 
     #[test]
     fn a_reference_to_a_declared_but_invalid_action_is_reported_once() {
         assert_eq!(
             findings(&[("actions.yaml", ACTIONS), ("work.yaml", FLOW)]),
-            ["actions.yaml: build.template: template `templates/build.md` does not exist"]
+            [finding(
+                "actions.yaml",
+                "build.template",
+                Problem::TemplateMissing("templates/build.md".into())
+            )]
         );
     }
 
@@ -769,8 +940,12 @@ effects:
                 ("templates/build.md", "see {brief}")
             ]),
             [
-                "actions.yaml: build.template: `{brief}` is the rendered template and is not available here",
-                "actions.yaml: effects.notify.command: `{brief}` is the rendered template and is not available here",
+                finding("actions.yaml", "build.template", Problem::BriefUnavailable),
+                finding(
+                    "actions.yaml",
+                    "effects.notify.command",
+                    Problem::BriefUnavailable
+                ),
             ]
         );
     }
@@ -792,21 +967,36 @@ transitions:
   to: start
   action: build
 ";
+        let at = |location: &str, problem| finding("work.yaml", location, problem);
         assert_eq!(
-            findings(&[
-                ("actions.yaml", ACTIONS),
-                ("templates/build.md", "x"),
-                ("work.yaml", flow),
-            ]),
+            findings(&[("actions.yaml", ACTIONS), TEMPLATE, ("work.yaml", flow)]),
             [
-                "work.yaml: flow: declared `flow: prepare` does not match the file name `work`",
-                "work.yaml: states[2]: state `start` is declared more than once",
-                "work.yaml: initial: state `begin` is not declared in `states`",
-                "work.yaml: transitions[0].to: state `nowhere` is not declared in `states`",
-                "work.yaml: transitions[0].when.exists: `prd.digst` is not a fact the workflow declares",
-                "work.yaml: transitions[0].action: action `deploy` is not configured in actions.yaml",
-                "work.yaml: transitions[0].effects[1]: effect `notify` is not configured under `effects` in actions.yaml",
-                "work.yaml: transitions[1]: required key `when` is missing",
+                at(
+                    "flow",
+                    Problem::FlowMismatch {
+                        declared: "prepare".into(),
+                        expected: "work".into()
+                    }
+                ),
+                at("states[2]", Problem::DuplicateState("start".into())),
+                at("initial", Problem::UndeclaredState("begin".into())),
+                at(
+                    "transitions[0].to",
+                    Problem::UndeclaredState("nowhere".into())
+                ),
+                at(
+                    "transitions[0].when.exists",
+                    Problem::UnknownFact("prd.digst".into())
+                ),
+                at(
+                    "transitions[0].action",
+                    Problem::UnknownAction("deploy".into())
+                ),
+                at(
+                    "transitions[0].effects[1]",
+                    Problem::UnknownEffect("notify".into())
+                ),
+                at("transitions[1]", Problem::MissingKey("when")),
             ]
         );
     }
@@ -815,22 +1005,22 @@ transitions:
     fn unparsable_yaml_names_its_line_and_column() {
         let got = findings(&[
             ("actions.yaml", ACTIONS),
-            ("templates/build.md", "x"),
+            TEMPLATE,
             ("work.yaml", "flow: [unclosed\n"),
         ]);
         assert_eq!(got.len(), 1);
-        assert!(
-            got[0].starts_with("work.yaml: 2:1: not valid YAML"),
-            "{}",
-            got[0]
+        assert_eq!(
+            (got[0].file.as_path(), got[0].location.as_str()),
+            (Path::new("work.yaml"), "2:1")
         );
+        assert!(matches!(got[0].problem, Problem::Yaml(_)));
     }
 
     #[test]
     fn a_missing_actions_file_is_a_finding() {
         assert_eq!(
             findings(&[("work.yaml", FLOW)]),
-            ["actions.yaml: the file is missing"]
+            [finding("actions.yaml", "", Problem::MissingFile)]
         );
     }
 }

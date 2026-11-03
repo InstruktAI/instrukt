@@ -16,16 +16,18 @@ mod _finding;
 mod _flavor;
 mod _names;
 mod _render;
+mod _schema;
 #[cfg(test)]
 mod _sdlc_flavor;
 #[cfg(test)]
 mod _testing;
 
 pub use _derive::{
-    Derivation, EvaluationError, Obligation, OwedEffect, SelectedTransition, Subject,
+    Derivation, EvaluationError, Obligation, OwedEffect, Responsible, SelectedTransition, Subject,
 };
 pub use _facts::{BoundSession, FactError, FactName, FactType, FactValue, Facts};
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError};
 pub use _names::{ActionId, EffectName, FlowName, StateName};
 pub use _render::{ConfigLookup, ConfigLookupError, RenderFailure, RenderFinding, Rendering};
+pub use _schema::WorkflowSchema;

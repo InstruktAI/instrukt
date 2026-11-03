@@ -271,14 +271,18 @@ impl Facts {
     pub fn insert(&mut self, name: &str, value: FactValue) -> Result<(), FactError> {
         let fact = FactName::parse(name).ok_or_else(|| FactError::Unknown(name.to_owned()))?;
         let expected = fact.fact_type();
-        if !value.fits(expected) {
+        // Empty evidence is absent whatever the type, so an empty enum text
+        // clears the fact rather than failing membership.
+        let empty_text = matches!(&value, FactValue::Text(text) if text.is_empty())
+            && matches!(expected, FactType::Text | FactType::Enum(_));
+        if !empty_text && !value.fits(expected) {
             return Err(FactError::WrongType {
                 name: fact,
                 expected,
                 given: value,
             });
         }
-        if value.is_empty() {
+        if empty_text || value.is_empty() {
             self.values.remove(&fact);
         } else {
             self.values.insert(fact, value);
@@ -359,6 +363,28 @@ mod tests {
             .insert("prd.digest", FactValue::Text(String::new()))
             .unwrap();
         assert_eq!(facts.iter().count(), 0);
+    }
+
+    #[test]
+    fn empty_enum_evidence_clears_an_earlier_member() {
+        let verdict = FactName::parse("prd_review.verdict").unwrap();
+        let mut facts = Facts::new();
+        facts
+            .insert("prd_review.verdict", FactValue::Text("approve".into()))
+            .unwrap();
+        assert_eq!(
+            facts.insert("prd_review.verdict", FactValue::Text(String::new())),
+            Ok(())
+        );
+        assert_eq!(facts.get(verdict), None);
+    }
+
+    #[test]
+    fn empty_text_is_not_a_boolean() {
+        assert!(matches!(
+            Facts::new().insert("build.complete", FactValue::Text(String::new())),
+            Err(FactError::WrongType { .. })
+        ));
     }
 
     #[test]

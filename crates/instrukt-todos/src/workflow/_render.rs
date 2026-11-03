@@ -223,7 +223,8 @@ mod tests {
         let config = |path: &str| -> Result<Option<String>, ConfigLookupError> {
             Ok(Some(format!("config:{path}")))
         };
-        let brief: Rendering = Ok("the brief".into());
+        let brief_text = "the brief".to_owned();
+        let brief: Rendering = Ok(brief_text.clone());
         let (slug, project) = (slug(), project());
         let bindings = Bindings {
             slug: &slug,
@@ -233,16 +234,15 @@ mod tests {
             config: &config,
         };
         assert_eq!(
-            render("{slug} {project} {kind} {brief}", &bindings),
-            Ok("first-build instrukt bug the brief".into())
+            render("{slug}|{project}|{kind}|{brief}", &bindings),
+            Ok(format!("{slug}|{project}|bug|{brief_text}"))
         );
     }
 
     #[test]
     fn an_absent_declared_fact_does_not_fall_through_to_configuration() {
-        let config = |path: &str| -> Result<Option<String>, ConfigLookupError> {
-            Ok(Some(format!("config:{path}")))
-        };
+        let config =
+            |path: &str| -> Result<Option<String>, ConfigLookupError> { Ok(Some(path.to_owned())) };
         let (slug, project, facts) = (slug(), project(), Facts::new());
         let bindings = Bindings {
             slug: &slug,
@@ -259,7 +259,7 @@ mod tests {
         );
         assert_eq!(
             render("{runtime.session_id}", &bindings),
-            Ok("config:runtime.session_id".into())
+            Ok("runtime.session_id".to_owned())
         );
     }
 
@@ -319,8 +319,8 @@ mod tests {
             config: &no_config,
         };
         assert_eq!(
-            render("--args '{claim_commits.unreviewed}'", &bindings),
-            Ok(format!("--args '{a} {b}'"))
+            render("{claim_commits.unreviewed}", &bindings),
+            Ok(format!("{a} {b}"))
         );
     }
 
