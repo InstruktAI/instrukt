@@ -15,6 +15,7 @@
 
 mod _adoption;
 mod _commit;
+mod _contain;
 mod _error;
 mod _filter;
 mod _git;
@@ -43,4 +44,7 @@ pub use _run::{
     run_hook, run_hook_worker,
 };
 pub use _section::{SECTION_END, SECTION_START, SectionError, hook_run_line};
-pub use _stamp::{ReviewNotes, Stamp, StampOutcome, read_review_notes, stamp};
+pub use _stamp::{
+    CommitReview, ReviewNotes, Settlement, Stamp, StampOutcome, StampTime, TimedStamp, Verdict,
+    read_review_notes, stamp,
+};

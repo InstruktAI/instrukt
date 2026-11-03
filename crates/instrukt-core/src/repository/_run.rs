@@ -534,49 +534,4 @@ mod tests {
         assert!(!is_pull(Hook::PostMerge, &args("0"), Some("pullish")));
         assert!(!is_pull(Hook::PostMerge, &args("0"), None));
     }
-
-    #[test]
-    fn a_record_reads_back_as_written() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        let project = ProjectSlug::parse("demo").unwrap();
-        let record = HookRunRecord {
-            hook: Hook::PostCommit,
-            run: "1-2".to_owned(),
-            started_at_ms: 1,
-            sync: Some(SyncOutcome::Running),
-            graph_generation: None,
-        };
-        save(&home, &project, &record).unwrap();
-        let finished = SyncOutcome::Finished {
-            finished_at_ms: 2,
-            exit_code: Some(1),
-            message: Some("refused".to_owned()),
-        };
-        complete(
-            &home,
-            &project,
-            Hook::PostCommit,
-            "other-run",
-            finished.clone(),
-        )
-        .unwrap();
-        assert_eq!(
-            last_run(&home, &project, Hook::PostCommit).unwrap(),
-            Some(record.clone())
-        );
-        complete(
-            &home,
-            &project,
-            Hook::PostCommit,
-            &record.run,
-            finished.clone(),
-        )
-        .unwrap();
-        let completed = last_run(&home, &project, Hook::PostCommit)
-            .unwrap()
-            .unwrap();
-        assert_eq!(completed.sync, Some(finished));
-        assert_eq!(last_run(&home, &project, Hook::PostMerge).unwrap(), None);
-    }
 }

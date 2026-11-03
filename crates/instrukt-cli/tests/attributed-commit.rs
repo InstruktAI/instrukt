@@ -52,11 +52,29 @@ runtimes:
     conversation: claude history {{runtime.session_id}}
 agents:
   claude:
-    git_author: Claude Agent <claude-agent@example.test>
+    git_author: Claude Agent <${{AGENT_EMAIL}}>
 "
         ),
     )
     .unwrap();
+}
+
+/// `text` with each stamp time (`at: <RFC 3339>`) shown as `<time N>`,
+/// numbered in time order, so a snapshot keeps which stamp came first.
+fn timeless(text: &str) -> String {
+    const MARK: &str = "at: ";
+    let mut times: Vec<&str> = text
+        .match_indices(MARK)
+        .filter_map(|(at, _)| text.get(at + MARK.len()..)?.split(';').next())
+        .collect();
+    times.sort_unstable();
+    times.dedup();
+    times
+        .iter()
+        .enumerate()
+        .fold(text.to_owned(), |text, (index, time)| {
+            text.replace(time, &format!("<time {}>", index + 1))
+        })
 }
 
 /// The last commit as git reads it back: author, committer and message.
@@ -86,6 +104,7 @@ fn an_agent_commits_its_work_under_its_own_name_with_its_session() {
     configure_machine(&env);
     env.set_env("THREAD_HOST_ID", "thread-7");
     env.set_env("CLAUDE_SESSION_ID", "claude-3");
+    env.set_env("AGENT_EMAIL", "claude-agent@example.test");
     let repo = env.git_repo("demo");
     repo.write("README.md", "# demo\n");
     repo.commit("the developer's first commit");
@@ -255,7 +274,7 @@ fn review_outcomes_and_exemptions_are_noted_on_each_commit_in_order() {
 
     let notes_arg = format!("--notes={REVIEW_NOTES_REF}");
     let notes = repo.git(["log", "--reverse", "--format=%H%n%N--", notes_arg.as_str()]);
-    insta::assert_snapshot!("notes-in-order", label(notes));
+    insta::assert_snapshot!("notes-in-order", timeless(&label(notes)));
 }
 
 /// A machine's clone of `remote` at `<test dir>/<name>`.
@@ -316,7 +335,7 @@ fn a_second_machine_stamping_after_the_first_merges_both_outcomes_onto_the_remot
     );
     insta::assert_snapshot!(
         "remote-note-with-both-outcomes",
-        remote_note(&env, &remote, &commit)
+        timeless(&remote_note(&env, &remote, &commit))
     );
 }
 
@@ -343,7 +362,7 @@ fn a_stamp_made_while_the_remote_is_unreachable_is_delivered_by_the_next_stamp()
     let pending = stamp_exempt(&env, &repo, &commits[0], "typo fix").success();
     insta::assert_snapshot!("stamp-while-unreachable", label(stdout(&env, &pending)));
     let local = repo.git(["notes", "--ref", REVIEW_NOTES_REF, "show", &commits[0]]);
-    insta::assert_snapshot!("note-kept-locally", local);
+    insta::assert_snapshot!("note-kept-locally", timeless(&local));
 
     std::fs::rename(&away, &remote).unwrap();
     let delivered = stamp_exempt(&env, &repo, &commits[1], "comment only").success();
@@ -355,6 +374,30 @@ fn a_stamp_made_while_the_remote_is_unreachable_is_delivered_by_the_next_stamp()
     );
     insta::assert_snapshot!(
         "delivered-second-note",
-        remote_note(&env, &remote, &commits[1])
+        timeless(&remote_note(&env, &remote, &commits[1]))
     );
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+#[test]
+fn a_later_approval_supersedes_an_earlier_needs_work_and_both_stamps_stay() {
+    let env = TestEnv::new();
+    let repo = env.git_repo("demo");
+    repo.write("one.md", "one\n");
+    let commit = repo.commit("add one");
+    let first = env.path("first-review.md");
+    std::fs::write(&first, "# Review\n\nOne finding.\n").unwrap();
+    let second = env.path("second-review.md");
+    std::fs::write(&second, "# Review\n\nNo findings.\n").unwrap();
+
+    for (verdict, report) in [("needs_work", &first), ("approve", &second)] {
+        env.instrukt(repo.path())
+            .args(["repo", "stamp", &commit, "--verdict", verdict, "--report"])
+            .arg(report)
+            .assert()
+            .success();
+    }
+
+    let note = repo.git(["notes", "--ref", REVIEW_NOTES_REF, "show", &commit]);
+    insta::assert_snapshot!("needs-work-then-approve", timeless(&note));
 }

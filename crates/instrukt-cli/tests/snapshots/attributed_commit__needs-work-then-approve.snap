@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/attributed-commit.rs
+expression: timeless(&note)
+---
+at: <time 1>; verdict: needs_work; report_sha256: 1854117304513a92af5c3bede438956fe31d4496ae3d787a5113b6bb8e8e4fe9
+at: <time 2>; verdict: approve; report_sha256: b8ebf40a88710065985528b6006707498eec3df6d6603576b782e647657682e5

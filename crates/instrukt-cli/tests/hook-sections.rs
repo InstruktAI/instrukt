@@ -17,6 +17,10 @@ use std::time::{Duration, Instant};
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
+use instrukt_core::fsx::LockGuard;
+use instrukt_core::home::Home;
+use instrukt_core::ids::ProjectSlug;
+use instrukt_core::publication::PublishedRecord;
 use instrukt_core::repository::{Hook, HookRunRecord, SyncOutcome};
 
 /// A test machine whose `PATH` holds the built `instrukt`, as an installed
@@ -90,23 +94,46 @@ fn finished_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
     }
 }
 
-/// The exit status `instrukt sync` answers with in `repo` when run
-/// directly: what a hook run's record must name.
-fn sync_exit_code(env: &TestEnv, repo: &Repo) -> Option<i32> {
-    env.instrukt(repo.path())
-        .arg("sync")
-        .output()
+/// The commit publication last recorded for `project`; `None` before the
+/// first.
+fn published(env: &TestEnv, project: &str) -> Option<String> {
+    let home = Home::at_user_home(env.home().to_path_buf());
+    PublishedRecord::load(&home, &ProjectSlug::parse(project).unwrap())
         .unwrap()
-        .status
-        .code()
+        .map(|record| record.commit.to_string())
 }
 
-fn assert_names_sync_exit(record: &HookRunRecord, hook: Hook, expected: Option<i32>) {
-    assert_eq!(record.hook, hook);
-    match &record.sync {
-        Some(SyncOutcome::Finished { exit_code, .. }) => assert_eq!(*exit_code, expected),
-        other => panic!("{hook}: sync did not finish: {other:?}"),
+/// Waits, within a bound, until publication has recorded `commit`.
+fn wait_published(env: &TestEnv, project: &str, commit: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while published(env, project).as_deref() != Some(commit) {
+        assert!(
+            Instant::now() < deadline,
+            "{commit} was never published (last published: {:?})",
+            published(env, project)
+        );
+        std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Holds the home's docs lock, under which every sync publishes, so a sync
+/// a hook run started cannot complete until the guard is dropped.
+fn block_publication(env: &TestEnv) -> LockGuard {
+    LockGuard::acquire(
+        &env.instrukt_home().join("locks/docs.lock"),
+        Duration::from_secs(30),
+    )
+    .unwrap()
+}
+
+/// Runs `git <args>` in `repo`, failing the test unless git returns within
+/// a bound: a hook that waited for a blocked publication would not.
+fn git_returns(env: &TestEnv, repo: &Repo, args: &[&str]) {
+    env.git_command(repo.path())
+        .args(args)
+        .timeout(Duration::from_secs(30))
+        .assert()
+        .success();
 }
 
 /// A hook file holding the developer's own lines and another tool's
@@ -117,13 +144,21 @@ other-tool run post-commit\n\
 # <<< other-tool <<<\n\
 echo ran >> \"$(git rev-parse --git-dir)/own-hook-ran\"\n";
 
+/// A developer's post-commit hook that ends by replacing the shell with
+/// another program, an assignment prefixing its `exec`.
+const OWN_EXEC_POST_COMMIT: &str = "#!/bin/sh\n\
+# >>> other-tool >>>\n\
+other-tool run post-commit\n\
+# <<< other-tool <<<\n\
+HOOK_NAME=post-commit exec sh -c 'echo ran >> \"$(git rev-parse --git-dir)/own-hook-ran\"'\n";
+
 // spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn installing_keeps_the_developers_own_hook_and_a_commit_starts_publication() {
     let env = machine();
     let repo = project(&env, "demo");
     let post_commit = hook_path(&repo, "post-commit");
-    write_hook(&post_commit, OWN_POST_COMMIT, 0o755);
+    write_hook(&post_commit, OWN_EXEC_POST_COMMIT, 0o755);
 
     let installed = env.run(repo.path(), ["hooks", "install"]).success();
     insta::assert_snapshot!("install-beside-own-hook", stdout(&env, &installed));
@@ -132,15 +167,28 @@ fn installing_keeps_the_developers_own_hook_and_a_commit_starts_publication() {
         std::fs::read_to_string(&post_commit).unwrap()
     );
 
+    let blocked = block_publication(&env);
     repo.write("notes.md", "a change\n");
-    repo.commit("a change on main");
-
+    repo.git(["add", "notes.md"]);
+    git_returns(
+        &env,
+        &repo,
+        &["commit", "--quiet", "-m", "a change on main"],
+    );
+    let head = repo.head();
     assert!(
         repo.path().join(".git/own-hook-ran").exists(),
         "the developer's own hook ran"
     );
-    let record = finished_run(&env, "demo", Hook::PostCommit);
-    assert_names_sync_exit(&record, Hook::PostCommit, sync_exit_code(&env, &repo));
+    assert_ne!(
+        published(&env, "demo").as_deref(),
+        Some(head.as_str()),
+        "git returned while publication was still blocked"
+    );
+
+    drop(blocked);
+    wait_published(&env, "demo", &head);
+    finished_run(&env, "demo", Hook::PostCommit);
 }
 
 // spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
@@ -265,30 +313,46 @@ fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() 
 
     let developer = env.clone_repo(&remote, "developer");
     env.run(developer.path(), ["hooks", "install"]).success();
-    let expected = sync_exit_code(&env, &developer);
 
     upstream.write("a.md", "first upstream change\n");
     upstream.commit("upstream change by merge");
     upstream.git(["push", "--quiet", "origin", "main"]);
-    developer.git(["pull", "--quiet", "--no-rebase"]);
-    assert_eq!(developer.head(), upstream.head(), "the pull completed");
-    let merged = finished_run(&env, "demo", Hook::PostMerge);
-    assert_names_sync_exit(&merged, Hook::PostMerge, expected);
+    let blocked = block_publication(&env);
+    git_returns(&env, &developer, &["pull", "--quiet", "--no-rebase"]);
+    let merged = developer.head();
+    assert_eq!(merged, upstream.head(), "the pull completed");
+    assert_ne!(
+        published(&env, "demo").as_deref(),
+        Some(merged.as_str()),
+        "the pull returned while publication was still blocked"
+    );
+    drop(blocked);
+    wait_published(&env, "demo", &merged);
+    finished_run(&env, "demo", Hook::PostMerge);
 
     developer.write("local.md", "a local commit\n");
     developer.commit("local work");
+    wait_published(&env, "demo", &developer.head());
     finished_run(&env, "demo", Hook::PostCommit);
     upstream.write("b.md", "second upstream change\n");
     upstream.commit("upstream change by rebase");
     upstream.git(["push", "--quiet", "origin", "main"]);
-    developer.git(["pull", "--quiet", "--rebase"]);
+    let blocked = block_publication(&env);
+    git_returns(&env, &developer, &["pull", "--quiet", "--rebase"]);
+    let rebased = developer.head();
     assert_eq!(
         developer.git(["rev-parse", "HEAD~1"]),
         upstream.head(),
         "the rebase put the local commit on the new main"
     );
-    let rebased = finished_run(&env, "demo", Hook::PostRewrite);
-    assert_names_sync_exit(&rebased, Hook::PostRewrite, expected);
+    assert_ne!(
+        published(&env, "demo").as_deref(),
+        Some(rebased.as_str()),
+        "the pull returned while publication was still blocked"
+    );
+    drop(blocked);
+    wait_published(&env, "demo", &rebased);
+    finished_run(&env, "demo", Hook::PostRewrite);
     finished_run(&env, "demo", Hook::PostCheckout);
 }
 
@@ -328,7 +392,7 @@ echo merging\n\
 exec other-tool post-merge \"$@\"\n";
 
 /// A hook the developer keeps switched off.
-const OWN_POST_CHECKOUT: &str = "#!/bin/sh\necho disabled\n";
+const OWN_POST_CHECKOUT: &str = "#!/bin/sh\necho disabled";
 
 // spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK4
 #[test]

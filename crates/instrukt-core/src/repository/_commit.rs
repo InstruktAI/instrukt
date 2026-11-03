@@ -189,16 +189,19 @@ fn agent_author(
     else {
         return Ok(None);
     };
-    let Some(author) = configuration.agent_git_author(&agent)? else {
+    if configuration.agent_git_author(&agent)?.is_none() {
         return Err(RepositoryError::AgentAuthorMissing { agent });
-    };
-    if !is_name_and_email(author) {
+    }
+    // Interpolation is configuration's: the author is read resolved in the
+    // invocation's environment, never as the raw stored text.
+    let author = configuration.get_str(&format!("agents.{agent}.git_author"), env)?;
+    if !is_name_and_email(&author) {
         return Err(RepositoryError::AgentAuthorMalformed {
             agent,
-            value: author.to_owned(),
+            value: author,
         });
     }
-    Ok(Some(author.to_owned()))
+    Ok(Some(author))
 }
 
 /// `Name <email>`: anything else makes git search earlier commits for a
@@ -313,7 +316,7 @@ mod tests {
             .iter()
             .map(|line| line.split_once(':').map_or("", |(key, _)| key))
             .collect();
-        assert_eq!(lines[3], "");
+        assert!(lines[3].is_empty());
         assert_eq!(
             keys,
             [
