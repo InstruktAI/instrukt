@@ -37,7 +37,8 @@ mod _validate;
 use std::path::PathBuf;
 
 pub use _corpus::{
-    BaselineManifest, Companion, Corpus, Lens, Snippet, SourceFile, ThirdPartyDoc, Version, View,
+    BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
+    Version, View,
 };
 pub use _finding::{Finding, FindingCode};
 pub use _fold::{FoldOutcome, fold};
