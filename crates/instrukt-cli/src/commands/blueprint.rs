@@ -72,7 +72,8 @@ enum BlueprintCommand {
 
 pub fn run(args: BlueprintArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     if let BlueprintCommand::Worker { project } = &args.command {
-        instrukt_blueprint::run_worker(&ctx.home, project)?;
+        let clock = ctx.clock;
+        instrukt_blueprint::run_worker(&ctx.home, project, &move || clock.now())?;
         return Ok(ExitCode::SUCCESS);
     }
     let root = git::worktree_root(&ctx.cwd)?;
