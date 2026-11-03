@@ -3,7 +3,8 @@
 //! Structural holders: a new holder's pending documentation moves to its
 //! first child).
 //!
-//! The whole transfer is planned in memory first; a refusal writes nothing.
+//! The whole transfer is planned in memory first; a refusal writes nothing,
+//! and a failed write restores what was already written.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,10 +49,14 @@ pub(super) struct Change {
 /// companions `<stem>.<from>.md`, renamed to `<stem>.<to>.md`. Every other
 /// todo's carriers are left as they are. Nothing is committed.
 ///
-/// Refuses, changing nothing, when a renamed companion would land on an
-/// existing file, when a `delivered_by` naming `from` is in a form that
-/// cannot be rewritten, and when `docs/` or a file to change lies outside
-/// the repository.
+/// All or nothing. Every file is read and every rewrite planned before the
+/// first write, and each file is written atomically. A refusal — a renamed
+/// companion landing on an existing file, a `delivered_by` naming `from` in
+/// a form that cannot be rewritten, `docs/` or a file lying outside the
+/// repository — writes nothing. When a write fails part-way, the files
+/// already changed are restored to their original bytes and the failure is
+/// reported as [`DocsError::TransferFailed`], naming any file that could not
+/// be restored.
 pub fn transfer_pending(
     repo_root: &Path,
     from: &TodoSlug,
@@ -62,8 +67,13 @@ pub fn transfer_pending(
         path: repo_root.to_path_buf(),
         source,
     })?;
-    let plan = plan(read_tree(&root)?, from, to)?;
-    let mut targets = Vec::new();
+    let sources = read_tree(&root)?;
+    let originals: BTreeMap<String, String> = sources
+        .iter()
+        .map(|s| (s.path.clone(), s.text.clone()))
+        .collect();
+    let plan = plan(sources, from, to)?;
+    let mut steps = Vec::new();
     for (path, change) in &plan {
         let source = confined(&root, path)?;
         let destination = match &change.moved_to {
@@ -75,28 +85,20 @@ pub fn transfer_pending(
                         reason: format!("a companion of {to} is already there"),
                     });
                 }
-                destination
+                Some(destination)
             }
-            None => source.clone(),
+            None => None,
         };
-        targets.push((source, destination, path, change));
+        steps.push(Step {
+            rel: path.clone(),
+            moved_to: change.moved_to.clone(),
+            source,
+            destination,
+            original: originals.get(path).cloned().unwrap_or_default(),
+            text: change.text.clone(),
+        });
     }
-    let mut outcome = TransferOutcome::default();
-    for (source, destination, path, change) in targets {
-        atomic_write(&destination, change.text.as_bytes())?;
-        match &change.moved_to {
-            Some(next) => {
-                std::fs::remove_file(&source).map_err(|err| DocsError::Remove {
-                    path: source.clone(),
-                    source: err,
-                })?;
-                outcome
-                    .renamed
-                    .push((PathBuf::from(path), PathBuf::from(next)));
-            }
-            None => outcome.written.push(PathBuf::from(path)),
-        }
-    }
+    let outcome = apply(&steps, &mut WorkingTree)?;
     tracing::debug!(
         event = "docs_transfer_completed",
         from = %from,
@@ -107,6 +109,114 @@ pub fn transfer_pending(
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
     Ok(outcome)
+}
+
+/// One planned file change, resolved to absolute paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Step {
+    /// Repository-relative path now.
+    rel: String,
+    /// Repository-relative path after a companion rename.
+    moved_to: Option<String>,
+    source: PathBuf,
+    destination: Option<PathBuf>,
+    /// The file's bytes as read before planning.
+    original: String,
+    text: String,
+}
+
+/// The two effects a transfer has on the working tree. Behind a trait so
+/// a failure part-way through can be injected and the restore observed.
+trait Files {
+    fn write(&mut self, path: &Path, text: &str) -> Result<(), DocsError>;
+    fn remove(&mut self, path: &Path) -> Result<(), DocsError>;
+}
+
+/// The working tree itself: atomic writes and plain removals.
+struct WorkingTree;
+
+impl Files for WorkingTree {
+    fn write(&mut self, path: &Path, text: &str) -> Result<(), DocsError> {
+        Ok(atomic_write(path, text.as_bytes())?)
+    }
+
+    fn remove(&mut self, path: &Path) -> Result<(), DocsError> {
+        std::fs::remove_file(path).map_err(|source| DocsError::Remove {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+}
+
+/// What has been done for one step, so it can be undone.
+#[derive(Debug, Clone, Copy, Default)]
+struct Done {
+    /// The new text is written (in place, or at the destination).
+    written: bool,
+    /// The renamed companion's old file is removed.
+    removed: bool,
+}
+
+/// Applies every step; on the first failure, undoes the steps done so far
+/// and reports the failure with the files that could not be restored.
+fn apply(steps: &[Step], files: &mut dyn Files) -> Result<TransferOutcome, DocsError> {
+    let mut done: Vec<Done> = Vec::new();
+    for step in steps {
+        let mut progress = Done::default();
+        let result = (|| {
+            let target = step.destination.as_ref().unwrap_or(&step.source);
+            files.write(target, &step.text)?;
+            progress.written = true;
+            if step.destination.is_some() {
+                files.remove(&step.source)?;
+                progress.removed = true;
+            }
+            Ok::<(), DocsError>(())
+        })();
+        done.push(progress);
+        if let Err(cause) = result {
+            let unrestored = undo(steps, &done, files);
+            return Err(DocsError::TransferFailed {
+                cause: Box::new(cause),
+                unrestored,
+            });
+        }
+    }
+    let mut outcome = TransferOutcome::default();
+    for step in steps {
+        match &step.moved_to {
+            Some(next) => outcome
+                .renamed
+                .push((PathBuf::from(&step.rel), PathBuf::from(next))),
+            None => outcome.written.push(PathBuf::from(&step.rel)),
+        }
+    }
+    Ok(outcome)
+}
+
+/// Restores each step's original bytes, newest first; returns the files
+/// that could not be restored.
+fn undo(steps: &[Step], done: &[Done], files: &mut dyn Files) -> Vec<PathBuf> {
+    let mut unrestored = Vec::new();
+    for (step, progress) in steps.iter().zip(done).rev() {
+        match &step.destination {
+            None if progress.written => {
+                if files.write(&step.source, &step.original).is_err() {
+                    unrestored.push(step.source.clone());
+                }
+            }
+            Some(destination) => {
+                if progress.removed && files.write(&step.source, &step.original).is_err() {
+                    unrestored.push(step.source.clone());
+                }
+                if progress.written && files.remove(destination).is_err() {
+                    unrestored.push(destination.clone());
+                }
+            }
+            None => {}
+        }
+    }
+    unrestored
 }
 
 /// The changes transferring `from`'s carriers to `to` makes, by current
@@ -316,6 +426,126 @@ mod tests {
             plan(sources(&[(X, text)]), &slug("other"), &slug("other"))
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// Files in memory; the operation numbered `fail_from` and every later
+    /// one fails, until `fail_until` (exclusive) when given.
+    struct Memory {
+        files: BTreeMap<PathBuf, String>,
+        ops: usize,
+        fail_from: usize,
+        fail_until: usize,
+    }
+
+    impl Memory {
+        fn new(files: &[(&str, &str)], fail_from: usize, fail_until: usize) -> Self {
+            Self {
+                files: files
+                    .iter()
+                    .map(|(p, t)| (PathBuf::from(p), (*t).to_owned()))
+                    .collect(),
+                ops: 0,
+                fail_from,
+                fail_until,
+            }
+        }
+
+        fn tick(&mut self, path: &Path) -> Result<(), DocsError> {
+            self.ops += 1;
+            if (self.fail_from..self.fail_until).contains(&self.ops) {
+                return Err(DocsError::OutsideRepository {
+                    path: path.to_path_buf(),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    impl Files for Memory {
+        fn write(&mut self, path: &Path, text: &str) -> Result<(), DocsError> {
+            self.tick(path)?;
+            self.files.insert(path.to_path_buf(), text.to_owned());
+            Ok(())
+        }
+
+        fn remove(&mut self, path: &Path) -> Result<(), DocsError> {
+            self.tick(path)?;
+            self.files.remove(path);
+            Ok(())
+        }
+    }
+
+    const A: &str = "a.md";
+    const B: &str = "b.md";
+    const OLD: &str = "c.parent.md";
+    const NEW: &str = "c.child.md";
+
+    fn step(path: &str, original: &str, text: &str, moved_to: Option<&str>) -> Step {
+        Step {
+            rel: path.to_owned(),
+            moved_to: moved_to.map(str::to_owned),
+            source: PathBuf::from(path),
+            destination: moved_to.map(PathBuf::from),
+            original: original.to_owned(),
+            text: text.to_owned(),
+        }
+    }
+
+    fn steps() -> Vec<Step> {
+        vec![
+            step(A, "a0", "a1", None),
+            step(OLD, "c0", "c1", Some(NEW)),
+            step(B, "b0", "b1", None),
+        ]
+    }
+
+    const BEFORE: [(&str, &str); 3] = [(A, "a0"), (B, "b0"), (OLD, "c0")];
+
+    fn state(memory: &Memory) -> Vec<(PathBuf, String)> {
+        memory.files.clone().into_iter().collect()
+    }
+
+    #[test]
+    fn a_completed_transfer_writes_and_renames_every_file() {
+        let mut memory = Memory::new(&BEFORE, usize::MAX, usize::MAX);
+        let outcome = apply(&steps(), &mut memory).unwrap();
+        assert_eq!(outcome.written, [PathBuf::from(A), PathBuf::from(B)]);
+        assert_eq!(outcome.renamed, [(PathBuf::from(OLD), PathBuf::from(NEW))]);
+        let after = Memory::new(&[(A, "a1"), (B, "b1"), (NEW, "c1")], 0, 0);
+        assert_eq!(state(&memory), state(&after));
+    }
+
+    #[test]
+    fn a_write_failing_part_way_restores_every_file_already_changed() {
+        // Operations: 1 write a, 2 write c.child, 3 remove c.parent,
+        // 4 write b. Each failure point leaves the files as they were.
+        for fail_at in 1..=4 {
+            let mut memory = Memory::new(&BEFORE, fail_at, fail_at + 1);
+            let result = apply(&steps(), &mut memory);
+            assert!(
+                matches!(&result, Err(DocsError::TransferFailed { unrestored, .. }) if unrestored.is_empty()),
+                "{fail_at}: {result:?}"
+            );
+            assert_eq!(
+                state(&memory),
+                state(&Memory::new(&BEFORE, 0, 0)),
+                "{fail_at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_restored_is_named() {
+        // The write of b fails, and so does every restore after it.
+        let mut memory = Memory::new(&BEFORE, 4, usize::MAX);
+        let result = apply(&steps(), &mut memory);
+        let Err(DocsError::TransferFailed { unrestored, .. }) = result else {
+            panic!("{result:?}");
+        };
+        assert_eq!(
+            unrestored,
+            [PathBuf::from(OLD), PathBuf::from(NEW), PathBuf::from(A)]
         );
     }
 
