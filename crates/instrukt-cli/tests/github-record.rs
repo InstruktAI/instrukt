@@ -448,3 +448,121 @@ fn labels(item: &Value) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+/// Points the project's layer at board `board`.
+fn choose_board(project: &Project, board: &str) {
+    let layer = project.repo.path().join("instrukt.yaml");
+    let text = std::fs::read_to_string(&layer).unwrap();
+    let kept: String = text
+        .lines()
+        .filter(|line| !line.starts_with("board:"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    std::fs::write(&layer, format!("{kept}board: {board}\n")).unwrap();
+}
+
+/// The node id of the project's issue `number`.
+fn issue_node(project: &Project, number: u64) -> String {
+    project.github.issue(REPOSITORY, number).unwrap()["node_id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn owned(fields: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+    fields
+        .iter()
+        .map(|(name, options)| {
+            (
+                (*name).to_owned(),
+                options.iter().map(|o| (*o).to_owned()).collect(),
+            )
+        })
+        .collect()
+}
+
+/// A board's items as a set: which issue each shows, with its fields.
+type BoardItems = std::collections::BTreeSet<(String, Vec<(String, String)>)>;
+
+/// The items on board `<owner>/<number>`, in no particular order.
+fn board_items(project: &Project, owner: &str, number: u64) -> BoardItems {
+    project
+        .github
+        .project_items(owner, number)
+        .into_iter()
+        .collect()
+}
+
+fn items(entries: &[(&str, &str)]) -> BoardItems {
+    entries
+        .iter()
+        .map(|(node, status)| {
+            (
+                (*node).to_owned(),
+                vec![("Record status".to_owned(), (*status).to_owned())],
+            )
+        })
+        .collect()
+}
+
+// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
+    let project = Project::new();
+    let github = &project.github;
+    // The developer's board, with columns and fields of its own: its
+    // `Record status` already has one of instrukt's options and one of
+    // theirs.
+    github.add_project("acme", 7).add_project("acme", 8);
+    github.add_project_field("acme", 7, "Status", Some(&["Todo", "Done"]));
+    github.add_project_field("acme", 7, "Estimate", None);
+    github.add_project_field("acme", 7, "Record status", Some(&["active", "blocked"]));
+    choose_board(&project, "acme/7");
+
+    project.create("nested-lists", "feature", INTENT);
+    project.create("parser-depth", "change", "Track list depth in the parser.");
+    project.ok(["freeze", "parser-depth"]);
+    let (lists, parser) = (issue_node(&project, 1), issue_node(&project, 2));
+
+    assert_eq!(
+        board_items(&project, "acme", 7),
+        items(&[(&lists, "active"), (&parser, "iceboxed")])
+    );
+    assert_eq!(
+        github.project_fields("acme", 7),
+        owned(&[
+            ("Status", &["Todo", "Done"]),
+            ("Estimate", &[]),
+            (
+                "Record status",
+                &[
+                    "active",
+                    "blocked",
+                    "iceboxed",
+                    "held",
+                    "delivered",
+                    "withdrawn"
+                ]
+            ),
+        ]),
+        "the board's own fields and options are as they were; only missing statuses are added"
+    );
+
+    // The developer chooses another board; the next reflection puts the
+    // work there.
+    choose_board(&project, "acme/8");
+    project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
+    project.ok(["refresh", "parser-depth"]);
+
+    assert_eq!(
+        board_items(&project, "acme", 8),
+        items(&[(&lists, "held"), (&parser, "iceboxed")])
+    );
+    assert_eq!(
+        github.project_fields("acme", 8),
+        owned(&[(
+            "Record status",
+            &["active", "iceboxed", "held", "delivered", "withdrawn"]
+        )])
+    );
+}
