@@ -7,6 +7,7 @@ mod common;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
+use instrukt_core::config::{CURRENT_SCHEMA_VERSION, Revision};
 
 fn write_global(env: &TestEnv, text: &str) {
     let path = env.instrukt_home().join("instrukt.yaml");
@@ -156,4 +157,79 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     insta::assert_snapshot!(read(&["config", "get", "actions.test"]), @"make test");
     insta::assert_snapshot!(read(&["config", "get", "ticks"]), @"off");
     env.run(repo.path(), ["config", "validate"]).success();
+}
+
+/// A project whose layer a newer instrukt wrote; returns it with the
+/// layer's bytes.
+fn written_by_a_newer_instrukt(env: &TestEnv) -> (Repo, Vec<u8>) {
+    let layer = format!(
+        "schema_version: {}\nproject: future\nboard: true\n",
+        CURRENT_SCHEMA_VERSION + 1
+    );
+    let repo = project(env, "future", &layer);
+    let bytes = std::fs::read(repo.path().join("instrukt.yaml")).unwrap();
+    (repo, bytes)
+}
+
+fn unchanged(repo: &Repo, bytes: &[u8]) {
+    assert_eq!(
+        std::fs::read(repo.path().join("instrukt.yaml")).unwrap(),
+        bytes,
+        "the configuration is unchanged"
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+#[test]
+fn reading_configuration_written_by_a_newer_instrukt_is_refused() {
+    let env = TestEnv::new();
+    let (repo, bytes) = written_by_a_newer_instrukt(&env);
+    let refused = env.run(repo.path(), ["config", "get", "board"]).failure();
+    insta::assert_snapshot!("newer-schema-get", stderr(&env, &refused));
+    unchanged(&repo, &bytes);
+}
+
+// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+#[test]
+fn reading_the_revision_of_configuration_written_by_a_newer_instrukt_is_refused() {
+    let env = TestEnv::new();
+    let (repo, bytes) = written_by_a_newer_instrukt(&env);
+    let refused = env
+        .run(repo.path(), ["config", "get", "--revision"])
+        .failure();
+    insta::assert_snapshot!("newer-schema-revision", stderr(&env, &refused));
+    unchanged(&repo, &bytes);
+}
+
+// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+#[test]
+fn changing_configuration_written_by_a_newer_instrukt_is_refused() {
+    let env = TestEnv::new();
+    let (repo, bytes) = written_by_a_newer_instrukt(&env);
+    let revision = Revision::of(&bytes);
+    let refused = env
+        .run(
+            repo.path(),
+            [
+                "config",
+                "patch",
+                "--revision",
+                revision.as_str(),
+                "--yaml",
+                "board: false",
+            ],
+        )
+        .failure();
+    insta::assert_snapshot!("newer-schema-patch", stderr(&env, &refused));
+    unchanged(&repo, &bytes);
+}
+
+// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+#[test]
+fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
+    let env = TestEnv::new();
+    let (repo, bytes) = written_by_a_newer_instrukt(&env);
+    let refused = env.run(repo.path(), ["config", "validate"]).failure();
+    insta::assert_snapshot!("newer-schema-validate", stderr(&env, &refused));
+    unchanged(&repo, &bytes);
 }

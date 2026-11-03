@@ -457,19 +457,6 @@ mod tests {
     }
 
     #[test]
-    fn the_revision_of_a_newer_document_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        std::fs::create_dir_all(home.root()).unwrap();
-        let newer = format!("schema_version: {}\n", CURRENT_SCHEMA_VERSION + 1);
-        std::fs::write(home.global_config(), newer).unwrap();
-        assert!(matches!(
-            revision(&home, &Layer::Global),
-            Err(ConfigError::NewerSchema { .. })
-        ));
-    }
-
-    #[test]
     fn revisions_follow_content_only() {
         assert_eq!(Revision::of(b"a: 1\n"), Revision::of(b"a: 1\n"));
         assert_ne!(Revision::of(b"a: 1\n"), Revision::of(b"a: 2\n"));
