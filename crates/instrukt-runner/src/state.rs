@@ -87,6 +87,16 @@ impl RunnerState {
         self.dir.join("validators").join(format!("{project}.json"))
     }
 
+    /// The executions the runner dispatched and watches.
+    pub(crate) fn executions(&self) -> PathBuf {
+        self.dir.join("executions.json")
+    }
+
+    /// Standing-agent starts begun and not yet bound.
+    pub(crate) fn standing_starts(&self) -> PathBuf {
+        self.dir.join("standing-starts.json")
+    }
+
     /// The failed task firings already reported as anomalies.
     pub(crate) fn failed_firings(&self) -> PathBuf {
         self.dir.join("failed-firings.json")

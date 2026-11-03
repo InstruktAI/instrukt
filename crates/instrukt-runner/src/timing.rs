@@ -159,10 +159,10 @@ fn field(text: &str, min: u32, max: u32, names: &[&str], name_base: u32) -> Resu
             let a = value(range)?;
             (a, if item.contains('/') { max } else { a })
         };
-        let mut v = from;
-        while v <= to {
-            set |= 1 << v;
-            v += step;
+        let mut v = Some(from);
+        while let Some(value) = v.filter(|value| *value <= to) {
+            set |= 1 << value;
+            v = value.checked_add(step);
         }
     }
     Ok(set)
@@ -267,6 +267,17 @@ mod tests {
     }
 
     #[test]
+    fn a_step_past_the_field_selects_its_start_only() {
+        let spec = CronSpec::parse("1/4294967295 * * * *").unwrap();
+        assert!(spec.matches(ts("2026-01-05T09:01:00Z"), &utc()));
+        assert!(!spec.matches(ts("2026-01-05T09:02:00Z"), &utc()));
+        assert_eq!(
+            TaskSchedule::parse("cron:*/4294967295 * * * *").map(|_| ()),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn fields_select_values_ranges_steps_and_names() {
         let spec = CronSpec::parse("*/15 9-17 * JAN,jul MON-FRI").unwrap();
         assert!(spec.matches(ts("2026-01-05T09:45:00Z"), &utc()));
@@ -289,6 +300,7 @@ mod tests {
             "* 24 * * *",
             "* * 0 * *",
             "*/0 * * * *",
+            "1/4294967296 * * * *",
             "5-1 * * * *",
             "* * * FOO *",
             "* * * *",
