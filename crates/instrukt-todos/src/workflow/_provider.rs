@@ -771,6 +771,38 @@ fn lane_resources(
     Ok(())
 }
 
+/// What recorded dependency grounding shows against `others`, the
+/// related todos' current evidence: whether a prerequisite artifact's
+/// digest changed, and whether a dependency is unresolved. Dependencies
+/// are matched by durable identity, never by slug, which a later todo may
+/// reuse; a record without an identity, or an identity no todo has, is
+/// unresolved: incomplete provenance.
+pub(crate) fn dependency_change(
+    recorded: &[crate::evidence::DependencyDigest],
+    others: &[TodoEvidence],
+) -> (bool, bool) {
+    let mut changed = false;
+    let mut unresolved = false;
+    for dependency in recorded {
+        let Some(todo) = dependency
+            .id
+            .as_ref()
+            .and_then(|id| others.iter().find(|other| &other.id == id))
+        else {
+            unresolved = true;
+            continue;
+        };
+        let current = todo
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.name == dependency.artifact)
+            .and_then(|artifact| artifact.versions.last())
+            .map(|version| &version.digest);
+        changed |= current != dependency.digest.as_ref();
+    }
+    (changed, unresolved)
+}
+
 /// The standing of each of `evidence`'s prerequisites, given how to read a
 /// prerequisite todo's own evidence.
 pub(crate) fn standings<E>(
@@ -1887,6 +1919,69 @@ mod tests {
         assert_eq!(
             get(&facts, "drift.implementation_plan"),
             Some(&value(member::COSMETIC))
+        );
+    }
+
+    // ---- dependency grounding by durable identity ----
+
+    fn identity(fill: char) -> crate::work::TodoId {
+        crate::work::TodoId::parse(&fill.to_string().repeat(32)).unwrap()
+    }
+
+    /// Prerequisite `parse-lists` with identity `id` and PRD `prd`.
+    fn prerequisite(id: char, prd: &str) -> TodoEvidence {
+        let mut other = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, prd)
+            .build();
+        other.id = identity(id);
+        other.slug = instrukt_core::ids::TodoSlug::parse("parse-lists").unwrap();
+        other
+    }
+
+    /// Grounding on `parse-lists`' PRD `prd-1`, recorded with `id`.
+    fn on_prerequisite(id: Option<char>) -> Vec<crate::evidence::DependencyDigest> {
+        vec![crate::evidence::DependencyDigest {
+            id: id.map(identity),
+            todo: instrukt_core::ids::TodoSlug::parse("parse-lists").unwrap(),
+            artifact: ArtifactName::new(artifact_names::PRD),
+            digest: Some(digest("prd-1")),
+        }]
+    }
+
+    #[test]
+    fn an_unchanged_prerequisite_artifact_is_neither_changed_nor_unresolved() {
+        let others = [prerequisite('1', "prd-1")];
+        assert_eq!(
+            dependency_change(&on_prerequisite(Some('1')), &others),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn a_rewritten_prerequisite_artifact_is_a_change() {
+        let others = [prerequisite('1', "prd-2")];
+        assert_eq!(
+            dependency_change(&on_prerequisite(Some('1')), &others),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn a_reused_slug_is_not_the_recorded_prerequisite() {
+        // `parse-lists` now names another todo, whose PRD matches by chance.
+        let others = [prerequisite('2', "prd-1")];
+        assert_eq!(
+            dependency_change(&on_prerequisite(Some('1')), &others),
+            (false, true)
+        );
+    }
+
+    #[test]
+    fn a_dependency_recorded_without_an_identity_is_unresolved() {
+        let others = [prerequisite('1', "prd-1")];
+        assert_eq!(
+            dependency_change(&on_prerequisite(None), &others),
+            (false, true)
         );
     }
 }
