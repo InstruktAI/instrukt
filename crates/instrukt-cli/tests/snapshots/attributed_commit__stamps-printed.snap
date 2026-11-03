@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/attributed-commit.rs
+expression: label(printed)
+---
+<commit 1>: approve
+<commit 2>: exempt
+<commit 4>: needs_work

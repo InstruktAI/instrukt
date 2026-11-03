@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "stderr(&env, &refused)"
+---
+instrukt: [TMP]/outside is not inside a git repository's working tree

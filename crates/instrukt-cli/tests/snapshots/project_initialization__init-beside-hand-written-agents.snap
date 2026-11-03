@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "stdout(&env, &first)"
+---
+project layer (instrukt.yaml): created
+docs folders (docs/global/, docs/local/): created
+master (AGENTS.master.md): not seeded: AGENTS.md is hand-written; move its content into a docs/local snippet, remove AGENTS.md (it becomes generated) and run `instrukt init` again
+docs reference filter (git config filter.instrukt-docs): created
+filter patterns (.gitattributes): created
+generated AGENTS.md ignore (.gitignore): created
+hook sections: created
+  hooks directory: [TMP]/demo/.git/hooks
+  post-commit: written
+  post-merge: written
+  post-rewrite: written
+  post-checkout: written

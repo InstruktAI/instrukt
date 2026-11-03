@@ -4,8 +4,10 @@ expression: help
 ---
 Adopt instrukt in the current git repository
 
-Usage: instrukt init
+Usage: instrukt init [OPTIONS]
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+      --slug <SLUG>  The project slug, instead of the one derived from the primary worktree's folder
+                     name
+  -h, --help         Print help
+  -V, --version      Print version

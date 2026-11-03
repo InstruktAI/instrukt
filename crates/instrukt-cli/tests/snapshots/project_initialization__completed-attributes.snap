@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "repo.read(\".gitattributes\")"
+---
+*.png binary
+docs/**/*.md text eol=lf
+docs/**/*.md filter=instrukt-docs

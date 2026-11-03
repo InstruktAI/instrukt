@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/hook-sections.rs
+expression: "std::fs::read_to_string(&post_commit).unwrap()"
+---
+#!/bin/sh
+# >>> other-tool >>>
+other-tool run post-commit
+# <<< other-tool <<<
+echo ran >> "$(git rev-parse --git-dir)/own-hook-ran"
+# >>> instrukt >>>
+instrukt hooks run post-commit "$@" || true
+# <<< instrukt <<<
