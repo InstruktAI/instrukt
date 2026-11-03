@@ -88,7 +88,7 @@ pub fn fold(repo_root: &Path, slug: &TodoSlug) -> Result<FoldOutcome, DocsError>
 /// The absolute path of repository-relative `rel`, refused unless its
 /// directory resolves inside `root` (canonical) and it is not itself a
 /// symbolic link.
-fn confined(root: &Path, rel: &str) -> Result<PathBuf, DocsError> {
+pub(super) fn confined(root: &Path, rel: &str) -> Result<PathBuf, DocsError> {
     let outside = || DocsError::OutsideRepository {
         path: root.join(rel),
     };
@@ -247,7 +247,7 @@ impl Foreign {
 }
 
 /// The slugs of a frontmatter's `delivered_by` list.
-fn delivered_by(yaml: Option<&str>) -> Vec<String> {
+pub(super) fn delivered_by(yaml: Option<&str>) -> Vec<String> {
     parse_mapping(yaml)
         .and_then(|map| {
             map.get("delivered_by")
@@ -327,22 +327,43 @@ fn entries(map: serde_yaml_ng::Mapping) -> Vec<(String, Value)> {
 }
 
 /// The frontmatter block `head` (fences included) with `slug` removed from
-/// `delivered_by`; the key goes when no slug remains. Other lines are kept
-/// as written. `None` when the rewrite cannot be made, or does not read
-/// back as exactly that change.
+/// `delivered_by`.
 fn clear_delivered_by(head: &str, yaml: Option<&str>, slug: &TodoSlug) -> Option<String> {
+    rewrite_delivered_by(head, yaml, slug, None)
+}
+
+/// The frontmatter block `head` (fences included) with `from` in
+/// `delivered_by` replaced by `into`, or removed when `into` is `None`; a
+/// slug already listed is not listed twice, and the key goes when no slug
+/// remains. Other lines are kept as written. `None` when the rewrite cannot
+/// be made, or does not read back as exactly that change.
+pub(super) fn rewrite_delivered_by(
+    head: &str,
+    yaml: Option<&str>,
+    from: &TodoSlug,
+    into: Option<&TodoSlug>,
+) -> Option<String> {
     let Some(yaml) = yaml else {
         return Some(head.to_owned());
     };
     let names = delivered_by(Some(yaml));
-    if !names.iter().any(|s| s == slug.as_str()) {
+    if !names.iter().any(|s| s == from.as_str()) {
         return Some(head.to_owned());
     }
-    let remaining: Vec<&str> = names
-        .iter()
-        .map(String::as_str)
-        .filter(|s| *s != slug.as_str())
-        .collect();
+    let mut remaining: Vec<&str> = Vec::new();
+    for name in &names {
+        let name = if name == from.as_str() {
+            match into {
+                Some(into) => into.as_str(),
+                None => continue,
+            }
+        } else {
+            name.as_str()
+        };
+        if !remaining.contains(&name) {
+            remaining.push(name);
+        }
+    }
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     let start = lines
         .iter()
