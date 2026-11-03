@@ -178,7 +178,8 @@ pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
         return false;
     }
     match item.reflection.pull {
-        None => true,
+        // A delivered todo whose branch never reached GitHub opens none.
+        None => record.delivery.is_none(),
         Some(_) => {
             build_verdicts(record).len() > item.reflection.reviews_reflected
                 || (record.delivery.is_some() && !item.reflection.pull_closed)
@@ -504,11 +505,12 @@ fn reflect_pull_request(
     };
     if item.reflection.pull.is_none() {
         let owner = gh.repository().split('/').next().unwrap_or_default();
-        let existing = gh.list(&format!("/pulls?state=all&head={owner}:{branch}"))?;
+        let head = encode(&format!("{owner}:{branch}"));
+        let existing = gh.list(&format!("/pulls?state=all&head={head}"))?;
         if let Some(number) = existing.first().and_then(|p| p["number"].as_u64()) {
             item.reflection.pull = Some(number);
         } else {
-            match gh.read(&format!("/branches/{branch}")) {
+            match gh.read(&format!("/branches/{}", encode(&branch))) {
                 Ok(_) => {}
                 // Not on GitHub yet: creation stays pending.
                 Err(GitHubError::NotFound { .. }) => return Ok(()),
@@ -657,6 +659,20 @@ fn with_contents(
         }
     }
     Ok(remote)
+}
+
+/// `text` percent-encoded for a URL path or query, keeping unreserved
+/// characters and the `/` and `:` a branch reference uses.
+fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 fn body_digest(text: &str) -> String {
