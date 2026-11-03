@@ -23,12 +23,13 @@ use std::path::Path;
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use instrukt_core::index::{GlobalIndex, IndexEntry, IndexScope};
+use serde::{Deserialize, Serialize};
 
 use crate::agents::{agent_order, global_order};
 use crate::event_log::{FileEventLog, LoggedEvent};
 use crate::events::Event;
 use crate::launch;
-use crate::sessions::{Observation, SessionState, Sessions, StartRequest};
+use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
 use crate::state::{self, RunnerState, StateError};
 
 /// Whether a subscription pattern selects the event `name`: an exact name,
@@ -65,6 +66,16 @@ pub enum Delivery {
     Waiting(SessionRef),
     /// The session could not be observed; retried next tick.
     Unobservable(SessionRef),
+    /// An earlier start's result was never recorded; it is not repeated.
+    StartUncertain,
+}
+
+/// A standing-agent start begun and not yet bound.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StartAttempt {
+    /// The uncertain start was reported as an anomaly.
+    #[serde(default)]
+    reported: bool,
 }
 
 /// A delivery could not be completed.
@@ -134,6 +145,22 @@ pub fn deliver(
     let prepared = launch::prepare(procedure, None, Some(&text))?;
     let (global, thinking) = global_order(config);
     let order = agent_order(None, prepared.dispatch.as_ref(), &global, thinking);
+    // The start is recorded before the runtime is asked: a start whose
+    // result was never recorded (the tick died in between) may have created
+    // a session, so it is never repeated; it is reported once instead.
+    let mut starts: BTreeMap<String, StartAttempt> =
+        state::read_json(&state.standing_starts())?.unwrap_or_default();
+    if let Some(attempt) = starts.get_mut(&consumer) {
+        if !attempt.reported {
+            attempt.reported = true;
+            state::write_json(&state.standing_starts(), &starts)?;
+            tracing::warn!(event = "standing_start_uncertain", consumer);
+            crate::anomaly::notify(config, env, &consumer, None);
+        }
+        return Ok(Delivery::StartUncertain);
+    }
+    starts.insert(consumer.clone(), StartAttempt { reported: false });
+    state::write_json(&state.standing_starts(), &starts)?;
     let started = sessions.start(
         &order,
         &StartRequest {
@@ -141,9 +168,27 @@ pub fn deliver(
             worktree: None,
             cwd: Some(root),
         },
-    )?;
+    );
+    let started = match started {
+        Ok(started) => started,
+        Err(err) => {
+            // Only the runtime's own answer that no session started is
+            // certain; a start that timed out or printed no id may have
+            // created one, so its attempt stays recorded.
+            if matches!(
+                err,
+                SessionsError::Failed { .. } | SessionsError::OrderExhausted { .. }
+            ) {
+                starts.remove(&consumer);
+                state::write_json(&state.standing_starts(), &starts)?;
+            }
+            return Err(err.into());
+        }
+    };
     bindings.insert(consumer.clone(), started.session.clone());
     state::write_json(&state.standing(), &bindings)?;
+    starts.remove(&consumer);
+    state::write_json(&state.standing_starts(), &starts)?;
     log.acknowledge(&consumer, last)?;
     tracing::info!(event = "standing_agent_started", consumer, session = %started.session, through = last);
     Ok(Delivery::Started(started.session))

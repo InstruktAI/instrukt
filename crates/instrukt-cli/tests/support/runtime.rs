@@ -35,6 +35,20 @@ case "$cmd" in
     printf '%s' "$1" > "$state/$id.opening"
     echo running > "$state/$id.status"
     echo "start $id ${INSTRUKT_AGENT:-}" >> "$state/calls"
+    if [ -f "$state/die-after-start" ]; then
+      # The runner is killed after the session exists, before it learns
+      # the id: kill the instrukt process that started this command.
+      rm "$state/die-after-start"
+      pid=$PPID
+      for _ in 1 2 3 4 5; do
+        case "$(ps -o comm= -p "$pid")" in
+          *instrukt) kill -KILL "$pid"; exit 0 ;;
+        esac
+        pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+      done
+      echo "no instrukt ancestor" >&2
+      exit 3
+    fi
     echo "$id"
     if [ -n "${INSTRUKT_WORKTREE:-}" ]; then echo "$state/worktrees/$INSTRUKT_WORKTREE"; fi
     ;;
@@ -114,7 +128,7 @@ impl FakeRuntime {
         let base = format!("'{}' '{}'", self.script.display(), self.state.display());
         let env = self.name.to_uppercase();
         let mut entry = format!(
-            "  - name: {name}\n    session_id_env: {env}_SESSION\n    start: \"{base} start\"\n    send: \"{base} send {{runtime.session_id}}\"\n    alive: \"{base} alive {{runtime.session_id}}\"\n    conversation: \"{base} conversation {{runtime.session_id}}\"\n",
+            "  - name: {name}\n    session_id_env: {env}_SESSION\n    start: \"{base} start\"\n    send: \"{base} send \\\"{{runtime.session_id}}\\\"\"\n    alive: \"{base} alive {{runtime.session_id}}\"\n    conversation: \"{base} conversation {{runtime.session_id}}\"\n",
             name = self.name,
         );
         entry.push_str(&format!("    notify: \"{base} notify\"\n"));
@@ -141,6 +155,12 @@ impl FakeRuntime {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    /// The next start creates its session, then kills the runner that
+    /// asked for it before the runner hears the id.
+    pub fn kill_runner_on_next_start(&self) {
+        std::fs::write(self.state.join("die-after-start"), "").unwrap();
     }
 
     /// Sets the status `alive` reports for session `id`.
@@ -174,6 +194,13 @@ impl FakeRuntime {
     /// The opening message session `id` started with.
     pub fn opening(&self, id: &str) -> String {
         std::fs::read_to_string(self.state.join(format!("{id}.opening"))).unwrap()
+    }
+
+    /// How many texts session `id` was sent.
+    pub fn sent_count(&self, id: &str) -> usize {
+        (1..)
+            .take_while(|n| self.state.join(format!("{id}.sent.{n}")).exists())
+            .count()
     }
 
     /// The `n`th text (from 1) sent to session `id`.

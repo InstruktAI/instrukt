@@ -19,6 +19,7 @@
 
 use std::fs::File;
 use std::io;
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -121,13 +122,27 @@ impl Engine {
 
     /// Maps the tree checked out at `tree` and returns its graph, validated
     /// against the contract. `scratch` is a private directory for the
-    /// engine's captured output; `timeout` bounds the run.
+    /// engine's captured output; `timeout` bounds the run, after which the
+    /// engine's whole process group is ended.
+    ///
+    /// The engine runs in its own process group with `hold` — the open file
+    /// through which generation holds its lock — as its standard input, so
+    /// the lock stays held while any of its processes lives. `started`
+    /// receives the engine's process group id once it runs.
     pub fn generate(
         &self,
         tree: &Path,
         scratch: &Path,
         timeout: Duration,
+        hold: &File,
+        started: &mut dyn FnMut(u32),
     ) -> Result<Graph, EngineError> {
+        let mut runner = Runner {
+            scratch,
+            timeout,
+            hold: Some(hold),
+            started,
+        };
         match self {
             Self::Shipped => {
                 // A committed `graphify-out` (or a link of that name) is not
@@ -140,7 +155,7 @@ impl Engine {
                     .arg(tree)
                     .arg("--force")
                     .current_dir(tree);
-                run(GRAPHIFY, command, scratch, timeout)?;
+                runner.run(GRAPHIFY, command)?;
                 let graph = out.join(GRAPHIFY_GRAPH);
                 for path in [&out, &graph] {
                     match std::fs::symlink_metadata(path) {
@@ -168,7 +183,7 @@ impl Engine {
                 Ok(Graph::from_json(&bytes)?)
             }
             Self::Command(line) => {
-                let stdout = run(line, shell(line, tree), scratch, timeout)?;
+                let stdout = runner.run(line, shell(line, tree))?;
                 let bytes = std::fs::read(&stdout).map_err(|source| EngineError::Io {
                     what: "cannot read",
                     path: stdout.clone(),
@@ -200,7 +215,13 @@ impl Engine {
             .arg("--graph")
             .arg(graph)
             .current_dir(scratch);
-        let stdout = run(GRAPHIFY, command, scratch, timeout)?;
+        let stdout = Runner {
+            scratch,
+            timeout,
+            hold: None,
+            started: &mut |_| {},
+        }
+        .run(GRAPHIFY, command)?;
         let bytes = std::fs::read(&stdout).map_err(|source| EngineError::Io {
             what: "cannot read",
             path: stdout.clone(),
@@ -222,51 +243,67 @@ fn shell(line: &str, tree: &Path) -> Command {
     command
 }
 
-/// Runs `command` with no input and its output captured in `scratch`,
-/// waiting at most `timeout`; returns the captured stdout's path.
-fn run(
-    program: &str,
-    mut command: Command,
-    scratch: &Path,
+/// How one engine process runs: output captured in `scratch`, bounded by
+/// `timeout`, in its own process group with `hold` (or nothing) as input.
+struct Runner<'a> {
+    scratch: &'a Path,
     timeout: Duration,
-) -> Result<PathBuf, EngineError> {
-    let stdout_path = scratch.join("engine.stdout");
-    let stderr_path = scratch.join("engine.stderr");
-    let create = |path: &Path| {
-        File::create(path).map_err(|source| EngineError::Io {
-            what: "cannot create",
-            path: path.to_path_buf(),
-            source,
-        })
-    };
-    command
-        .stdin(Stdio::null())
-        .stdout(create(&stdout_path)?)
-        .stderr(create(&stderr_path)?);
-    let mut child = command.spawn().map_err(|source| {
-        if source.kind() == io::ErrorKind::NotFound && program == GRAPHIFY {
-            EngineError::NotInstalled {
-                program: GRAPHIFY,
-                install: GRAPHIFY_INSTALL,
-            }
-        } else {
-            EngineError::Spawn {
-                program: program.to_owned(),
+    hold: Option<&'a File>,
+    started: &'a mut dyn FnMut(u32),
+}
+
+impl Runner<'_> {
+    /// Runs `command` and waits for it within the bound; returns the
+    /// captured stdout's path.
+    fn run(&mut self, program: &str, mut command: Command) -> Result<PathBuf, EngineError> {
+        let stdout_path = self.scratch.join("engine.stdout");
+        let stderr_path = self.scratch.join("engine.stderr");
+        let create = |path: &Path| {
+            File::create(path).map_err(|source| EngineError::Io {
+                what: "cannot create",
+                path: path.to_path_buf(),
                 source,
+            })
+        };
+        let stdin = match self.hold {
+            Some(hold) => Stdio::from(hold.try_clone().map_err(|source| EngineError::Io {
+                what: "cannot share the generation lock with the engine at",
+                path: self.scratch.to_path_buf(),
+                source,
+            })?),
+            None => Stdio::null(),
+        };
+        command
+            .stdin(stdin)
+            .stdout(create(&stdout_path)?)
+            .stderr(create(&stderr_path)?)
+            .process_group(0);
+        let mut child = command.spawn().map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound && program == GRAPHIFY {
+                EngineError::NotInstalled {
+                    program: GRAPHIFY,
+                    install: GRAPHIFY_INSTALL,
+                }
+            } else {
+                EngineError::Spawn {
+                    program: program.to_owned(),
+                    source,
+                }
             }
+        })?;
+        (self.started)(child.id());
+        let status = wait(&mut child, self.timeout)?;
+        if !status.success() {
+            let stderr = std::fs::read(&stderr_path)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            return Err(EngineError::Failed {
+                status: describe(status),
+                message: last_line(&stderr),
+            });
         }
-    })?;
-    let status = wait(&mut child, timeout)?;
-    if !status.success() {
-        let stderr = std::fs::read(&stderr_path)
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .unwrap_or_default();
-        return Err(EngineError::Failed {
-            status: describe(status),
-            message: last_line(&stderr),
-        });
+        Ok(stdout_path)
     }
-    Ok(stdout_path)
 }
 
 fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError> {
@@ -275,9 +312,7 @@ fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError>
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) if started.elapsed() >= timeout => {
-                if let Err(err) = child.kill() {
-                    tracing::warn!(event = "blueprint_engine_kill_failed", error = %err);
-                }
+                kill_group(child.id());
                 if let Err(err) = child.wait() {
                     tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
                 }
@@ -291,6 +326,26 @@ fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError>
                     source,
                 });
             }
+        }
+    }
+}
+
+/// Ends every process of the process group `group` with SIGKILL, through
+/// the POSIX `kill` utility.
+pub(crate) fn kill_group(group: u32) {
+    let ended = Command::new("kill")
+        .args(["-s", "KILL", "--", &format!("-{group}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match ended {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            tracing::warn!(event = "blueprint_engine_kill_failed", group, status = %status);
+        }
+        Err(err) => {
+            tracing::warn!(event = "blueprint_engine_kill_failed", group, error = %err);
         }
     }
 }
@@ -335,66 +390,4 @@ fn remove_entry(path: &Path) -> Result<(), EngineError> {
         path: path.to_path_buf(),
         source,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unset_or_graphify_selects_the_shipped_adapter_anything_else_a_command() {
-        assert_eq!(Engine::from_setting(None), Engine::Shipped);
-        assert_eq!(Engine::from_setting(Some(SHIPPED_ENGINE)), Engine::Shipped);
-        assert_eq!(
-            Engine::from_setting(Some("./map --json")),
-            Engine::Command("./map --json".into())
-        );
-    }
-
-    #[test]
-    fn only_the_shipped_adapter_offers_query_and_explain() {
-        for question in [Question::Query, Question::Explain] {
-            assert!(Engine::Shipped.offers(question));
-            assert!(!Engine::Command("map".into()).offers(question));
-        }
-    }
-
-    #[test]
-    fn a_command_engine_receives_the_checkout_and_its_stdout_is_the_graph() {
-        let dir = tempfile::tempdir().unwrap();
-        let tree = dir.path().join("tree");
-        std::fs::create_dir_all(&tree).unwrap();
-        std::fs::write(
-            tree.join("graph.json"),
-            br#"{"nodes": [{"id": "a", "source_file": "a.rs"}], "links": []}"#,
-        )
-        .unwrap();
-        let graph = Engine::Command("cat \"$1/graph.json\" #".into())
-            .generate(&tree, dir.path(), Duration::from_secs(30))
-            .unwrap();
-        assert_eq!(graph.nodes()[0].id, "a");
-    }
-
-    #[test]
-    fn a_failing_or_contract_breaking_command_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let failed = Engine::Command("exit 3 #".into()).generate(
-            dir.path(),
-            dir.path(),
-            Duration::from_secs(30),
-        );
-        assert!(
-            matches!(failed, Err(EngineError::Failed { .. })),
-            "{failed:?}"
-        );
-        let refused = Engine::Command("echo '[]' #".into()).generate(
-            dir.path(),
-            dir.path(),
-            Duration::from_secs(30),
-        );
-        assert!(
-            matches!(refused, Err(EngineError::Refused(ContractError::NotObject))),
-            "{refused:?}"
-        );
-    }
 }

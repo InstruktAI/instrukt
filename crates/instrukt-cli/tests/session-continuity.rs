@@ -76,6 +76,24 @@ fn a_clarification_reaches_the_runtime_byte_for_byte_and_executes_nothing() {
 
     assert_eq!(rt.opening("s1"), clarification);
     assert_eq!(rt.sent("s2", 1), clarification);
+
+    // A session id is no command either, quoted or not.
+    let hostile_id = "x$(touch${IFS}planted-id)`touch${IFS}planted-tick`'\";";
+    rt.open_session(hostile_id);
+    env.run(
+        &cwd,
+        [
+            "sessions",
+            "send",
+            &format!("rt:{hostile_id}"),
+            &clarification,
+        ],
+    )
+    .success();
+    assert_eq!(rt.sent(hostile_id, 1), clarification);
+    for planted in ["planted-id", "planted-tick"] {
+        assert!(!cwd.join(planted).exists(), "{planted} was executed");
+    }
     for suffix in ["dollar", "tick", "pipe"] {
         let planted = std::path::PathBuf::from(format!("{}-{suffix}", canary.display()));
         assert!(!planted.exists(), "{} was executed", planted.display());

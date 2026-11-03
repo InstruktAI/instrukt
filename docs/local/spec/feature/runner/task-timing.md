@@ -21,7 +21,9 @@ procedure that declares the `task-runner` role in the selected flavor (the
 sdlc flavor's `run-task`), found as it finds the lane orchestrators, under the
 todo pickup policy. A claim covers one occurrence's run: it is released when
 that run's completion or failure is recorded, and the next occurrence claims
-afresh. A task does not introduce a
+afresh. The run's opening message carries `occurrence: <RFC 3339>`, and its
+started and outcome stamps pass that value as `--occurrence`; an outcome whose
+occurrence is not the current one is refused as stale. A task does not introduce a
 workflow engine of its own. The work context owns task
 records, artifacts and stamps; workflow owns preparation and authorization; this feature owns time
 eligibility and missed-run decisions.
@@ -111,8 +113,11 @@ And missed-run decisions remain governed by each task’s policy
 ```gherkin
 Given a developer has an authorized recurring task
 And the project permits automatic pickup
-When an occurrence's run completes or fails and its outcome is recorded
+When an occurrence's run succeeds and its outcome is recorded
 Then the next occurrence is dispatched when its time arrives
+But when a run reports an error that needs the developer's judgment
+Then the task is held with that reason and the developer is notified
+And no further occurrence runs until the developer resolves it
 ```
 
 ## Known caveats

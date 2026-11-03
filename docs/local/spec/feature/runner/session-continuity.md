@@ -23,6 +23,7 @@ stay in the machine's runtime mapping.
 | `instrukt sessions link <a> <b>` | Link sessions when the runtime entry declares a `link` template; otherwise report that the runtime lacks the capability. |
 | `instrukt sessions end <id>` | End the identified session through the optional `end` template; otherwise report that the runtime lacks the capability. |
 | `instrukt sessions link --remove <a> <b>` | Remove the link through the runtime mapping; report a missing capability when unsupported. |
+| `instrukt sessions resolve-start <procedure>@<project> --session <runtime:id> \| --none` | Resolve a standing agent's start whose result never arrived: bind the session the runtime did create, or declare that none was, allowing a fresh start. |
 | `instrukt sessions conversation <id>` | Read the identified session's conversation through that mapping. |
 
 Runtime command templates receive per-call input as follows:
@@ -35,7 +36,8 @@ Runtime command templates receive per-call input as follows:
 - `start` prints the session id, then the worktree path when one was
   requested; no path means the mapping lacks worktree support.
 - The opening message names the procedure's closure read (``Run `instrukt docs
-  get <procedure> --closure` …``), then the bound parameters, then the brief.
+  get <procedure> --closure` …``), then the bound parameters, then, for a task
+  run, `occurrence: <RFC 3339>` naming the scheduled occurrence, then the brief.
 
 The mapping is global configuration, not executable instructions supplied by
 a cloned project's configuration. Configuration interpolation expands command
