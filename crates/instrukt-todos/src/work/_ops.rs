@@ -24,7 +24,7 @@ use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactName, HoldRecord, HoldSource, PreparationReview, ReviewVerdict, StampFact,
-    StampRecord, TodoStatus, artifact_names,
+    StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
 };
 
 /// `instrukt todo create`.
@@ -184,6 +184,7 @@ impl Work {
                     digest: digest_of(&content),
                     writer: actor.clone(),
                     created: now,
+                    derived_from: Vec::new(),
                     remote: None,
                     content: Some(content),
                 }],
@@ -612,10 +613,19 @@ impl Work {
                 "`{slug}` is a structural holder; its artifacts are frozen evidence of the split"
             )));
         }
+        // Provenance: the upstream artifacts as they stand now.
+        let derived_from = upstream_of(name)
+            .iter()
+            .map(|upstream| Upstream {
+                artifact: ArtifactName::new(*upstream),
+                digest: record.current_digest(upstream).cloned(),
+            })
+            .collect();
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
             created: s.now,
+            derived_from,
             remote: None,
             content: Some(content.to_owned()),
         };

@@ -18,6 +18,7 @@ use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
     RoleBinding, StampFact, StampRecord, TaskResult, TodoEvidence, TodoStatus, WorkEvidence,
+    artifact_names,
 };
 
 /// The actor automatic holds and runner claims are attributed to: the
@@ -482,6 +483,7 @@ fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
 }
 
 fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
+    let implementation_plan_seeded = seeded(&record);
     TodoEvidence {
         timing: timing(&record),
         project: record.project,
@@ -500,6 +502,7 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
                         digest: v.digest,
                         writer: v.writer,
                         created: v.created,
+                        derived_from: v.derived_from,
                     })
                     .collect(),
             })
@@ -524,7 +527,33 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
         prerequisites,
         delivery: record.delivery.map(|d| d.commit),
         agent: record.agent,
+        implementation_plan_seeded,
     }
+}
+
+/// Whether the implementation plan was seeded: its first version was
+/// written by the todo's filer, before any plan review (`preparation`,
+/// "seeded derivation": a plan present at first entry with no prior
+/// review). No spec names how a seed is recorded; this reads it from the
+/// record rather than adding a surface.
+fn seeded(record: &TodoRecord) -> bool {
+    let Some(first) = record
+        .artifact(artifact_names::IMPLEMENTATION_PLAN)
+        .and_then(|a| a.versions.first())
+    else {
+        return false;
+    };
+    let reviewed_before = record.stamps.iter().any(|s| {
+        s.at <= first.created
+            && matches!(
+                s.fact,
+                StampFact::PreparationVerdict {
+                    phase: crate::evidence::PreparationReview::PlanReview,
+                    ..
+                }
+            )
+    });
+    first.writer == record.created_by && !reviewed_before
 }
 
 /// A task's schedule and its last firing.
@@ -559,4 +588,96 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::{ArtifactName, PreparationReview, ReviewVerdict};
+    use crate::work::_model::{Artifact, TodoId, Version, digest_of};
+    use instrukt_core::ids::ProjectSlug;
+    use instrukt_runner::interfaces::CatchUp;
+
+    fn filer() -> Actor {
+        Actor::Person {
+            name: "filer".into(),
+        }
+    }
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(1_800_000_000 + second).unwrap()
+    }
+
+    fn with_plan(writer: Actor, written: i64) -> TodoRecord {
+        TodoRecord {
+            schema: 1,
+            id: TodoId::parse(&"ef".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("depth").unwrap(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: at(0),
+            created_by: filer(),
+            human_involved: None,
+            revision: 1,
+            artifacts: vec![Artifact {
+                name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
+                address: None,
+                versions: vec![Version {
+                    digest: digest_of("plan"),
+                    writer,
+                    created: at(written),
+                    derived_from: Vec::new(),
+                    remote: None,
+                    content: None,
+                }],
+            }],
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: CatchUp::Once,
+            agent: None,
+            branch: None,
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    #[test]
+    fn a_plan_the_filer_supplied_before_any_review_is_seeded() {
+        assert!(seeded(&with_plan(filer(), 1)));
+    }
+
+    #[test]
+    fn a_plan_drafted_by_preparation_is_not_seeded() {
+        let drafter = Actor::Person {
+            name: "planner".into(),
+        };
+        assert!(!seeded(&with_plan(drafter, 1)));
+    }
+
+    #[test]
+    fn a_plan_first_written_after_a_plan_review_is_not_seeded() {
+        let mut record = with_plan(filer(), 5);
+        record.stamps.push(StampRecord {
+            fact: StampFact::PreparationVerdict {
+                phase: PreparationReview::PlanReview,
+                verdict: ReviewVerdict::NeedsWork,
+                target: digest_of("older"),
+                report: digest_of("report"),
+            },
+            at: at(2),
+            actor: filer(),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+        });
+        assert!(!seeded(&record));
+    }
 }

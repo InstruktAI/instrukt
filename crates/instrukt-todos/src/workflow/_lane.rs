@@ -148,6 +148,7 @@ mod tests {
                 reason: "the plan misses the API".into(),
                 input: digest("input-2"),
                 invalidated_plan: Some(digest("plan-1")),
+                invalidated_reviews: crate::evidence::plan_review_only(),
             })
             .build();
         assert_eq!(lane_of(&evidence, &indexed), Lane::Prepare);

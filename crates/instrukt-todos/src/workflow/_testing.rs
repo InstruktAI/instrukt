@@ -83,6 +83,7 @@ pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuild
             delivery: None,
             timing: None,
             agent: None,
+            implementation_plan_seeded: false,
         },
         tick: 0,
     }
@@ -109,6 +110,7 @@ impl EvidenceBuilder {
             digest: digest(value),
             writer: Actor::Session(session("writer")),
             created: self.next(),
+            derived_from: Vec::new(),
         };
         match self
             .evidence

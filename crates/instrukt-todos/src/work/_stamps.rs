@@ -178,6 +178,7 @@ pub(crate) fn resolve(
             reason: required(reason, "--reason")?,
             input: current(record, artifact_names::INPUT)?,
             invalidated_plan: record.current_digest(plan_artifact(record.kind)).cloned(),
+            invalidated_reviews: crate::evidence::plan_review_only(),
         }),
         StampRequest::ArchitectureSkipped { reason } => plain(StampFact::ArchitectureSkipped {
             reason: required(reason, "the skip reason")?,
