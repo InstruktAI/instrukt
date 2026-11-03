@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::ids::{CommitSha, ProjectSlug, RoleName, TodoSlug};
+use crate::ids::{CommitSha, ProjectSlug, RoleName, SnippetId, TodoSlug};
 
 /// An optional module could not answer a core question.
 #[derive(Debug, thiserror::Error)]
@@ -34,6 +34,46 @@ pub trait FlavorRoles: Send + Sync {
     /// The declared roles for the project at `project_root`, read from the
     /// published flavor its configuration selects.
     fn declared_roles(&self, project_root: &Path) -> Result<Vec<RoleName>, InterfaceError>;
+}
+
+/// One problem in an authored flavor's workflow files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlavorFinding {
+    /// The file, relative to the `workflow/` directory.
+    pub file: PathBuf,
+    /// Where in the file (a key path), empty for the whole file.
+    pub location: String,
+    pub message: String,
+}
+
+/// What a valid flavor declares that docs validation checks against the
+/// procedures (`workflow-definition`, "Flavor source").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FlavorDeclarations {
+    /// `roles:` in declaration order.
+    pub roles: Vec<RoleName>,
+    /// Each flow's declared `orchestrator` role, by flow name.
+    pub orchestrators: Vec<(String, RoleName)>,
+    /// Each action whose command names a procedure, with that procedure.
+    pub action_procedures: Vec<(String, SnippetId)>,
+}
+
+/// The outcome of checking one authored flavor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlavorCheck {
+    /// The files satisfy the workflow schema.
+    Valid(FlavorDeclarations),
+    /// The schema findings; nothing is declared until they are fixed.
+    Invalid(Vec<FlavorFinding>),
+}
+
+/// The workflow schema an authored flavor (`docs/global/<domain>/workflow/`)
+/// is validated against (workflow, through the todos crate). Docs
+/// validation checks these files whether or not the `todos` module is on,
+/// because the publishing project authors them either way; the CLI always
+/// wires it.
+pub trait FlavorSchema: Send + Sync {
+    fn check(&self, workflow_dir: &Path) -> Result<FlavorCheck, InterfaceError>;
 }
 
 /// How a remote-main revision reached this machine.
@@ -69,6 +109,7 @@ pub trait GraphGeneration: Send + Sync {
 pub struct CoreWiring {
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
+    pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
 }
 
@@ -77,6 +118,7 @@ impl std::fmt::Debug for CoreWiring {
         f.debug_struct("CoreWiring")
             .field("todo_existence", &self.todo_existence.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
+            .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
             .finish()
     }
