@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "repo.read(\"AGENTS.master.md\")"
+---
+## Purpose
+
+my-demo
+
+## Required reads
+
+@docs/local/baseline.md

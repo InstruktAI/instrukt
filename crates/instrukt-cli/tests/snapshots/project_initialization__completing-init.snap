@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "stdout(&env, &completed)"
+---
+project layer (instrukt.yaml): already present
+docs folders (docs/global/, docs/local/): created
+master (AGENTS.master.md): already present
+docs reference filter (git config filter.instrukt-docs): created
+filter patterns (.gitattributes): completed
+generated AGENTS.md ignore (.gitignore): created
+hook sections: created
+  hooks directory: [TMP]/demo/.git/hooks
+  post-commit: written
+  post-merge: written
+  post-rewrite: written
+  post-checkout: written

@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/hook-sections.rs
+expression: "stdout(&env, &status)"
+---
+hooks directory: [TMP]/demo/.manager-hooks (set by core.hooksPath)
+post-commit: absent
+  add this line to the tool that manages [TMP]/demo/.manager-hooks/post-commit: instrukt hooks run post-commit "$@" || true
+  last run: sync exited 1: instrukt: `instrukt sync` is not available in this build
+post-merge: current
+  last run: none
+post-rewrite: current
+  last run: none
+post-checkout: current
+  last run: none
