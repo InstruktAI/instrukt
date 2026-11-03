@@ -60,9 +60,25 @@ resolved from the agent CLI entries alone.
 
 `instrukt repo stamp <sha…> --verdict approve|needs_work --report <file>`
 writes the verdict and the complete report's digest as a git note on each
-named commit. Notes travel with push and need no separate work record or
-enabled todos module. The integrator reads these notes when assessing settled
-direct commits for integration.
+named commit. The notes need no separate work record or enabled todos module.
+The integrator reads these notes when assessing settled direct commits for
+integration.
+
+The notes live under `refs/notes/instrukt-review`, and instrukt moves that ref
+explicitly; no remote refspec is changed:
+
+- **Push.** After writing the notes locally, `repo stamp` pushes the notes ref
+  to the remote the default branch tracks, when there is one (the default
+  branch is the remote's `HEAD`, then `init.defaultBranch`, then `main`).
+- **Rejected push.** When another machine stamped first, the stamp fetches the
+  remote notes ref, merges it into the local one (`git notes merge -s
+  cat_sort_uniq`) and pushes again, a bounded number of times.
+- **Unreachable remote.** The stamp still succeeds locally and reports the push
+  as pending. Pushing the ref carries every local note, so the next stamp whose
+  push succeeds delivers it; there is no queue and no flag.
+- **Reading.** Every verdict reader — the integrator and the `repo` commands
+  that read verdicts — fetches the notes ref first. When that fetch fails, it
+  says so and reads the local notes.
 
 `instrukt repo stamp <sha…> --verdict exempt --reason <text>` records
 the author's own-stamp exemption and reason for a commit requiring no review.

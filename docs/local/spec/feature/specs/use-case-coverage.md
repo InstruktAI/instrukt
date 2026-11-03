@@ -27,9 +27,15 @@ is the scenario inventory bound, never source lines or a file mapping
   heading of level 2 to 6, or a Gherkin `Scenario:` line. The id is the first
   token of the form `UC-` followed by a letter or digit and then letters,
   digits or hyphens. Within one file an id counts once.
-- **Anonymous scenarios.** A heading section whose body holds a line beginning
-  with `When` and whose heading carries no use-case id, and each `Scenario:`
-  line carrying no use-case id. Each counts once.
+- **Anonymous scenarios.** Gherkin with no use-case id: a heading section
+  whose heading carries no use-case id and whose body holds a `When` line
+  inside a fenced Gherkin block. A `Scenario:` line without an id inherits the
+  id of the use-case heading it sits under when it is that heading's single
+  scenario; a second unnamed `Scenario:` under the same heading is anonymous,
+  so two scenarios never share an id. Prose beginning with "When" outside a
+  fenced Gherkin block is not Gherkin and is not counted. Each anonymous
+  scenario counts once. This is deliberately tighter than the predecessor's
+  meter, which counted any line beginning with `When`.
 - Pending use cases (inside `planned` or `planned-change` blocks) are in the
   inventory as written: a scenario authored before its build is bindable.
 

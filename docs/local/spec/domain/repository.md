@@ -107,8 +107,10 @@ commands.
 - **Invariants:**
   - A hook file holds at most one instrukt section.
   - No instrukt operation changes a byte of a hook file outside its section.
-  - A section never uses `exec` and never ends the hook early, so every
-    section after it runs.
+  - A section never `exec`s a command (never replaces the shell) and never
+    ends the hook early, so every section after it runs; a redirection-only
+    `exec` is allowed, and the pre-push section uses one to give the sections
+    after it the full ref list on stdin.
   - A section in a post-hook never fails or delays the git operation.
 - **Identifier:** the hook name within the repository's hooks directory.
 - **Lifecycle:** written by `instrukt hooks install` or `instrukt init`;
@@ -141,8 +143,8 @@ commands.
 - **Lifecycle:** created once; git owns it from then on.
 
 Commit-review notes bind a verdict and complete report digest to each named
-commit. They travel with push and need no separate work record. The integrator
-reads them; their command contract is owned by
+commit. instrukt pushes and fetches the notes ref explicitly, so they reach
+every machine without a separate work record. The integrator reads them; their command contract is owned by
 `local/projects/instrukt/spec/feature/repository/attributed-commit`.
 
 ### Domain events emitted

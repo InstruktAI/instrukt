@@ -22,8 +22,9 @@ integrator to resolve before there is a candidate to verify.
 
 Each tick compares local main with remote main using local git, without an
 API call. When local main is ahead and no candidate is pending, the runner
-emits `runner.main_ahead` to wake the integrator. The integrator reads direct
-commits' git-note verdicts and takes settled direct commits through the same
+emits `runner.main_ahead` to wake the integrator. The integrator fetches the
+review notes ref and reads direct commits' git-note verdicts
+(`local/projects/instrukt/spec/feature/repository/attributed-commit`) and takes settled direct commits through the same
 candidate and verification gate. It takes commits noted `approve` or `exempt`,
 stopping at the first commit with neither verdict.
 

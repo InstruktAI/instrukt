@@ -33,8 +33,10 @@ the structural graph, or the decision of who may author a use case.
    `Scenario:` line carrying a use-case id.
 
 **Anonymous scenario**
-:  Gherkin with no use-case id: a heading section whose body has a `When` line
-   and whose heading carries no id, or a `Scenario:` line carrying no id. Not
+:  Gherkin with no use-case id: a heading section whose heading carries no id
+   and whose body has a `When` line inside a fenced Gherkin block, or a
+   `Scenario:` line carrying no id that is not its use-case heading's single
+   scenario (which inherits that heading's id). Prose is never Gherkin. Not
    bindable; the id-assignment backlog.
 
 **Retired use case**

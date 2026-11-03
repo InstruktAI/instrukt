@@ -1,5 +1,5 @@
 ---
-description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`, never blocking git; post-hooks start publication, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
+description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`ing a command, never blocking git; post-hooks start publication, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
 delivered_by: [instrukt-first-build]
 ---
 # Hook Sections — Spec
@@ -44,7 +44,15 @@ projects keep their own tooling.
 
 - Delimited by `# >>> instrukt >>>` and `# <<< instrukt <<<`, holding the one
   call `instrukt hooks run <hook>`.
-- Never uses `exec` and never ends the hook, so every section after it runs.
+- Never `exec`s a command (never replaces the shell) and never ends the hook,
+  so every section after it runs; a redirection-only `exec` is allowed.
+- **Pre-push stdin.** Git passes pre-push its ref list on stdin, which every
+  section of the hook may need. The pre-push section copies stdin to a
+  temporary file, runs `instrukt hooks run pre-push` with that file on its
+  stdin, then restores the hook's stdin from the file (`exec 0<"$tmp"`) and
+  removes the file. The open descriptor keeps the list readable, so every
+  section after it reads the full ref list and nothing stays behind in the
+  temporary directory.
 
 ### `instrukt hooks install`
 
