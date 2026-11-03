@@ -122,6 +122,8 @@ impl EvidenceBuilder {
             digest: digest(value),
             writer: Actor::Session(session("writer")),
             created: self.next(),
+            sequence: u64::try_from(self.tick).unwrap_or_default(),
+            grounding: Default::default(),
             derived_from: upstream
                 .iter()
                 .map(|(artifact, value)| Upstream {
@@ -156,6 +158,7 @@ impl EvidenceBuilder {
             eval_fingerprint: None,
             role: None,
             human_involved: None,
+            sequence: u64::try_from(self.tick).unwrap_or_default(),
         });
         self
     }

@@ -190,10 +190,13 @@ impl Store {
 fn read_item(path: &Path) -> Result<LocalItem, WorkError> {
     refuse_link(path)?;
     let bytes = std::fs::read(path).map_err(|source| io_error(path, source))?;
-    serde_json::from_slice(&bytes).map_err(|source| WorkError::Corrupt {
-        path: path.to_path_buf(),
-        message: source.to_string(),
-    })
+    let mut item: LocalItem =
+        serde_json::from_slice(&bytes).map_err(|source| WorkError::Corrupt {
+            path: path.to_path_buf(),
+            message: source.to_string(),
+        })?;
+    item.record.number_unsequenced();
+    Ok(item)
 }
 
 /// Refuses a symbolic link at `dir` or any of its ancestors inside the

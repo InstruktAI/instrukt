@@ -768,6 +768,7 @@ mod tests {
             created_by: Actor::Person { name: "dev".into() },
             human_involved: None,
             revision,
+            sequence: 0,
             artifacts: Vec::new(),
             stamps: Vec::new(),
             claim: None,

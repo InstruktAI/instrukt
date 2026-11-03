@@ -159,12 +159,11 @@ pub(crate) fn parse_record_comment(body: &str) -> Option<Result<Envelope, serde_
         .lines()
         .find(|line| line.starts_with(RECORD_MARKER) && line.ends_with(COMMENT_CLOSE))?;
     let payload = &line[RECORD_MARKER.len()..line.len() - COMMENT_CLOSE.len()];
-    Some(
-        serde_json::from_str::<Envelope>(payload).map(|envelope| Envelope {
-            record: envelope.record.without_contents(),
-            ..envelope
-        }),
-    )
+    Some(serde_json::from_str::<Envelope>(payload).map(|envelope| {
+        let mut record = envelope.record.without_contents();
+        record.number_unsequenced();
+        Envelope { record, ..envelope }
+    }))
 }
 
 /// Keeps JSON inside an HTML comment: `<`, `>` and `&` as JSON escapes.
@@ -218,6 +217,7 @@ mod tests {
             },
             human_involved: None,
             revision: 3,
+            sequence: 0,
             artifacts: Vec::new(),
             stamps: Vec::new(),
             claim: None,
@@ -252,6 +252,8 @@ mod tests {
             writer: Actor::Person { name: "x".into() },
             created: "2026-11-03T10:00:00Z".parse().unwrap(),
             derived_from: Vec::new(),
+            sequence: 0,
+            grounding: Default::default(),
             remote: Some(1),
             content: Some("forged".into()),
         };

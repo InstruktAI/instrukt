@@ -310,6 +310,7 @@ impl TaskFirings for Work {
                 .iter()
                 .find(|b| &b.session == session)
                 .map(|b| b.role.clone());
+            let sequence = record.next_sequence();
             record.stamps.push(StampRecord {
                 fact: StampFact::TaskFiringStarted { occurrence },
                 at: now,
@@ -318,6 +319,7 @@ impl TaskFirings for Work {
                 eval_fingerprint: fingerprint,
                 role,
                 human_involved: None,
+                sequence,
             });
             Ok(())
         })?;
@@ -504,6 +506,8 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
                         writer: v.writer,
                         created: v.created,
                         derived_from: v.derived_from,
+                        sequence: v.sequence,
+                        grounding: v.grounding,
                     })
                     .collect(),
             })
@@ -621,6 +625,7 @@ mod tests {
             created_by: filer(),
             human_involved: None,
             revision: 1,
+            sequence: 0,
             artifacts: vec![Artifact {
                 name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
                 address: None,
@@ -629,6 +634,8 @@ mod tests {
                     writer,
                     created: at(written),
                     derived_from: Vec::new(),
+                    sequence: 0,
+                    grounding: Default::default(),
                     remote: None,
                     content: None,
                 }],
@@ -678,6 +685,7 @@ mod tests {
             eval_fingerprint: None,
             role: None,
             human_involved: None,
+            sequence: 0,
         });
         assert!(!seeded(&record));
     }

@@ -158,6 +158,17 @@ impl ContentDigest {
         Self(digest.into())
     }
 
+    /// The digest of `content` as work records it (`sha256:<hex>` of its
+    /// UTF-8 bytes): artifact versions, and the snippets grounding
+    /// evidence names, so a reader digests current content the same way.
+    pub fn of(content: &str) -> Self {
+        use sha2::{Digest as _, Sha256};
+        Self(format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(content.as_bytes()))
+        ))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -188,6 +199,57 @@ pub struct ArtifactVersion {
     /// it was written (see [`upstream_of`]); empty for an artifact with no
     /// upstream, and for versions written before provenance was recorded.
     pub derived_from: Vec<Upstream>,
+    /// Its place in the todo's record order: one counter per todo,
+    /// incremented by every artifact version and every stamp, so the order
+    /// is total whatever the timestamps.
+    pub sequence: u64,
+    /// The grounding recorded when it was written (`artifact-currency`,
+    /// "Drift evidence").
+    pub grounding: Grounding,
+}
+
+/// What an artifact version was grounded on when it was written: the
+/// canonical branch's head, the code paths and snippets its content
+/// declares, and, derived, the snippets the todo owns and its
+/// prerequisites' artifacts. Snippet digests are [`ContentDigest::of`] the
+/// snippet file's text, read from the project's working tree, or from the
+/// published home copy for a snippet the project does not hold.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grounding {
+    /// The canonical branch's head commit; `None` with no head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<CommitSha>,
+    /// The paths and directory prefixes of the content's fenced
+    /// `referenced-paths` blocks, as declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_paths: Vec<String>,
+    /// The snippets the content's `@` references name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_snippets: Vec<SnippetDigest>,
+    /// The snippets the todo owns: those it delivers or holds pending
+    /// material for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owned_snippets: Vec<SnippetDigest>,
+    /// Each prerequisite's artifacts of the kinds this artifact derives
+    /// from ([`upstream_of`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<DependencyDigest>,
+}
+
+/// A snippet and its digest then; `None` when it did not resolve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnippetDigest {
+    pub id: instrukt_core::ids::SnippetId,
+    pub digest: Option<ContentDigest>,
+}
+
+/// A prerequisite todo's artifact and its current digest then; `None` when
+/// the prerequisite had no such artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DependencyDigest {
+    pub todo: TodoSlug,
+    pub artifact: ArtifactName,
+    pub digest: Option<ContentDigest>,
 }
 
 /// The artifacts an artifact is derived from (`artifact-currency`,
@@ -241,6 +303,10 @@ pub struct StampRecord {
     pub role: Option<RoleName>,
     /// The audit-only `--human-involved` declaration, where given.
     pub human_involved: Option<bool>,
+    /// Its place in the todo's record order (see
+    /// [`ArtifactVersion::sequence`]).
+    #[serde(default)]
+    pub sequence: u64,
 }
 
 /// A preparation review phase (`--phase prd_review|architecture_review|plan_review`).

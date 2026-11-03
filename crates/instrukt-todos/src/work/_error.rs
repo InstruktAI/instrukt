@@ -36,6 +36,9 @@ pub enum WorkError {
     },
     #[error("the work record at {} is not readable: {message}", path.display())]
     Corrupt { path: PathBuf, message: String },
+    /// The project's documentation could not be read for grounding.
+    #[error(transparent)]
+    Docs(#[from] instrukt_core::docs::DocsError),
     #[error("{} is a symbolic link; instrukt does not follow links in its home", path.display())]
     Symlink { path: PathBuf },
     /// The project layer declares no `project` slug.

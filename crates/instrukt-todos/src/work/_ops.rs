@@ -23,8 +23,8 @@ use super::_session::{GitHubRead, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
-    Actor, ArtifactName, HoldRecord, HoldSource, PreparationReview, ReviewVerdict, StampFact,
-    StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
+    Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, PreparationReview,
+    ReviewVerdict, StampFact, StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
 };
 
 /// `instrukt todo create`.
@@ -177,6 +177,7 @@ impl Work {
             created_by: actor.clone(),
             human_involved: request.human_involved,
             revision: 0,
+            sequence: 1,
             artifacts: vec![Artifact {
                 name: ArtifactName::new(artifact_names::INPUT),
                 address: None,
@@ -185,6 +186,8 @@ impl Work {
                     writer: actor.clone(),
                     created: now,
                     derived_from: Vec::new(),
+                    sequence: 1,
+                    grounding: Default::default(),
                     remote: None,
                     content: Some(content),
                 }],
@@ -528,6 +531,7 @@ impl Work {
             model: None,
             eval_fingerprint: EvalFingerprint::current(self.home())?.map(|f| f.fingerprint),
             human_involved: None,
+            sequence: 0,
         };
         if let StampFact::FinalizeReady { commit } = &stamp.fact {
             let log = events.ok_or_else(|| {
@@ -551,7 +555,6 @@ impl Work {
             );
         }
         let now = s.now;
-        let stamp_out = stamp.clone();
         s.commit("stamped", |s| {
             let record = &mut s.items[index].record;
             if let StampFact::DiagnosisUnresolved { reason, .. } = &stamp.fact {
@@ -578,12 +581,19 @@ impl Work {
             if matches!(stamp.fact, StampFact::TaskOutcome { .. }) {
                 record.claim = None;
             }
+            let mut stamp = stamp;
+            stamp.sequence = record.next_sequence();
             record.stamps.push(stamp);
             Ok(())
         })?;
         s.flush()?;
         Ok(Outcome {
-            value: stamp_out,
+            value: s.items[index]
+                .record
+                .stamps
+                .last()
+                .cloned()
+                .ok_or_else(|| WorkError::refused("the stamp was not recorded"))?,
             reflection: s.status(index),
         })
     }
@@ -621,17 +631,41 @@ impl Work {
                 digest: record.current_digest(upstream).cloned(),
             })
             .collect();
+        let after = record.after.clone();
+        let mut grounding = super::_grounding::ground(
+            self.home(),
+            &project.root,
+            &project.slug,
+            &s.base,
+            slug,
+            content,
+        )?;
+        for prerequisite in &after {
+            let found = s.record_by_id(&prerequisite.id);
+            for upstream in upstream_of(name) {
+                grounding.dependencies.push(DependencyDigest {
+                    todo: prerequisite.slug.clone(),
+                    artifact: ArtifactName::new(*upstream),
+                    digest: found
+                        .as_ref()
+                        .and_then(|r| r.current_digest(upstream).cloned()),
+                });
+            }
+        }
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
             created: s.now,
             derived_from,
+            sequence: 0,
+            grounding,
             remote: None,
             content: Some(content.to_owned()),
         };
-        let written = version.clone();
         s.commit("artifact written", |s| {
             let record = &mut s.items[index].record;
+            let mut version = version;
+            version.sequence = record.next_sequence();
             match record
                 .artifacts
                 .iter_mut()
@@ -647,6 +681,12 @@ impl Work {
             Ok(())
         })?;
         s.flush()?;
+        let written = s.items[index]
+            .record
+            .artifact(name)
+            .and_then(|a| a.versions.last())
+            .cloned()
+            .ok_or_else(|| WorkError::refused("the artifact version was not recorded"))?;
         Ok(Outcome {
             value: written,
             reflection: s.status(index),
@@ -1203,6 +1243,7 @@ mod tests {
             created_by: Actor::Person { name: "dev".into() },
             human_involved: None,
             revision: 1,
+            sequence: 0,
             artifacts: Vec::new(),
             stamps: Vec::new(),
             claim: None,
@@ -1281,6 +1322,7 @@ mod tests {
             eval_fingerprint: None,
             role: None,
             human_involved: None,
+            sequence: 0,
         });
         assert!(matches!(
             change_kind(&mut started, TodoKind::Bug, true),
