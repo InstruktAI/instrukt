@@ -67,6 +67,11 @@ pub enum PublicationError {
         path.display()
     )]
     Unconfined { path: PathBuf },
+    #[error(
+        "{} is a symbolic link that leads nowhere; publication changes nothing through it",
+        path.display()
+    )]
+    DanglingLink { path: PathBuf },
     #[error("domain `{domain}` is reserved for the home's own published tree")]
     ReservedDomain { domain: String },
     #[error("{} cannot take the entrypoint-loading key: {reason}", path.display())]

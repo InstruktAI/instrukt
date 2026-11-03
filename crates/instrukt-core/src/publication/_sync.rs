@@ -11,7 +11,7 @@ use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
 use super::_tree::{self, BUNDLE_FILE, Outputs, PublisherRecord};
-use super::_tx::{STAGING_PREFIX, Transaction, confined, sweep};
+use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{self, Corpus, ExecPolicy, Finding, ValidationRequest};
@@ -304,7 +304,7 @@ fn project_overrides(home: &Home, root_agents: &str) -> Result<Files<String>, Pu
         let Some(file) = target.project_override else {
             continue;
         };
-        if confined(home.user_home(), Path::new(target.dir))?.is_dir() {
+        if resolved(home.user_home(), Path::new(target.dir))?.is_dir() {
             overrides.push((PathBuf::from(file), root_agents.to_owned()));
         }
     }
@@ -335,7 +335,7 @@ fn global_entrypoints(
     let mut entrypoints = Vec::new();
     let mut settings = Vec::new();
     for target in TARGETS {
-        let dir = confined(user_home, Path::new(target.dir))?;
+        let dir = resolved(user_home, Path::new(target.dir))?;
         if !dir.is_dir() {
             tracing::debug!(event = "sync_agent_skipped", agent = target.name, dir = %dir.display());
             continue;
@@ -353,7 +353,7 @@ fn global_entrypoints(
         )?;
         entrypoints.push((Path::new(target.dir).join(target.entrypoint), compiled));
         if let Some(loading) = target.loading {
-            let path = confined(user_home, Path::new(loading.settings))?;
+            let path = resolved(user_home, Path::new(loading.settings))?;
             let existing = match std::fs::read(&path) {
                 Ok(bytes) => Some(bytes),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
@@ -490,18 +490,18 @@ fn write(
     }
     let user_home = home.user_home();
     for (rel, text) in &prepared.entrypoints {
-        tx.write(&confined(user_home, rel)?, text.as_bytes())?;
+        tx.write(&resolved(user_home, rel)?, text.as_bytes())?;
         outputs.entrypoints.push(rel.clone());
     }
     for (rel, bytes) in &prepared.settings {
-        tx.write(&confined(user_home, rel)?, bytes)?;
+        tx.write(&resolved(user_home, rel)?, bytes)?;
     }
     for old in previous
         .entrypoints
         .iter()
         .filter(|old| !outputs.entrypoints.contains(old))
     {
-        tx.remove_file(&confined(user_home, old)?)?;
+        tx.remove_file(&resolved(user_home, old)?)?;
     }
 
     let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;

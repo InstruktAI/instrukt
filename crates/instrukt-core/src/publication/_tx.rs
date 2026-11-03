@@ -2,10 +2,12 @@
 //! replaced, so a sync that fails part-way puts the previous publication
 //! back instead of leaving a mix of two.
 //!
-//! Every target is confined to a root (the home, the project's primary
-//! worktree or the user's home directory): no existing component between
-//! the root and the target may be a symbolic link, so nothing is written
-//! through a link to another file.
+//! Targets a repository or instrukt controls — outputs in the project's
+//! primary worktree and the home's own tree — are [`confined`]: no
+//! existing component between the root and the target may be a symbolic
+//! link, so a committed link never aliases another file. Agent-CLI files
+//! in the user's home are [`resolved`] through the user's own links and
+//! written at their real target, so those links stay links.
 
 use std::path::{Path, PathBuf};
 
@@ -280,6 +282,54 @@ pub(super) fn confined(root: &Path, rel: &Path) -> Result<PathBuf, PublicationEr
             Ok(_) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => exists = false,
             Err(source) => return Err(PublicationError::Io { path, source }),
+        }
+    }
+    Ok(path)
+}
+
+/// Where the user-owned file `root/rel` really lives: every existing
+/// component, the file itself included, resolved through the user's
+/// symbolic links (a dotfiles link stays a link; the write lands at its
+/// target). The missing rest of the path is appended as written. A link
+/// that leads nowhere is refused, naming it. `rel` climbing out of `root`
+/// is refused.
+pub(super) fn resolved(root: &Path, rel: &Path) -> Result<PathBuf, PublicationError> {
+    let mut path = root.to_path_buf();
+    let parts: Vec<&std::ffi::OsStr> = rel
+        .components()
+        .map(|component| match component {
+            std::path::Component::Normal(part) => Ok(part),
+            _ => Err(PublicationError::Unconfined {
+                path: root.join(rel),
+            }),
+        })
+        .collect::<Result<_, _>>()?;
+    for (at, part) in parts.iter().enumerate() {
+        let candidate = path.join(part);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => {
+                path = candidate.canonicalize().map_err(|source| {
+                    if source.kind() == std::io::ErrorKind::NotFound {
+                        PublicationError::DanglingLink {
+                            path: candidate.clone(),
+                        }
+                    } else {
+                        PublicationError::Io {
+                            path: candidate.clone(),
+                            source,
+                        }
+                    }
+                })?;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(parts[at..].iter().fold(path, |path, part| path.join(part)));
+            }
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: candidate,
+                    source,
+                });
+            }
         }
     }
     Ok(path)
