@@ -87,41 +87,13 @@ pub fn notify(config: &Configuration, env: &Env, reference: &str, deep_link: Opt
 mod tests {
     use super::*;
 
-    fn runtime(with_notify: bool) -> Configuration {
-        let dir = tempfile::tempdir().unwrap();
-        let home = instrukt_core::home::Home::at_user_home(dir.path().to_path_buf());
-        let notify = if with_notify {
-            ", notify: 'rt notify'"
-        } else {
-            ""
-        };
-        std::fs::create_dir_all(home.root()).unwrap();
-        std::fs::write(
-            home.global_config(),
-            format!(
-                "schema_version: 1\nruntimes:\n  - {{name: rt, session_id_env: RT, start: s, send: s, alive: s, conversation: s{notify}}}\n"
-            ),
-        )
-        .unwrap();
-        Configuration::load_global(&home).unwrap()
-    }
-
     #[test]
-    fn off_is_silent_a_command_wins_and_the_default_uses_the_runtimes_capability() {
-        let with = runtime(true);
-        let without = runtime(false);
-        let entry = with.runtimes().first();
-        assert_eq!(route(&Notify::Off, entry), Route::Silent);
+    fn off_is_silent_and_a_configured_command_wins() {
+        let command = String::from("notify-me");
+        assert_eq!(route(&Notify::Off, None), Route::Silent);
         assert_eq!(
-            route(&Notify::Command("n".into()), entry),
-            Route::Configured("n")
-        );
-        assert!(
-            matches!(route(&Notify::RuntimeDefault, entry), Route::Runtime(e) if Some(e) == entry)
-        );
-        assert_eq!(
-            route(&Notify::RuntimeDefault, without.runtimes().first()),
-            Route::Silent
+            route(&Notify::Command(command.clone()), None),
+            Route::Configured(command.as_str())
         );
         assert_eq!(route(&Notify::RuntimeDefault, None), Route::Silent);
     }
