@@ -26,6 +26,10 @@ pub enum RepositoryError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error(
+        "{path} resolves to {target}, outside the repository; instrukt does not write there and changed nothing"
+    )]
+    Escapes { path: PathBuf, target: PathBuf },
     #[error("{path} is not UTF-8 text")]
     NotText { path: PathBuf },
     #[error("{path}: {source}; fix or remove its instrukt markers, then run again")]
@@ -52,6 +56,8 @@ pub enum RepositoryError {
     },
     #[error("the review note of {commit} holds `{line}`, which records no stamp")]
     MalformedNote { commit: String, line: String },
+    #[error("the system clock reads a time before 1970; a stamp's time cannot be recorded")]
+    ClockBeforeEpoch,
     #[error("a stamp needs at least one commit")]
     NoCommits,
     #[error("an exemption needs a non-empty reason")]

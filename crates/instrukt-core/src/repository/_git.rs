@@ -23,6 +23,16 @@ pub(crate) fn primary_worktree(root: &Path) -> Result<PathBuf, RepositoryError> 
         .map_or_else(|| root.to_path_buf(), PathBuf::from))
 }
 
+/// The repository's git directory shared by all its worktrees.
+pub(crate) fn common_dir(root: &Path) -> Result<PathBuf, RepositoryError> {
+    let dir = PathBuf::from(git::run(root, ["rev-parse", "--git-common-dir"])?);
+    Ok(if dir.is_absolute() {
+        dir
+    } else {
+        root.join(dir)
+    })
+}
+
 /// The value of git configuration `key` as git resolves it for `root`;
 /// `None` when unset.
 pub(crate) fn config(root: &Path, key: &str) -> Result<Option<String>, RepositoryError> {

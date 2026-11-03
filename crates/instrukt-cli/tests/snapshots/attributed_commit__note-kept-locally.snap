@@ -1,5 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/attributed-commit.rs
-expression: local
+expression: timeless(&local)
 ---
-verdict: exempt; reason: typo fix
+at: <time 1>; verdict: exempt; reason: typo fix

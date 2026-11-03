@@ -14,7 +14,7 @@ use instrukt_core::ids::{ProjectSlug, TodoSlug};
 use instrukt_core::repository::{
     self, CommitRequest, FilterDirection, GENERATED_FILE, GenerationOutcome, Hook, HookChange,
     HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, MASTER_FILE, NotesPush,
-    PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, SyncOutcome,
+    PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, StampTime, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -425,9 +425,12 @@ fn stamp(args: StampArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             anyhow::bail!("--verdict approve|needs_work takes --report <file> and no --reason")
         }
     };
-    let outcome = repository::stamp(&ctx.cwd, &args.commits, &stamp)?;
+    // The clock is read here, at the composition root, and handed down.
+    let at = StampTime::from_system(std::time::SystemTime::now())?;
+    let outcome = repository::stamp(&ctx.cwd, &args.commits, &stamp, at)?;
     for commit in &outcome.commits {
-        ctx.out.line(&format!("{commit}: {}", stamp.verdict()))?;
+        ctx.out
+            .line(&format!("{commit}: {}", stamp.verdict().name()))?;
     }
     let push = match &outcome.push {
         NotesPush::Pushed { remote } => format!("review notes pushed to {remote}"),

@@ -10,6 +10,7 @@ use crate::fsx;
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
+use super::_contain::Bounds;
 use super::_error::RepositoryError;
 use super::_git::{self, HooksDir};
 use super::_hook::Hook;
@@ -100,12 +101,25 @@ pub fn install_hooks(home: &Home, cwd: &Path) -> Result<HooksReport, RepositoryE
 
 /// [`install_hooks`] for the working tree rooted at `root`.
 pub(crate) fn install_at(home: &Home, root: &Path) -> Result<HooksReport, RepositoryError> {
-    let started = Instant::now();
+    plan_install_at(home, root)?.apply()
+}
+
+/// Every hook file's edit, decided and checked before anything is written.
+pub(crate) struct InstallPlan {
+    dir: HooksDir,
+    planned: Vec<(HookFile, Plan)>,
+}
+
+/// Decides the install in the working tree rooted at `root`: reads every
+/// hook file and refuses one whose markers are damaged or that resolves
+/// outside the repository, writing nothing.
+pub(crate) fn plan_install_at(home: &Home, root: &Path) -> Result<InstallPlan, RepositoryError> {
     let dir = _git::hooks_dir(root)?;
+    let bounds = hook_bounds(root, &dir)?;
     let blueprint = Configuration::load(home, Some(root))?.module_enabled(Module::Blueprint)?;
     let mut planned = Vec::new();
     for hook in Hook::ALL {
-        let file = HookFile::read(&dir.path, hook)?;
+        let file = HookFile::read(&dir.path, hook, &bounds)?;
         let wanted = !hook.needs_blueprint() || blueprint;
         let plan = if wanted {
             plan_install(&file, hook)?
@@ -117,26 +131,48 @@ pub(crate) fn install_at(home: &Home, root: &Path) -> Result<HooksReport, Reposi
         };
         planned.push((file, plan));
     }
-    let mut hooks = Vec::new();
-    for (file, plan) in planned {
-        if let Some(text) = &plan.text {
-            file.write(text)?;
+    Ok(InstallPlan { dir, planned })
+}
+
+impl InstallPlan {
+    /// Writes the decided edits.
+    pub(crate) fn apply(self) -> Result<HooksReport, RepositoryError> {
+        let started = Instant::now();
+        let mut hooks = Vec::new();
+        for (file, plan) in self.planned {
+            if let Some(text) = &plan.text {
+                file.write(text)?;
+            }
+            hooks.push(HookChange {
+                hook: file.hook,
+                file: file.path.clone(),
+                change: plan.change,
+                before_exec_line: plan.before_exec_line,
+                not_executable: file.not_executable(),
+            });
         }
-        hooks.push(HookChange {
-            hook: file.hook,
-            file: file.path.clone(),
-            change: plan.change,
-            before_exec_line: plan.before_exec_line,
-            not_executable: file.not_executable(),
-        });
+        tracing::debug!(
+            event = "hooks_installed",
+            hooks_dir = %self.dir.path.display(),
+            changed = hooks.iter().filter(|h| matches!(h.change, SectionChange::Written | SectionChange::Updated | SectionChange::Removed)).count(),
+            duration_ms = started.elapsed().as_millis() as u64,
+        );
+        Ok(HooksReport {
+            dir: self.dir,
+            hooks,
+        })
     }
-    tracing::debug!(
-        event = "hooks_installed",
-        hooks_dir = %dir.path.display(),
-        changed = hooks.iter().filter(|h| matches!(h.change, SectionChange::Written | SectionChange::Updated | SectionChange::Removed)).count(),
-        duration_ms = started.elapsed().as_millis() as u64,
-    );
-    Ok(HooksReport { dir, hooks })
+}
+
+/// Where hook files may resolve: the working tree, the repository's git
+/// directory and the hooks directory git runs them from.
+fn hook_bounds(root: &Path, dir: &HooksDir) -> Result<Bounds, RepositoryError> {
+    let common = _git::common_dir(root)?;
+    std::fs::create_dir_all(&dir.path).map_err(|source| RepositoryError::Create {
+        path: dir.path.clone(),
+        source,
+    })?;
+    Bounds::of(&[root, &common, &dir.path])
 }
 
 /// Removes instrukt's section from every hook file holding one; every other
@@ -145,9 +181,10 @@ pub fn remove_hooks(cwd: &Path) -> Result<HooksReport, RepositoryError> {
     let started = Instant::now();
     let root = _git::root(cwd)?;
     let dir = _git::hooks_dir(&root)?;
+    let bounds = hook_bounds(&root, &dir)?;
     let mut planned = Vec::new();
     for hook in Hook::ALL {
-        let file = HookFile::read(&dir.path, hook)?;
+        let file = HookFile::read(&dir.path, hook, &bounds)?;
         let plan = plan_removal(&file)?.unwrap_or(Plan {
             text: None,
             change: SectionChange::Absent,
@@ -189,7 +226,7 @@ pub fn hooks_status(home: &Home, cwd: &Path) -> Result<HooksStatus, RepositoryEr
         if hook.needs_blueprint() && !blueprint {
             continue;
         }
-        let file = HookFile::read(&dir.path, hook)?;
+        let file = HookFile::read_only(&dir.path, hook)?;
         let section = match file.text.as_deref() {
             None => SectionStatus::Absent,
             Some(text) => match _section::state(text, hook) {
@@ -296,26 +333,37 @@ struct HookFile {
 }
 
 impl HookFile {
-    fn read(dir: &Path, hook: Hook) -> Result<Self, RepositoryError> {
+    /// The hook file for an edit: its target resolved within `bounds`.
+    fn read(dir: &Path, hook: Hook, bounds: &Bounds) -> Result<Self, RepositoryError> {
         let path = dir.join(hook.name());
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    hook,
-                    target: path.clone(),
-                    path,
-                    text: None,
-                    permissions: None,
-                });
-            }
-            Err(source) => return Err(RepositoryError::Read { path, source }),
-        };
+        let target = bounds.resolve(&path)?;
+        Self::load(hook, path, target)
+    }
+
+    /// The hook file for reporting only; nothing is written through it.
+    fn read_only(dir: &Path, hook: Hook) -> Result<Self, RepositoryError> {
+        let path = dir.join(hook.name());
+        Self::load(hook, path.clone(), path)
+    }
+
+    fn load(hook: Hook, path: PathBuf, target: PathBuf) -> Result<Self, RepositoryError> {
         let read_error = |source| RepositoryError::Read {
             path: path.clone(),
             source,
         };
-        let target = std::fs::canonicalize(&path).map_err(read_error)?;
+        let bytes = match std::fs::read(&target) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    hook,
+                    path,
+                    target,
+                    text: None,
+                    permissions: None,
+                });
+            }
+            Err(source) => return Err(read_error(source)),
+        };
         let permissions = std::fs::metadata(&target)
             .map_err(read_error)?
             .permissions();

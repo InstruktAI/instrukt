@@ -169,6 +169,14 @@ impl TestEnv {
         cmd
     }
 
+    /// `git` ready to run in `dir` with this test's environment, for a test
+    /// that bounds how long git may take (`.timeout(…)`).
+    pub fn git_command(&self, dir: &Path) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.env_clear().envs(&self.vars).current_dir(dir);
+        cmd
+    }
+
     /// Runs `instrukt <args>` in `cwd` and returns the assertion handle.
     pub fn run<I, S>(&self, cwd: &Path, args: I) -> Assert
     where

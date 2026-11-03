@@ -228,3 +228,41 @@ fn a_hand_written_agents_file_holds_back_the_master_until_its_content_has_moved(
         "nothing in the repository changed"
     );
 }
+
+// spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN2
+#[test]
+fn an_ignore_file_linked_outside_the_repository_refuses_init_and_nothing_changes() {
+    let env = machine();
+    let outside = env.path("elsewhere/ignore-list");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    std::fs::write(&outside, "secrets/\n").unwrap();
+    let repo = env.git_repo("demo");
+    std::os::unix::fs::symlink(&outside, repo.path().join(".gitignore")).unwrap();
+    let outside_before = std::fs::read(&outside).unwrap();
+    let before = tree(repo.path());
+
+    let refused = env.run(repo.path(), ["init"]).failure();
+    insta::assert_snapshot!("escaping-ignore-refused", stderr(&env, &refused));
+
+    assert_eq!(
+        std::fs::read(&outside).unwrap(),
+        outside_before,
+        "the outside file is untouched"
+    );
+    assert!(
+        std::fs::symlink_metadata(repo.path().join(".gitignore"))
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link stays a link"
+    );
+    assert_eq!(
+        tree(repo.path()),
+        before,
+        "nothing in the repository changed"
+    );
+    assert!(
+        !env.instrukt_home().join("instrukt.yaml").exists(),
+        "nothing was written in the home"
+    );
+}

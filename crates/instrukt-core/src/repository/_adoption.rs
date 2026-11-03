@@ -5,11 +5,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::config::{self, InitOutcome, Layer};
+use crate::config::{self, CONFIG_FILE_NAME, InitOutcome, Layer};
 use crate::fsx::atomic_write;
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
+use super::_contain::Bounds;
 use super::_error::RepositoryError;
 use super::_filter::{self, FILTER_PATTERN};
 use super::_git;
@@ -75,6 +76,19 @@ pub fn init(
 ) -> Result<InitReport, RepositoryError> {
     let started = Instant::now();
     let root = _git::root(cwd)?;
+    // Every target is resolved, and the hook edits decided, before anything
+    // is written: a target outside the repository refuses the whole init.
+    let bounds = Bounds::of(&[&root])?;
+    bounds.resolve(&root.join(CONFIG_FILE_NAME))?;
+    let folders = DOCS_FOLDERS
+        .iter()
+        .map(|folder| bounds.resolve(&root.join(folder)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let master_path = bounds.resolve(&root.join(MASTER_FILE))?;
+    let attributes = bounds.resolve(&root.join(".gitattributes"))?;
+    let ignore = bounds.resolve(&root.join(".gitignore"))?;
+    let hooks_plan = _hooks::plan_install_at(home, &root)?;
+
     let mut parts = Vec::new();
     let layer = match config::init(home, &Layer::Project(root.clone()), slug)? {
         InitOutcome::Created => PartOutcome::Created,
@@ -82,18 +96,18 @@ pub fn init(
         InitOutcome::AlreadyCurrent => PartOutcome::AlreadyPresent,
     };
     parts.push((InitPart::ProjectLayer, layer));
-    parts.push((InitPart::DocsFolders, docs_folders(&root)?));
-    parts.push((InitPart::Master, master(&root)?));
+    parts.push((InitPart::DocsFolders, docs_folders(&folders)?));
+    parts.push((InitPart::Master, master(&root, &master_path)?));
     parts.push((InitPart::DocsFilter, docs_filter(&root)?));
     parts.push((
         InitPart::FilterPatterns,
-        ensure_line(&root.join(".gitattributes"), FILTER_PATTERN)?,
+        ensure_line(&attributes, FILTER_PATTERN)?,
     ));
     parts.push((
         InitPart::GeneratedIgnore,
-        ensure_line(&root.join(".gitignore"), GENERATED_FILE)?,
+        ensure_line(&ignore, GENERATED_FILE)?,
     ));
-    let hooks = _hooks::install_at(home, &root)?;
+    let hooks = hooks_plan.apply()?;
     parts.push((InitPart::HookSections, hooks_outcome(&hooks)));
     tracing::debug!(
         event = "repository_initialized",
@@ -104,14 +118,13 @@ pub fn init(
     Ok(InitReport { root, parts, hooks })
 }
 
-fn docs_folders(root: &Path) -> Result<PartOutcome, RepositoryError> {
+fn docs_folders(folders: &[PathBuf]) -> Result<PartOutcome, RepositoryError> {
     let mut created = 0;
-    for folder in DOCS_FOLDERS {
-        let path = root.join(folder);
+    for path in folders {
         if path.is_dir() {
             continue;
         }
-        std::fs::create_dir_all(&path).map_err(|source| RepositoryError::Create {
+        std::fs::create_dir_all(path).map_err(|source| RepositoryError::Create {
             path: path.clone(),
             source,
         })?;
@@ -119,14 +132,14 @@ fn docs_folders(root: &Path) -> Result<PartOutcome, RepositoryError> {
     }
     Ok(match created {
         0 => PartOutcome::AlreadyPresent,
-        n if n == DOCS_FOLDERS.len() => PartOutcome::Created,
+        n if n == folders.len() => PartOutcome::Created,
         _ => PartOutcome::Completed,
     })
 }
 
-fn master(root: &Path) -> Result<PartOutcome, RepositoryError> {
-    let path = root.join(MASTER_FILE);
-    if exists(&path)? {
+/// Seeds the master at `path`, the resolved `AGENTS.master.md` of `root`.
+fn master(root: &Path, path: &Path) -> Result<PartOutcome, RepositoryError> {
+    if exists(path)? {
         return Ok(PartOutcome::AlreadyPresent);
     }
     if exists(&root.join(GENERATED_FILE))? {
@@ -140,7 +153,7 @@ fn master(root: &Path) -> Result<PartOutcome, RepositoryError> {
             .unwrap_or_default(),
     };
     let text = format!("## Purpose\n\n{name}\n\n## Required reads\n\n@{LOCAL_BASELINE}\n");
-    atomic_write(&path, text.as_bytes())?;
+    atomic_write(path, text.as_bytes())?;
     Ok(PartOutcome::Created)
 }
 
@@ -157,7 +170,7 @@ fn docs_filter(root: &Path) -> Result<PartOutcome, RepositoryError> {
     })
 }
 
-/// Appends `line` to the file at `path` unless a line equal to it is there,
+/// Appends `line` to the file at `path` (already resolved) unless a line equal to it is there,
 /// keeping every other line.
 fn ensure_line(path: &Path, line: &str) -> Result<PartOutcome, RepositoryError> {
     let text = match std::fs::read(path) {

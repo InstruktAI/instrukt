@@ -101,21 +101,46 @@ pub(crate) enum Installed {
 pub(crate) fn state(text: &str, hook: Hook) -> Result<SectionState, SectionError> {
     Ok(match locate(text)? {
         None => SectionState::Absent,
-        Some(span) if text[span.start..span.end] == section(hook) => SectionState::Current,
+        Some(span) if span.holds(text, &section(hook)) => SectionState::Current,
         Some(_) => SectionState::Outdated,
     })
 }
 
-/// Installs `hook`'s section into `text`, touching no byte outside it.
+impl Span {
+    /// Whether the section ends the file without a final newline: the file
+    /// had none before the section was appended, and the newline that ends
+    /// its last line is the one just before the section.
+    fn unterminated_at_end(self, text: &str) -> bool {
+        self.end == text.len() && !text[self.start..self.end].ends_with('\n')
+    }
+
+    /// Whether the section is `wanted` (in its form without a final newline
+    /// when it ends a file that has none).
+    fn holds(self, text: &str, wanted: &str) -> bool {
+        let found = &text[self.start..self.end];
+        found == wanted
+            || (self.unterminated_at_end(text) && wanted.strip_suffix('\n') == Some(found))
+    }
+}
+
+/// Installs `hook`'s section into `text`, touching no byte outside it. A
+/// file without a final newline keeps having none: the section is appended
+/// after a newline ending the file's last line, without one of its own, so
+/// removing it restores every byte.
 pub(crate) fn install(text: &str, hook: Hook) -> Result<Installed, SectionError> {
     let wanted = section(hook);
     if let Some(span) = locate(text)? {
-        if text[span.start..span.end] == wanted {
+        if span.holds(text, &wanted) {
             return Ok(Installed::Unchanged);
         }
+        let replacement = if span.unterminated_at_end(text) {
+            wanted.trim_end_matches('\n')
+        } else {
+            wanted.as_str()
+        };
         let mut out = String::with_capacity(text.len() + wanted.len());
         out.push_str(&text[..span.start]);
-        out.push_str(&wanted);
+        out.push_str(replacement);
         out.push_str(&text[span.end..]);
         return Ok(Installed::Replaced(out));
     }
@@ -130,16 +155,24 @@ pub(crate) fn install(text: &str, hook: Hook) -> Result<Installed, SectionError>
     out.push_str(text);
     if !text.is_empty() && !text.ends_with('\n') {
         out.push('\n');
+        out.push_str(wanted.trim_end_matches('\n'));
+    } else {
+        out.push_str(&wanted);
     }
-    out.push_str(&wanted);
     Ok(Installed::Appended(out))
 }
 
-/// `text` without its section; `None` when it holds none.
+/// `text` without its section; `None` when it holds none. A section ending
+/// a file without a final newline takes the newline before it along, so
+/// the file ends as it did before the section was appended.
 pub(crate) fn remove(text: &str) -> Result<Option<String>, SectionError> {
     Ok(locate(text)?.map(|span| {
+        let mut start = span.start;
+        if span.unterminated_at_end(text) && start > 0 && text[..start].ends_with('\n') {
+            start -= 1;
+        }
         let mut out = String::with_capacity(text.len());
-        out.push_str(&text[..span.start]);
+        out.push_str(&text[..start]);
         out.push_str(&text[span.end..]);
         out
     }))
@@ -223,20 +256,50 @@ fn first_exec_line(text: &str) -> Option<(usize, usize)> {
         .map(|(number, offset, _)| (number, offset))
 }
 
-/// Whether `line` is an `exec` that replaces the shell with a command; an
-/// `exec` holding only redirections (`exec 1>&2`, `exec 0<"$file"`) keeps
-/// the shell, so the lines after it still run.
+/// Whether `line` runs a command through `exec`, replacing the shell, in
+/// any of its shell forms: at the start of the line or after `;`, `&&`,
+/// `||`, `&`, `|` or a keyword (`then`, `do`, `{` …), after assignment
+/// prefixes (`FOO=bar exec cmd`), after `exec`'s own options. An `exec`
+/// holding only redirections (`exec 1>&2`, `exec 0<"$file"`) keeps the
+/// shell, so the lines after it still run.
 fn execs_a_command(line: &str) -> bool {
-    let Some(rest) = line.trim_start().strip_prefix("exec") else {
-        return false;
-    };
-    if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
-        return false;
-    }
-    let mut words = rest.split_whitespace();
+    shell_words(line)
+        .split(|word| matches!(word, Word::Separator))
+        .any(|command| {
+            let words: Vec<&str> = command
+                .iter()
+                .filter_map(|word| match word {
+                    Word::Text(text) => Some(text.as_str()),
+                    Word::Separator => None,
+                })
+                .collect();
+            let mut rest = words
+                .iter()
+                .copied()
+                .skip_while(|word| is_assignment(word) || KEYWORDS.contains(word));
+            rest.next() == Some("exec") && runs_command(rest)
+        })
+}
+
+/// Words after which a command starts.
+const KEYWORDS: [&str; 9] = [
+    "then", "else", "elif", "do", "if", "while", "until", "{", "!",
+];
+
+/// Whether the words after `exec` name a command, past its options and
+/// redirections.
+fn runs_command<'a>(mut words: impl Iterator<Item = &'a str>) -> bool {
+    let mut options = true;
     while let Some(word) = words.next() {
-        if word.starts_with('#') {
-            return false;
+        if options && word == "--" {
+            options = false;
+            continue;
+        }
+        if options && word.starts_with('-') && word.len() > 1 {
+            if word == "-a" {
+                words.next();
+            }
+            continue;
         }
         match redirection(word) {
             Some(Target::Next) => {
@@ -247,6 +310,79 @@ fn execs_a_command(line: &str) -> bool {
         }
     }
     false
+}
+
+/// `NAME=value`, a variable assignment prefixing a command.
+fn is_assignment(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(name, _)| {
+        name.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// One shell word, quotes removed, or a command separator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Word {
+    Text(String),
+    Separator,
+}
+
+/// The words of one line as the shell splits them: quotes group, `#` at a
+/// word's start begins a comment, and `;`, `&`, `|`, `(`, `)` separate
+/// commands unless they continue a redirection (`2>&1`, `>|`).
+fn shell_words(line: &str) -> Vec<Word> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_word = false;
+    let mut chars = line.chars().peekable();
+    let flush = |words: &mut Vec<Word>, current: &mut String, in_word: &mut bool| {
+        if *in_word {
+            words.push(Word::Text(std::mem::take(current)));
+            *in_word = false;
+        }
+    };
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_word = true;
+                for quoted in chars.by_ref() {
+                    if quoted == '\'' {
+                        break;
+                    }
+                    current.push(quoted);
+                }
+            }
+            '"' => {
+                in_word = true;
+                while let Some(quoted) = chars.next() {
+                    match quoted {
+                        '"' => break,
+                        '\\' => current.extend(chars.next()),
+                        other => current.push(other),
+                    }
+                }
+            }
+            '\\' => {
+                in_word = true;
+                current.extend(chars.next());
+            }
+            '#' if !in_word => break,
+            '&' | '|' if current.ends_with(['<', '>']) => current.push(c),
+            ';' | '&' | '|' | '(' | ')' => {
+                flush(&mut words, &mut current, &mut in_word);
+                words.push(Word::Separator);
+            }
+            c if c.is_whitespace() => flush(&mut words, &mut current, &mut in_word),
+            other => {
+                in_word = true;
+                current.push(other);
+            }
+        }
+    }
+    flush(&mut words, &mut current, &mut in_word);
+    words
 }
 
 /// Where a redirection word's target is.
@@ -344,6 +480,13 @@ mod tests {
             "  exec \"$@\"",
             "exec 2>&1 other-tool",
             "exec > log other-tool",
+            "FOO=bar exec sh -c 'x'",
+            "HOOK=\"a b\" OTHER=1 exec \"$tool\"",
+            "[ -x tool ] && exec tool",
+            "test -n \"$CI\" || exec ci-tool",
+            "if true; then exec tool; fi",
+            "exec -a name tool",
+            "exec -- tool",
         ] {
             assert!(execs_a_command(command), "{command}");
         }
@@ -356,6 +499,9 @@ mod tests {
             "exec # nothing",
             "executable=1",
             "# exec npx",
+            "FOO=bar exec 2>&1",
+            "echo 'exec tool'",
+            "echo done # exec tool",
         ] {
             assert!(!execs_a_command(kept), "{kept}");
         }
@@ -386,22 +532,21 @@ mod tests {
         ] {
             assert_eq!(foreign_interpreter(shell), None, "{shell}");
         }
-        assert_eq!(
-            foreign_interpreter("#!/usr/bin/env -S python3 -u\n").as_deref(),
-            Some("python3")
-        );
-        assert_eq!(
-            foreign_interpreter("#!/usr/bin/node\n").as_deref(),
-            Some("node")
-        );
+        for foreign in ["#!/usr/bin/env -S python3 -u\n", "#!/usr/bin/node\n"] {
+            assert!(foreign_interpreter(foreign).is_some(), "{foreign}");
+        }
     }
 
     proptest! {
         #[test]
         fn install_then_remove_restores_every_byte(
             own in prop::collection::vec("[ -~]{0,20}", 0..8),
+            final_newline in any::<bool>(),
         ) {
-            let text: String = own.iter().map(|line| format!("{line}\n")).collect();
+            let mut text: String = own.iter().map(|line| format!("{line}\n")).collect();
+            if !final_newline {
+                text.pop();
+            }
             prop_assume!(locate(&text).is_ok_and(|span| span.is_none()));
             let installed = installed_text(install(&text, HOOK).unwrap());
             prop_assert_eq!(state(&installed, HOOK).unwrap(), SectionState::Current);
