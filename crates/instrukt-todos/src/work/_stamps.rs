@@ -340,6 +340,20 @@ pub(crate) fn resolve(
         StampRequest::TaskFiringStarted { occurrence } => {
             task_only(record)?;
             let occurrence = occurrence.unwrap_or(inputs.now);
+            // A replayed start never displaces the current occurrence: one
+            // older than the latest start, or one whose outcome is recorded,
+            // is stale.
+            let stale = |why: &str| {
+                WorkError::refused(format!(
+                    "this firing start is stale: {why}; a start is recorded for the current occurrence only"
+                ))
+            };
+            if has_outcome(record, occurrence) {
+                return Err(stale("that occurrence already has its outcome"));
+            }
+            if firings(record).iter().any(|f| f.occurrence > occurrence) {
+                return Err(stale("a later occurrence has started since"));
+            }
             // The runner stamped this start for the caller's run already.
             let already_recorded = match (firings(record).last(), inputs.session) {
                 (Some(latest), Some(caller)) => {
