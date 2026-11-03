@@ -82,7 +82,8 @@ fn revisions_pushed_while_one_is_mapped_wait_and_only_the_newest_is_mapped_next(
     push(&env, &repo);
     gate.open();
 
-    // One at a time: a second run while one runs would fail at the engine.
+    // The newest is mapped next, once the running mapping ends: the gated
+    // engine fails any run that starts while another is still running.
     assert_eq!(wait_generated(&env, &three).state, GenerationState::Mapped);
     assert!(
         !gate.started("two"),

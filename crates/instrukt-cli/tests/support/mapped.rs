@@ -1,8 +1,9 @@
 //! Mapped projects for blueprint generation tests: a project with the
 //! blueprint module on, instrukt's hooks installed and a bare remote to
 //! push main to, mapped by a test engine — a small executable the test
-//! writes into its temporary directory and configures as
-//! `blueprint.engine`, the boundary a project's own engine sits at.
+//! writes into its temporary directory and configures as the machine's
+//! `blueprint.engine` (global layer), the boundary a developer's own engine
+//! sits at.
 //!
 //! Each revision commits the graph it should map to (`map.json`) and its
 //! name (`rev`); the test engines print `map.json`, so answers reflect the
@@ -149,17 +150,38 @@ impl Gate {
     }
 }
 
-/// A project `demo` mapped by `engine` (the shipped adapter when `None`),
-/// with instrukt's hooks installed and `origin` a bare remote.
+/// A project `demo` mapped by `engine` — configured as the machine's engine
+/// command; the shipped adapter when `None` — with instrukt's hooks
+/// installed and `origin` a bare remote.
 pub fn project(env: &TestEnv, engine: Option<&Path>) -> Repo {
+    if let Some(engine) = engine {
+        machine_engine(env, engine);
+    }
+    project_with_layer(env, "")
+}
+
+/// Configures `engine` as the machine's engine command, in the global
+/// layer: only there may a command be configured.
+pub fn machine_engine(env: &TestEnv, engine: &Path) {
+    std::fs::create_dir_all(env.instrukt_home()).unwrap();
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        format!(
+            "schema_version: 1\nblueprint:\n  engine: {}\n",
+            engine.display()
+        ),
+    )
+    .unwrap();
+}
+
+/// A project `demo` with the blueprint module on, `extra` appended to its
+/// project layer, instrukt's hooks installed and `origin` a bare remote.
+pub fn project_with_layer(env: &TestEnv, extra: &str) -> Repo {
     let remote = env.bare_remote("origin");
     let repo = env.git_repo("demo");
-    let engine = engine
-        .map(|engine| format!("blueprint:\n  engine: {}\n", engine.display()))
-        .unwrap_or_default();
     repo.write(
         "instrukt.yaml",
-        &format!("schema_version: 1\nproject: demo\nmodules:\n  blueprint: true\n{engine}"),
+        &format!("schema_version: 1\nproject: demo\nmodules:\n  blueprint: true\n{extra}"),
     );
     repo.git([
         std::ffi::OsStr::new("remote"),
