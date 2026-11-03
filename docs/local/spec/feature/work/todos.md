@@ -148,6 +148,8 @@ Claim release and session cleanup belong to the work lane before handoff.
   And no active work conflicts with its name
   When they restore that todo
   Then its intent and recorded evidence are available under its original identity
+  But when the recovery window has passed
+  Then the withdrawn todo is gone and can no longer be restored
 ```
 
 ## Known caveats

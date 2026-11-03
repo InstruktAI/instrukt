@@ -123,6 +123,11 @@ the remote record before creating duplicate evidence.
   When they record progress on that todo
   Then the accepted progress remains available locally
   And its GitHub reflection remains pending
+  But when no GitHub credentials are available on their computer
+  Then the progress is still recorded locally
+  And its reflection is reported as pending for lack of credentials
+  But when GitHub is limiting their requests
+  Then the reflection waits and completes once GitHub accepts requests again
 ```
 
 #### UC-GR2: Inspect a delivery's evidence on GitHub
@@ -132,6 +137,15 @@ the remote record before creating duplicate evidence.
   When they inspect its issue and linked implementation review
   Then they can follow the intent, retained artifact versions and recorded decisions
   And identify the commit that delivered the work
+```
+
+#### UC-GR3: A developer whose todo changed elsewhere is told to refresh first
+
+```gherkin
+  Given a developer's todo was changed on GitHub since their computer last read it
+  When they record progress on that todo
+  Then the change is refused and they are told how to refresh the todo
+  And after refreshing they can record their progress against the current todo
 ```
 
 ## Known caveats

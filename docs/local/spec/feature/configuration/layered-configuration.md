@@ -30,7 +30,7 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
 | `ticks` | global only | the runner |
-| `blueprint.engine` | both; the project overrides | the `blueprint` module |
+| `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
 | `runner.runtime` (default: first entry of `runtimes`) | global only | runner |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
@@ -153,7 +153,7 @@ And the configuration is unchanged
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | boolean | `false` (todos are always issues; the board is opt-in). |
-| `blueprint.engine` | shipped adapter selector or command string | the shipped adapter |
+| `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runtimes`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
 
 An action is a command string, which takes no files, or a declaration

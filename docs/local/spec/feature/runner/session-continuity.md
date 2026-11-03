@@ -25,6 +25,18 @@ stay in the machine's runtime mapping.
 | `instrukt sessions link --remove <a> <b>` | Remove the link through the runtime mapping; report a missing capability when unsupported. |
 | `instrukt sessions conversation <id>` | Read the identified session's conversation through that mapping. |
 
+Runtime command templates receive per-call input as follows:
+
+- Per-call inputs (the opening message, sent text, another session's id) are
+  appended to the command as separate arguments, never spliced into the
+  command text; their content may be anything.
+- `start` also receives `INSTRUKT_WORKTREE`, `INSTRUKT_AGENT` and
+  `INSTRUKT_THINKING` in its environment.
+- `start` prints the session id, then the worktree path when one was
+  requested; no path means the mapping lacks worktree support.
+- The opening message names the procedure's closure read (``Run `instrukt docs
+  get <procedure> --closure` …``), then the bound parameters, then the brief.
+
 The mapping is global configuration, not executable instructions supplied by
 a cloned project's configuration. Configuration interpolation expands command
 templates at call time. The active runtime inside an agent is the first

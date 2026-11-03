@@ -1,5 +1,5 @@
 ---
-description: The engine behind the blueprint — the minimal node-link graph contract, the one shipped adapter, and a project's own engine as a configured command emitting the contract JSON; output that breaks the contract is never served.
+description: The engine behind the blueprint — the minimal node-link graph contract, the one shipped adapter, and a developer's own engine as a command configured in the global layer emitting the contract JSON; output that breaks the contract is never served.
 delivered_by: [instrukt-first-build]
 ---
 # Graph Engine — Spec
@@ -38,13 +38,17 @@ A graph is one JSON object:
 
 ### Engine selection
 
-`blueprint.engine` in either layer of `instrukt.yaml` selects the engine
-(`local/projects/instrukt/spec/domain/configuration`):
+`blueprint.engine` selects the engine
+(`local/projects/instrukt/spec/domain/configuration`). Either layer may name a
+shipped adapter. The command form is permitted only in the global layer: a
+command in a project layer is a validation finding and is ignored, as
+project-layer `runtimes` are, because a cloned repository does not decide what
+runs on a machine.
 
 | Value | Engine |
 | --- | --- |
 | `graphify` | the shipped adapter; it offers `query` and `explain` |
-| a command | the project's own engine; it offers only what the contract supports (`affected`, `path`) |
+| a command (global layer only) | the developer's own engine; it offers only what the contract supports (`affected`, `path`) |
 
 - The engine runs against the committed tree of the revision being mapped,
   never the caller's working tree.

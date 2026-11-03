@@ -121,6 +121,14 @@ Scenario Outline: Choose how development work is picked up
     | deliberate | awaits the developer's deliberate start  |
 ```
 
+#### UC-RD2: A developer is told how to enable the runner
+
+```gherkin
+Given a developer's project has work tracking and event responses both switched off
+When they ask the runner to run, to wake up, or to start a session
+Then the command refuses and names both switches that would enable it
+```
+
 ## Known caveats
 
 None.

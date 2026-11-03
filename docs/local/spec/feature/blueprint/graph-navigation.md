@@ -43,6 +43,17 @@ Then it receives the chain of relations leading from the first to the second, or
 And it sees which revision the answer reflects
 ```
 
+#### UC-BN2: An agent asks the map a looser question when the engine supports it
+
+```gherkin
+Given a project whose latest pushed revision has been mapped by an engine that answers free questions
+When an agent working for a person asks the map a question or asks it to explain a part
+Then it receives the engine's answer
+And it sees which revision the answer reflects
+But when the configured engine does not answer free questions
+Then the agent is told the engine does not offer it
+```
+
 ## See Also
 
 - docs/local/spec/domain/blueprint.md — the blueprint context.
