@@ -42,6 +42,31 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), FsError> {
     Ok(())
 }
 
+/// Writes `contents` to `path` atomically, as [`atomic_write`] does, with
+/// `permissions` set on the file before it takes the target's place — so a
+/// reader never sees the new content under other permissions (an executable
+/// hook file stays executable throughout).
+pub fn atomic_write_with_permissions(
+    path: &Path,
+    contents: &[u8],
+    permissions: std::fs::Permissions,
+) -> Result<(), FsError> {
+    let parent = path.parent().ok_or_else(|| FsError::NoParent {
+        path: path.to_path_buf(),
+    })?;
+    let wrap = |source: io::Error| FsError::Write {
+        path: path.to_path_buf(),
+        source,
+    };
+    std::fs::create_dir_all(parent).map_err(wrap)?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(wrap)?;
+    temp.write_all(contents).map_err(wrap)?;
+    temp.as_file().set_permissions(permissions).map_err(wrap)?;
+    temp.as_file().sync_all().map_err(wrap)?;
+    temp.persist(path).map_err(|err| wrap(err.error))?;
+    Ok(())
+}
+
 /// An exclusive advisory lock on a lock file, held until dropped.
 #[derive(Debug)]
 pub struct LockGuard {

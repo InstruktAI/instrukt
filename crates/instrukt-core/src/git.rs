@@ -123,6 +123,16 @@ pub fn worktree_root(dir: &Path) -> Result<Option<PathBuf>, GitError> {
     Ok(Some(PathBuf::from(text.trim_end_matches('\n'))))
 }
 
+/// Removes from `command` the variables through which git locates a
+/// repository, for a process started from inside a git hook that must find
+/// its repository from its own working directory.
+pub fn strip_repository_env(command: &mut Command) -> &mut Command {
+    for var in REPOSITORY_ENV {
+        command.env_remove(var);
+    }
+    command
+}
+
 fn failed(dir: &Path, args: String, output: &Output) -> GitError {
     GitError::Failed {
         dir: dir.to_path_buf(),
@@ -144,10 +154,7 @@ where
         .collect::<Vec<_>>()
         .join(" ");
     let mut command = Command::new("git");
-    for var in REPOSITORY_ENV {
-        command.env_remove(var);
-    }
-    let output = command
+    let output = strip_repository_env(&mut command)
         .args(&args)
         .current_dir(dir)
         .output()
