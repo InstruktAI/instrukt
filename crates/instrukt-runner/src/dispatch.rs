@@ -12,11 +12,11 @@
 //! and pending and nothing starts. An exhausted agent order releases the
 //! runner's claim through work's command contract and is an anomaly.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{RoleName, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::index::{GlobalIndex, IndexEntry};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -25,8 +25,8 @@ use crate::agents::{agent_order, global_order};
 use crate::anomaly;
 use crate::executions::{Execution, Executions};
 use crate::interfaces::{
-    ClaimOutcome, Claimant, Lane, PickupCandidate, ProjectRef, RunnerWiring, SessionBinding,
-    TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
+    ClaimOutcome, Claimant, HoldCause, Lane, PickupCandidate, ProjectRef, RunnerWiring,
+    SessionBinding, TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
 };
 use crate::launch;
 use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
@@ -125,8 +125,9 @@ fn pickup(
         tracing::warn!(event = "executions_unobservable", project = %project.slug, error = %err);
     }
     for candidate in &offered {
-        report_failed_firing(cx, config, work, project, candidate);
+        hold_failed_firing(cx, work, project, candidate);
     }
+    notify_task_failures(cx, config, project);
     let kinds = autostart_kinds(config);
     if kinds.is_empty() {
         return Vec::new();
@@ -294,15 +295,23 @@ pub fn procedure_for_role<'i>(
     })
 }
 
-/// A task whose last firing recorded `error` is an anomaly once its
-/// conversation waits for nobody: reported once per firing through
-/// `runner.notify`, referencing the session bound to the task-runner role.
-/// A session still `running` or `needs-input` holds the failure in its own
-/// thread, and a session that cannot be observed is retried next tick. The
-/// task sets no hold: its next occurrence runs when its time arrives.
-fn report_failed_firing(
+/// A task failure the runner holds and reports: its occurrence's
+/// `error` outcome, the session that ran it, and whether the developer was
+/// notified yet.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct TaskFailure {
+    project: ProjectSlug,
+    todo: TodoSlug,
+    session: Option<SessionRef>,
+    notified: bool,
+}
+
+/// A task whose last firing recorded `error` is a blocker needing the
+/// developer's judgment (`task-timing`, UC-TT4): the todo is held at once
+/// with the task-error reason, so no further occurrence runs on its own,
+/// and the failure is remembered for notification.
+fn hold_failed_firing(
     cx: &DispatchContext<'_>,
-    config: &Configuration,
     work: &WorkPorts,
     project: &ProjectRef,
     candidate: &PickupCandidate,
@@ -314,54 +323,98 @@ fn report_failed_firing(
     else {
         return;
     };
-    let Some(TaskOutcome::Error { .. }) = &firing.outcome else {
+    let Some(TaskOutcome::Error { reason }) = &firing.outcome else {
         return;
     };
     let todo = &candidate.todo;
     let key = format!("{}/{todo}/{}", project.slug, firing.occurrence);
-    let path = cx.state.failed_firings();
-    let mut reported: BTreeSet<String> = match state::read_json(&path) {
-        Ok(reported) => reported.unwrap_or_default(),
+    let path = cx.state.task_failures();
+    let mut failures: BTreeMap<String, TaskFailure> = match state::read_json(&path) {
+        Ok(failures) => failures.unwrap_or_default(),
         Err(err) => {
-            tracing::warn!(event = "failed_firings_unreadable", error = %err);
+            tracing::warn!(event = "task_failures_unreadable", error = %err);
             return;
         }
     };
-    if reported.contains(&key) {
+    if failures.contains_key(&key) {
         return;
     }
-    let Ok(role) = RoleName::parse(TASK_RUNNER_ROLE) else {
-        return;
+    let cause = HoldCause::TaskFailed {
+        reason: reason
+            .clone()
+            .unwrap_or_else(|| "no reason recorded".to_owned()),
     };
-    let binding = match work.bindings.session_binding(project, todo, &role) {
-        Ok(binding) => binding,
+    if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
+        tracing::warn!(event = "task_failure_hold_failed", project = %project.slug, todo = %todo, error = %err);
+        return;
+    }
+    let session = RoleName::parse(TASK_RUNNER_ROLE)
+        .ok()
+        .and_then(|role| match work.bindings.session_binding(project, todo, &role) {
+            Ok(binding) => binding.map(|b| b.session),
+            Err(err) => {
+                tracing::warn!(event = "task_binding_unreadable", project = %project.slug, todo = %todo, error = %err);
+                None
+            }
+        });
+    tracing::warn!(event = "task_failed_held", project = %project.slug, todo = %todo, occurrence = %firing.occurrence);
+    failures.insert(
+        key,
+        TaskFailure {
+            project: project.slug.clone(),
+            todo: todo.clone(),
+            session,
+            notified: false,
+        },
+    );
+    if let Err(err) = state::write_json(&path, &failures) {
+        tracing::warn!(event = "task_failures_unwritable", error = %err);
+    }
+}
+
+/// Notifies each of `project`'s held task failures once its conversation
+/// waits for nobody (`anomaly-notification`, "Routing contract"): a
+/// session still `running` or `needs-input` holds the failure in its own
+/// thread, and one that cannot be observed is retried next tick. The
+/// notification references the session that ran it.
+fn notify_task_failures(cx: &DispatchContext<'_>, config: &Configuration, project: &ProjectRef) {
+    let path = cx.state.task_failures();
+    let mut failures: BTreeMap<String, TaskFailure> = match state::read_json(&path) {
+        Ok(failures) => failures.unwrap_or_default(),
         Err(err) => {
-            tracing::warn!(event = "task_binding_unreadable", project = %project.slug, todo = %todo, error = %err);
+            tracing::warn!(event = "task_failures_unreadable", error = %err);
             return;
         }
     };
-    let reference = match binding {
-        None => format!("{}/{todo}", project.slug),
-        Some(binding) => match Sessions::new(config, cx.env).alive(&binding.session) {
-            Ok(Observation::State(SessionState::Running | SessionState::NeedsInput)) => {
-                tracing::debug!(event = "task_failure_in_thread", project = %project.slug, todo = %todo, session = %binding.session);
-                return;
-            }
-            Ok(Observation::Unobservable(reason)) => {
-                tracing::warn!(event = "task_failure_unobservable", project = %project.slug, todo = %todo, session = %binding.session, reason);
-                return;
-            }
-            Err(err) => {
-                tracing::warn!(event = "task_failure_unobservable", project = %project.slug, todo = %todo, session = %binding.session, error = %err);
-                return;
-            }
-            Ok(Observation::State(_)) => binding.session.to_string(),
-        },
-    };
-    tracing::warn!(event = "task_failed", project = %project.slug, todo = %todo, occurrence = %firing.occurrence, session = %reference);
-    anomaly::notify(config, cx.env, &reference, None);
-    reported.insert(key);
-    if let Err(err) = state::write_json(&path, &reported) {
-        tracing::warn!(event = "failed_firings_unwritable", error = %err);
+    let sessions = Sessions::new(config, cx.env);
+    let mut changed = false;
+    for failure in failures.values_mut() {
+        if failure.notified || failure.project != project.slug {
+            continue;
+        }
+        let reference = match &failure.session {
+            None => format!("{}/{}", project.slug, failure.todo),
+            Some(session) => match sessions.alive(session) {
+                Ok(Observation::State(SessionState::Running | SessionState::NeedsInput)) => {
+                    tracing::debug!(event = "task_failure_in_thread", todo = %failure.todo, session = %session);
+                    continue;
+                }
+                Ok(Observation::Unobservable(reason)) => {
+                    tracing::warn!(event = "task_failure_unobservable", todo = %failure.todo, session = %session, reason);
+                    continue;
+                }
+                Err(err) => {
+                    tracing::warn!(event = "task_failure_unobservable", todo = %failure.todo, session = %session, error = %err);
+                    continue;
+                }
+                Ok(Observation::State(_)) => session.to_string(),
+            },
+        };
+        anomaly::notify(config, cx.env, &reference, None);
+        failure.notified = true;
+        changed = true;
+    }
+    if changed && let Err(err) = state::write_json(&path, &failures) {
+        tracing::warn!(event = "task_failures_unwritable", error = %err);
     }
 }

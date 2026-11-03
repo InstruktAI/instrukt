@@ -17,6 +17,7 @@ use instrukt_runner::install::{self, Scheduler, WakeUp};
 use instrukt_runner::interfaces::{ProjectRef, SessionBinding};
 use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
 use instrukt_runner::sessions::{Observation, Sessions, StartRequest};
+use instrukt_runner::standing::{self, StartResolution};
 use instrukt_runner::state::RunnerState;
 use instrukt_runner::{launch, ticks};
 use jiff::tz::TimeZone;
@@ -140,6 +141,24 @@ enum SessionsCommand {
     Link(LinkArgs),
     /// End a session.
     End(IdArgs),
+    /// Resolve a standing agent's start whose result never arrived: bind
+    /// the session the runtime did create, or declare that none was.
+    ResolveStart(ResolveStartArgs),
+}
+
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("resolution").required(true).args(["session", "none"])))]
+struct ResolveStartArgs {
+    /// The standing agent, `<procedure>@<project>`, as its anomaly names it.
+    agent: String,
+    /// The session the runtime created, `<runtime>:<id>`.
+    #[arg(long)]
+    session: Option<SessionRef>,
+    /// No session was created; the next wake-up starts one afresh.
+    #[arg(long)]
+    none: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -246,6 +265,35 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                     .line(&format!("unlinked {} and {}", args.a, args.b))?;
             } else {
                 ctx.out.line(&format!("linked {} and {}", args.a, args.b))?;
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        SessionsCommand::ResolveStart(args) => {
+            let resolution = match &args.session {
+                Some(session) => StartResolution::Session(session.clone()),
+                None => StartResolution::None,
+            };
+            standing::resolve_start(
+                &RunnerState::new(&ctx.home),
+                &config,
+                &args.agent,
+                &resolution,
+            )?;
+            if args.json {
+                ctx.out.json(&json!({
+                    "agent": args.agent,
+                    "session": args.session.as_ref().map(ToString::to_string),
+                }))?;
+            } else {
+                match &args.session {
+                    Some(session) => ctx
+                        .out
+                        .line(&format!("{} is bound to {session}", args.agent))?,
+                    None => ctx.out.line(&format!(
+                        "{} has no session; the next wake-up starts one",
+                        args.agent
+                    ))?,
+                }
             }
             Ok(ExitCode::SUCCESS)
         }

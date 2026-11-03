@@ -97,9 +97,9 @@ impl RunnerState {
         self.dir.join("standing-starts.json")
     }
 
-    /// The failed task firings already reported as anomalies.
-    pub(crate) fn failed_firings(&self) -> PathBuf {
-        self.dir.join("failed-firings.json")
+    /// The held task failures and whether each was notified.
+    pub(crate) fn task_failures(&self) -> PathBuf {
+        self.dir.join("task-failures.json")
     }
 
     /// Standing-agent session bindings, keyed by (procedure, project).

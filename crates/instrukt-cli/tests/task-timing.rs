@@ -19,6 +19,8 @@ mod documented;
 mod flavor;
 #[path = "support/runtime.rs"]
 mod runtime;
+#[path = "support/work.rs"]
+mod work;
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -231,7 +233,7 @@ fn missed_occurrences_with_skip_dispatch_nothing() {
 
 // spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
 #[test]
-fn a_recurring_task_continues_after_a_completed_and_after_a_failed_run() {
+fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     let mut project = Tracked::new(true);
     project.authorized_task("quarter-hourly-sync", "cron:*/15 * * * *", &[]);
 
@@ -242,8 +244,12 @@ fn a_recurring_task_continues_after_a_completed_and_after_a_failed_run() {
         ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
     );
 
+    // Success: the next occurrence runs when its time arrives.
     project.tick_at("2030-01-06T09:15:20Z");
     assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    insta::assert_snapshot!("next-occurrence", project.rt.opening("s2"));
+
+    // An error needing the developer's judgment: held and notified.
     project.todo_in_session(
         "s2",
         [
@@ -252,11 +258,20 @@ fn a_recurring_task_continues_after_a_completed_and_after_a_failed_run() {
             "--task-outcome",
             "error",
             "--reason",
-            "the sync target was down",
+            "the sync target refused our credentials",
         ],
     );
+    project.rt.set_status("s2", "ended failed");
+    project.tick_at("2030-01-06T09:16:20Z");
+    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"rt:s2");
+    insta::assert_snapshot!(
+        "held-after-error",
+        work::redact(&project.todo(["show", "quarter-hourly-sync"]))
+    );
 
+    // No further occurrence runs until the developer resolves it.
     project.tick_at("2030-01-06T09:30:20Z");
-    assert_eq!(project.rt.calls().len(), 3, "{:?}", project.rt.calls());
-    insta::assert_snapshot!("third-occurrence", project.rt.opening("s3"));
+    project.tick_at("2030-01-06T09:45:20Z");
+    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.notifications().len(), 1);
 }
