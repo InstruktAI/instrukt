@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/layered-configuration.rs
+expression: report
+---
+[REPO]/instrukt.yaml: schema_version: missing
+[REPO]/instrukt.yaml: ticks: not permitted in the project layer (global layer only)
+[REPO]/instrukt.yaml: board: expected true or false
+[REPO]/instrukt.yaml: approvals.prd: expected `human` or `peer`
+[REPO]/instrukt.yaml: modules.core: unknown key
+[REPO]/instrukt.yaml: loop_guard: unknown key
+[REPO]/instrukt.yaml: github.api_url: not permitted in the project layer (global layer only)
+[REPO]/instrukt.yaml: requires.0: requires module `todos`, which is switched off
+[REPO]/instrukt.yaml: actions.lint: unresolved reference: `nowhere.key` does not exist: no `nowhere` in the configuration
+[REPO]/instrukt.yaml: actions.first: reference cycle: actions.first -> actions.second -> actions.first
+[REPO]/instrukt.yaml: actions.second: reference cycle: actions.second -> actions.first -> actions.second
+[REPO]/instrukt.yaml: loop_guard: unresolved reference: `a` does not exist: no `a` in the configuration
