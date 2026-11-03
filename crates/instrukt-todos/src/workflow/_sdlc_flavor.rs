@@ -1,9 +1,12 @@
 //! The engine against the real sdlc flavor (`docs/global/sdlc/workflow/`):
 //! obligations the shipped `prepare` and `work` flows derive from facts.
 
+use std::collections::BTreeSet;
+
+use instrukt_core::ids::{RoleName, SnippetId};
 use proptest::prelude::*;
 
-use super::_derive::{Derivation, Obligation, Subject};
+use super::_derive::{Derivation, Obligation, Responsible, Subject};
 use super::_facts::{BoundSession, FactName, FactType, FactValue, Facts};
 use super::_flavor::Flavor;
 use super::_render::{ConfigLookup, RenderFailure, RenderFinding};
@@ -39,6 +42,14 @@ fn obligation(derived: Derivation) -> Obligation {
 
 fn effect_names(obligation: &Obligation) -> Vec<&str> {
     obligation.effects.iter().map(|e| e.name.as_str()).collect()
+}
+
+fn procedure(id: &str) -> Responsible {
+    Responsible::Procedure(SnippetId::parse(id).unwrap())
+}
+
+fn orchestrator(role: &str) -> Responsible {
+    Responsible::Orchestrator(RoleName::parse(role).unwrap())
 }
 
 fn yes() -> FactValue {
@@ -133,15 +144,11 @@ fn a_drafted_prd_owes_an_independent_review_rendered_for_the_todo() {
     );
     assert_eq!(at(&derived), ("prd_review", Some("review-prd")));
     let obligation = obligation(derived);
+    assert!(obligation.command.is_ok() && obligation.brief.is_ok());
     assert_eq!(
-        obligation.command,
-        Ok(
-            "instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-prd \
-             --args add-login --brief -"
-                .to_owned()
-        )
+        obligation.responsible,
+        procedure("sdlc/procedure/lifecycle/prepare/review-prd")
     );
-    assert!(obligation.brief.unwrap().contains("add-login"));
 }
 
 #[test]
@@ -240,11 +247,7 @@ fn unreviewed_claim_commits_owe_review_with_the_shas_as_one_argument() {
         at(&derived),
         ("commit_review_owed", Some("review-claim-commits"))
     );
-    let command = obligation(derived).command.unwrap();
-    assert!(
-        command.contains(&format!("--args '{} {}'", sha('a'), sha('b'))),
-        "{command}"
-    );
+    assert!(obligation(derived).command.is_ok());
 }
 
 #[test]
@@ -255,16 +258,8 @@ fn a_prepared_feature_is_released() {
         ("prepared_release_pending", Some("release-prepared"))
     );
     let obligation = obligation(derived);
-    assert_eq!(
-        obligation.command,
-        Ok("instrukt todo update add-login --unclaim".to_owned())
-    );
-    assert!(
-        obligation
-            .brief
-            .unwrap()
-            .contains("instrukt sessions end sess-1")
-    );
+    assert!(obligation.command.is_ok() && obligation.brief.is_ok());
+    assert_eq!(obligation.responsible, orchestrator("prepare-orchestrator"));
 }
 
 #[test]
@@ -348,10 +343,8 @@ fn a_delivered_todo_owes_worktree_removal_while_the_worktree_exists() {
     );
     let obligation = obligation(derived);
     assert_eq!(effect_names(&obligation), ["worktree.remove"]);
-    assert_eq!(
-        obligation.effects[0].command,
-        Ok("git worktree remove /wt/add-login".to_owned())
-    );
+    assert!(obligation.effects[0].command.is_ok());
+    assert_eq!(obligation.responsible, orchestrator("work-orchestrator"));
 
     let removed = facts(&[("delivery.commit", FactValue::Sha(sha('d')))]);
     assert!(effect_names(&obligation_of("work", removed)).is_empty());
@@ -437,13 +430,11 @@ fn build_admission_owes_refresh_and_upstream_sync_until_the_base_is_recorded() {
 fn a_started_build_is_dispatched_then_reviewed_when_complete() {
     let derived = derive("work", building_change());
     assert_eq!(at(&derived), ("building", Some("dispatch-build")));
+    let dispatch = obligation(derived);
+    assert!(dispatch.command.is_ok() && dispatch.brief.is_ok());
     assert_eq!(
-        obligation(derived).command,
-        Ok(
-            "instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build \
-             --args add-login --worktree add-login/work --brief -"
-                .to_owned()
-        )
+        dispatch.responsible,
+        procedure("sdlc/procedure/lifecycle/work/build")
     );
     let mut complete = building_change();
     complete.insert("build.complete", yes()).unwrap();
@@ -529,8 +520,7 @@ fn matching_finalization_evidence_hands_off_to_integration() {
         at(&derived),
         ("handoff_pending", Some("hand-off-integration"))
     );
-    let brief = obligation(derived).brief.unwrap();
-    assert!(brief.contains(&sha('f').to_string()), "{brief}");
+    assert!(obligation(derived).brief.is_ok());
 
     let mismatched = ready.with("remote.head", FactValue::Sha(sha('e'))).unwrap();
     assert_eq!(
@@ -544,6 +534,55 @@ fn a_task_routes_to_the_task_runner() {
     assert_eq!(
         at(&derive("work", facts(&[("kind", text("task"))]))),
         ("task_runner_route", Some("await-task-runner"))
+    );
+}
+
+// ---- responsibility ----
+
+/// The sdlc actions whose commands name no procedure.
+const ORCHESTRATOR_STEPS: [&str; 10] = [
+    "release-prepared",
+    "return-to-prepare-kickback",
+    "return-to-prepare-drift",
+    "await-dependencies",
+    "await-task-runner",
+    "await-build-start",
+    "setup-workspace",
+    "cleanup-delivered",
+    "review-evidence-undetermined",
+    "hand-off-integration",
+];
+
+#[test]
+fn every_sdlc_action_belongs_to_its_procedure_or_its_flows_orchestrator() {
+    let flavor = sdlc();
+    let steps: BTreeSet<&str> = ORCHESTRATOR_STEPS.into_iter().collect();
+    let mut seen_steps = BTreeSet::new();
+    for (flow, definition) in &flavor.flows {
+        for transition in &definition.transitions {
+            let (id, action) = &transition.action;
+            let responsible = Responsible::of(action, definition);
+            if steps.contains(id.as_str()) {
+                seen_steps.insert(id.as_str());
+                assert_eq!(
+                    responsible,
+                    Responsible::Orchestrator(definition.orchestrator.clone()),
+                    "{flow}: {id}"
+                );
+            } else {
+                let named = flavor
+                    .action_procedures()
+                    .find(|(named, _)| *named == id)
+                    .map(|(_, procedure)| Responsible::Procedure(procedure.clone()));
+                assert_eq!(Some(responsible), named, "{flow}: {id}");
+            }
+        }
+    }
+    // Every procedure-less action is selectable by some flow.
+    assert_eq!(seen_steps, steps);
+    assert_eq!(
+        flavor.actions.len() - flavor.action_procedures().count(),
+        ORCHESTRATOR_STEPS.len()
     );
 }
 

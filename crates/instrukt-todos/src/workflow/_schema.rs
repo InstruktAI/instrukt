@@ -68,7 +68,8 @@ mod tests {
         let FlavorCheck::Valid(declared) = WorkflowSchema.check(&sdlc_dir()).unwrap() else {
             panic!("sdlc flavor is invalid");
         };
-        assert_eq!(declared.roles.len(), 25);
+        let flavor = Flavor::load(&sdlc_dir()).unwrap();
+        assert_eq!(declared.roles, flavor.roles());
         assert_eq!(
             declared.orchestrators,
             vec![
@@ -76,8 +77,6 @@ mod tests {
                 ("work".to_owned(), role("work-orchestrator")),
             ]
         );
-        // 37 actions, of which 10 name no procedure.
-        assert_eq!(declared.action_procedures.len(), 27);
         let procedure_of = |action: &str| {
             declared
                 .action_procedures

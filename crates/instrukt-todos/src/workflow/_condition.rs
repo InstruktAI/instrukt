@@ -1,6 +1,8 @@
 //! Conditions: the structural operators a definition composes over facts
 //! (`docs/local/spec/feature/workflow/workflow-definition.md`, "Conditions").
 
+use std::cmp::Ordering;
+
 use serde_yaml_ng::Value;
 
 use super::_facts::{FactName, FactValue, Facts};
@@ -50,20 +52,12 @@ impl Condition {
             Condition::All(all) => all.iter().all(|c| c.holds(facts)),
             Condition::Any(any) => any.iter().any(|c| c.holds(facts)),
             Condition::Not(inner) => !inner.holds(facts),
-            Condition::AtLeast(name, bound) => match facts.get(*name) {
-                Some(FactValue::Int(value)) => match bound {
-                    Bound::Int(b) => value >= b,
-                    Bound::Float(b) => (*value as f64) >= *b,
-                },
-                _ => false,
-            },
-            Condition::AtMost(name, bound) => match facts.get(*name) {
-                Some(FactValue::Int(value)) => match bound {
-                    Bound::Int(b) => value <= b,
-                    Bound::Float(b) => (*value as f64) <= *b,
-                },
-                _ => false,
-            },
+            Condition::AtLeast(name, bound) => {
+                compare(facts.get(*name), *bound).is_some_and(Ordering::is_ge)
+            }
+            Condition::AtMost(name, bound) => {
+                compare(facts.get(*name), *bound).is_some_and(Ordering::is_le)
+            }
         }
     }
 
@@ -224,10 +218,52 @@ fn equals(value: &FactValue, literal: &Literal) -> bool {
     match (value, literal) {
         (FactValue::Bool(a), Literal::Bool(b)) => a == b,
         (FactValue::Int(a), Literal::Int(b)) => a == b,
-        (FactValue::Int(a), Literal::Float(b)) => (*a as f64) == *b,
+        (FactValue::Int(a), Literal::Float(b)) => int_cmp_float(*a, *b) == Some(Ordering::Equal),
         (_, Literal::Text(b)) => value.as_text() == Some(b.as_str()),
         _ => false,
     }
+}
+
+/// How a present numeric fact orders against a bound; `None` when the fact
+/// is absent or not a number, or the bound is NaN.
+fn compare(value: Option<&FactValue>, bound: Bound) -> Option<Ordering> {
+    let Some(FactValue::Int(value)) = value else {
+        return None;
+    };
+    match bound {
+        Bound::Int(bound) => Some(value.cmp(&bound)),
+        Bound::Float(bound) => int_cmp_float(*value, bound),
+    }
+}
+
+/// Exact ordering of an integer against a float, without rounding the
+/// integer through `f64`.
+fn int_cmp_float(int: i64, float: f64) -> Option<Ordering> {
+    // 2^63: the first float above every i64.
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    if float.is_nan() {
+        return None;
+    }
+    if float >= LIMIT {
+        return Some(Ordering::Less);
+    }
+    if float < -LIMIT {
+        return Some(Ordering::Greater);
+    }
+    let whole = float.trunc();
+    // In range and integral, so the conversion is exact.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "whole is integral and within i64 range"
+    )]
+    let whole_int = whole as i64;
+    Some(int.cmp(&whole_int).then(if float > whole {
+        Ordering::Less
+    } else if float < whole {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }))
 }
 
 /// Equality of two present facts; textual values compare by their text.
@@ -313,6 +349,30 @@ mod tests {
         assert!(least.holds(&round(3)) && least.holds(&round(4)) && !least.holds(&round(2)));
         assert!(most.holds(&round(3)) && most.holds(&round(0)) && !most.holds(&round(4)));
         assert!(!least.holds(&Facts::new()) && !most.holds(&Facts::new()));
+    }
+
+    #[test]
+    fn integers_compare_exactly_beyond_float_precision() {
+        // 2^53 + 1 is not representable as f64; it must not equal 2^53.
+        let big = |n| facts(&[("build_review.round", FactValue::Int(n))]);
+        let equals = parse("equals: [build_review.round, 9007199254740992.0]").unwrap();
+        assert!(equals.holds(&big(9_007_199_254_740_992)));
+        assert!(!equals.holds(&big(9_007_199_254_740_993)));
+        let int_bound = parse("at_most: [build_review.round, 9007199254740992]").unwrap();
+        assert!(!int_bound.holds(&big(9_007_199_254_740_993)));
+        let float_bound = parse("at_most: [build_review.round, 9007199254740992.0]").unwrap();
+        assert!(!float_bound.holds(&big(9_007_199_254_740_993)));
+    }
+
+    #[test]
+    fn fractional_bounds_order_integers_exactly() {
+        let round = |n| facts(&[("build_review.round", FactValue::Int(n))]);
+        let least = parse("at_least: [build_review.round, 2.5]").unwrap();
+        let most = parse("at_most: [build_review.round, -0.5]").unwrap();
+        assert!(least.holds(&round(3)) && !least.holds(&round(2)));
+        assert!(most.holds(&round(-1)) && !most.holds(&round(0)));
+        let equals = parse("equals: [build_review.round, 2.5]").unwrap();
+        assert!(!equals.holds(&round(2)) && !equals.holds(&round(3)));
     }
 
     #[test]

@@ -3,12 +3,11 @@
 //! (`docs/local/spec/feature/workflow/workflow-definition.md`).
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
-use instrukt_core::ids::{ProjectSlug, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SnippetId, TodoSlug};
 
 use super::_facts::Facts;
-use super::_flavor::{Effect, Flavor, Transition};
+use super::_flavor::{Action, Definition, Effect, Flavor, Transition};
 use super::_names::{ActionId, EffectName, FlowName, StateName};
 use super::_render::{Bindings, ConfigLookup, Rendering, render};
 
@@ -36,6 +35,8 @@ pub struct Derivation {
 pub struct Obligation {
     pub transition: SelectedTransition,
     pub action: ActionId,
+    /// Who the action belongs to.
+    pub responsible: Responsible,
     /// The action's command with placeholders filled; `{brief}` is the
     /// rendered template.
     pub command: Rendering,
@@ -43,6 +44,29 @@ pub struct Obligation {
     pub brief: Rendering,
     /// Effects still owed along the selected walk, in listed order.
     pub effects: Vec<OwedEffect>,
+}
+
+/// The party an action belongs to (`workflow-definition`, "Flavor source").
+/// The engine knows the procedure an action's command names, not that
+/// procedure's frontmatter: its `role` is resolved from the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Responsible {
+    /// The command names this procedure (`--procedure <id>` or
+    /// `docs get <id>`); the action belongs to the procedure's `role`.
+    Procedure(SnippetId),
+    /// The command names no procedure; the action is a step of the
+    /// orchestrator of the flow that selected it.
+    Orchestrator(RoleName),
+}
+
+impl Responsible {
+    /// The party for `action` when `flow`'s definition selects it.
+    pub(crate) fn of(action: &Action, definition: &Definition) -> Self {
+        match &action.procedure {
+            Some(procedure) => Responsible::Procedure(procedure.clone()),
+            None => Responsible::Orchestrator(definition.orchestrator.clone()),
+        }
+    }
 }
 
 /// A transition the walk selected.
@@ -103,7 +127,7 @@ impl Flavor {
         let mut walk = vec![state.clone()];
         let mut visited = BTreeSet::from([state]);
         let mut selected: Option<(usize, &Transition)> = None;
-        let mut owed: Vec<&(EffectName, Arc<Effect>)> = Vec::new();
+        let mut owed: Vec<&(EffectName, Effect)> = Vec::new();
         while let Some((index, transition)) = definition
             .transitions
             .iter()
@@ -127,8 +151,9 @@ impl Flavor {
                 });
             }
         }
-        let obligation = selected
-            .map(|(index, transition)| obligation(index, transition, &owed, subject, config));
+        let obligation = selected.map(|(index, transition)| {
+            obligation(index, transition, definition, &owed, subject, config)
+        });
         Ok(Derivation {
             flow: flow.clone(),
             state: state.clone(),
@@ -140,7 +165,8 @@ impl Flavor {
 fn obligation(
     index: usize,
     transition: &Transition,
-    owed: &[&(EffectName, Arc<Effect>)],
+    definition: &Definition,
+    owed: &[&(EffectName, Effect)],
     subject: &Subject,
     config: &dyn ConfigLookup,
 ) -> Obligation {
@@ -169,6 +195,7 @@ fn obligation(
             to: transition.to.clone(),
         },
         action: action_id.clone(),
+        responsible: Responsible::of(action, definition),
         command,
         brief,
         effects,
@@ -182,34 +209,36 @@ mod tests {
     use super::super::_testing::{facts, flavor_dir, no_config, subject, text};
     use super::*;
 
+    // Commands and templates consist of placeholders only, so a rendered
+    // value is compared with the bound values it must be made of.
     const ACTIONS: &str = "\
 roles: [builder]
 first:
-  command: run first {slug} --brief '{brief}'
+  command: '{slug}|{brief}'
   template: templates/first.md
 second:
-  command: run second
+  command: instrukt docs get sdlc/procedure/lifecycle/work/build
   template: templates/second.md
 effects:
   always:
-    command: refresh {slug}
+    command: '{slug}'
   until-built:
-    command: build {project}
+    command: '{project}'
     done_when: {equals: [build.complete, true]}
 ";
 
     fn fixture(flow: &str) -> Flavor {
         let dir = flavor_dir(&[
             ("actions.yaml", ACTIONS),
-            ("templates/first.md", "First for {slug} of kind {kind}."),
-            ("templates/second.md", "Second."),
+            ("templates/first.md", "{slug}|{kind}"),
+            ("templates/second.md", "{slug}"),
             ("work.yaml", flow),
         ]);
         Flavor::load(dir.path()).unwrap_or_else(|err| panic!("{err}"))
     }
 
-    /// start -a-> middle -b-> end, with an earlier start transition that
-    /// only holds for bugs.
+    /// start -first-> middle -second-> end, with an earlier start
+    /// transition that only holds for bugs.
     const WALK: &str = "\
 flow: work
 orchestrator: builder
@@ -235,8 +264,12 @@ transitions:
   action: second
 ";
 
-    fn names(effects: &[OwedEffect]) -> Vec<&str> {
-        effects.iter().map(|e| e.name.as_str()).collect()
+    fn state(name: &str) -> StateName {
+        StateName::new(name)
+    }
+
+    fn names(effects: &[OwedEffect]) -> Vec<EffectName> {
+        effects.iter().map(|e| e.name.clone()).collect()
     }
 
     #[test]
@@ -244,7 +277,7 @@ transitions:
         let derived = fixture(WALK)
             .evaluate("work", &subject(Facts::new()), &no_config)
             .unwrap();
-        assert_eq!(derived.state.as_str(), "start");
+        assert_eq!(derived.state, state("start"));
         assert_eq!(derived.obligation, None);
     }
 
@@ -253,21 +286,15 @@ transitions:
         let flavor = fixture(WALK);
         let both = facts(&[("kind", text("bug")), ("prd.digest", text("p"))]);
         let derived = flavor.evaluate("work", &subject(both), &no_config).unwrap();
-        assert_eq!(derived.state.as_str(), "side");
+        assert_eq!(derived.state, state("side"));
+        let feature = facts(&[("kind", text("feature")), ("prd.digest", text("p"))]);
         let derived = flavor
-            .evaluate(
-                "work",
-                &subject(facts(&[
-                    ("kind", text("feature")),
-                    ("prd.digest", text("p")),
-                ])),
-                &no_config,
-            )
+            .evaluate("work", &subject(feature), &no_config)
             .unwrap();
-        assert_eq!(derived.state.as_str(), "middle");
+        assert_eq!(derived.state, state("middle"));
         let obligation = derived.obligation.unwrap();
         assert_eq!(obligation.transition.index, 1);
-        assert_eq!(obligation.action.as_str(), "first");
+        assert_eq!(obligation.action, ActionId::new("first"));
     }
 
     #[test]
@@ -282,61 +309,51 @@ transitions:
                 &no_config,
             )
             .unwrap();
-        assert_eq!(derived.state.as_str(), "end");
+        assert_eq!(derived.state, state("end"));
         let obligation = derived.obligation.unwrap();
-        assert_eq!(obligation.action.as_str(), "second");
+        assert_eq!(obligation.action, ActionId::new("second"));
         assert_eq!(
-            (
-                obligation.transition.from.as_str(),
-                obligation.transition.to.as_str()
-            ),
-            ("middle", "end")
+            obligation.transition,
+            SelectedTransition {
+                index: 2,
+                from: state("middle"),
+                to: state("end")
+            }
         );
         // Traversing `middle` does not discard the effects owed on the way.
-        assert_eq!(names(&obligation.effects), ["always", "until-built"]);
+        assert_eq!(
+            names(&obligation.effects),
+            [EffectName::new("always"), EffectName::new("until-built")]
+        );
     }
 
     #[test]
     fn an_effect_whose_done_when_holds_is_not_owed() {
+        let subject = subject(facts(&[
+            ("prd.digest", text("p")),
+            ("build.complete", FactValue::Bool(true)),
+        ]));
         let derived = fixture(WALK)
-            .evaluate(
-                "work",
-                &subject(facts(&[
-                    ("prd.digest", text("p")),
-                    ("build.complete", FactValue::Bool(true)),
-                ])),
-                &no_config,
-            )
+            .evaluate("work", &subject, &no_config)
             .unwrap();
         let obligation = derived.obligation.unwrap();
-        assert_eq!(names(&obligation.effects), ["always"]);
-        assert_eq!(
-            obligation.effects[0].command,
-            Ok("refresh add-login".to_owned())
-        );
+        assert_eq!(names(&obligation.effects), [EffectName::new("always")]);
+        assert_eq!(obligation.effects[0].command, Ok(subject.slug.to_string()));
     }
 
     #[test]
     fn the_command_receives_the_rendered_brief() {
+        let subject = subject(facts(&[
+            ("kind", text("feature")),
+            ("prd.digest", text("p")),
+        ]));
         let derived = fixture(WALK)
-            .evaluate(
-                "work",
-                &subject(facts(&[
-                    ("kind", text("feature")),
-                    ("prd.digest", text("p")),
-                ])),
-                &no_config,
-            )
+            .evaluate("work", &subject, &no_config)
             .unwrap();
         let obligation = derived.obligation.unwrap();
-        assert_eq!(
-            obligation.brief,
-            Ok("First for add-login of kind feature.".to_owned())
-        );
-        assert_eq!(
-            obligation.command,
-            Ok("run first add-login --brief 'First for add-login of kind feature.'".to_owned())
-        );
+        let brief = format!("{}|feature", subject.slug);
+        assert_eq!(obligation.brief, Ok(brief.clone()));
+        assert_eq!(obligation.command, Ok(format!("{}|{brief}", subject.slug)));
     }
 
     #[test]
@@ -365,6 +382,29 @@ transitions:
     }
 
     #[test]
+    fn an_action_naming_a_procedure_belongs_to_it_and_others_to_the_orchestrator() {
+        let flavor = fixture(WALK);
+        let selecting = |entries: &[(&str, FactValue)]| {
+            flavor
+                .evaluate("work", &subject(facts(entries)), &no_config)
+                .unwrap()
+                .obligation
+                .unwrap()
+                .responsible
+        };
+        assert_eq!(
+            selecting(&[("kind", text("feature")), ("prd.digest", text("p"))]),
+            Responsible::Orchestrator(RoleName::parse("builder").unwrap())
+        );
+        assert_eq!(
+            selecting(&[("kind", text("bug"))]),
+            Responsible::Procedure(
+                SnippetId::parse("sdlc/procedure/lifecycle/work/build").unwrap()
+            )
+        );
+    }
+
+    #[test]
     fn revisiting_a_state_is_an_invalid_evaluation() {
         let cyclic = "\
 flow: work
@@ -389,8 +429,12 @@ transitions:
             )
             .unwrap_err();
         assert_eq!(
-            err.to_string(),
-            "flow `work` revisits state `start` (walk: start → middle → start)"
+            err,
+            EvaluationError::Revisit {
+                flow: FlowName::new("work"),
+                state: state("start"),
+                walk: vec![state("start"), state("middle"), state("start")],
+            }
         );
     }
 
