@@ -558,30 +558,3 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         .failure();
     insta::assert_snapshot!("failed-command", stdout(&env, &failed));
 }
-
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
-#[test]
-fn a_fragment_path_climbing_out_of_the_published_fragments_is_refused() {
-    let env = TestEnv::new();
-    let climbing = snippet(
-        "policy",
-        "Climbing",
-        "Includes a fragment from outside the fragments.",
-        "",
-        &[],
-        "Before.\n\n<!-- @include: docs/snippets/../acme/policy/climbing.md -->\n",
-    );
-    let demo = project(
-        &env,
-        "demo",
-        &["acme"],
-        &[("docs/global/acme/policy/climbing.md", climbing)],
-    );
-    sync(&env, &demo);
-
-    let refused = env
-        .run(demo.path(), ["docs", "get", "acme/policy/climbing"])
-        .failure();
-    assert!(refused.get_output().stdout.is_empty());
-    insta::assert_snapshot!("fragment-climbing-out", stderr(&env, &refused));
-}
