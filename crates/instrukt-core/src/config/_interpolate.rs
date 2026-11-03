@@ -15,9 +15,11 @@ use super::_runtime::{self, Env, OPTIONAL_FIELDS, REQUIRED_FIELDS, RuntimeEntry,
 pub(crate) enum Mode<'a> {
     /// Expand against the caller's environment.
     Expand(&'a Env),
-    /// Check key references only; environment and runtime references
-    /// expand to nothing.
-    Check,
+    /// Check references without an environment: variables expand to
+    /// nothing, and `runtime.*` resolves against the runtime-mapping entry
+    /// at this index when given (validation checks each candidate active
+    /// runtime in turn), to nothing otherwise.
+    Check(Option<usize>),
 }
 
 /// Resolves paths and expands references over one configuration value.
@@ -90,39 +92,15 @@ impl<'a> Interpolator<'a> {
     }
 
     fn expand_str(&self, text: &str, stack: &mut Vec<String>) -> Result<String, ConfigError> {
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(start) = rest.find(['$', '{']) {
-            out.push_str(&rest[..start]);
-            let tail = &rest[start..];
-            if let Some(inner) = tail.strip_prefix("${")
-                && let Some(end) = inner.find('}')
-                && is_variable_name(&inner[..end])
-            {
-                out.push_str(&self.variable(&inner[..end])?);
-                rest = &inner[end + 1..];
-                continue;
-            }
-            if let Some(inner) = tail.strip_prefix('{')
-                && let Some(end) = inner.find('}')
-                && is_reference_path(&inner[..end])
-            {
-                out.push_str(&self.reference(&inner[..end], stack)?);
-                rest = &inner[end + 1..];
-                continue;
-            }
-            // Not a reference: keep the character literally.
-            let width = tail.chars().next().map_or(1, char::len_utf8);
-            out.push_str(&tail[..width]);
-            rest = &tail[width..];
-        }
-        out.push_str(rest);
-        Ok(out)
+        scan(text, |token| match token {
+            Token::Variable(name) => self.variable(name),
+            Token::Reference(path) => self.reference(path, stack),
+        })
     }
 
     fn variable(&self, name: &str) -> Result<String, ConfigError> {
         match self.mode {
-            Mode::Check => Ok(String::new()),
+            Mode::Check(_) => Ok(String::new()),
             Mode::Expand(env) => {
                 env.get(name)
                     .map(str::to_owned)
@@ -134,16 +112,29 @@ impl<'a> Interpolator<'a> {
     }
 
     fn reference(&self, path: &str, stack: &mut Vec<String>) -> Result<String, ConfigError> {
-        let (path, value) = match self.locate(path)? {
-            Located::Derived(text) => return Ok(text),
-            Located::Value { path, value } => (path, value),
-        };
+        if let Mode::Check(active) = self.mode
+            && let Some(field) = path.strip_prefix("runtime.")
+        {
+            return self.check_runtime_reference(path, field, active, stack);
+        }
+        match self.locate(path)? {
+            Located::Derived(text) => Ok(text),
+            Located::Value { path, value } => self.follow(path, value, stack),
+        }
+    }
+
+    /// Expands the value a reference led to, refusing a reference back to
+    /// a value already being expanded.
+    fn follow(
+        &self,
+        path: String,
+        value: &Value,
+        stack: &mut Vec<String>,
+    ) -> Result<String, ConfigError> {
         if stack.contains(&path) {
             let mut chain = stack.clone();
             chain.push(path);
-            return Err(ConfigError::Cycle {
-                chain: chain.join(" -> "),
-            });
+            return Err(ConfigError::Cycle { chain });
         }
         match value {
             Value::String(text) => {
@@ -158,6 +149,37 @@ impl<'a> Interpolator<'a> {
         }
     }
 
+    /// In validation, a `{runtime.<field>}` reference follows the candidate
+    /// active entry's field, so a cycle through it is found; a field the
+    /// entry lacks, or no candidate, expands to nothing.
+    fn check_runtime_reference(
+        &self,
+        path: &str,
+        field: &str,
+        active: Option<usize>,
+        stack: &mut Vec<String>,
+    ) -> Result<String, ConfigError> {
+        if field == SESSION_ID {
+            return Ok(String::new());
+        }
+        if !is_runtime_field(field) {
+            return Err(missing(path, field, "runtime"));
+        }
+        let value = active.and_then(|index| {
+            self.root
+                .get("runtimes")
+                .and_then(|r| r.get(index))
+                .and_then(|entry| entry.get(field))
+        });
+        match (active, value) {
+            (Some(index), Some(value)) => {
+                self.follow(format!("runtimes.{index}.{field}"), value, stack)?;
+                Ok(String::new())
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
     /// Resolves a dotted path to its canonical location.
     fn locate(&self, path: &str) -> Result<Located<'a>, ConfigError> {
         let segments: Vec<&str> = path.split('.').collect();
@@ -169,12 +191,11 @@ impl<'a> Interpolator<'a> {
 
     fn locate_runtime(&self, path: &str, fields: &[&str]) -> Result<Located<'a>, ConfigError> {
         let entry = match self.mode {
-            Mode::Check => {
+            Mode::Check(_) => {
                 return match fields {
                     [] => Err(ConfigError::NotScalar {
                         path: path.to_owned(),
                     }),
-                    [field] if is_runtime_field(field) => Ok(Located::Derived(String::new())),
                     _ => Err(missing(
                         path,
                         fields.first().copied().unwrap_or(""),
@@ -190,7 +211,7 @@ impl<'a> Interpolator<'a> {
         if fields == [SESSION_ID] {
             let value = match self.mode {
                 Mode::Expand(env) => env.get(&entry.session_id_env).unwrap_or_default(),
-                Mode::Check => "",
+                Mode::Check(_) => "",
             };
             return Ok(Located::Derived(value.to_owned()));
         }
@@ -248,6 +269,62 @@ impl<'a> Interpolator<'a> {
     }
 }
 
+/// One reference found in a text.
+enum Token<'t> {
+    /// `${NAME}`.
+    Variable(&'t str),
+    /// `{dotted.path}`.
+    Reference(&'t str),
+}
+
+/// `text` with every reference replaced by what `expand` answers for it;
+/// anything that is not a reference stays literally.
+fn scan<'t>(
+    text: &'t str,
+    mut expand: impl FnMut(Token<'t>) -> Result<String, ConfigError>,
+) -> Result<String, ConfigError> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(['$', '{']) {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        if let Some(inner) = tail.strip_prefix("${")
+            && let Some(end) = inner.find('}')
+            && is_variable_name(&inner[..end])
+        {
+            out.push_str(&expand(Token::Variable(&inner[..end]))?);
+            rest = &inner[end + 1..];
+            continue;
+        }
+        if let Some(inner) = tail.strip_prefix('{')
+            && let Some(end) = inner.find('}')
+            && is_reference_path(&inner[..end])
+        {
+            out.push_str(&expand(Token::Reference(&inner[..end]))?);
+            rest = &inner[end + 1..];
+            continue;
+        }
+        let width = tail.chars().next().map_or(1, char::len_utf8);
+        out.push_str(&tail[..width]);
+        rest = &tail[width..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// `text` with every reference replaced by `placeholder`, and whether the
+/// text consists of nothing but references (and whitespace).
+pub(crate) fn mask_references(text: &str, placeholder: &str) -> (String, bool) {
+    let mut found = false;
+    let masked = scan(text, |_| {
+        found = true;
+        Ok(placeholder.to_owned())
+    })
+    .unwrap_or_else(|_| text.to_owned());
+    let bare = scan(text, |_| Ok(String::new())).unwrap_or_else(|_| text.to_owned());
+    (masked, found && bare.trim().is_empty())
+}
+
 fn missing(path: &str, segment: &str, parent: &str) -> ConfigError {
     ConfigError::MissingKey {
         path: path.to_owned(),
@@ -297,21 +374,26 @@ fn is_reference_path(path: &str) -> bool {
 mod tests {
     use super::*;
 
+    const BASE: &str = "/srv";
+    const USER: &str = "dev";
+    const HOST_SESSION: &str = "h-1";
+    const CLI_SESSION: &str = "c-7";
+
     fn doc() -> Value {
-        serde_yaml_ng::from_str(
-            "base: /srv\n\
-             path: '{base}/app'\n\
-             deep: '{path}/bin ${USER_NAME}'\n\
-             json: '{\"k\": 1} {not a ref}'\n\
+        serde_yaml_ng::from_str(&format!(
+            "base: {BASE}\n\
+             path: '{{base}}/app'\n\
+             deep: '{{path}}/bin ${{USER_NAME}}'\n\
+             json: '{{\"k\": 1}} {{not a ref}}'\n\
              n: 3\n\
-             loop_a: '{loop_b}'\n\
-             loop_b: '{loop_a}'\n\
-             self: 'x{self}'\n\
-             tree: {a: 1}\n\
+             loop_a: '{{loop_b}}'\n\
+             loop_b: '{{loop_a}}'\n\
+             self: 'x{{self}}'\n\
+             tree: {{a: 1}}\n\
              runtimes:\n\
-             \x20 - {name: host, session_id_env: HOST_ID, conversation: 'host show {runtime.session_id} --json'}\n\
-             \x20 - {name: cli, session_id_env: CLI_ID, conversation: 'cli history {runtime.session_id}'}\n",
-        )
+             \x20 - {{name: host, session_id_env: HOST_ID, conversation: 'host {{runtime.session_id}}'}}\n\
+             \x20 - {{name: cli, session_id_env: CLI_ID, conversation: 'cli {{runtime.session_id}}'}}\n"
+        ))
         .unwrap()
     }
 
@@ -324,43 +406,59 @@ mod tests {
         get(doc, env, path).unwrap().as_str().unwrap().to_owned()
     }
 
-    #[test]
-    fn references_expand_recursively_and_from_the_environment() {
-        let env = Env::from_pairs([("USER_NAME", "dev")]);
-        let doc = doc();
-        assert_eq!(text(&doc, &env, "deep"), "/srv/app/bin dev");
-        assert_eq!(text(&doc, &env, "json"), "{\"k\": 1} {not a ref}");
+    fn check(doc: &Value, text: &str, origin: &str) -> Result<String, ConfigError> {
+        check_as(doc, None, text, origin)
+    }
+
+    fn check_as(
+        doc: &Value,
+        active: Option<usize>,
+        text: &str,
+        origin: &str,
+    ) -> Result<String, ConfigError> {
+        let runtimes = _runtime::entries(doc.get("runtimes"));
+        Interpolator::new(doc, &runtimes, Mode::Check(active)).expand_text(text, Some(origin))
     }
 
     #[test]
-    fn an_unset_variable_is_named() {
+    fn references_expand_recursively_and_from_the_environment() {
+        let env = Env::from_pairs([("USER_NAME", USER)]);
+        let doc = doc();
+        assert_eq!(text(&doc, &env, "deep"), format!("{BASE}/app/bin {USER}"));
+        let literal = doc.get("json").and_then(Value::as_str).unwrap();
+        assert_eq!(text(&doc, &env, "json"), literal, "non-references stay");
+    }
+
+    #[test]
+    fn an_unset_variable_is_refused() {
         let err = get(&doc(), &Env::default(), "deep").unwrap_err();
         assert!(matches!(err, ConfigError::UnsetVariable { name } if name == "USER_NAME"));
     }
 
     #[test]
-    fn cycles_and_self_references_are_named() {
+    fn cycles_and_self_references_are_refused_with_their_chain() {
         let doc = doc();
         let err = get(&doc, &Env::default(), "loop_a").unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "reference cycle: loop_a -> loop_b -> loop_a"
+        assert!(
+            matches!(err, ConfigError::Cycle { chain } if chain == ["loop_a", "loop_b", "loop_a"])
         );
         let err = get(&doc, &Env::default(), "self").unwrap_err();
-        assert_eq!(err.to_string(), "reference cycle: self -> self");
+        assert!(matches!(err, ConfigError::Cycle { chain } if chain == ["self", "self"]));
     }
 
     #[test]
     fn the_active_runtime_supplies_its_fields_and_session_id() {
         let doc = doc();
-        let env = Env::from_pairs([("CLI_ID", "c-7"), ("USER_NAME", "dev")]);
-        assert_eq!(text(&doc, &env, "runtime.conversation"), "cli history c-7");
-        assert_eq!(text(&doc, &env, "runtime.session_id"), "c-7");
-        assert_eq!(text(&doc, &env, "runtime.name"), "cli");
-        let both = Env::from_pairs([("CLI_ID", "c-7"), ("HOST_ID", "h-1")]);
+        let cli = Env::from_pairs([("CLI_ID", CLI_SESSION)]);
+        assert_eq!(
+            text(&doc, &cli, "runtime.conversation"),
+            format!("cli {CLI_SESSION}")
+        );
+        assert_eq!(text(&doc, &cli, "runtime.session_id"), CLI_SESSION);
+        let both = Env::from_pairs([("CLI_ID", CLI_SESSION), ("HOST_ID", HOST_SESSION)]);
         assert_eq!(
             text(&doc, &both, "runtime.conversation"),
-            "host show h-1 --json"
+            format!("host {HOST_SESSION}")
         );
         let err = get(&doc, &Env::default(), "runtime.conversation").unwrap_err();
         assert!(matches!(err, ConfigError::NoActiveRuntime));
@@ -369,23 +467,55 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_path_names_its_segment_and_containers_are_not_references() {
+    fn a_missing_path_is_refused_and_containers_are_not_references() {
         let doc = doc();
         let err = get(&doc, &Env::default(), "tree.b").unwrap_err();
-        assert_eq!(err.to_string(), "`tree.b` does not exist: no `b` in `tree`");
-        let runtimes = _runtime::entries(doc.get("runtimes"));
-        let check = Interpolator::new(&doc, &runtimes, Mode::Check);
+        assert!(matches!(err, ConfigError::MissingKey { segment, .. } if segment == "b"));
         assert!(matches!(
-            check.expand_text("{tree}", None),
+            check(&doc, "{tree}", "x"),
             Err(ConfigError::NotScalar { .. })
         ));
+        assert!(check(&doc, "{n} ${ANY} {runtime.session_id}", "x").is_ok());
+        assert!(matches!(
+            check(&doc, "{runtime.bogus}", "x"),
+            Err(ConfigError::MissingKey { .. })
+        ));
+        assert!(matches!(
+            check(&doc, "{nope}", "x"),
+            Err(ConfigError::MissingKey { .. })
+        ));
+    }
+
+    #[test]
+    fn validation_follows_runtime_references_into_the_candidate_runtime() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "runtimes:\n\
+             \x20 - {name: a, session_id_env: A, conversation: '{runtime.conversation}', start: '{runtime.send}', send: s}\n\
+             \x20 - {name: b, session_id_env: B, send: '{runtime.start}', start: s}\n",
+        )
+        .unwrap();
+        let err = check_as(
+            &doc,
+            Some(0),
+            "{runtime.conversation}",
+            "runtimes.0.conversation",
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::Cycle { .. }));
+        // Entry 0's start reads the active runtime's send; whichever runtime
+        // is active, no reference leads back to where it started.
+        for active in [Some(0), Some(1), None] {
+            assert!(check_as(&doc, active, "{runtime.send}", "runtimes.0.start").is_ok());
+        }
+    }
+
+    #[test]
+    fn masking_marks_text_made_only_of_references() {
         assert_eq!(
-            check
-                .expand_text("{n} ${ANY} {runtime.session_id}", None)
-                .unwrap(),
-            "3  "
+            mask_references("{a} <${B}>", "r"),
+            ("r <r>".to_owned(), false)
         );
-        assert!(check.expand_text("{runtime.bogus}", None).is_err());
-        assert!(check.expand_text("{nope}", None).is_err());
+        assert_eq!(mask_references(" {a} ", "r"), (" r ".to_owned(), true));
+        assert_eq!(mask_references("plain", "r"), ("plain".to_owned(), false));
     }
 }

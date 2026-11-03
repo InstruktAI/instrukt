@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/configuration-editing.rs
+expression: "stderr(&env, &before)"
+---
+instrukt: [TMP]/My Project_v2/instrukt.yaml does not exist; create it with `instrukt config init`

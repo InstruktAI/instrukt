@@ -144,9 +144,9 @@ mod tests {
     fn the_first_entry_whose_variable_is_set_is_active() {
         let entries = mapping();
         let both = Env::from_pairs([("HOST_ID", "h"), ("CLI_ID", "c")]);
-        assert_eq!(active(&entries, &both).unwrap().name, "host");
+        assert_eq!(active(&entries, &both).unwrap().index, 0);
         let cli = Env::from_pairs([("CLI_ID", "c"), ("OTHER_ID", "o")]);
-        assert_eq!(active(&entries, &cli).unwrap().name, "cli");
+        assert_eq!(active(&entries, &cli).unwrap().index, 1);
         assert!(active(&entries, &Env::default()).is_none());
     }
 
@@ -154,7 +154,7 @@ mod tests {
     fn the_active_agent_skips_entries_that_are_not_agent_clis() {
         let entries = mapping();
         let both = Env::from_pairs([("HOST_ID", "h"), ("OTHER_ID", "o")]);
-        assert_eq!(active_agent(&entries, &both).unwrap().name, "other");
+        assert_eq!(active_agent(&entries, &both).unwrap().index, 2);
         assert!(active_agent(&entries, &Env::from_pairs([("HOST_ID", "h")])).is_none());
     }
 }

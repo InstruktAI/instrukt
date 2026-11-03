@@ -14,7 +14,9 @@ pub struct Finding {
     pub document: PathBuf,
     /// The dotted key the finding concerns (`runtimes`, `runtimes.0.start`).
     pub key: String,
-    /// What is wrong with it.
+    /// Which rule the key breaks.
+    pub kind: FindingKind,
+    /// What is wrong with it, for a reader.
     pub message: String,
 }
 
@@ -28,6 +30,33 @@ impl fmt::Display for Finding {
             self.message
         )
     }
+}
+
+/// The rule a finding reports broken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindingKind {
+    /// A key of the other layer.
+    NotPermittedInLayer,
+    /// A key the schema does not know.
+    UnknownKey,
+    /// A required key or field is absent (`schema_version`, a runtime field).
+    Missing,
+    /// A value of the wrong type or outside its allowed values.
+    InvalidValue,
+    /// A `schema_version` other than the one this instrukt writes.
+    SchemaVersionNotCurrent,
+    /// `requires` names a module switched off in the effective configuration.
+    ModuleSwitchedOff,
+    /// `agents.order` names an agent no runtime-mapping entry can start.
+    AgentNotStartable,
+    /// `runner.runtime` names no runtime-mapping entry.
+    UnknownRuntime,
+    /// `publishes` declares one domain twice.
+    DuplicateDomain,
+    /// A reference to a key that does not exist.
+    UnresolvedReference,
+    /// A reference that leads back to itself.
+    ReferenceCycle,
 }
 
 /// The findings that refused a write, one per line.
@@ -96,8 +125,8 @@ pub enum ConfigError {
     NotScalar { path: String },
     #[error("environment variable `{name}` is not set")]
     UnsetVariable { name: String },
-    #[error("reference cycle: {chain}")]
-    Cycle { chain: String },
+    #[error("reference cycle: {}", chain.join(" -> "))]
+    Cycle { chain: Vec<String> },
     #[error("no configured runtime's session variable is set; `runtime.*` has no value here")]
     NoActiveRuntime,
     #[error("`runtime.{field}`: the active runtime `{runtime}` has no `{field}`")]

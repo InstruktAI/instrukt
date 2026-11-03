@@ -13,18 +13,22 @@ mod _error;
 mod _interpolate;
 mod _layer;
 mod _merge;
+mod _module;
 mod _runtime;
 mod _schema;
 mod _validate;
 
 use std::path::Path;
 
-pub use _effective::{ApprovalGate, Approver, Configuration, Module, Notify, WatchedRef};
-pub use _error::{ConfigError, Finding, Findings};
+pub use _effective::{
+    ApprovalGate, Approver, Configuration, Notify, PublishedDomain, ThinkingMode, WatchedRef,
+};
+pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, MigrationOutcome, Revision, init, migrate, parse_patch,
     patch, revision,
 };
+pub use _module::Module;
 pub use _runtime::{Env, RuntimeEntry};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind};
 pub use _validate::validate;
