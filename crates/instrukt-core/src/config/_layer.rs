@@ -1,0 +1,416 @@
+//! Layer documents on disk: locating, reading, revisions, version checks,
+//! migration, initialization and the locked, validated, atomic patch.
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use serde_yaml_ng::{Mapping, Value};
+use sha2::{Digest, Sha256};
+
+use super::_error::{ConfigError, Findings};
+use super::_merge::merge_patch;
+use super::_schema::{CURRENT_SCHEMA_VERSION, LayerKind};
+use super::_validate::findings_for;
+use crate::fsx::{LockGuard, atomic_write};
+use crate::git;
+use crate::home::Home;
+use crate::ids::ProjectSlug;
+
+/// The file name of both configuration layers.
+pub const CONFIG_FILE_NAME: &str = "instrukt.yaml";
+
+/// One addressable layer document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Layer {
+    /// The machine's `~/.instrukt/instrukt.yaml`.
+    Global,
+    /// The `instrukt.yaml` at the root of the repository at this path.
+    Project(PathBuf),
+}
+
+impl Layer {
+    /// The project layer of the repository containing `dir`.
+    pub fn project_containing(dir: &Path) -> Result<Self, ConfigError> {
+        match git::worktree_root(dir)? {
+            Some(root) => Ok(Layer::Project(root)),
+            None => Err(ConfigError::NotInProject {
+                dir: dir.to_path_buf(),
+            }),
+        }
+    }
+
+    pub fn kind(&self) -> LayerKind {
+        match self {
+            Layer::Global => LayerKind::Global,
+            Layer::Project(_) => LayerKind::Project,
+        }
+    }
+
+    /// The document's path.
+    pub fn path(&self, home: &Home) -> PathBuf {
+        match self {
+            Layer::Global => home.global_config(),
+            Layer::Project(root) => root.join(CONFIG_FILE_NAME),
+        }
+    }
+
+    pub(crate) fn init_door(&self) -> &'static str {
+        match self {
+            Layer::Global => "instrukt config init --global",
+            Layer::Project(_) => "instrukt config init",
+        }
+    }
+}
+
+/// An opaque digest of a layer document's content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision(String);
+
+impl Revision {
+    /// The revision of document content `bytes`.
+    pub fn of(bytes: &[u8]) -> Self {
+        let digest = Sha256::digest(bytes);
+        Self(hex::encode(&digest[..8]))
+    }
+
+    /// A revision as a caller hands it back.
+    pub fn from_text(text: &str) -> Self {
+        Self(text.trim().to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Revision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A layer document as read from disk.
+pub(crate) struct Document {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) value: Value,
+}
+
+/// Reads the document at `path`; `None` when it does not exist.
+pub(crate) fn read(path: &Path) -> Result<Option<Document>, ConfigError> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let value = parse(path, &bytes)?;
+    Ok(Some(Document { bytes, value }))
+}
+
+fn parse(path: &Path, bytes: &[u8]) -> Result<Value, ConfigError> {
+    let value: Value = serde_yaml_ng::from_slice(bytes).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    match value {
+        Value::Null => Ok(Value::Mapping(Mapping::new())),
+        Value::Mapping(_) => Ok(value),
+        _ => Err(ConfigError::NotAMapping {
+            path: path.to_path_buf(),
+        }),
+    }
+}
+
+/// How a document's `schema_version` compares with the current one.
+enum Version {
+    Current,
+    Older(u64),
+    Newer(u64),
+    Unknown,
+}
+
+fn version(value: &Value) -> Version {
+    match value.get("schema_version").and_then(Value::as_u64) {
+        Some(v) if v == CURRENT_SCHEMA_VERSION => Version::Current,
+        Some(v) if (1..CURRENT_SCHEMA_VERSION).contains(&v) => Version::Older(v),
+        Some(v) if v > CURRENT_SCHEMA_VERSION => Version::Newer(v),
+        _ => Version::Unknown,
+    }
+}
+
+/// Refuses a document a command other than `init` and publication cannot
+/// use: one of a newer schema (upgrade instrukt) or an older one (migrate
+/// it first). A document without a usable version is left to validation.
+pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Result<(), ConfigError> {
+    match version(value) {
+        Version::Current | Version::Unknown => Ok(()),
+        Version::Newer(found) => Err(ConfigError::NewerSchema {
+            path: path.to_path_buf(),
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+        }),
+        Version::Older(found) => Err(ConfigError::OlderSchema {
+            path: path.to_path_buf(),
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+            door: layer.init_door(),
+        }),
+    }
+}
+
+/// Reads a layer for a read command: absent is `None`; an unusable schema
+/// version is refused.
+pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, ConfigError> {
+    let path = layer.path(home);
+    match read(&path)? {
+        Some(doc) => {
+            require_usable(layer, &path, &doc.value)?;
+            Ok(Some(doc.value))
+        }
+        None => Ok(None),
+    }
+}
+
+/// The current revision of `layer`.
+pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
+    let path = layer.path(home);
+    match read(&path)? {
+        Some(doc) => Ok(Revision::of(&doc.bytes)),
+        None => Err(ConfigError::NoLayer {
+            path,
+            door: layer.init_door(),
+        }),
+    }
+}
+
+/// Parses patch text: YAML that must be a mapping.
+pub fn parse_patch(text: &str) -> Result<Value, ConfigError> {
+    let value: Value = serde_yaml_ng::from_str(text).map_err(ConfigError::PatchParse)?;
+    if value.is_mapping() {
+        Ok(value)
+    } else {
+        Err(ConfigError::PatchNotAMapping)
+    }
+}
+
+/// Applies merge `patch` to `layer`, only when the document is still at
+/// `expected` and the whole result is valid; writes atomically and returns
+/// the new revision. Of two patches from one revision, one succeeds and
+/// the other is refused.
+pub fn patch(
+    home: &Home,
+    layer: &Layer,
+    expected: &Revision,
+    patch: &Value,
+) -> Result<Revision, ConfigError> {
+    if !patch.is_mapping() {
+        return Err(ConfigError::PatchNotAMapping);
+    }
+    let path = layer.path(home);
+    let _lock = LockGuard::acquire(&lock_path(home, &path))?;
+    let Some(doc) = read(&path)? else {
+        return Err(ConfigError::NoLayer {
+            path,
+            door: layer.init_door(),
+        });
+    };
+    require_usable(layer, &path, &doc.value)?;
+    let current = Revision::of(&doc.bytes);
+    if &current != expected {
+        return Err(ConfigError::RevisionMismatch {
+            expected: expected.to_string(),
+            current: current.to_string(),
+        });
+    }
+    let mut next = doc.value;
+    merge_patch(&mut next, patch);
+    let findings = findings_for(home, layer, &path, &next)?;
+    if !findings.is_empty() {
+        return Err(ConfigError::Invalid(Findings(findings)));
+    }
+    write(&path, &next)
+}
+
+/// What [`init`] did to a layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InitOutcome {
+    Created,
+    AlreadyCurrent,
+    Migrated { from: u64 },
+}
+
+/// What [`migrate`] did to a layer document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationOutcome {
+    /// There is no document.
+    Absent,
+    /// The document is at the current version; untouched.
+    AlreadyCurrent,
+    /// The document was rewritten from version `from`.
+    Migrated { from: u64 },
+}
+
+/// Brings `layer` to the current schema version with its settings kept:
+/// an older document is rewritten through the same atomic write as a
+/// patch; a current one is left untouched; a newer one is refused.
+/// Publication and `init` run this.
+pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
+    let path = layer.path(home);
+    let _lock = LockGuard::acquire(&lock_path(home, &path))?;
+    let Some(doc) = read(&path)? else {
+        return Ok(MigrationOutcome::Absent);
+    };
+    match version(&doc.value) {
+        Version::Current => Ok(MigrationOutcome::AlreadyCurrent),
+        Version::Newer(found) => Err(ConfigError::NewerSchema {
+            path,
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+        }),
+        Version::Unknown => Err(ConfigError::UnknownSchema { path }),
+        Version::Older(from) => {
+            let migrated = migrate_value(doc.value, from);
+            write(&path, &migrated)?;
+            Ok(MigrationOutcome::Migrated { from })
+        }
+    }
+}
+
+/// Rewrites a document of version `from` into the current version. Each
+/// schema version after the first adds its step here; version 1 is the
+/// first, so no step exists yet.
+fn migrate_value(mut value: Value, _from: u64) -> Value {
+    if let Value::Mapping(map) = &mut value {
+        map.insert(
+            Value::String("schema_version".to_owned()),
+            Value::Number(CURRENT_SCHEMA_VERSION.into()),
+        );
+    }
+    value
+}
+
+/// Creates `layer` with the current schema version (and, for a project,
+/// its slug) when absent; migrates an existing one. The project slug is
+/// `slug` when given, otherwise the primary worktree's folder name
+/// normalized; an empty normalization is refused.
+pub fn init(
+    home: &Home,
+    layer: &Layer,
+    slug: Option<&ProjectSlug>,
+) -> Result<InitOutcome, ConfigError> {
+    let path = layer.path(home);
+    if path.exists() {
+        return match migrate(home, layer)? {
+            MigrationOutcome::Migrated { from } => Ok(InitOutcome::Migrated { from }),
+            MigrationOutcome::AlreadyCurrent | MigrationOutcome::Absent => {
+                Ok(InitOutcome::AlreadyCurrent)
+            }
+        };
+    }
+    let mut doc = Mapping::new();
+    doc.insert(
+        Value::String("schema_version".to_owned()),
+        Value::Number(CURRENT_SCHEMA_VERSION.into()),
+    );
+    if let Layer::Project(root) = layer {
+        let slug = match slug {
+            Some(slug) => slug.clone(),
+            None => derived_slug(root)?,
+        };
+        doc.insert(
+            Value::String("project".to_owned()),
+            Value::String(slug.to_string()),
+        );
+    }
+    let _lock = LockGuard::acquire(&lock_path(home, &path))?;
+    if path.exists() {
+        return Ok(InitOutcome::AlreadyCurrent);
+    }
+    write(&path, &Value::Mapping(doc))?;
+    Ok(InitOutcome::Created)
+}
+
+/// The primary worktree's folder name, normalized to a slug.
+fn derived_slug(root: &Path) -> Result<ProjectSlug, ConfigError> {
+    let listing = git::run(root, ["worktree", "list", "--porcelain"])?;
+    let primary = listing
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.to_path_buf());
+    let folder = primary
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let normalized = normalize_slug(&folder);
+    ProjectSlug::parse(&normalized).map_err(|_| ConfigError::EmptySlug { folder })
+}
+
+/// Lowercases, turns every run of characters other than ASCII letters and
+/// digits into one `-`, and trims `-` from both ends.
+pub(crate) fn normalize_slug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_owned()
+}
+
+fn write(path: &Path, value: &Value) -> Result<Revision, ConfigError> {
+    let text = serde_yaml_ng::to_string(value).map_err(|source| ConfigError::Render {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    atomic_write(path, text.as_bytes())?;
+    Ok(Revision::of(text.as_bytes()))
+}
+
+/// The lock serializing writers of the document at `path`. It lives in the
+/// home, never beside a project's document.
+fn lock_path(home: &Home, path: &Path) -> PathBuf {
+    let canonical = path
+        .parent()
+        .and_then(|dir| dir.canonicalize().ok())
+        .map(|dir| dir.join(CONFIG_FILE_NAME))
+        .unwrap_or_else(|| path.to_path_buf());
+    let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
+    home.locks_dir()
+        .join(format!("config-{}.lock", hex::encode(&digest[..8])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_names_normalize_to_slugs() {
+        assert_eq!(normalize_slug("My Project_v2"), "my-project-v2");
+        assert_eq!(normalize_slug("--Ünïcode--"), "n-code");
+        assert_eq!(normalize_slug("___"), "");
+    }
+
+    #[test]
+    fn revisions_follow_content_only() {
+        assert_eq!(Revision::of(b"a: 1\n"), Revision::of(b"a: 1\n"));
+        assert_ne!(Revision::of(b"a: 1\n"), Revision::of(b"a: 2\n"));
+    }
+
+    #[test]
+    fn a_patch_must_be_a_mapping() {
+        assert!(parse_patch("a: 1").is_ok());
+        for bad in ["[1]", "3", ""] {
+            assert!(matches!(
+                parse_patch(bad),
+                Err(ConfigError::PatchNotAMapping)
+            ));
+        }
+    }
+}
