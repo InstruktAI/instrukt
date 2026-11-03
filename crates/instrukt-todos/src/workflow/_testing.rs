@@ -72,6 +72,7 @@ pub(crate) struct EvidenceBuilder {
 pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuilder {
     EvidenceBuilder {
         evidence: crate::evidence::TodoEvidence {
+            id: crate::work::TodoId::parse(&"ab".repeat(16)).unwrap(),
             project: ProjectSlug::parse("demo").unwrap(),
             slug: TodoSlug::parse("add-login").unwrap(),
             kind,

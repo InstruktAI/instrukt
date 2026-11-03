@@ -1323,6 +1323,7 @@ fn grounding_now(
         let found = s.record_by_id(&prerequisite.id);
         for upstream in upstream_of(name) {
             grounding.dependencies.push(DependencyDigest {
+                id: Some(prerequisite.id.clone()),
                 todo: prerequisite.slug.clone(),
                 artifact: ArtifactName::new(*upstream),
                 digest: found

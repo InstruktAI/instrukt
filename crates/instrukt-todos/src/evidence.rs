@@ -36,11 +36,23 @@ pub trait WorkEvidence: Send + Sync {
         project: &ProjectRef,
         todo: &TodoSlug,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError>;
+
+    /// The record of the todo with durable identity `id` in `project`, as
+    /// [`WorkEvidence::evidence`] reads it, retained entries included; `None`
+    /// when the project has no todo with that identity. A slug may be
+    /// reused; an identity names one todo for good.
+    fn evidence_by_id(
+        &self,
+        project: &ProjectRef,
+        id: &crate::work::TodoId,
+    ) -> Result<Option<TodoEvidence>, WorkInterfaceError>;
 }
 
 /// A todo's record as evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TodoEvidence {
+    /// The todo's durable identity, stable across renames and never reused.
+    pub id: crate::work::TodoId,
     pub project: ProjectSlug,
     pub slug: TodoSlug,
     pub kind: TodoKind,
@@ -247,6 +259,13 @@ pub struct SnippetDigest {
 /// the prerequisite had no such artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyDigest {
+    /// The prerequisite's durable identity: compare against the todo with
+    /// this identity, never by slug (a slug may be reused). `None` in a
+    /// record written before identities were recorded: that dependency
+    /// grounding is incomplete provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<crate::work::TodoId>,
+    /// The slug the prerequisite had then, for display.
     pub todo: TodoSlug,
     pub artifact: ArtifactName,
     pub digest: Option<ContentDigest>,
