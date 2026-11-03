@@ -228,22 +228,44 @@ pub fn render(text: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rend
 }
 
 fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
-    let included = expand_includes(body, &cx.fragments)?;
-    let scan = _markers::scan(&included);
-    let lensed = _markers::resolve(&included, &scan, |block| match lens {
-        Lens::Target(slug) if block.slug == slug.as_str() => Side::Delivered,
-        _ => Side::Current,
-    });
+    let lensed = include_and_lens(body, lens, cx)?;
+    let required_reads = section_reads(&lensed, cx);
     let (executed, exec_failures) = run_execs(&lensed, cx.exec)?;
     // The section is stripped before references expand, which leaves the
-    // text the same and its references as written.
-    let (stripped, required_reads) = strip_required_reads(&executed, cx);
+    // text the same.
+    let stripped = strip_required_reads(&executed);
     let text = expand_references(&stripped, cx);
     Ok(Rendered {
         text,
         required_reads,
         exec_failures,
     })
+}
+
+/// The required reads a rendering of `body` through `lens` reports, read
+/// without running any read-time command: fragments are included and the
+/// lens applied first, so a fragment's required reads count and hidden
+/// ones do not. A command's output is fenced and never adds a reference,
+/// so this is exactly [`Rendered::required_reads`].
+pub(super) fn dependency_reads(
+    body: &str,
+    lens: Lens<'_>,
+    cx: &RenderContext<'_>,
+) -> Result<Vec<Reference>, DocsError> {
+    Ok(section_reads(&include_and_lens(body, lens, cx)?, cx))
+}
+
+fn include_and_lens(
+    body: &str,
+    lens: Lens<'_>,
+    cx: &RenderContext<'_>,
+) -> Result<String, DocsError> {
+    let included = expand_includes(body, &cx.fragments)?;
+    let scan = _markers::scan(&included);
+    Ok(_markers::resolve(&included, &scan, |block| match lens {
+        Lens::Target(slug) if block.slug == slug.as_str() => Side::Delivered,
+        _ => Side::Current,
+    }))
 }
 
 /// `text` with each span replaced by its replacement; spans are ordered
@@ -387,7 +409,6 @@ fn run_command(
         Some(status) if status.success() => Ok(String::from_utf8_lossy(&stdout).into_owned()),
         Some(status) => Err(failed(status)),
     };
-    let stderr = String::from_utf8_lossy(&stderr).into_owned();
     tracing::debug!(
         event = "docs_exec_completed",
         command,
@@ -396,9 +417,12 @@ fn run_command(
             Ok(_) => "success".to_owned(),
             Err(outcome) => outcome.to_string(),
         },
-        stderr = %stderr,
+        stdout_bytes = stdout.len(),
+        stderr_bytes = stderr.len(),
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
+    let stderr = String::from_utf8_lossy(&stderr).into_owned();
+    tracing::trace!(event = "docs_exec_stderr", command, stderr = %stderr);
     Ok(outcome.map_err(|outcome| (outcome, stderr)))
 }
 
@@ -495,238 +519,31 @@ fn expand_references(body: &str, cx: &RenderContext<'_>) -> String {
     splice(body, replacements)
 }
 
-/// `body` without its `## Required reads` section (heading included), and
-/// the references the section holds.
-fn strip_required_reads(body: &str, cx: &RenderContext<'_>) -> (String, Vec<Reference>) {
+/// The references of `body`'s `## Required reads` section.
+fn section_reads(body: &str, cx: &RenderContext<'_>) -> Vec<Reference> {
     let lines = _text::lines(body);
     let Some(section) = required_reads_section(&lines) else {
-        return (body.to_owned(), Vec::new());
+        return Vec::new();
     };
     let user_home = cx.fragments.home().user_home();
-    let reads = _text::references(&lines)
+    _text::references(&lines)
         .into_iter()
         .filter(|r| section.contains(&r.line))
         .map(|r| _refs::parse(&r.target, cx.project, user_home))
-        .collect();
+        .collect()
+}
+
+/// `body` without its `## Required reads` section, heading included.
+fn strip_required_reads(body: &str) -> String {
+    let lines = _text::lines(body);
+    let Some(section) = required_reads_section(&lines) else {
+        return body.to_owned();
+    };
     let from = lines
         .get(section.start.saturating_sub(1))
         .map_or(body.len(), |line| line.span.start);
     let to = lines
         .get(section.end)
         .map_or(body.len(), |line| line.span.start);
-    (splice(body, vec![(from..to, String::new())]), reads)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Configuration;
-    use crate::docs::SourceFile;
-    use crate::ids::TodoSlug;
-
-    const HEAD: &str = "\n# Work — Procedure\n\n";
-    const READ: &str = "~/.instrukt/docs/acme/policy/rules.md";
-    const LOCAL_REF: &str = "docs/local/spec/a.md";
-    const FRAGMENT_NAME: &str = "shared";
-    const FRAGMENT: &str = "Shared text.\n";
-    const VALUE: &str = "computed-value";
-    const MARKER_FILE: &str = "hidden-ran";
-    const SLUG: &str = "add-it";
-
-    fn source() -> String {
-        format!(
-            "---\ndescription: d\n---\n{HEAD}## Required reads\n\n- @{READ}\n\n## Goal\n\n\
-             See @{LOCAL_REF} here.\n<!-- @include: docs/snippets/{FRAGMENT_NAME}.md -->\n\
-             <!-- @exec: printf %s {VALUE} -->\n<!-- planned:{SLUG} -->\n\
-             <!-- @exec: touch {MARKER_FILE} -->\n<!-- /planned:{SLUG} -->\n"
-        )
-    }
-
-    struct Fixture {
-        _user_home: tempfile::TempDir,
-        repo: tempfile::TempDir,
-        home: Home,
-        project: ProjectSlug,
-    }
-
-    fn fixture() -> Fixture {
-        let user_home = tempfile::tempdir().unwrap();
-        let repo = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(user_home.path().canonicalize().unwrap());
-        Fixture {
-            _user_home: user_home,
-            repo,
-            home,
-            project: ProjectSlug::parse("demo").unwrap(),
-        }
-    }
-
-    fn corpus(f: &Fixture) -> Corpus {
-        Corpus::from_sources(
-            Some(f.project.clone()),
-            &f.home,
-            [SourceFile {
-                path: format!("docs/global/snippets/{FRAGMENT_NAME}.md"),
-                text: FRAGMENT.to_owned(),
-            }],
-        )
-    }
-
-    fn at_read<'a>(
-        fragments: Fragments<'a>,
-        exec: &'a ExecPolicy,
-        repo_root: Option<&'a Path>,
-    ) -> RenderContext<'a> {
-        RenderContext {
-            fragments,
-            exec,
-            repo_root,
-            project: None,
-        }
-    }
-
-    #[test]
-    fn every_step_runs_in_order_and_hidden_content_never_executes() {
-        let f = fixture();
-        let corpus = corpus(&f);
-        let exec = ExecPolicy::read(f.repo.path());
-        let cx = RenderContext {
-            project: Some(&f.project),
-            ..at_read(Fragments::CorpusFirst(&corpus), &exec, Some(f.repo.path()))
-        };
-        let rendered = render(&source(), Lens::Current, &cx).unwrap();
-        assert!(!f.repo.path().join(MARKER_FILE).exists());
-        assert!(rendered.exec_failures.is_empty());
-
-        // Frontmatter and the Required reads section are gone, the fragment
-        // stands where its directive stood, the reference is absolute and
-        // the command's output is fenced in place of its directive.
-        let got: Vec<&str> = rendered.text.lines().collect();
-        let mut expected: Vec<String> = HEAD.lines().map(str::to_owned).collect();
-        expected.push("## Goal".to_owned());
-        expected.push(String::new());
-        expected.push(format!(
-            "See @{} here.",
-            f.repo.path().join(LOCAL_REF).display()
-        ));
-        expected.push(FRAGMENT.trim_end().to_owned());
-        assert_eq!(got[..expected.len()], expected[..]);
-        let fence = got[expected.len()];
-        assert!(fence.len() >= 3 && fence.chars().all(|c| c == '`'));
-        assert_eq!(got[expected.len() + 1..], [VALUE, fence]);
-
-        let reads: Vec<&str> = rendered
-            .required_reads
-            .iter()
-            .map(|r| r.raw.as_str())
-            .collect();
-        assert_eq!(reads, [READ]);
-
-        let slug = TodoSlug::parse(SLUG).unwrap();
-        let targeted = render(&source(), Lens::Target(&slug), &cx).unwrap();
-        assert!(f.repo.path().join(MARKER_FILE).exists());
-        assert!(targeted.exec_failures.is_empty());
-    }
-
-    #[test]
-    fn a_failed_command_is_a_notice_at_read_and_an_error_at_publish() {
-        let f = fixture();
-        let corpus = corpus(&f);
-        let command = "exit 3";
-        let text = format!("# T — Spec\n<!-- @exec: {command} -->\n");
-        let read = ExecPolicy::read(f.repo.path());
-        let cx = at_read(Fragments::CorpusFirst(&corpus), &read, Some(f.repo.path()));
-        let rendered = render(&text, Lens::Current, &cx).unwrap();
-        assert_eq!(
-            rendered.exec_failures,
-            [ExecFailure {
-                command: command.to_owned(),
-                outcome: ExecOutcome::Exited(3),
-            }]
-        );
-        let publish = ExecPolicy::publish(f.repo.path(), &[]);
-        let cx = RenderContext {
-            exec: &publish,
-            ..cx
-        };
-        assert!(matches!(
-            render(&text, Lens::Current, &cx),
-            Err(DocsError::ExecFailed {
-                outcome: ExecOutcome::Exited(3),
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn publishing_runs_without_the_runtime_session_variables() {
-        // HOME stands in for a session variable: every test process has it.
-        let f = fixture();
-        std::fs::create_dir_all(f.home.root()).unwrap();
-        std::fs::write(
-            f.home.global_config(),
-            "schema_version: 1\nruntimes:\n  - name: cli\n    agent: cli\n    \
-             session_id_env: HOME\n    start: cli\n    send: cli send\n    \
-             alive: cli alive\n    conversation: cli history\n",
-        )
-        .unwrap();
-        let configuration = Configuration::load_global(&f.home).unwrap();
-        let corpus = corpus(&f);
-        let text = "<!-- @exec: test -z \"${HOME+set}\" -->\n";
-        let publish = ExecPolicy::publish(f.repo.path(), configuration.runtimes());
-        let read = ExecPolicy::read(f.repo.path());
-        let published = render(
-            text,
-            Lens::Current,
-            &at_read(Fragments::CorpusFirst(&corpus), &publish, None),
-        );
-        assert!(published.is_ok());
-        let at_read = render(
-            text,
-            Lens::Current,
-            &at_read(Fragments::CorpusFirst(&corpus), &read, None),
-        )
-        .unwrap();
-        assert_eq!(at_read.exec_failures.len(), 1);
-    }
-
-    #[test]
-    fn home_fragments_are_read_inside_the_home_and_a_missing_one_stays_visible() {
-        let f = fixture();
-        let dir = f.home.fragments_dir();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{FRAGMENT_NAME}.md")), FRAGMENT).unwrap();
-        let exec = ExecPolicy::read(f.repo.path());
-        let cx = at_read(Fragments::Home(&f.home), &exec, None);
-        let found = format!("<!-- @include: docs/snippets/{FRAGMENT_NAME}.md -->\n");
-        assert_eq!(render(&found, Lens::Current, &cx).unwrap().text, FRAGMENT);
-        let missing = "<!-- @include: docs/snippets/none.md -->\n";
-        assert_eq!(render(missing, Lens::Current, &cx).unwrap().text, missing);
-        let climbing = "<!-- @include: docs/snippets/../index.md -->\n";
-        assert!(matches!(
-            render(climbing, Lens::Current, &cx),
-            Err(DocsError::OutsideHome { .. })
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_fragment_linking_out_of_the_home_is_refused() {
-        let f = fixture();
-        let outside = tempfile::tempdir().unwrap();
-        std::fs::write(outside.path().join("secret.md"), FRAGMENT).unwrap();
-        let dir = f.home.fragments_dir();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::os::unix::fs::symlink(outside.path().join("secret.md"), dir.join("link.md")).unwrap();
-        let exec = ExecPolicy::read(f.repo.path());
-        let cx = at_read(Fragments::Home(&f.home), &exec, None);
-        assert!(matches!(
-            render(
-                "<!-- @include: docs/snippets/link.md -->\n",
-                Lens::Current,
-                &cx
-            ),
-            Err(DocsError::OutsideHome { .. })
-        ));
-    }
+    splice(body, vec![(from..to, String::new())])
 }

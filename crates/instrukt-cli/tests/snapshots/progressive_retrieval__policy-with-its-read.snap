@@ -15,9 +15,27 @@ description: The rules of the work.
 
 ## Rules
 
-Follow @[TMP]/home/.instrukt/docs/acme/principle/care.md always.
+Follow the rules.
 
 Shared text.
+
+<!-- @include: docs/snippets/missing.md -->
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
 
 ---
 id: acme/principle/care
@@ -31,3 +49,15 @@ description: Why care matters.
 ## Principle
 
 Care.
+
+## Rationale
+
+Text.
+
+## Implications
+
+Text.
+
+## Tensions
+
+Text.

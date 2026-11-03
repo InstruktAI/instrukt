@@ -17,6 +17,10 @@ description: A new contract build-it delivers.
 
 New with build-it.
 
+## Canonical fields
+
+Text.
+
 ---
 id: acme/policy/reworked
 type: policy
@@ -29,6 +33,22 @@ description: A live policy with a next version.
 ## Rules
 
 The rules as build-it delivers them.
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
 
 ---
 id: acme/spec/live
@@ -45,9 +65,12 @@ The current text.
 
 Added by build-it.
 
-## Canonical fields
 
 - field: replaced by build-it
+
+## Canonical fields
+
+Text.
 
 ---
 id: acme/concept/old

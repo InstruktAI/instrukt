@@ -11,13 +11,10 @@ use std::collections::{BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
-use super::_corpus::{
-    Corpus, Lens, ManifestLine, Snippet, SourceFile, View, manifest_lines, required_reads_section,
-};
+use super::_corpus::{Corpus, Lens, ManifestLine, Snippet, SourceFile, View, manifest_lines};
 use super::_identity::{Scope, Taxonomy, companion_shape};
-use super::_refs::{self, RefTarget, Reference};
+use super::_refs::{RefTarget, Reference};
 use super::_render::{self, ExecPolicy, Fragments, RenderContext, read_confined};
-use super::_text;
 use super::DocsError;
 use crate::git;
 use crate::home::Home;
@@ -572,19 +569,13 @@ impl<'i> Reader<'i> {
     }
 
     /// The required reads of the version the lens reads.
-    fn reads_of(&self, loaded: &Loaded<'_>) -> Vec<Reference> {
-        let View::Visible { body, .. } = loaded.snippet.view(self.lens) else {
-            return Vec::new();
+    /// Exactly what rendering it reports ([`super::Rendered::required_reads`]),
+    /// fragments included, without running its read-time commands.
+    fn reads_of(&self, loaded: &Loaded<'_>) -> Result<Vec<Reference>, DocsError> {
+        let View::Visible { version, .. } = loaded.snippet.view(self.lens) else {
+            return Ok(Vec::new());
         };
-        let lines = _text::lines(&body);
-        let Some(section) = required_reads_section(&lines) else {
-            return Vec::new();
-        };
-        _text::references(&lines)
-            .into_iter()
-            .filter(|r| section.contains(&r.line))
-            .map(|r| _refs::parse(&r.target, loaded.project(), self.home.user_home()))
-            .collect()
+        _render::dependency_reads(version.body(), self.lens, &self.context(loaded))
     }
 
     /// Follows required reads from `roots`, transitively, by what each
@@ -595,7 +586,10 @@ impl<'i> Reader<'i> {
         let mut bundles = BTreeSet::new();
         let mut unreadable = BTreeSet::new();
         let mut reached: Vec<Loaded<'i>> = Vec::new();
-        let mut queue: VecDeque<Vec<Reference>> = roots.iter().map(|l| self.reads_of(l)).collect();
+        let mut queue: VecDeque<Vec<Reference>> = roots
+            .iter()
+            .map(|l| self.reads_of(l))
+            .collect::<Result<_, _>>()?;
         while let Some(reads) = queue.pop_front() {
             for read in reads {
                 let refused = |reason: &str| DocsError::ClosureRefused {
@@ -648,7 +642,7 @@ impl<'i> Reader<'i> {
                                 Strictness::List => {}
                             }
                         }
-                        queue.push_back(self.reads_of(&loaded));
+                        queue.push_back(self.reads_of(&loaded)?);
                         reached.push(loaded);
                     }
                     Some(RefTarget::Bundle(domain)) => {

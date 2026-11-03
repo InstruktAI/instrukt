@@ -1,19 +1,18 @@
 //! `instrukt docs index|get`
 //! (`docs/local/spec/feature/docs/progressive-retrieval.md`).
 //!
-//! The home is seeded as publication leaves it (`support/published.rs`):
-//! publication is built separately, and these tests read its persisted
-//! contract.
+//! Every home is published by the real `instrukt sync` from temporary
+//! project repositories (`support/documented.rs`).
 
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
 mod common;
-#[path = "support/published.rs"]
-mod published;
+#[path = "support/documented.rs"]
+mod documented;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use published::{doc, generated, publish};
+use documented::{project, snippet, sync};
 
 /// Command output with the test's temporary directory shown as `[TMP]`.
 fn text(env: &TestEnv, bytes: &[u8]) -> String {
@@ -29,86 +28,95 @@ fn stderr(env: &TestEnv, assert: &Assert) -> String {
     text(env, &assert.get_output().stderr)
 }
 
-/// A committed repository declaring project `slug`.
-fn project(env: &TestEnv, slug: &str) -> Repo {
-    let repo = env.git_repo(slug);
-    repo.write(
-        "instrukt.yaml",
-        &format!("schema_version: 1\nproject: {slug}\n"),
-    );
-    repo.commit("chore: adopt instrukt");
-    repo
-}
+const CARE: &str = "- @~/.instrukt/docs/acme/principle/care.md";
+const RULES: &str = "- @~/.instrukt/docs/acme/policy/rules.md";
+const TERMS: &str = "- @~/.instrukt/docs/acme/concept/terms.md";
+const BUNDLE: &str = "- @~/.instrukt/docs/acme/bundle.md";
 
-const CARE: &str = "~/.instrukt/docs/acme/principle/care.md";
-const RULES: &str = "~/.instrukt/docs/acme/policy/rules.md";
-const BUNDLE: &str = "~/.instrukt/docs/acme/bundle.md";
-
-/// The documentation project `demo` publishes: two domains, a fragment, a
-/// baseline, a third-party doc and two local snippets.
+/// What project `demo` documents: two domains, fragments (one carrying a
+/// required read), a baseline, a third-party doc and two local snippets.
 fn demo_files() -> Vec<(&'static str, String)> {
     vec![
         (
             "docs/global/acme/principle/care.md",
-            doc(
-                "Care — Principle",
-                "Why care matters.",
-                "",
-                "\n## Principle\n\nCare.\n",
-            ),
+            snippet("principle", "Care", "Why care matters.", "", &[], "Care.\n"),
         ),
         (
             "docs/global/acme/policy/rules.md",
-            doc(
-                "Rules — Policy",
+            snippet(
+                "policy",
+                "Rules",
                 "The rules of the work.",
                 "",
-                &format!(
-                    "\n## Required reads\n\n- @{CARE}\n\n## Rules\n\nFollow @{CARE} always.\n\n\
-                     <!-- @include: docs/snippets/shared.md -->\n"
-                ),
+                &[CARE],
+                "Follow the rules.\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
+                 <!-- @include: docs/snippets/missing.md -->\n",
+            ),
+        ),
+        (
+            "docs/global/acme/concept/terms.md",
+            snippet(
+                "concept",
+                "Terms",
+                "The words used.",
+                "",
+                &[CARE],
+                "Terms.\n",
             ),
         ),
         (
             "docs/global/acme/procedure/work.md",
-            doc(
-                "Work — Procedure",
+            snippet(
+                "procedure",
+                "Work",
                 "How the work is done.",
                 "",
-                &format!("\n## Required reads\n\n- @{RULES}\n- @{BUNDLE}\n\n## Steps\n\nWork.\n"),
+                &[RULES, BUNDLE],
+                "Work.\n",
+            ),
+        ),
+        (
+            "docs/global/acme/procedure/start.md",
+            snippet(
+                "procedure",
+                "Start",
+                "Starts a session.",
+                "role: starter\n",
+                &[RULES, "<!-- @include: docs/snippets/reads.md -->", BUNDLE],
+                "Start.\n",
             ),
         ),
         (
             "docs/global/beta/spec/thing.md",
-            doc(
-                "Thing — Spec",
-                "What a thing is.",
-                "",
-                "\n## What it is\n\nA thing.\n",
-            ),
+            snippet("spec", "Thing", "What a thing is.", "", &[], "A thing.\n"),
         ),
         (
             "docs/global/snippets/shared.md",
             "Shared text.\n".to_owned(),
         ),
-        ("docs/global/acme/baseline.md", format!("@{CARE}\n")),
+        ("docs/global/snippets/reads.md", format!("{TERMS}\n")),
+        (
+            "docs/global/acme/baseline.md",
+            "@~/.instrukt/docs/acme/principle/care.md\n".to_owned(),
+        ),
         (
             "docs/third-party/tool/guide.md",
             "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n".to_owned(),
         ),
         (
             "docs/local/spec/feature/x.md",
-            doc(
-                "X — Spec",
+            snippet(
+                "spec",
+                "X",
                 "The x feature.",
                 "",
-                "\n## Required reads\n\n- @docs/local/design/y.md\n\n## What it is\n\n\
-                 See @docs/local/design/y.md.\n",
+                &["- @docs/local/design/y.md"],
+                "The x feature.\n",
             ),
         ),
         (
             "docs/local/design/y.md",
-            doc("Y — Design", "How y is built.", "", "\n## Purpose\n\nY.\n"),
+            snippet("design", "Y", "How y is built.", "", &[], "Y.\n"),
         ),
         (
             "docs/local/baseline.md",
@@ -117,17 +125,10 @@ fn demo_files() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Project `demo`, committed and published, with the `acme` bundle.
+/// Project `demo`, committed and published.
 fn published_demo(env: &TestEnv) -> Repo {
-    let demo = project(env, "demo");
-    let files = demo_files();
-    let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (*p, t.as_str())).collect();
-    publish(env, "demo", Some(&demo), &files);
-    generated(
-        env,
-        "acme/bundle.md",
-        "# Acme bundle\n\nEverything acme agents read.\n",
-    );
+    let demo = project(env, "demo", &["acme", "beta"], &demo_files());
+    sync(env, &demo);
     demo
 }
 
@@ -158,8 +159,8 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
     insta::assert_snapshot!("procedure-with-reads-not-loaded", stdout(&env, &read));
 
     // A required read that was asked for is loaded, not listed; the
-    // fragment, the absolute reference and the stripped section show the
-    // read pipeline.
+    // fragment, the missing fragment's directive and the stripped section
+    // show the read pipeline.
     let both = env
         .run(
             demo.path(),
@@ -167,6 +168,12 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
         )
         .success();
     insta::assert_snapshot!("policy-with-its-read", stdout(&env, &both));
+
+    // A required read a fragment carries is named like any other.
+    let start = env
+        .run(demo.path(), ["docs", "get", "acme/procedure/start"])
+        .success();
+    insta::assert_snapshot!("fragment-required-read-not-loaded", stdout(&env, &start));
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
@@ -174,21 +181,16 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
 fn an_agent_sees_its_own_project_and_reads_another_projects_local_documentation() {
     let env = TestEnv::new();
     let demo = published_demo(&env);
-    let other = project(&env, "other");
-    publish(
+    let other = project(
         &env,
         "other",
-        Some(&other),
+        &[],
         &[(
             "docs/local/concept/notes.md",
-            &doc(
-                "Notes — Concept",
-                "Other's notes.",
-                "",
-                "\n## What\n\nNotes.\n",
-            ),
+            snippet("concept", "Notes", "Other's notes.", "", &[], "Notes.\n"),
         )],
     );
+    sync(&env, &other);
 
     let in_demo = env.run(demo.path(), ["docs", "index"]).success();
     insta::assert_snapshot!("default-index-in-a-project", stdout(&env, &in_demo));
@@ -314,57 +316,62 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
     insta::assert_snapshot!("missing-local-file", stderr(&env, &missing));
 }
 
-/// A procedure with root frontmatter whose reads meet in one snippet, so
-/// the closure must include it once.
-fn closure_files() -> Vec<(&'static str, String)> {
+/// Procedures with root frontmatter whose closures must refuse: one
+/// requires a pending snippet, one requires through a fragment a pending
+/// snippet, one requires through a fragment what is not published.
+fn refused_files() -> Vec<(&'static str, String)> {
     vec![
         (
-            "docs/global/acme/procedure/start.md",
-            doc(
-                "Start — Procedure",
-                "Starts a session.",
-                "role: starter\n",
-                &format!(
-                    "\n## Required reads\n\n- @{RULES}\n- @~/.instrukt/docs/acme/concept/terms.md\n\
-                     - @{BUNDLE}\n\n## Goal\n\nStart.\n"
-                ),
-            ),
-        ),
-        (
-            "docs/global/acme/concept/terms.md",
-            doc(
-                "Terms — Concept",
-                "The words used.",
-                "",
-                &format!("\n## Required reads\n\n- @{CARE}\n\n## What\n\nTerms.\n"),
-            ),
-        ),
-        (
             "docs/global/acme/procedure/blocked.md",
-            doc(
-                "Blocked — Procedure",
+            snippet(
+                "procedure",
+                "Blocked",
                 "Cannot start yet.",
                 "role: blocked\n",
-                "\n## Required reads\n\n- @~/.instrukt/docs/acme/spec/coming.md\n\n## Goal\n\nWait.\n",
+                &["- @~/.instrukt/docs/acme/spec/coming.md"],
+                "Wait.\n",
+            ),
+        ),
+        (
+            "docs/global/acme/procedure/blocked-through-fragment.md",
+            snippet(
+                "procedure",
+                "Blocked through fragment",
+                "Cannot start yet either.",
+                "role: blocked-too\n",
+                &["<!-- @include: docs/snippets/coming.md -->"],
+                "Wait.\n",
             ),
         ),
         (
             "docs/global/acme/procedure/broken.md",
-            doc(
-                "Broken — Procedure",
+            snippet(
+                "procedure",
+                "Broken",
                 "Requires what is not published.",
                 "activation_trigger: When broken.\n",
-                "\n## Required reads\n\n- @~/.instrukt/docs/acme/spec/absent.md\n\n## Goal\n\nNo.\n",
+                &["<!-- @include: docs/snippets/absent.md -->"],
+                "No.\n",
             ),
         ),
         (
             "docs/global/acme/spec/coming.md",
-            doc(
-                "Coming — Spec",
+            snippet(
+                "spec",
+                "Coming",
                 "Not delivered yet.",
                 "delivered_by: [build-coming]\n",
-                "\n## What it is\n\nSoon.\n",
+                &[],
+                "Soon.\n",
             ),
+        ),
+        (
+            "docs/global/snippets/coming.md",
+            "- @~/.instrukt/docs/acme/spec/coming.md\n".to_owned(),
+        ),
+        (
+            "docs/global/snippets/absent.md",
+            "- @~/.instrukt/docs/acme/spec/absent.md\n".to_owned(),
         ),
     ]
 }
@@ -373,17 +380,13 @@ fn closure_files() -> Vec<(&'static str, String)> {
 #[test]
 fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     let env = TestEnv::new();
-    let demo = project(&env, "demo");
     let mut files = demo_files();
-    files.extend(closure_files());
-    let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (*p, t.as_str())).collect();
-    publish(&env, "demo", Some(&demo), &files);
-    generated(
-        &env,
-        "acme/bundle.md",
-        "# Acme bundle\n\nEverything acme agents read.\n",
-    );
+    files.extend(refused_files());
+    let demo = project(&env, "demo", &["acme", "beta"], &files);
+    sync(&env, &demo);
 
+    // `start` requires `rules` and, through a fragment, `terms`; both
+    // require `care`, which the closure holds once.
     let closure = env
         .run(
             demo.path(),
@@ -392,22 +395,20 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
         .success();
     insta::assert_snapshot!("closure", stdout(&env, &closure));
 
-    let pending = env
-        .run(
-            demo.path(),
-            ["docs", "get", "--closure", "acme/procedure/blocked"],
-        )
-        .failure();
-    assert!(pending.get_output().stdout.is_empty());
-    insta::assert_snapshot!("closure-refused-pending", stderr(&env, &pending));
-
-    let unreadable = env
-        .run(
-            demo.path(),
-            ["docs", "get", "--closure", "acme/procedure/broken"],
-        )
-        .failure();
-    insta::assert_snapshot!("closure-refused-unreadable", stderr(&env, &unreadable));
+    for (name, id) in [
+        ("closure-refused-pending", "acme/procedure/blocked"),
+        (
+            "closure-refused-pending-through-fragment",
+            "acme/procedure/blocked-through-fragment",
+        ),
+        ("closure-refused-unreadable", "acme/procedure/broken"),
+    ] {
+        let refused = env
+            .run(demo.path(), ["docs", "get", "--closure", id])
+            .failure();
+        assert!(refused.get_output().stdout.is_empty(), "{id}");
+        insta::assert_snapshot!(name, stderr(&env, &refused));
+    }
 
     let two = env
         .run(
@@ -443,8 +444,6 @@ runtimes:
     conversation: agent-cli history {runtime.session_id}
 ";
 
-const SESSION_COMMAND: &str = "<!-- @exec: instrukt config get runtime.session_id -->";
-
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
 fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
@@ -461,28 +460,32 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         "PATH",
         &format!("{bin}:{}", std::env::var("PATH").unwrap_or_default()),
     );
-    let demo = project(&env, "demo");
-    let procedure = doc(
-        "Report — Procedure",
+    let procedure = snippet(
+        "procedure",
+        "Report",
         "Reports into the session.",
         "",
-        &format!("\n## Steps\n\nYour session:\n\n{SESSION_COMMAND}\n\nThen report.\n"),
+        &[],
+        "Your session:\n\n<!-- @exec: instrukt config get runtime.session_id -->\n\nThen report.\n",
     );
-    let failing = doc(
-        "Fragile — Procedure",
+    let failing = snippet(
+        "procedure",
+        "Fragile",
         "Asks a command that fails.",
         "",
-        "\n## Steps\n\nBefore.\n\n<!-- @exec: echo partial; exit 3 -->\n\nAfter.\n",
+        &[],
+        "Before.\n\n<!-- @exec: echo partial; exit 3 -->\n\nAfter.\n",
     );
-    publish(
+    let demo = project(
         &env,
         "demo",
-        Some(&demo),
+        &["acme"],
         &[
-            ("docs/global/acme/procedure/report.md", &procedure),
-            ("docs/global/acme/procedure/fragile.md", &failing),
+            ("docs/global/acme/procedure/report.md", procedure.clone()),
+            ("docs/global/acme/procedure/fragile.md", failing),
         ],
     );
+    sync(&env, &demo);
 
     env.set_env("AGENT_CLI_SESSION_ID", "session-one");
     let first = env

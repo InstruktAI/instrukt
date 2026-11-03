@@ -6,6 +6,7 @@ expression: "stdout(&env, &listed)"
 # Filter with --domains <acme|beta>, --areas <principle|concept|policy|procedure|design|spec|adr>, --baseline-only, --third-party, --target <slug>, --project <slug>
 
 acme/policy/rules: The rules of the work.
+acme/procedure/start: Starts a session.
 acme/procedure/work: How the work is done.
 
 # Read the snippets you need: instrukt docs get <id> [<id>…]

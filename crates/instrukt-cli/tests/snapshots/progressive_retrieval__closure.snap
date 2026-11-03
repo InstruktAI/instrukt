@@ -9,9 +9,33 @@ expression: "stdout(&env, &closure)"
 bundle: acme
 path: [TMP]/home/.instrukt/docs/acme/bundle.md
 ---
-# Acme bundle
+# acme — Platform Baseline
 
-Everything acme agents read.
+id: acme/principle/care
+
+# Care — Principle
+
+## Principle
+
+Care.
+
+## Rationale
+
+Text.
+
+## Implications
+
+Text.
+
+## Tensions
+
+Text.
+
+---
+
+## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
+
+- `acme/procedure/broken` — Requires what is not published. — When broken.
 
 ---
 id: acme/principle/care
@@ -26,6 +50,18 @@ description: Why care matters.
 
 Care.
 
+## Rationale
+
+Text.
+
+## Implications
+
+Text.
+
+## Tensions
+
+Text.
+
 ---
 id: acme/concept/terms
 type: concept
@@ -39,6 +75,10 @@ description: The words used.
 
 Terms.
 
+## Why
+
+Text.
+
 ---
 id: acme/policy/rules
 type: policy
@@ -50,9 +90,27 @@ description: The rules of the work.
 
 ## Rules
 
-Follow @[TMP]/home/.instrukt/docs/acme/principle/care.md always.
+Follow the rules.
 
 Shared text.
+
+<!-- @include: docs/snippets/missing.md -->
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
 
 ---
 id: acme/procedure/start
@@ -66,3 +124,19 @@ description: Starts a session.
 ## Goal
 
 Start.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.
