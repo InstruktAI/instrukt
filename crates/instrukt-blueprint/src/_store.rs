@@ -10,7 +10,8 @@
 //! <sha>/graph.json   one complete, contract-valid graph per revision
 //! latest.json        {"latest": "<sha>", "previous": "<sha>"} — the pointer
 //! .staging-<sha>/    a graph being written; never read
-//! .lock              held while publishing
+//! .lock              held exclusively for a whole publication
+//! .prune.lock         shared by readers while they resolve; exclusive while pruning
 //! ```
 //!
 //! # Invariants
@@ -28,14 +29,17 @@
 //!   older `<sha>/` directories are removed. The pointer swap is the commit
 //!   point: a failure to remove an old graph afterwards does not undo the
 //!   publication and is reported in [`Published`].
-//! - A reader whose resolved graph was removed by later publications
-//!   resolves the pointer again, so it answers from the old graph or a newer
-//!   one, never fails because of a swap.
+//! - A reader sees the old graph or the new one, never a failure from a
+//!   swap. It holds `.prune.lock` shared from reading the pointer until the
+//!   graph file it names is open; pruning holds it exclusively, so a graph a
+//!   reader resolved cannot be removed before the reader has it open. Once
+//!   open, the file stays readable even if pruning then unlinks it. Readers
+//!   do not wait for a publication's writes, only for pruning itself.
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use instrukt_core::fsx::{self, FsError, LockGuard};
+use instrukt_core::fsx::{self, FsError, LockGuard, SharedLockGuard};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use serde::{Deserialize, Serialize};
@@ -48,13 +52,15 @@ use crate::_contract::{ContractError, Graph};
 /// and pruning.
 const PUBLISH_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long a reader waits for pruning, and pruning for readers, on
+/// `.prune.lock`; both hold it only for a few filesystem calls.
+const PRUNE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 const GRAPH_FILE: &str = "graph.json";
 const POINTER_FILE: &str = "latest.json";
 const LOCK_FILE: &str = ".lock";
+const PRUNE_LOCK_FILE: &str = ".prune.lock";
 const STAGING_PREFIX: &str = ".staging-";
-/// How many times a reader resolves the pointer again when the graph it
-/// named was pruned by later publications before it could be read.
-const RESOLVE_ATTEMPTS: usize = 8;
 
 /// The store could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -129,45 +135,38 @@ impl GraphStore {
     /// error means a pointer or graph exists but cannot be read or does not
     /// satisfy the contract.
     pub fn latest(&self) -> Result<Option<LatestGraph>, StoreError> {
-        match self.pointer()? {
-            Some(pointer) => self.load_resolved(pointer).map(Some),
-            None => Ok(None),
-        }
+        self.latest_with(|| {})
     }
 
-    /// Loads the graph `resolved` names. When that graph is gone — pruned by
-    /// publications since the pointer was read — the pointer is read again
-    /// and the newer latest graph is loaded instead.
-    fn load_resolved(&self, mut resolved: Pointer) -> Result<LatestGraph, StoreError> {
-        let mut attempts = 1;
-        loop {
-            let path = self.graph_file(&resolved.latest);
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    let graph =
-                        Graph::from_json(&bytes).map_err(|source| StoreError::Contract {
-                            sha: resolved.latest.clone(),
-                            source,
-                        })?;
-                    return Ok(LatestGraph {
-                        sha: resolved.latest,
-                        graph,
-                    });
-                }
-                Err(err)
-                    if err.kind() == io::ErrorKind::NotFound && attempts < RESOLVE_ATTEMPTS =>
-                {
-                    match self.pointer()? {
-                        Some(again) if again != resolved => {
-                            resolved = again;
-                            attempts += 1;
-                        }
-                        _ => return Err(StoreError::Read { path, source: err }),
-                    }
-                }
-                Err(source) => return Err(StoreError::Read { path, source }),
-            }
+    /// [`Self::latest`], running `resolved` after the pointer is read and
+    /// before the graph it names is opened — the window pruning must not
+    /// enter. Tests use it to force interleavings.
+    fn latest_with(&self, resolved: impl FnOnce()) -> Result<Option<LatestGraph>, StoreError> {
+        if !self.dir.is_dir() {
+            return Ok(None);
         }
+        let (sha, mut file, path) = {
+            let _shared =
+                SharedLockGuard::acquire(&self.dir.join(PRUNE_LOCK_FILE), PRUNE_LOCK_TIMEOUT)?;
+            let Some(pointer) = self.pointer()? else {
+                return Ok(None);
+            };
+            resolved();
+            let path = self.graph_file(&pointer.latest);
+            let file = std::fs::File::open(&path).map_err(|source| StoreError::Read {
+                path: path.clone(),
+                source,
+            })?;
+            (pointer.latest, file, path)
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| StoreError::Read { path, source })?;
+        let graph = Graph::from_json(&bytes).map_err(|source| StoreError::Contract {
+            sha: sha.clone(),
+            source,
+        })?;
+        Ok(Some(LatestGraph { sha, graph }))
     }
 
     /// Whether a complete graph of `sha` is stored: present, readable and
@@ -248,6 +247,17 @@ impl GraphStore {
     /// remove is returned and logged.
     fn prune(&self, keep: &Pointer) -> Published {
         let mut published = Published::default();
+        let lock_path = self.dir.join(PRUNE_LOCK_FILE);
+        let _exclusive = match LockGuard::acquire(&lock_path, PRUNE_LOCK_TIMEOUT) {
+            Ok(guard) => guard,
+            Err(err) => {
+                published.cleanup_failures.push(CleanupFailure {
+                    path: lock_path,
+                    error: io::Error::other(err),
+                });
+                return self.logged(published);
+            }
+        };
         let entries = match std::fs::read_dir(&self.dir) {
             Ok(entries) => entries,
             Err(error) => {
@@ -483,19 +493,39 @@ mod tests {
     }
 
     #[test]
-    fn a_reader_whose_graph_was_pruned_resolves_the_newer_latest() {
+    fn a_reader_racing_two_publications_gets_the_old_graph_not_an_error() {
         let (_dir, store) = store();
         publish_ok(&store, &sha('a'), &graph("a"));
-        // The reader resolved the pointer while `a` was latest ...
-        let resolved = store.pointer().unwrap().unwrap();
-        // ... then `b` and `c` were published, pruning `a`.
-        publish_ok(&store, &sha('b'), &graph("b"));
-        publish_ok(&store, &sha('c'), &graph("c"));
-        assert!(!store.dir().join(sha('a').as_str()).exists());
+        let publisher = store.clone();
+        let mut publications = None;
+        let read = store
+            .latest_with(|| {
+                // The reader has resolved `a`. Two publications follow; the
+                // second would prune `a`.
+                let handle = std::thread::spawn(move || {
+                    publish_ok(&publisher, &sha('b'), &graph("b"));
+                    publish_ok(&publisher, &sha('c'), &graph("c"));
+                });
+                // Wait (bounded) until the first publication has swapped the
+                // pointer: it now waits to prune behind the reader.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while store.pointer().unwrap().unwrap().latest != sha('b') {
+                    assert!(std::time::Instant::now() < deadline, "publication stalled");
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                // Both publications finish once the reader has opened its
+                // graph; joined below.
+                publications = Some(handle);
+            })
+            .unwrap()
+            .unwrap();
+        publications.unwrap().join().unwrap();
 
-        let latest = store.load_resolved(resolved).unwrap();
-        assert_eq!(latest.sha, sha('c'));
-        assert_eq!(latest.graph.nodes()[0].id, "c");
+        assert_eq!(read.sha, sha('a'));
+        assert_eq!(read.graph.nodes()[0].id, "a");
+        // Both publications completed and `a` was pruned after the read.
+        assert_eq!(store.latest().unwrap().unwrap().sha, sha('c'));
+        assert!(!store.dir().join(sha('a').as_str()).exists());
     }
 
     #[test]
