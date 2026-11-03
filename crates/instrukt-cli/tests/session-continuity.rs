@@ -39,3 +39,45 @@ fn a_clarification_typed_in_one_conversation_reaches_the_linked_one_as_the_devel
         @"developer (typed in s1): Use the staging database, not production."
     );
 }
+
+// spec: local/projects/instrukt/spec/feature/runner/session-continuity UC-SS1
+#[test]
+fn a_clarification_reaches_the_runtime_byte_for_byte_and_executes_nothing() {
+    let env = TestEnv::new();
+    let rt = FakeRuntime::new(&env, "rt", true);
+    global_layer(&env, "events: true", &[&rt]);
+    rt.open_session("s2");
+    let cwd = env.path("");
+    let canary = env.path("canary");
+    let clarification = format!(
+        "Use the staging database; not production.\n\
+         Don't run $(touch {c}-dollar) or `touch {c}-tick` or \"quoted\" 'text' | cat > {c}-pipe & echo",
+        c = canary.display()
+    );
+
+    // A collaborator's session opens with the clarification as its brief,
+    // and the clarification is sent to the developer's other session.
+    let started = env
+        .instrukt(&cwd)
+        .args(["sessions", "run", "--worktree", "shared", "--brief", "-"])
+        .write_stdin(clarification.clone())
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&started.get_output().stdout)
+            .replace(rt.state_dir().to_str().unwrap(), "<sessions>"),
+        @r"
+    rt:s1
+    <sessions>/worktrees/shared
+    "
+    );
+    env.run(&cwd, ["sessions", "send", "rt:s2", &clarification])
+        .success();
+
+    assert_eq!(rt.opening("s1"), clarification);
+    assert_eq!(rt.sent("s2", 1), clarification);
+    for suffix in ["dollar", "tick", "pipe"] {
+        let planted = std::path::PathBuf::from(format!("{}-{suffix}", canary.display()));
+        assert!(!planted.exists(), "{} was executed", planted.display());
+    }
+}

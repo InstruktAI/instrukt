@@ -1,0 +1,21 @@
+---
+source: crates/instrukt-cli/tests/work-dispatch.rs
+expression: "work::redact(&project.todo([\"show\", \"tidy-imports\"]))"
+---
+tidy-imports · change · active
+identity: <id 1>
+created: <time> by Test Developer
+revision: 3
+intent:
+  Sort the imports of every module.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time>
+hold: none
+sessions:
+  prepare-orchestrator: rt:s1
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
