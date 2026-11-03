@@ -248,6 +248,7 @@ fn status(ctx: &mut Ctx, root: Option<&Path>) -> anyhow::Result<ExitCode> {
 fn outcome(state: &GenerationState) -> String {
     match state {
         GenerationState::Running => "is running".to_owned(),
+        GenerationState::Orphaned => "is running without its worker; its engine is ended once past its time limit and a newer revision waits".to_owned(),
         GenerationState::Interrupted => "was interrupted".to_owned(),
         GenerationState::Mapped => "is mapped".to_owned(),
         GenerationState::Failed { error } => format!("failed: {error}"),
