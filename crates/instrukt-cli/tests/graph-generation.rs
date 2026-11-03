@@ -243,7 +243,7 @@ fn an_engine_left_running_by_an_interrupted_worker_is_never_joined_by_a_second()
     let names = [(one.as_str(), "one"), (two.as_str(), "two")];
     insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
     no blueprint graph of this project yet
-    last generation: <one> is running
+    last generation: <one> is running without its worker; its engine is ended once past its time limit and a newer revision waits
     ");
 
     gate.open();
@@ -254,4 +254,41 @@ fn an_engine_left_running_by_an_interrupted_worker_is_never_joined_by_a_second()
       src/b.rs b::call
       src/c.rs c::main
     ");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+#[test]
+fn an_engine_left_hanging_past_its_time_limit_is_ended_for_the_next_revision() {
+    let mut env = machine();
+    env.set_env("INSTRUKT_NOW", "2000-01-01T00:00:00Z");
+    let gate = Gate::new(&env);
+    let repo = project(&env, Some(&gate.engine));
+    let one = revision(&repo, "one", Some(&first_map()));
+    push(&env, &repo);
+    gate.wait_started("one");
+    gate.kill_worker("one");
+    let names_one = [(one.as_str(), "one")];
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names_one), @r"
+    no blueprint graph of this project yet
+    last generation: <one> is running without its worker; its engine is ended once past its time limit and a newer revision waits
+    ");
+
+    // An hour later by the machine's clock the left engine is past its
+    // limit: the next revision's worker ends it and maps its own.
+    env.set_env("INSTRUKT_NOW", "2000-01-01T01:00:00Z");
+    let two = revision(&repo, "two", Some(&second_map()));
+    push(&env, &repo);
+    gate.wait_started("two");
+    let names = [(one.as_str(), "one"), (two.as_str(), "two")];
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
+    no blueprint graph of this project yet
+    last generation: <two> is running
+    ");
+
+    gate.open();
+    assert_eq!(wait_generated(&env, &two).state, GenerationState::Mapped);
+    assert!(
+        !gate.finished("one"),
+        "the left engine was ended, not finished"
+    );
 }
