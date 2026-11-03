@@ -2,9 +2,10 @@
 //! project's feature specs, with the todo that claims each use case.
 //!
 //! The reading rules are `use-case-coverage`'s "The inventory": definition
-//! lines are ATX headings of level 2 to 6 and Gherkin `Scenario:` lines; a
-//! heading is a use case only while a fenced Gherkin block follows it in its
-//! section; within one file an id counts once. Claims come from the docs
+//! lines are ATX headings of level 2 to 6 and `Scenario:` lines inside fenced
+//! Gherkin (prose is never Gherkin); a heading is a use case only while a
+//! fenced Gherkin block follows it in its section; within one file an id
+//! counts once. Claims come from the docs
 //! model's pending carriers (`binding-reservation`, "The claim").
 
 use std::path::{Path, PathBuf};
@@ -217,97 +218,124 @@ impl SpecScan {
     }
 }
 
-/// One heading and what its section (up to the next heading) holds.
+/// One `Scenario:` line inside fenced Gherkin: its body line, its own id
+/// and its trimmed text.
+struct ScenarioLine {
+    line: usize,
+    id: Option<UseCaseId>,
+    text: String,
+}
+
+/// A heading and what its section (up to the next heading) holds; the
+/// preamble before the first heading is a section without a heading.
+#[derive(Default)]
 struct Section {
+    heading: Option<Heading>,
+    /// A fenced Gherkin block opens in the section.
+    gherkin: bool,
+    /// A `When` line inside fenced Gherkin.
+    gherkin_when: bool,
+    scenarios: Vec<ScenarioLine>,
+}
+
+struct Heading {
     line: usize,
     level: usize,
     id: Option<UseCaseId>,
     text: String,
-    gherkin: bool,
-    when: bool,
-}
-
-/// A definition, in body-line order: a heading section or a `Scenario:`
-/// line.
-enum Definition {
-    Heading(Section),
-    Scenario {
-        line: usize,
-        id: Option<UseCaseId>,
-        text: String,
-    },
 }
 
 fn scan_spec(body: &str) -> SpecScan {
-    let mut definitions: Vec<Definition> = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
+    let mut sections = vec![Section::default()];
+    // The open fence: its character, run length and whether it is Gherkin.
+    let mut fence: Option<(char, usize, bool)> = None;
     for (index, raw) in body.split_inclusive('\n').enumerate() {
         let line = raw.trim_end_matches(['\n', '\r']);
         let trimmed = line.trim_start();
         let opener = fence_opener(trimmed);
-        let mut opens_gherkin = false;
-        let fenced = match (fence, opener) {
+        let (fenced, in_gherkin, opens_gherkin) = match (fence, opener) {
             (None, Some((ch, len, info))) => {
-                fence = Some((ch, len));
-                opens_gherkin = info.eq_ignore_ascii_case("gherkin");
-                true
+                let gherkin = info.eq_ignore_ascii_case("gherkin");
+                fence = Some((ch, len, gherkin));
+                (true, false, gherkin)
             }
-            (Some((ch, len)), Some((close_ch, close_len, info)))
+            (Some((ch, len, _)), Some((close_ch, close_len, info)))
                 if ch == close_ch && close_len >= len && info.is_empty() =>
             {
                 fence = None;
-                true
+                (true, false, false)
             }
-            (Some(_), _) => true,
-            (None, None) => false,
+            (Some((_, _, gherkin)), _) => (true, gherkin, false),
+            (None, None) => (false, false, false),
         };
         if !fenced && let Some((level, title)) = heading(line) {
-            definitions.push(Definition::Heading(Section {
-                line: index,
-                level,
-                id: use_case_id(title),
-                text: line.trim().to_owned(),
-                gherkin: false,
-                when: false,
-            }));
+            sections.push(Section {
+                heading: Some(Heading {
+                    line: index,
+                    level,
+                    id: use_case_id(title),
+                    text: line.trim().to_owned(),
+                }),
+                ..Section::default()
+            });
             continue;
         }
+        let Some(section) = sections.last_mut() else {
+            continue;
+        };
+        section.gherkin |= opens_gherkin;
+        if !in_gherkin {
+            // Prose is never Gherkin.
+            continue;
+        }
+        section.gherkin_when |= is_when_line(trimmed);
         if let Some(rest) = trimmed.strip_prefix("Scenario:") {
-            definitions.push(Definition::Scenario {
+            section.scenarios.push(ScenarioLine {
                 line: index,
                 id: use_case_id(rest),
                 text: line.trim().to_owned(),
             });
         }
-        let section = definitions.iter_mut().rev().find_map(|d| match d {
-            Definition::Heading(section) => Some(section),
-            Definition::Scenario { .. } => None,
-        });
-        if let Some(section) = section {
-            section.gherkin |= opens_gherkin;
-            section.when |= is_when_line(trimmed);
-        }
     }
     let mut scan = SpecScan::default();
-    for definition in definitions {
-        match definition {
-            Definition::Heading(section) => match section.id {
-                Some(id) if (2..=6).contains(&section.level) && section.gherkin => {
-                    scan.define(id, section.line);
-                }
-                // A level-1 heading or a retired one (no Gherkin) defines
-                // nothing.
-                Some(_) => {}
-                None if section.when => scan.anonymous.push((section.line, section.text)),
-                None => {}
-            },
-            Definition::Scenario { line, id, text } => match id {
-                Some(id) => scan.define(id, line),
-                None => scan.anonymous.push((line, text)),
-            },
-        }
+    for section in sections {
+        scan_section(&mut scan, section);
     }
     scan
+}
+
+/// A use-case heading (level 2 to 6, an id, Gherkin in its section)
+/// defines its id; its first unnamed `Scenario:` inherits that id and
+/// every further unnamed one is anonymous. Under any other heading an
+/// unnamed `Scenario:` is anonymous, and a section with Gherkin `When`
+/// but no `Scenario:` line is one anonymous scenario when its heading
+/// carries no id.
+fn scan_section(scan: &mut SpecScan, section: Section) {
+    let use_case_heading = section.heading.as_ref().and_then(|h| match &h.id {
+        Some(id) if (2..=6).contains(&h.level) && section.gherkin => Some((id.clone(), h.line)),
+        _ => None,
+    });
+    if let Some((id, line)) = &use_case_heading {
+        scan.define(id.clone(), *line);
+    }
+    if let Some(heading) = &section.heading
+        && heading.id.is_none()
+        && section.gherkin_when
+        && section.scenarios.is_empty()
+    {
+        scan.anonymous.push((heading.line, heading.text.clone()));
+    }
+    let mut inherited = false;
+    for scenario in section.scenarios {
+        match (scenario.id, &use_case_heading) {
+            (Some(id), _) => scan.define(id, scenario.line),
+            (None, Some((id, _))) if !inherited => {
+                inherited = true;
+                scan.define(id.clone(), scenario.line);
+            }
+            (None, _) => scan.anonymous.push((scenario.line, scenario.text)),
+        }
+    }
 }
 
 /// A fence opener or closer: its character, its run length and its info
@@ -404,11 +432,18 @@ mod tests {
     }
 
     #[test]
-    fn gherkin_without_an_id_is_anonymous_once_per_heading_and_per_scenario_line() {
+    fn an_unnamed_scenario_under_an_id_less_heading_counts_once() {
         let body = "## Behaviour\n\n```gherkin\nScenario: unnamed\nWhen it runs\n```\n";
         let scan = scan_spec(body);
         assert!(scan.use_cases.is_empty());
-        assert_eq!(scan.anonymous.len(), 2);
+        assert_eq!(scan.anonymous.len(), 1);
+    }
+
+    #[test]
+    fn scenario_and_when_lines_outside_fenced_gherkin_are_prose() {
+        let body = "## Notes\n\nScenario: told in prose\nWhen it runs, nothing is counted.\n\n\
+                    ```text\nWhen it runs\n```\n";
+        assert_eq!(scan_spec(body), SpecScan::default());
     }
 
     #[test]

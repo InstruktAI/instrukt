@@ -221,3 +221,96 @@ fn a_change_that_only_leaves_use_cases_unbound_passes_the_check() {
     check: passed
     ");
 }
+
+/// `#### <id>` whose Gherkin block holds one unnamed `Scenario:` per title.
+fn scenarios_under(id: &str, titles: &[&str]) -> String {
+    let scenarios: String = titles
+        .iter()
+        .map(|t| format!("Scenario: {t}\n  Given a thing\n  When it is used\n  Then it works\n"))
+        .collect();
+    format!("#### {id}: a goal\n\n```gherkin\n{scenarios}```\n\n")
+}
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[test]
+fn prose_beginning_with_when_is_not_a_scenario() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    repo.write(
+        SPEC_PATH,
+        &format!(
+            "{}## Notes\n\nWhen the thing runs, nothing here is Gherkin.\n\n\
+             Scenario: told in prose\n",
+            repo.read(SPEC_PATH)
+        ),
+    );
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 3
+    bindable use cases: 3
+    anonymous scenarios: 0
+    bound: 0
+    unbound: 3
+    multi-bound: 0
+    orphans: 0
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[test]
+fn a_single_unnamed_scenario_takes_its_headings_id_and_is_bound_under_it() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    repo.write(
+        SPEC_PATH,
+        &spec(&format!(
+            "{}{}",
+            use_case("UC-TH1", "first"),
+            scenarios_under("UC-TH2", &["the second goal"])
+        )),
+    )
+    .write("tests/thing.rs", &rust_tests(&[(SPEC_ID, "UC-TH2")]));
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 2
+    bindable use cases: 2
+    anonymous scenarios: 0
+    bound: 1
+    unbound: 1
+    multi-bound: 0
+    orphans: 0
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[test]
+fn a_second_unnamed_scenario_under_one_heading_is_anonymous() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    repo.write(
+        SPEC_PATH,
+        &spec(&scenarios_under(
+            "UC-TH2",
+            &["the second goal", "another goal"],
+        )),
+    );
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 2
+    bindable use cases: 1
+    anonymous scenarios: 1
+    bound: 0
+    unbound: 1
+    multi-bound: 0
+    orphans: 0
+    anonymous: local/projects/demo/spec/feature/things/thing Scenario: another goal
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    ");
+}
