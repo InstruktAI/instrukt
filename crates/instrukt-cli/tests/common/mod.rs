@@ -315,6 +315,9 @@ impl LiveGuard {
             ".codex/config.toml",
             ".gemini/GEMINI.md",
             ".gemini/settings.json",
+            ".gemini/antigravity-cli/AGENTS.md",
+            ".gemini/antigravity-cli/settings.json",
+            ".dsh/AGENTS.md",
             ".teleclaude/docs/index.yaml",
         ]
         .iter()

@@ -2,15 +2,52 @@
 
 use std::process::ExitCode;
 
-use crate::commands::not_built;
+use instrukt_core::publication::{self, Refusal, SyncOutcome, SyncRequest};
+
 use crate::context::Ctx;
+use crate::wiring::core_wiring;
 
 #[derive(Debug, clap::Args)]
 pub struct SyncArgs {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
-    rest: Vec<String>,
+    /// Republish even when main equals the commit last published.
+    #[arg(long)]
+    force: bool,
 }
 
-pub fn run(_args: SyncArgs, _ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    not_built("sync")
+/// Publishes the project the caller stands in from its canonical main.
+///
+/// Prints one line naming the outcome. A refusal exits non-zero: validation
+/// findings are printed one per line, then the refusal is reported on
+/// stderr.
+pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let wiring = core_wiring(ctx);
+    let outcome = publication::sync(&SyncRequest {
+        home: &ctx.home,
+        cwd: &ctx.cwd,
+        force: args.force,
+        wiring: &wiring,
+    })?;
+    match outcome {
+        SyncOutcome::Published { project, commit } => {
+            ctx.out.line(&format!("published {project} at {commit}"))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        SyncOutcome::Unchanged { project, commit } => {
+            ctx.out
+                .line(&format!("{project} is already published at {commit}"))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        SyncOutcome::Refused {
+            project,
+            commit,
+            refusal,
+        } => {
+            if let Refusal::Findings(findings) = &refusal {
+                for finding in findings {
+                    ctx.out.line(&finding.to_string())?;
+                }
+            }
+            anyhow::bail!("{project} at {commit} is not published: {refusal}")
+        }
+    }
 }
