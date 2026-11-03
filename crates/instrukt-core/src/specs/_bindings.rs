@@ -157,7 +157,7 @@ impl BindingSet {
                 test: TestLocation {
                     file: PathBuf::from(&file),
                     line,
-                    function,
+                    function: function.map(|f| f.name),
                 },
                 cites,
             }));
@@ -191,9 +191,17 @@ impl Language {
     }
 }
 
+/// The function a binding is attached to: its name and the 1-based line
+/// its item starts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Attached {
+    name: String,
+    line: usize,
+}
+
 /// A binding found in one file: its 1-based line, the function it is
 /// attached to and what it cites.
-type Found = (usize, Option<String>, Citation);
+type Found = (usize, Option<Attached>, Citation);
 
 // ---- Rust -------------------------------------------------------------
 
@@ -345,7 +353,11 @@ fn citation(declared: &str) -> Citation {
 
 /// The name of the function whose item follows line `from`, past blank
 /// lines, comments and attributes.
-fn following_rust_fn(lines: &[&str], from: usize, code: &impl Fn(usize) -> bool) -> Option<String> {
+fn following_rust_fn(
+    lines: &[&str],
+    from: usize,
+    code: &impl Fn(usize) -> bool,
+) -> Option<Attached> {
     let mut attribute_depth: i64 = 0;
     for (index, line) in lines.iter().enumerate().skip(from) {
         let trimmed = line.trim();
@@ -356,7 +368,10 @@ fn following_rust_fn(lines: &[&str], from: usize, code: &impl Fn(usize) -> bool)
         if trimmed.is_empty() || !code(index) || trimmed.starts_with("//") {
             continue;
         }
-        return rust_fn_name(trimmed);
+        return rust_fn_name(trimmed).map(|name| Attached {
+            name,
+            line: index + 1,
+        });
     }
     None
 }
@@ -666,54 +681,48 @@ fn python_arguments(args: &[&PyToken], constants: &HashMap<String, String>) -> O
 }
 
 /// The name of the function the decorators end at.
-fn following_python_def(after: &[LogicalLine]) -> Option<String> {
+fn following_python_def(after: &[LogicalLine]) -> Option<Attached> {
     let item = after
         .iter()
         .find(|l| l.tokens.first().map(|(_, t)| t) != Some(&PyToken::Op('@')))?;
-    match item.kinds().as_slice() {
-        [PyToken::Name(def), PyToken::Name(name), ..] if def == "def" => Some(name.clone()),
+    let name = match item.kinds().as_slice() {
+        [PyToken::Name(def), PyToken::Name(name), ..] if def == "def" => name.clone(),
         [
             PyToken::Name(a),
             PyToken::Name(def),
             PyToken::Name(name),
             ..,
-        ] if a == "async" && def == "def" => Some(name.clone()),
-        _ => None,
-    }
+        ] if a == "async" && def == "def" => name.clone(),
+        _ => return None,
+    };
+    let line = item.tokens.first().map(|(line, _)| *line)?;
+    Some(Attached { name, line })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn reference(spec: &str, use_case: &str) -> Citation {
-        Citation::UseCase(UseCaseRef {
-            spec: SnippetId::parse(spec).unwrap(),
-            use_case: UseCaseId::parse(use_case).unwrap(),
-        })
-    }
-
-    /// The identifier starting at `column` of 0-based line `line` of
-    /// `text`: the fixture's own text, taken by position.
-    fn ident_at(text: &str, line: usize, column: usize) -> Option<String> {
-        let from = &text.lines().nth(line).unwrap()[column..];
-        let len = from.find(|c: char| !is_name_char(c)).unwrap_or(from.len());
-        Some(from[..len].to_owned())
+    /// Each binding's line, the line of the function it is attached to,
+    /// and whether it cites a well-formed use case.
+    fn shape(found: &[Found]) -> Vec<(usize, Option<usize>, bool)> {
+        found
+            .iter()
+            .map(|(line, function, cites)| {
+                (
+                    *line,
+                    function.as_ref().map(|f| f.line),
+                    matches!(cites, Citation::UseCase(_)),
+                )
+            })
+            .collect()
     }
 
     #[test]
     fn a_rust_binding_attaches_to_the_function_after_its_attributes() {
         let text = "// spec: acme/spec/feature/x/y UC-XY1\n#[test]\n#[cfg_attr(\n    unix,\n    ignore\n)]\n\
                     // more\npub async fn realizes_it() {}\n";
-        let found = rust_bindings(text);
-        assert_eq!(
-            found,
-            vec![(
-                1,
-                ident_at(text, 7, 13),
-                reference("acme/spec/feature/x/y", "UC-XY1")
-            )]
-        );
+        assert_eq!(shape(&rust_bindings(text)), vec![(1, Some(8), true)]);
     }
 
     #[test]
@@ -722,10 +731,7 @@ mod tests {
                     const B: &str = r#\"\n// spec: acme/spec/feature/x/y UC-XY2\n\"#;\n\
                     /* outer /* inner */\n// spec: acme/spec/feature/x/y UC-XY3\n*/\n\
                     fn f<'a>(c: char) -> bool { c == '\"' }\n// spec: acme/spec/feature/x/y UC-XY4\nfn g() {}\n";
-        let found = rust_bindings(text);
-        let lines: Vec<usize> = found.iter().map(|(line, _, _)| *line).collect();
-        assert_eq!(lines, vec![11]);
-        assert_eq!(found[0].1, ident_at(text, 11, 3));
+        assert_eq!(shape(&rust_bindings(text)), vec![(11, Some(12), true)]);
     }
 
     #[test]
@@ -737,12 +743,7 @@ mod tests {
     #[test]
     fn a_binding_of_another_shape_is_malformed_and_one_with_no_function_is_detached() {
         let found = rust_bindings("// spec: docs/x.md UC-XY1\nstruct S;\n// spec: only-one\n");
-        let malformed: Vec<bool> = found
-            .iter()
-            .map(|(_, _, c)| matches!(c, Citation::Malformed(_)))
-            .collect();
-        assert_eq!(malformed, vec![true, true]);
-        assert!(found.iter().all(|(_, function, _)| function.is_none()));
+        assert_eq!(shape(&found), vec![(1, None, false), (3, None, false)]);
     }
 
     #[test]
@@ -750,21 +751,9 @@ mod tests {
         let text = "SPEC = \"acme/spec/feature/x/y\"\n\n@pytest.mark.spec(SPEC, 'UC-XY1')\n\
                     @pytest.mark.slow\nasync def test_it():\n    pass\n\n\
                     @pytest.mark.spec(\n    \"acme/spec/feature/x/y\",\n    \"UC-XY2\",\n)\ndef test_other():\n    pass\n";
-        let found = python_bindings(text);
         assert_eq!(
-            found,
-            vec![
-                (
-                    3,
-                    ident_at(text, 4, 10),
-                    reference("acme/spec/feature/x/y", "UC-XY1")
-                ),
-                (
-                    8,
-                    ident_at(text, 11, 4),
-                    reference("acme/spec/feature/x/y", "UC-XY2")
-                ),
-            ]
+            shape(&python_bindings(text)),
+            vec![(3, Some(5), true), (8, Some(12), true)]
         );
     }
 
@@ -772,24 +761,14 @@ mod tests {
     fn comments_inside_decorator_arguments_do_not_hide_a_binding() {
         let text = "@pytest.mark.spec(  # the use case\n    'acme/spec/feature/x/y',  # spec\n    \
                     'UC-XY1',  # ) not the end\n)\ndef test_it():\n    pass\n";
-        let found = python_bindings(text);
-        assert_eq!(
-            found,
-            vec![(
-                1,
-                ident_at(text, 4, 4),
-                reference("acme/spec/feature/x/y", "UC-XY1")
-            )]
-        );
+        assert_eq!(shape(&python_bindings(text)), vec![(1, Some(5), true)]);
     }
 
     #[test]
     fn triple_quotes_inside_a_comment_do_not_open_a_string() {
         let text = "# a comment with \"\"\" in it\n@pytest.mark.spec('acme/spec/feature/x/y', 'UC-XY1')\n\
                     def test_it():\n    pass\n";
-        let found = python_bindings(text);
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].1, ident_at(text, 2, 4));
+        assert_eq!(shape(&python_bindings(text)), vec![(2, Some(3), true)]);
     }
 
     #[test]
@@ -811,7 +790,6 @@ mod tests {
         let found = python_bindings(
             "@pytest.mark.spec('acme/spec/feature/x/y', 'UC-XY1')\nclass TestIt:\n    pass\n",
         );
-        assert_eq!(found.len(), 1);
-        assert!(found[0].1.is_none());
+        assert_eq!(shape(&found), vec![(1, None, true)]);
     }
 }

@@ -305,8 +305,9 @@ fn scan_spec(body: &str) -> SpecScan {
 }
 
 /// A use-case heading (level 2 to 6, an id, Gherkin in its section)
-/// defines its id; its first unnamed `Scenario:` inherits that id and
-/// every further unnamed one is anonymous. Under any other heading an
+/// defines its id; an unnamed `Scenario:` that is its only `Scenario:`
+/// line inherits that id, and every other unnamed one is anonymous. Under
+/// any other heading an
 /// unnamed `Scenario:` is anonymous, and a section with Gherkin `When`
 /// but no `Scenario:` line is one anonymous scenario when its heading
 /// carries no id.
@@ -325,14 +326,15 @@ fn scan_section(scan: &mut SpecScan, section: Section) {
     {
         scan.anonymous.push((heading.line, heading.text.clone()));
     }
-    let mut inherited = false;
+    // Only the heading's single scenario, named or not, inherits.
+    let single = section.scenarios.len() == 1;
     for scenario in section.scenarios {
         match (scenario.id, &use_case_heading) {
             (Some(id), _) => scan.define(id, scenario.line),
-            (None, Some((id, _))) if !inherited => {
-                inherited = true;
-                scan.define(id.clone(), scenario.line);
-            }
+            // The scenario takes the heading's identity, but its line
+            // carries no id: it is no definition line and no claim can
+            // enclose it.
+            (None, Some(_)) if single => {}
             (None, _) => scan.anonymous.push((scenario.line, scenario.text)),
         }
     }
