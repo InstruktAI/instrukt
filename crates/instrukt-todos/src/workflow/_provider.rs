@@ -16,20 +16,53 @@ use jiff::Timestamp;
 use crate::evidence::{
     ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, ContentDigest, DriftClass,
     PreparationReview, Prerequisite, ReviewVerdict, StampFact, TodoEvidence, artifact_names,
+    upstream_of,
 };
 
 use super::_facts::{FactError, FactValue, Facts};
 
-/// The artifact a build review's complete report is written to
-/// (`review-build`: `instrukt todo artifacts write {slug} review-findings`).
+/// The artifact a build review's complete report is written to.
+#[cfg(test)]
 pub(crate) const BUILD_REVIEW_FINDINGS: &str = artifact_names::REVIEW_FINDINGS;
 
-/// The fact-name stem of an artifact: procedures name artifacts with
-/// hyphens (`implementation-plan`), the fact table with underscores
-/// (`implementation_plan.digest`).
-fn fact_stem(artifact: &str) -> String {
-    artifact.replace('-', "_")
-}
+/// Each artifact whose current digest is a fact, with that fact's name.
+/// Fact names are the fact table's; artifact names are work's.
+const DIGEST_FACTS: [(&str, &str); 9] = [
+    (artifact_names::PRD, "prd.digest"),
+    (artifact_names::ARCHITECTURE, "architecture.digest"),
+    (artifact_names::DIAGNOSIS, "diagnosis.digest"),
+    (
+        artifact_names::IMPLEMENTATION_PLAN,
+        "implementation_plan.digest",
+    ),
+    (
+        artifact_names::PRD_REVIEW_FINDINGS,
+        "prd_review_findings.digest",
+    ),
+    (
+        artifact_names::ARCHITECTURE_REVIEW_FINDINGS,
+        "architecture_review_findings.digest",
+    ),
+    (
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "plan_review_findings.digest",
+    ),
+    (artifact_names::TASK_PLAN, "task_plan.digest"),
+    (
+        artifact_names::QUALITY_CHECKLIST,
+        "quality_checklist.digest",
+    ),
+];
+
+/// Each artifact with a drift classification, with its fact's name.
+const DRIFT_FACTS: [(&str, &str); 3] = [
+    (artifact_names::PRD, "drift.prd"),
+    (artifact_names::ARCHITECTURE, "drift.architecture"),
+    (
+        artifact_names::IMPLEMENTATION_PLAN,
+        "drift.implementation_plan",
+    ),
+];
 
 /// Artifacts whose new version makes an earlier build completion stale
 /// (`workflow` domain: "a new build-relevant artifact version clears
@@ -118,22 +151,9 @@ pub(crate) fn derive_facts(input: &ProviderInput<'_>) -> Result<Facts, FactError
                 .all(|standing| *standing == PrerequisiteStanding::Delivered),
         ),
     )?;
-    for name in [
-        artifact_names::PRD,
-        artifact_names::ARCHITECTURE,
-        artifact_names::DIAGNOSIS,
-        artifact_names::IMPLEMENTATION_PLAN,
-        artifact_names::PRD_REVIEW_FINDINGS,
-        artifact_names::ARCHITECTURE_REVIEW_FINDINGS,
-        artifact_names::PLAN_REVIEW_FINDINGS,
-        artifact_names::TASK_PLAN,
-        artifact_names::QUALITY_CHECKLIST,
-    ] {
+    for (name, fact) in DIGEST_FACTS {
         if let Some(digest) = ledger.current(name) {
-            facts.insert(
-                &format!("{}.digest", fact_stem(name)),
-                text(digest.as_str()),
-            )?;
+            facts.insert(fact, text(digest.as_str()))?;
         }
     }
     preparation_reviews(&ledger, &mut facts)?;
@@ -158,6 +178,15 @@ pub(crate) fn derive_facts(input: &ProviderInput<'_>) -> Result<Facts, FactError
     drift(&ledger, &mut facts)?;
     build(&ledger, input.observed, &mut facts)?;
     lane_resources(input.evidence, input.observed, &mut facts)?;
+    // A seeded plan is input to planning: once preparation writes a new
+    // version, the current plan is derived and no longer seeded.
+    let plan_versions = ledger
+        .history(artifact_names::IMPLEMENTATION_PLAN)
+        .map_or(0, <[_]>::len);
+    facts.insert(
+        "implementation_plan.seeded",
+        FactValue::Bool(input.evidence.implementation_plan_seeded && plan_versions == 1),
+    )?;
     if let Some(commit) = &input.evidence.delivery {
         facts.insert("delivery.commit", FactValue::Sha(commit.clone()))?;
     }
@@ -263,14 +292,17 @@ impl<'e> Ledger<'e> {
     /// Ledger positions of the stamps that invalidate review `review`: a
     /// substantive drift judgment of an artifact whose settlement
     /// invalidates it (`artifact-currency`, "Substantive settlement"), or a
-    /// kickback, which invalidates the plan and its review.
+    /// kickback recording that it invalidates `review`.
     fn invalidations(&self, review: PreparationReview) -> impl Iterator<Item = usize> + '_ {
         self.evidence
             .stamps
             .iter()
             .enumerate()
             .filter(move |(_, stamp)| match &stamp.fact {
-                StampFact::Kickback { .. } => review == PreparationReview::PlanReview,
+                StampFact::Kickback {
+                    invalidated_reviews,
+                    ..
+                } => invalidated_reviews.contains(&review),
                 StampFact::DriftReviewed {
                     artifact,
                     class: DriftClass::Substantive,
@@ -416,17 +448,24 @@ fn approvals(
     Ok(())
 }
 
-/// `drift.<artifact>`: the latest recorded classification, while the
-/// artifact has not been rewritten after it. A rewrite clears it
-/// (`artifact-currency`, "Substantive settlement"). Pending and fresh need
-/// recorded provenance, which the evidence does not carry yet; they are
-/// not supplied.
+/// `drift.<artifact>`: one effective classification per tracked artifact
+/// (`artifact-currency`, "Drift evidence"), substantive before pending
+/// before cosmetic before fresh.
+///
+/// - A recorded judgment counts while the artifact has not been rewritten
+///   after it; a rewrite captures new provenance and clears it.
+/// - The current version's recorded provenance is compared with each
+///   upstream's current digest; a difference is drift evidence.
+/// - Drift evidence is pending analysis, unless a cosmetic judgment made
+///   after every upstream version it could have seen settles it: the same
+///   evidence stays settled; a newer upstream version needs a new judgment.
+/// - Without drift evidence, recorded provenance is fresh. A version written
+///   before provenance was recorded supplies no drift fact.
 fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
-    for name in [
-        artifact_names::PRD,
-        artifact_names::ARCHITECTURE,
-        artifact_names::IMPLEMENTATION_PLAN,
-    ] {
+    for (name, fact) in DRIFT_FACTS {
+        let Some(version) = ledger.history(name).and_then(|versions| versions.last()) else {
+            continue;
+        };
         let judged = ledger
             .evidence
             .stamps
@@ -437,15 +476,31 @@ fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
                     artifact, class, ..
                 } if artifact.as_str() == name => Some((*class, stamp.at)),
                 _ => None,
-            });
-        if let Some((class, at)) = judged
-            && !ledger.rewritten_after(name, at)
-        {
-            let class = match class {
-                DriftClass::Cosmetic => "cosmetic",
-                DriftClass::Substantive => "substantive",
-            };
-            facts.insert(&format!("drift.{}", fact_stem(name)), text(class))?;
+            })
+            .filter(|(_, at)| !ledger.rewritten_after(name, *at));
+        let drifted = version
+            .derived_from
+            .iter()
+            .any(|upstream| ledger.current(upstream.artifact.as_str()) != upstream.digest.as_ref());
+        let class = match judged {
+            Some((DriftClass::Substantive, _)) => Some("substantive"),
+            Some((DriftClass::Cosmetic, at)) if drifted => {
+                let upstream_changed = upstream_of(name)
+                    .iter()
+                    .any(|upstream| ledger.rewritten_after(upstream, at));
+                Some(if upstream_changed {
+                    "pending"
+                } else {
+                    "cosmetic"
+                })
+            }
+            Some((DriftClass::Cosmetic, _)) => Some("cosmetic"),
+            None if drifted => Some("pending"),
+            None if version.derived_from.is_empty() => None,
+            None => Some("fresh"),
+        };
+        if let Some(class) = class {
+            facts.insert(fact, text(class))?;
         }
     }
     Ok(())
@@ -549,7 +604,7 @@ fn binding(
     report: &ContentDigest,
     change: Option<ChangeSinceReview>,
 ) -> &'static str {
-    match ledger.current(BUILD_REVIEW_FINDINGS) {
+    match ledger.current(artifact_names::REVIEW_FINDINGS) {
         None => "unbound",
         Some(current) if current != report => "report_changed",
         Some(_) => match change {
@@ -1180,5 +1235,145 @@ mod tests {
             get(&facts, "delivery.commit"),
             Some(&FactValue::Sha(sha('d')))
         );
+    }
+
+    // ---- kickback, drift provenance and seeded plans ----
+
+    #[test]
+    fn a_kickback_clears_exactly_the_reviews_it_records() {
+        let evidence = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-1")
+            .stamp(verdict(
+                PreparationReview::PrdReview,
+                ReviewVerdict::Approve,
+                "prd-1",
+            ))
+            .stamp(StampFact::Kickback {
+                reason: "the requirements miss offline use".into(),
+                input: digest("input-2"),
+                invalidated_plan: None,
+                invalidated_reviews: vec![PreparationReview::PrdReview],
+            })
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "prd_review.verdict"), None);
+        assert_eq!(
+            get(&facts, "prd_review.cleared_by_substantive_drift").cloned(),
+            yes()
+        );
+        assert_eq!(
+            get(&facts, "plan_review.cleared_by_substantive_drift").cloned(),
+            no()
+        );
+    }
+
+    /// A PRD derived from input `input-1`.
+    fn derived_prd() -> EvidenceBuilder {
+        todo(TodoKind::Feature)
+            .artifact(artifact_names::INPUT, "input-1")
+            .derived(
+                artifact_names::PRD,
+                "prd-1",
+                &[(artifact_names::INPUT, Some("input-1"))],
+            )
+    }
+
+    fn cosmetic(artifact: &str) -> StampFact {
+        StampFact::DriftReviewed {
+            artifact: ArtifactName::new(artifact),
+            class: DriftClass::Cosmetic,
+            reason: "wording".into(),
+            examined: digest("evidence"),
+        }
+    }
+
+    #[test]
+    fn provenance_matching_its_upstream_is_fresh() {
+        let facts = facts_of(&derived_prd().build(), &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), Some(&text("fresh")));
+    }
+
+    #[test]
+    fn a_changed_upstream_makes_drift_pending() {
+        let evidence = derived_prd()
+            .artifact(artifact_names::INPUT, "input-2")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), Some(&text("pending")));
+    }
+
+    #[test]
+    fn an_upstream_that_appeared_after_the_version_is_drift() {
+        let evidence = todo(TodoKind::Feature)
+            .derived(
+                artifact_names::ARCHITECTURE,
+                "arch-1",
+                &[(artifact_names::INPUT, None), (artifact_names::PRD, None)],
+            )
+            .artifact(artifact_names::PRD, "prd-1")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.architecture"), Some(&text("pending")));
+    }
+
+    #[test]
+    fn a_cosmetic_judgment_settles_the_evidence_it_saw() {
+        let evidence = derived_prd()
+            .artifact(artifact_names::INPUT, "input-2")
+            .stamp(cosmetic(artifact_names::PRD))
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), Some(&text("cosmetic")));
+    }
+
+    #[test]
+    fn a_newer_upstream_after_a_cosmetic_judgment_needs_a_new_one() {
+        let evidence = derived_prd()
+            .artifact(artifact_names::INPUT, "input-2")
+            .stamp(cosmetic(artifact_names::PRD))
+            .artifact(artifact_names::INPUT, "input-3")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), Some(&text("pending")));
+    }
+
+    #[test]
+    fn a_substantive_judgment_outranks_pending_evidence() {
+        let evidence = derived_prd()
+            .artifact(artifact_names::INPUT, "input-2")
+            .stamp(substantive(artifact_names::PRD))
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), Some(&text("substantive")));
+    }
+
+    #[test]
+    fn a_version_without_recorded_provenance_supplies_no_drift() {
+        let evidence = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-1")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), None);
+    }
+
+    #[test]
+    fn a_plan_filed_with_the_todo_is_seeded() {
+        let evidence = todo(TodoKind::Change)
+            .seeded()
+            .artifact(artifact_names::IMPLEMENTATION_PLAN, "plan-0")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "implementation_plan.seeded").cloned(), yes());
+    }
+
+    #[test]
+    fn a_seeded_plan_redrafted_by_planning_is_no_longer_seeded() {
+        let evidence = todo(TodoKind::Change)
+            .seeded()
+            .artifact(artifact_names::IMPLEMENTATION_PLAN, "plan-0")
+            .artifact(artifact_names::IMPLEMENTATION_PLAN, "plan-1")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "implementation_plan.seeded").cloned(), no());
     }
 }

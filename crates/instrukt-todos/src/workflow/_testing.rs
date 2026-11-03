@@ -104,13 +104,31 @@ impl EvidenceBuilder {
     }
 
     /// Saves a new version of artifact `name` with digest `value`.
-    pub(crate) fn artifact(mut self, name: &str, value: &str) -> Self {
-        use crate::evidence::{Actor, ArtifactHistory, ArtifactName, ArtifactVersion};
+    pub(crate) fn artifact(self, name: &str, value: &str) -> Self {
+        self.derived(name, value, &[])
+    }
+
+    /// Saves a new version of artifact `name` with digest `value`, derived
+    /// from `upstream`: each upstream artifact with the digest it had
+    /// then (`None` when it did not exist).
+    pub(crate) fn derived(
+        mut self,
+        name: &str,
+        value: &str,
+        upstream: &[(&str, Option<&str>)],
+    ) -> Self {
+        use crate::evidence::{Actor, ArtifactHistory, ArtifactName, ArtifactVersion, Upstream};
         let version = ArtifactVersion {
             digest: digest(value),
             writer: Actor::Session(session("writer")),
             created: self.next(),
-            derived_from: Vec::new(),
+            derived_from: upstream
+                .iter()
+                .map(|(artifact, value)| Upstream {
+                    artifact: ArtifactName::new(*artifact),
+                    digest: value.map(digest),
+                })
+                .collect(),
         };
         match self
             .evidence
@@ -159,6 +177,12 @@ impl EvidenceBuilder {
                 worktree: worktree.map(PathBuf::from),
             },
         });
+        self
+    }
+
+    /// The filer supplied the implementation plan with the filing.
+    pub(crate) fn seeded(mut self) -> Self {
+        self.evidence.implementation_plan_seeded = true;
         self
     }
 
