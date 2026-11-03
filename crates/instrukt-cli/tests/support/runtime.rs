@@ -64,6 +64,9 @@ case "$cmd" in
       echo "link $a $b" >> "$state/calls"
     fi
     ;;
+  notify)
+    printf '%s\n' "$*" >> "$state/notifications"
+    ;;
   type)
     id="$1"
     printf 'developer: %s\n' "$2" >> "$state/$id.conversation"
@@ -114,6 +117,7 @@ impl FakeRuntime {
             "  - name: {name}\n    session_id_env: {env}_SESSION\n    start: \"{base} start\"\n    send: \"{base} send {{runtime.session_id}}\"\n    alive: \"{base} alive {{runtime.session_id}}\"\n    conversation: \"{base} conversation {{runtime.session_id}}\"\n",
             name = self.name,
         );
+        entry.push_str(&format!("    notify: \"{base} notify\"\n"));
         if self.link {
             entry.push_str(&format!(
                 "    link: \"{base} link {{runtime.session_id}}\"\n"
@@ -148,6 +152,16 @@ impl FakeRuntime {
         .unwrap();
     }
 
+    /// The notifications the runtime delivered, one argument list per
+    /// line.
+    pub fn notifications(&self) -> Vec<String> {
+        std::fs::read_to_string(self.state.join("notifications"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
     /// The calls the runtime received, one per line.
     pub fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.state.join("calls"))
@@ -172,11 +186,10 @@ impl FakeRuntime {
     }
 }
 
-/// Writes the global layer: `modules` switches, then the runtimes.
+/// Writes the global layer: `modules` switches, then the runtimes;
+/// anomaly notification is left at its default.
 pub fn global_layer(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime]) {
-    let mut text = format!(
-        "schema_version: 1\nmodules: {{{modules}}}\nrunner: {{notify: 'off'}}\nruntimes:\n"
-    );
+    let mut text = format!("schema_version: 1\nmodules: {{{modules}}}\nruntimes:\n");
     for runtime in runtimes {
         text.push_str(&runtime.entry());
     }

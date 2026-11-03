@@ -92,14 +92,6 @@ pub fn dispatch_project(
         tracing::debug!(event = "dispatch_unavailable", project = %project.slug);
         return Vec::new();
     };
-    match work.reflection.sync_reflection(project) {
-        Ok(report) => {
-            tracing::debug!(event = "reflection_synced", project = %project.slug, pending = report.pending.len(), conflicted = report.conflicted.len())
-        }
-        Err(err) => {
-            tracing::warn!(event = "reflection_failed", project = %project.slug, error = %err)
-        }
-    }
     match work.retention.purge_expired(project) {
         Ok(purged) if !purged.is_empty() => {
             tracing::info!(event = "retained_records_purged", project = %project.slug, count = purged.len())
@@ -109,6 +101,29 @@ pub fn dispatch_project(
             tracing::warn!(event = "retention_purge_failed", project = %project.slug, error = %err)
         }
     }
+    // Pickup runs before the reflection pass: a claim this runner left
+    // pending is offered once more (`claimed_here`) and reflected by
+    // claiming it again, then dispatched (ruling D). Flushing first would
+    // reflect it without a session to hold it.
+    let dispatched = pickup(cx, config, work, workflow.as_ref(), project);
+    match work.reflection.sync_reflection(project) {
+        Ok(report) => {
+            tracing::debug!(event = "reflection_synced", project = %project.slug, pending = report.pending.len(), conflicted = report.conflicted.len())
+        }
+        Err(err) => {
+            tracing::warn!(event = "reflection_failed", project = %project.slug, error = %err)
+        }
+    }
+    dispatched
+}
+
+fn pickup(
+    cx: &DispatchContext<'_>,
+    config: &Configuration,
+    work: &WorkPorts,
+    workflow: &dyn WorkflowAssignments,
+    project: &ProjectRef,
+) -> Vec<Dispatched> {
     let kinds = autostart_kinds(config);
     if kinds.is_empty() {
         return Vec::new();
@@ -130,15 +145,7 @@ pub fn dispatch_project(
     candidates
         .iter()
         .filter_map(|candidate| {
-            dispatch_one(
-                cx,
-                config,
-                work,
-                workflow.as_ref(),
-                &index,
-                project,
-                candidate,
-            )
+            dispatch_one(cx, config, work, workflow, &index, project, candidate)
         })
         .collect()
 }
