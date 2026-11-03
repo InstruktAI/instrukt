@@ -276,10 +276,18 @@ where
         .to_owned()
 }
 
-/// Size and modification time of a path; `None` when it does not exist.
-type Stat = Option<(u64, Option<SystemTime>)>;
+/// What the guard compares for one path: the path itself (a symlink's own
+/// identity and where it points) and, followed, what it resolves to.
+/// `None` parts do not exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stat {
+    link: Option<(u64, Option<SystemTime>, Option<PathBuf>)>,
+    target: Option<(u64, Option<SystemTime>)>,
+}
 
 /// A snapshot of live-machine paths instrukt could write, compared on drop.
+/// Symlinks are compared both as links and through their targets; any
+/// inspection failure other than a missing path fails the test.
 pub struct LiveGuard {
     entries: BTreeMap<PathBuf, Stat>,
     trees: Vec<PathBuf>,
@@ -335,28 +343,57 @@ impl LiveGuard {
         for (path, state) in self.walk_trees() {
             now.insert(path, state);
         }
+        let absent = Stat {
+            link: None,
+            target: None,
+        };
         now.into_iter()
-            .filter(|(path, state)| self.entries.get(path).cloned().flatten() != *state)
+            .filter(|(path, state)| self.entries.get(path).unwrap_or(&absent) != state)
             .map(|(path, _)| path)
             .collect()
     }
 
     fn walk_trees(&self) -> Vec<(PathBuf, Stat)> {
-        self.trees
-            .iter()
-            .filter(|tree| tree.exists())
-            .flat_map(|tree| {
-                walkdir::WalkDir::new(tree)
-                    .into_iter()
-                    .filter_map(Result::ok)
-            })
-            .map(|entry| (entry.path().to_path_buf(), stat(entry.path())))
-            .collect()
+        let mut found = Vec::new();
+        for tree in &self.trees {
+            if stat(tree).link.is_none() {
+                continue;
+            }
+            for entry in walkdir::WalkDir::new(tree).follow_links(true) {
+                match entry {
+                    Ok(entry) => found.push((entry.path().to_path_buf(), stat(entry.path()))),
+                    Err(err) if is_not_found(err.io_error()) => {}
+                    Err(err) => panic!("live guard cannot inspect {}: {err}", tree.display()),
+                }
+            }
+        }
+        found
     }
 }
 
 fn stat(path: &Path) -> Stat {
-    std::fs::symlink_metadata(path)
-        .ok()
-        .map(|meta| (meta.len(), meta.modified().ok()))
+    let link = match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            let points_to = if meta.file_type().is_symlink() {
+                Some(std::fs::read_link(path).unwrap_or_else(|err| {
+                    panic!("live guard cannot read link {}: {err}", path.display())
+                }))
+            } else {
+                None
+            };
+            Some((meta.len(), meta.modified().ok(), points_to))
+        }
+        Err(err) if is_not_found(Some(&err)) => None,
+        Err(err) => panic!("live guard cannot inspect {}: {err}", path.display()),
+    };
+    let target = match std::fs::metadata(path) {
+        Ok(meta) => Some((meta.len(), meta.modified().ok())),
+        Err(err) if is_not_found(Some(&err)) => None,
+        Err(err) => panic!("live guard cannot inspect {}: {err}", path.display()),
+    };
+    Stat { link, target }
+}
+
+fn is_not_found(err: Option<&std::io::Error>) -> bool {
+    err.is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
 }

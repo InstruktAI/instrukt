@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+The work record and workflow (todos module)
+
+Usage: instrukt todo
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

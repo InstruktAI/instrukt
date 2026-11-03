@@ -15,7 +15,7 @@ use super::_refs::{self, RefTarget, Reference};
 use super::_text::{self, Directive};
 use super::DocsError;
 use crate::home::Home;
-use crate::ids::{DomainName, ProjectSlug, SnippetId, TodoSlug};
+use crate::ids::{DomainName, ProjectSlug, SnippetId, ThirdPartyId, TodoSlug};
 
 /// One documentation file handed to the model: its path relative to the
 /// repository root (`/`-separated, beginning `docs/`) and its text.
@@ -327,13 +327,13 @@ impl BaselineManifest {
 /// A curated third-party doc.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThirdPartyDoc {
-    id: SnippetId,
+    id: ThirdPartyId,
     version: Version,
 }
 
 impl ThirdPartyDoc {
     /// Its identity: the path below the third-party root, without `.md`.
-    pub fn id(&self) -> &SnippetId {
+    pub fn id(&self) -> &ThirdPartyId {
         &self.id
     }
 

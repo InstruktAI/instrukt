@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Install, remove, inspect and run instrukt's git hook sections
+
+Usage: instrukt hooks
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

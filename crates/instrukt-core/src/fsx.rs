@@ -8,6 +8,7 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// A filesystem effect failed; names the path it concerned.
 #[derive(Debug, thiserror::Error)]
@@ -16,6 +17,8 @@ pub enum FsError {
     Write { path: PathBuf, source: io::Error },
     #[error("cannot lock {path}: {source}")]
     Lock { path: PathBuf, source: io::Error },
+    #[error("{path} is held by another instrukt process; gave up after {waited:?}")]
+    LockTimeout { path: PathBuf, waited: Duration },
     #[error("{path} has no parent directory")]
     NoParent { path: PathBuf },
 }
@@ -48,18 +51,27 @@ pub struct LockGuard {
 }
 
 impl LockGuard {
-    /// Blocks until the exclusive lock on `path` is held. Creates the lock
-    /// file and its parent directories when missing.
-    pub fn acquire(path: &Path) -> Result<Self, FsError> {
-        let file = open_lock_file(path)?;
-        file.lock().map_err(|source| FsError::Lock {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Ok(Self {
-            _file: file,
-            path: path.to_path_buf(),
-        })
+    /// Takes the exclusive lock on `path`, waiting at most `timeout` for a
+    /// holder to release it; a lock still held then is a
+    /// [`FsError::LockTimeout`]. Creates the lock file and its parent
+    /// directories when missing.
+    pub fn acquire(path: &Path, timeout: Duration) -> Result<Self, FsError> {
+        let started = Instant::now();
+        let mut pause = Duration::from_millis(5);
+        loop {
+            if let Some(guard) = Self::try_acquire(path)? {
+                return Ok(guard);
+            }
+            let waited = started.elapsed();
+            if waited >= timeout {
+                return Err(FsError::LockTimeout {
+                    path: path.to_path_buf(),
+                    waited,
+                });
+            }
+            std::thread::sleep(pause.min(timeout - waited));
+            pause = (pause * 2).min(Duration::from_millis(200));
+        }
     }
 
     /// Takes the exclusive lock on `path` if nobody holds it; `Ok(None)`
@@ -121,8 +133,13 @@ mod tests {
     fn a_held_lock_is_not_taken_twice_and_frees_on_drop() {
         let dir = tempfile::tempdir().unwrap();
         let lock = dir.path().join("locks/docs.lock");
-        let held = LockGuard::acquire(&lock).unwrap();
+        let held = LockGuard::acquire(&lock, Duration::from_secs(1)).unwrap();
         assert!(LockGuard::try_acquire(&lock).unwrap().is_none());
+        let refused = LockGuard::acquire(&lock, Duration::from_millis(50));
+        assert!(
+            matches!(refused, Err(FsError::LockTimeout { .. })),
+            "{refused:?}"
+        );
         drop(held);
         assert!(LockGuard::try_acquire(&lock).unwrap().is_some());
     }

@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Publish the current project's committed docs into the home
+
+Usage: instrukt sync
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Scheduled tick status
+
+Usage: instrukt ticks
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

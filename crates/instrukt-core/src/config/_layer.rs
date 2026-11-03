@@ -16,6 +16,10 @@ use crate::git;
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
+/// How long a layer write waits for another writer of the same document;
+/// writes hold the lock for one read-modify-write only.
+const WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The file name of both configuration layers.
 pub const CONFIG_FILE_NAME: &str = "instrukt.yaml";
 
@@ -211,7 +215,7 @@ pub fn patch(
         return Err(ConfigError::PatchNotAMapping);
     }
     let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path))?;
+    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     let Some(doc) = read(&path)? else {
         return Err(ConfigError::NoLayer {
             path,
@@ -260,7 +264,7 @@ pub enum MigrationOutcome {
 /// Publication and `init` run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
     let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path))?;
+    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     let Some(doc) = read(&path)? else {
         return Ok(MigrationOutcome::Absent);
     };
@@ -326,7 +330,7 @@ pub fn init(
             Value::String(slug.to_string()),
         );
     }
-    let _lock = LockGuard::acquire(&lock_path(home, &path))?;
+    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     if path.exists() {
         return Ok(InitOutcome::AlreadyCurrent);
     }

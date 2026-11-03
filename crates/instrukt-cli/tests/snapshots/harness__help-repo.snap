@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Attributed commits and commit-review stamps
+
+Usage: instrukt repo
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

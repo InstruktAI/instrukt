@@ -36,12 +36,7 @@ where
 {
     let (args_text, output) = raw(dir, args)?;
     if !output.status.success() {
-        return Err(GitError::Failed {
-            dir: dir.to_path_buf(),
-            args: args_text,
-            status: output.status.to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+        return Err(failed(dir, args_text, &output));
     }
     let mut text = String::from_utf8(output.stdout).map_err(|_| GitError::NotUtf8 {
         dir: dir.to_path_buf(),
@@ -53,15 +48,20 @@ where
     Ok(text)
 }
 
-/// Runs `git <args>` in `dir` and reports only whether it exited zero —
-/// for git's predicate commands (`merge-base --is-ancestor`, `diff --quiet`).
+/// Runs one of git's predicate commands (`merge-base --is-ancestor`,
+/// `diff --quiet`) in `dir`: exit 0 is `true`, exit 1 is `false`, any other
+/// status is an error carrying stderr.
 pub fn succeeds<I, S>(dir: &Path, args: I) -> Result<bool, GitError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let (_, output) = raw(dir, args)?;
-    Ok(output.status.success())
+    let (args_text, output) = raw(dir, args)?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(failed(dir, args_text, &output)),
+    }
 }
 
 /// Runs `git <args>` in `dir` and returns stdout as bytes, for blobs that
@@ -73,28 +73,41 @@ where
 {
     let (args_text, output) = raw(dir, args)?;
     if !output.status.success() {
-        return Err(GitError::Failed {
-            dir: dir.to_path_buf(),
-            args: args_text,
-            status: output.status.to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+        return Err(failed(dir, args_text, &output));
     }
     Ok(output.stdout)
 }
 
 /// The top-level directory of the working tree containing `dir`, or `None`
-/// outside any git working tree.
+/// when git positively reports that `dir` is not inside a working tree.
+/// Any other failure (a corrupt configuration, an unreadable repository) is
+/// an error.
 pub fn worktree_root(dir: &Path) -> Result<Option<PathBuf>, GitError> {
-    let (_, output) = raw(dir, ["rev-parse", "--show-toplevel"])?;
+    let args = ["rev-parse", "--show-toplevel"];
+    let (args_text, output) = raw(dir, args)?;
     if !output.status.success() {
-        return Ok(None);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("not a git repository")
+            || stderr.contains("this operation must be run in a work tree")
+        {
+            return Ok(None);
+        }
+        return Err(failed(dir, args_text, &output));
     }
     let text = String::from_utf8(output.stdout).map_err(|_| GitError::NotUtf8 {
         dir: dir.to_path_buf(),
-        args: "rev-parse --show-toplevel".to_owned(),
+        args: args_text,
     })?;
     Ok(Some(PathBuf::from(text.trim_end_matches('\n'))))
+}
+
+fn failed(dir: &Path, args: String, output: &Output) -> GitError {
+    GitError::Failed {
+        dir: dir.to_path_buf(),
+        args,
+        status: output.status.to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    }
 }
 
 fn raw<I, S>(dir: &Path, args: I) -> Result<(String, Output), GitError>
@@ -117,4 +130,43 @@ where
             source,
         })?;
     Ok((args_text, output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        run(dir.path(), ["init", "--quiet"]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_predicate_answers_true_false_and_errs_on_anything_else() {
+        let dir = repo();
+        assert!(succeeds(dir.path(), ["diff", "--quiet"]).unwrap());
+        std::fs::write(dir.path().join("f"), "x").unwrap();
+        run(dir.path(), ["add", "f"]).unwrap();
+        assert!(!succeeds(dir.path(), ["diff", "--cached", "--quiet"]).unwrap());
+        let err = succeeds(
+            dir.path(),
+            ["merge-base", "--is-ancestor", "no-such-rev", "HEAD"],
+        );
+        assert!(matches!(err, Err(GitError::Failed { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn worktree_root_is_none_only_outside_a_repository() {
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(worktree_root(outside.path()).unwrap(), None);
+        let dir = repo();
+        let root = worktree_root(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+        std::fs::write(dir.path().join(".git/config"), "[broken").unwrap();
+        assert!(worktree_root(dir.path()).is_err());
+    }
 }

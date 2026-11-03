@@ -94,10 +94,26 @@ fn report(err: &anyhow::Error) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Diagnostics go to stderr, filtered by `INSTRUKT_LOG` (default: warnings).
+/// Diagnostics go to stderr at INFO, the production level
+/// (`sdlc/policy/observability`), or at the directives `INSTRUKT_LOG`
+/// supplies. Invalid directives are reported, never silently replaced.
 fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("INSTRUKT_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    let filter = match std::env::var("INSTRUKT_LOG") {
+        Err(std::env::VarError::NotPresent) => tracing_subscriber::EnvFilter::new("info"),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("instrukt: INSTRUKT_LOG is not valid UTF-8; logging at info");
+            tracing_subscriber::EnvFilter::new("info")
+        }
+        Ok(directives) => match tracing_subscriber::EnvFilter::try_new(&directives) {
+            Ok(filter) => filter,
+            Err(err) => {
+                eprintln!(
+                    "instrukt: INSTRUKT_LOG={directives:?} is invalid ({err}); logging at info"
+                );
+                tracing_subscriber::EnvFilter::new("info")
+            }
+        },
+    };
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)

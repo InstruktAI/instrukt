@@ -37,6 +37,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::{ContractError, Graph};
 
+/// How long publishing waits for another publish of the same project's
+/// store; a publish holds the lock only to swap and prune.
+const PUBLISH_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 const GRAPH_FILE: &str = "graph.json";
 const POINTER_FILE: &str = "latest.json";
 const LOCK_FILE: &str = ".lock";
@@ -124,7 +128,7 @@ impl GraphStore {
     /// it. A graph of `sha` already stored is kept as it is. Serialized with
     /// other publications of the same project by the store's lock.
     pub fn publish(&self, sha: &CommitSha, graph: &Graph) -> Result<(), StoreError> {
-        let _lock = LockGuard::acquire(&self.dir.join(LOCK_FILE))?;
+        let _lock = LockGuard::acquire(&self.dir.join(LOCK_FILE), PUBLISH_LOCK_TIMEOUT)?;
         if !self.has_graph(sha) {
             self.write_complete(sha, graph)?;
         }

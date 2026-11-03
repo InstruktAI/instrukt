@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Use-case coverage, reservation and trace
+
+Usage: instrukt specs
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

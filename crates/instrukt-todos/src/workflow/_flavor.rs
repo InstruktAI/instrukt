@@ -656,10 +656,10 @@ transitions:
             findings(&[("actions.yaml", &empty), flow, template]),
             ["actions.yaml: roles: `roles` must list at least one role"]
         );
-        let duplicate = ACTIONS.replace("[builder, reviewer]", "[builder, Bad Role, builder]");
+        let duplicate = ACTIONS.replace("[builder, reviewer]", "[builder, ' padded', builder]");
         let got = findings(&[("actions.yaml", &duplicate), flow, template]);
         assert_eq!(got.len(), 2);
-        assert!(got[0].starts_with("actions.yaml: roles[1]: invalid role `Bad Role`"));
+        assert!(got[0].starts_with("actions.yaml: roles[1]: invalid role ` padded`"));
         assert_eq!(
             got[1],
             "actions.yaml: roles[2]: role `builder` is declared more than once"

@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Register the machine's runner wake-up with the OS scheduler
+
+Usage: instrukt install
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

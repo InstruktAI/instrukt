@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+Evaluation reports from the work record
+
+Usage: instrukt eval
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

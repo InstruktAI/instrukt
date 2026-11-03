@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::ids::{DomainName, ProjectSlug, SnippetId};
+use crate::ids::{DomainName, ProjectSlug, SnippetId, ThirdPartyId};
 
 /// A snippet's type, from its taxonomy directory. Ordered as listings order
 /// them.
@@ -181,7 +181,7 @@ pub(super) enum Placement {
     /// that root.
     Fragment(String),
     /// A third-party doc, identified by its path below `docs/third-party/`.
-    ThirdParty(SnippetId),
+    ThirdParty(ThirdPartyId),
     /// Under `docs/global/<domain>/workflow/`: not a snippet.
     Workflow,
     Unplaced(Unplaced),
@@ -211,10 +211,12 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
         }
         ["global", tail @ ..] => place_published(tail),
         ["local", tail @ ..] => place_local(tail, project),
-        ["third-party", tail @ ..] if !tail.is_empty() => match SnippetId::parse(&tail.join("/")) {
-            Ok(id) => Placement::ThirdParty(id),
-            Err(_) => Placement::Unplaced(Unplaced::Outside),
-        },
+        ["third-party", tail @ ..] if !tail.is_empty() => {
+            match ThirdPartyId::parse(&tail.join("/")) {
+                Ok(id) => Placement::ThirdParty(id),
+                Err(_) => Placement::Unplaced(Unplaced::Outside),
+            }
+        }
         _ => Placement::Unplaced(Unplaced::Outside),
     })
 }

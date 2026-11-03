@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/harness.rs
+expression: help
+---
+The sessions facade over the configured runtime
+
+Usage: instrukt sessions
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
