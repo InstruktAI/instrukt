@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::contract::{Graph, Link};
+use crate::_contract::{Graph, Link};
 
 /// Which way a dependency link is followed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +51,9 @@ impl Graph {
     /// The shortest chain of links, followed in their direction, leading
     /// from any id in `from` to any id in `to`; any relation counts. Empty
     /// when the two sets share an id; `None` when no chain exists. Among
-    /// chains of equal length, the one through the earliest links in the
-    /// document wins, so answers are stable.
+    /// chains of equal length the answer is stable: the chain from the
+    /// starting id first in byte order wins, and at each step a node's
+    /// outgoing links are tried in document order.
     pub fn shortest_path<'g>(&'g self, from: &[&'g str], to: &[&'g str]) -> Option<Vec<&'g Link>> {
         let targets: BTreeSet<&str> = to.iter().copied().collect();
         let mut out: BTreeMap<&str, Vec<&Link>> = BTreeMap::new();

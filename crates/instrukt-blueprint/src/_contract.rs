@@ -157,6 +157,13 @@ pub struct Node {
 }
 
 impl Node {
+    /// Whether the node is defined in `file`, comparing equivalent
+    /// spellings of a repository-relative path as equal
+    /// ([`normalize_path`]).
+    pub fn is_in_file(&self, file: &str) -> bool {
+        normalize_path(&self.source_file) == normalize_path(file)
+    }
+
     /// How answers name the node: its label, else its id.
     pub fn name(&self) -> &str {
         self.label.as_deref().unwrap_or(&self.id)
@@ -254,11 +261,13 @@ impl Graph {
         &self.links
     }
 
-    /// The nodes whose `source_file` is `file`.
+    /// The nodes whose `source_file` is `file`, in any equivalent spelling
+    /// ([`normalize_path`]).
     pub fn nodes_in_file<'g>(&'g self, file: &'g str) -> impl Iterator<Item = &'g Node> + 'g {
+        let file = normalize_path(file);
         self.nodes
             .iter()
-            .filter(move |node| node.source_file == file)
+            .filter(move |node| normalize_path(&node.source_file) == file)
     }
 
     /// The nodes with id `id` (an engine may repeat an id).
@@ -280,6 +289,17 @@ fn list<'d>(
 
 fn string(raw: &Map<String, Value>, key: &str) -> Option<String> {
     raw.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// One spelling of a repository-relative path: `.` segments and empty
+/// segments (repeated, leading `./` or trailing slashes) are dropped, so
+/// `./src//a.rs` and `src/a.rs` compare equal. The contract already refuses
+/// `..` segments, so no other spelling names the same file.
+pub fn normalize_path(path: &str) -> String {
+    path.split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn check_relative(path: &str) -> Result<(), SourceFileProblem> {
