@@ -103,30 +103,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_rfc3339_date_times_are_accepted() {
-        for good in [
-            "2026-11-03T12:00:00Z",
-            "2026-11-03t12:00:00z",
-            "2026-11-03T12:00:00.250Z",
-            "2026-11-03T13:00:00+01:00",
-            "2026-11-03T07:00:00-05:00",
-        ] {
-            assert!(parse_rfc3339(good).is_ok(), "{good:?} should be accepted");
-        }
-        for bad in [
-            "2026-11-03T12:00:00Z[foo=bar]",
-            "2026-11-03T12:00:00+01:00[Europe/Amsterdam]",
-            "2026-11-03T12:00Z",
-            "20261103T120000Z",
-            "2026-11-03 12:00:00Z",
-            "2026-11-03T12:00:00.Z",
-            "2026-11-03T12:00:00+0100",
-            "2026-11-03T12:00:00",
-            "2026-13-03T12:00:00Z",
-            "",
-        ] {
-            assert!(parse_rfc3339(bad).is_err(), "{bad:?} should be refused");
-        }
+    fn a_utc_date_time_is_accepted() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00Z").is_ok());
+    }
+
+    #[test]
+    fn lowercase_designators_are_accepted() {
+        assert!(parse_rfc3339("2026-11-03t12:00:00z").is_ok());
+    }
+
+    #[test]
+    fn a_fractional_second_is_accepted() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00.250Z").is_ok());
+    }
+
+    #[test]
+    fn a_numeric_offset_is_accepted() {
+        assert!(parse_rfc3339("2026-11-03T07:00:00-05:00").is_ok());
+    }
+
+    #[test]
+    fn an_annotation_after_the_zone_is_refused() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00Z[foo=bar]").is_err());
+    }
+
+    #[test]
+    fn an_annotation_after_an_offset_is_refused() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00+01:00[Europe/Amsterdam]").is_err());
+    }
+
+    #[test]
+    fn omitted_seconds_are_refused() {
+        assert!(parse_rfc3339("2026-11-03T12:00Z").is_err());
+    }
+
+    #[test]
+    fn the_basic_format_is_refused() {
+        assert!(parse_rfc3339("20261103T120000Z").is_err());
+    }
+
+    #[test]
+    fn a_space_separator_is_refused() {
+        assert!(parse_rfc3339("2026-11-03 12:00:00Z").is_err());
+    }
+
+    #[test]
+    fn an_empty_fraction_is_refused() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00.Z").is_err());
+    }
+
+    #[test]
+    fn an_offset_without_a_colon_is_refused() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00+0100").is_err());
+    }
+
+    #[test]
+    fn a_time_without_a_zone_is_refused() {
+        assert!(parse_rfc3339("2026-11-03T12:00:00").is_err());
+    }
+
+    #[test]
+    fn a_well_shaped_but_impossible_date_is_refused() {
+        assert!(parse_rfc3339("2026-13-03T12:00:00Z").is_err());
     }
 
     #[test]
