@@ -1,0 +1,27 @@
+---
+source: crates/instrukt-cli/tests/preparation.rs
+expression: "redact(&steps.join(\"=====\\n\"))"
+---
+todo: quoted-lists (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt sessions run --procedure crew/procedure/drift-analyze --args quoted-lists --todo quoted-lists --brief -
+effects: none
+instructions:
+Judge the drift of quoted-lists: PRD pending, plan pending.
+=====
+todo: quoted-lists (demo)
+flow: prepare
+claim: held by this session
+state: prepared
+transition: plan_review -> prepared (#9)
+action: release-prepared
+responsible: prepare-lead (orchestrator step)
+command: instrukt todo update quoted-lists --unclaim
+effects: none
+instructions:
+quoted-lists is prepared: release the claim.

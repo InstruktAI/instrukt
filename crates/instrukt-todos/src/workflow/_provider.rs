@@ -143,12 +143,24 @@ pub(crate) struct GroundingChange {
     pub snippets: bool,
     /// A prerequisite artifact's current digest differs.
     pub dependencies: bool,
+    /// A referenced snippet or path does not resolve now: incomplete
+    /// provenance (`artifact-currency`, "Cosmetic settlement with
+    /// incomplete provenance"), never fresh until a judgment assesses it.
+    pub unresolved: bool,
 }
 
 impl GroundingChange {
-    /// Whether this is drift evidence: a change, or code that could not be
-    /// compared, which is pending until analyzed.
+    /// Whether this is drift evidence: a change, code that could not be
+    /// compared, or provenance that does not resolve, each pending until
+    /// analyzed.
     fn drifted(self) -> bool {
+        self.changed() || self.unresolved
+    }
+
+    /// Whether the recorded evidence changed or could not be compared. A
+    /// judgment that assessed an unresolved reference still holds while it
+    /// stays unresolved: only a change to it needs a new assessment.
+    fn changed(self) -> bool {
         self.code != CodeChange::Unchanged || self.snippets || self.dependencies
     }
 }
@@ -594,7 +606,7 @@ fn drift(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Res
                 let assessed_changed = observed
                     .judged_grounding
                     .get(name)
-                    .is_some_and(|change| change.drifted());
+                    .is_some_and(|change| change.changed());
                 Some(if upstream_changed || assessed_changed {
                     member::PENDING
                 } else {
@@ -1843,6 +1855,38 @@ mod tests {
         assert_eq!(
             get(&facts, "drift.implementation_plan"),
             Some(&value(member::PENDING))
+        );
+    }
+
+    // ---- incomplete provenance ----
+
+    #[test]
+    fn an_unresolved_reference_is_never_fresh() {
+        let observed = plan_grounding(GroundingChange {
+            unresolved: true,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&grounded_plan().build(), &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
+        );
+    }
+
+    #[test]
+    fn a_cosmetic_judgment_settles_a_reference_that_stays_unresolved() {
+        let (evidence, mut observed) = judged_plan(GroundingChange::default());
+        observed.grounding.insert(
+            artifact_names::IMPLEMENTATION_PLAN.to_owned(),
+            GroundingChange {
+                unresolved: true,
+                ..GroundingChange::default()
+            },
+        );
+        let facts = facts_of(&evidence, &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::COSMETIC))
         );
     }
 }
