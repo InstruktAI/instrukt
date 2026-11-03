@@ -88,15 +88,13 @@ fn parse_marker(inner: &str) -> Option<(bool, Kind, &str)> {
         Some(rest) => (true, rest),
         None => (false, inner),
     };
-    let (kind, slug) = if let Some(slug) = rest.strip_prefix("planned-change:") {
-        (Kind::PlannedChange, slug)
-    } else if let Some(slug) = rest.strip_prefix("planned:") {
-        (Kind::Planned, slug)
-    } else if let Some(slug) = rest.strip_prefix("change:") {
-        (Kind::Change, slug)
-    } else {
-        return None;
-    };
+    let (kind, slug) = [
+        ("planned-change:", Kind::PlannedChange),
+        ("planned:", Kind::Planned),
+        ("change:", Kind::Change),
+    ]
+    .into_iter()
+    .find_map(|(prefix, kind)| rest.strip_prefix(prefix).map(|slug| (kind, slug)))?;
     let valid = !slug.is_empty() && !slug.contains(|c: char| c.is_whitespace() || c == '>');
     valid.then_some((closing, kind, slug))
 }
