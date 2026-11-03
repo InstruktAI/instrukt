@@ -302,23 +302,23 @@ mod tests {
         assert_eq!(scan.slugs.len(), 2);
     }
 
+    /// The fixture's own lines at `indices`, joined: the expected result
+    /// taken from the input by position.
+    fn pick(text: &str, indices: &[usize]) -> String {
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        indices.iter().map(|i| lines[*i]).collect()
+    }
+
     #[test]
     fn current_and_delivered_sides_resolve_each_block() {
+        // Lines: 0 a, 1 open x, 2 add, 3 close x, 4 b, 5 open y, 6 old,
+        // 7 change y, 8 new, 9 close y, 10 c.
         let text = body();
         let s = scan(&text);
-        let lines_and_scan = |side: Side| {
-            let out = resolve(&text, &s, |_| side);
-            (out.lines().count(), scan(&out))
-        };
-        // Current: the addition and the replacement side are gone (a, b,
-        // old, c); delivered: the addition and the replacement stay (a, add,
-        // b, new, c). Neither leaves a marker behind.
-        assert_eq!(lines_and_scan(Side::Current), (4, Scan::default()));
-        assert_eq!(lines_and_scan(Side::Delivered), (5, Scan::default()));
-        assert_eq!(
-            lines_and_scan(Side::Untouched),
-            (text.lines().count(), s.clone())
-        );
+        let resolved = |side: Side| resolve(&text, &s, |_| side);
+        assert_eq!(resolved(Side::Current), pick(&text, &[0, 4, 6, 10]));
+        assert_eq!(resolved(Side::Delivered), pick(&text, &[0, 2, 4, 8, 10]));
+        assert_eq!(resolved(Side::Untouched), text);
     }
 
     #[test]

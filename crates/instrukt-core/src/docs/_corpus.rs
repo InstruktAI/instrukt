@@ -762,10 +762,12 @@ mod tests {
     const AFTER: &str = "\n## Canonical fields\n\ny\n";
     const NEXT: &str = "next\n";
 
+    fn live_body() -> String {
+        format!("{BEFORE}<!-- planned:add-it -->\n{ADDED}<!-- /planned:add-it -->\n{AFTER}")
+    }
+
     fn live() -> String {
-        format!(
-            "---\ndescription: d\n---\n{BEFORE}<!-- planned:add-it -->\n{ADDED}<!-- /planned:add-it -->\n{AFTER}"
-        )
+        format!("---\ndescription: d\n---\n{}", live_body())
     }
 
     fn with_companions() -> Corpus {
@@ -788,15 +790,10 @@ mod tests {
         assert_eq!(c.snippets()[0].superseded_by(), expected);
     }
 
-    /// The version a view reads, and the line count and marker slugs of the
-    /// body it shows.
-    fn shown(view: View<'_>) -> (PathBuf, usize, usize) {
+    /// The path of the version a view reads and the body it shows.
+    fn shown(view: View<'_>) -> (PathBuf, String) {
         match view {
-            View::Visible { version, body } => (
-                version.path().to_path_buf(),
-                body.lines().count(),
-                _markers::scan(&body).slugs.len(),
-            ),
+            View::Visible { version, body } => (version.path().to_path_buf(), body),
             other => panic!("{other:?}"),
         }
     }
@@ -806,14 +803,24 @@ mod tests {
         let c = with_companions();
         let s = &c.snippets()[0];
         let live = PathBuf::from("docs/local/spec/a.md");
-        let (path, current_lines, markers) = shown(s.view(Lens::Current));
-        assert_eq!((path, markers), (live.clone(), 0));
+        // The live body's own lines: 0-5 before, 6 open, 7 added, 8 close,
+        // 9-12 after.
+        let text = live_body();
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let pick = |indices: &[usize]| -> String { indices.iter().map(|i| lines[*i]).collect() };
+        let before_and_after = [0, 1, 2, 3, 4, 5, 9, 10, 11, 12];
+        assert_eq!(
+            shown(s.view(Lens::Current)),
+            (live.clone(), pick(&before_and_after))
+        );
         let add = slug("add-it");
-        let (path, added_lines, markers) = shown(s.view(Lens::Target(&add)));
-        assert_eq!((path, markers), (live, 0));
-        assert_eq!(added_lines, current_lines + 1);
+        let with_addition = [0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 12];
+        assert_eq!(
+            shown(s.view(Lens::Target(&add))),
+            (live, pick(&with_addition))
+        );
         let rework = slug("rework");
-        let (path, _, _) = shown(s.view(Lens::Target(&rework)));
+        let (path, _) = shown(s.view(Lens::Target(&rework)));
         assert_eq!(path, PathBuf::from("docs/local/spec/a.rework.md"));
         let retire = slug("retire-it");
         assert_eq!(s.view(Lens::Target(&retire)), View::Retired);
