@@ -445,15 +445,33 @@ pub fn related_evidence(
             add(work.evidence(project, slug)?);
         }
     }
-    let grounded = evidence.artifacts.iter().flat_map(|artifact| {
+    // Every grounding a derivation compares: each artifact's current
+    // version, and each drift judgment's assessed evidence, whose
+    // dependencies may no longer be prerequisites at all.
+    let versions = evidence.artifacts.iter().flat_map(|artifact| {
         artifact
             .versions
             .last()
             .into_iter()
             .flat_map(|version| version.grounding.dependencies.iter())
-            .filter_map(|dependency| dependency.id.as_ref())
     });
-    for id in grounded {
+    let judged = evidence
+        .stamps
+        .iter()
+        .filter_map(|stamp| match &stamp.fact {
+            crate::evidence::StampFact::DriftReviewed { grounding, .. } => {
+                Some(grounding.dependencies.iter())
+            }
+            _ => None,
+        })
+        .flatten();
+    let mut ids: Vec<&crate::work::TodoId> = Vec::new();
+    for id in versions.chain(judged).filter_map(|d| d.id.as_ref()) {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    for id in ids {
         add(work.evidence_by_id(project, id)?);
     }
     Ok(others)

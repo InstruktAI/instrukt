@@ -1,0 +1,39 @@
+---
+source: crates/instrukt-cli/tests/preparation.rs
+expression: "redact(&steps.join(\"=====\\n\"))"
+---
+todo: render-lists (demo)
+flow: prepare
+claim: held by this session
+state: prepared
+transition: plan_review -> prepared (#10)
+action: release-prepared
+responsible: prepare-lead (orchestrator step)
+command: instrukt todo update render-lists --unclaim
+effects: none
+instructions:
+render-lists is prepared: release the claim.
+=====
+todo: render-lists (demo)
+flow: prepare
+claim: held by this session
+state: prepared
+transition: plan_review -> prepared (#10)
+action: release-prepared
+responsible: prepare-lead (orchestrator step)
+command: instrukt todo update render-lists --unclaim
+effects: none
+instructions:
+render-lists is prepared: release the claim.
+=====
+todo: render-lists (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#9)
+action: analyze-plan-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt sessions run --procedure crew/procedure/drift-analyze --args render-lists --todo render-lists --brief -
+effects: none
+instructions:
+Judge the drift of render-lists: plan pending.
