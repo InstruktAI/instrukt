@@ -426,7 +426,14 @@ impl<'w> Session<'w> {
             _ => return None,
         };
         match result {
-            Ok(records) => Some(records),
+            // Withdrawn work past its recovery window is gone: GitHub keeps
+            // the closed issue as history, not as recoverable work.
+            Ok(records) => Some(
+                records
+                    .into_iter()
+                    .filter(|(record, _)| !past_recovery(record, self.now))
+                    .collect(),
+            ),
             Err(err) => {
                 self.note(err);
                 None
@@ -516,12 +523,7 @@ impl<'w> Session<'w> {
         let now = self.now;
         let mut index = 0;
         while index < self.items.len() {
-            let expired = matches!(
-                (&self.items[index].record.status, &self.items[index].record.removal),
-                (TodoStatus::Removed, Some(removal))
-                    if removal.at.checked_add(RECOVERY_WINDOW).is_ok_and(|end| end <= now)
-            );
-            if expired {
+            if past_recovery(&self.items[index].record, now) {
                 let slug = self.items[index].record.slug.clone();
                 let id = self.items[index].record.id.clone();
                 self.delete(index)?;
@@ -579,6 +581,16 @@ impl<'w> Session<'w> {
         }
         WorkError::GitHub(err)
     }
+}
+
+/// Whether `record` is withdrawn work whose recovery window has passed at
+/// `now`.
+fn past_recovery(record: &TodoRecord, now: Timestamp) -> bool {
+    matches!(
+        (&record.status, &record.removal),
+        (TodoStatus::Removed, Some(removal))
+            if removal.at.checked_add(RECOVERY_WINDOW).is_ok_and(|end| end <= now)
+    )
 }
 
 fn reason_of(err: &GitHubError) -> PendingReason {
