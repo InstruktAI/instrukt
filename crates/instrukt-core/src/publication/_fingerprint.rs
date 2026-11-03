@@ -68,13 +68,19 @@ pub(super) fn records(
     fingerprint: &EvalFingerprint,
 ) -> Result<Vec<(PathBuf, Vec<u8>)>, PublicationError> {
     let text = serde_yaml_ng::to_string(fingerprint).map_err(PublicationError::Render)?;
-    Ok(vec![
-        (
-            record_path(home, &fingerprint.commit),
-            text.clone().into_bytes(),
-        ),
-        (home.eval_fingerprint_dir().join(CURRENT), text.into_bytes()),
-    ])
+    Ok(record_paths(home, &fingerprint.commit)
+        .into_iter()
+        .map(|path| (path, text.clone().into_bytes()))
+        .collect())
+}
+
+/// The records a sync publishing `commit` writes: the per-commit one and
+/// the current one.
+pub(super) fn record_paths(home: &Home, commit: &CommitSha) -> [PathBuf; 2] {
+    [
+        record_path(home, commit),
+        home.eval_fingerprint_dir().join(CURRENT),
+    ]
 }
 
 /// Computes the fingerprint over the published corpus of the home as

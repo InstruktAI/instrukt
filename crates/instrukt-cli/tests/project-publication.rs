@@ -507,6 +507,15 @@ fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
             .is_file()
     );
 
+    // Still not removable: an unchanged main is a no-op that reports it.
+    let still = sync(&env, &repo).success();
+    let stdout = text(&still.get_output().stdout, &[&sha])
+        .replace(&left[0].display().to_string(), "[LEFTOVER]");
+    insta::assert_snapshot!(stdout, @r"
+    demo is already published at [SHA]
+    leftover [LEFTOVER] could not be removed; a later sync removes it
+    ");
+
     for dir in walkdir::WalkDir::new(&left[0])
         .into_iter()
         .map(Result::unwrap)
@@ -514,6 +523,65 @@ fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
     {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    env.run(repo.path(), ["sync", "--force"]).success();
+    let removed = sync(&env, &repo).success();
+    insta::assert_snapshot!(text(&removed.get_output().stdout, &[&sha]), @"demo is already published at [SHA]");
     assert!(leftovers().is_empty(), "the next sync removes the leftover");
+}
+
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB7
+#[cfg(unix)]
+#[test]
+fn a_linked_later_output_is_refused_before_anything_is_written() {
+    use std::os::unix::fs::MetadataExt;
+
+    /// Every entry below `root` (outside `.git`) with its identity: inode,
+    /// modification time, length and whether it is a link.
+    fn identities(root: &Path) -> BTreeMap<PathBuf, (u64, i64, i64, u64, bool)> {
+        walkdir::WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != ".git")
+            .map(Result::unwrap)
+            .map(|e| {
+                let meta = std::fs::symlink_metadata(e.path()).unwrap();
+                (
+                    e.path().to_path_buf(),
+                    (
+                        meta.ino(),
+                        meta.mtime(),
+                        meta.mtime_nsec(),
+                        meta.len(),
+                        meta.file_type().is_symlink(),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n");
+    let published = repo.commit("instructions");
+    sync(&env, &repo).success();
+    let current = env
+        .instrukt_home()
+        .join("state/eval-fingerprint/current.yaml");
+    let elsewhere = env.path("elsewhere.yaml");
+    std::fs::rename(&current, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &current).unwrap();
+    let elsewhere_text = std::fs::read_to_string(&elsewhere).unwrap();
+    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""))
+        .write(
+            "AGENTS.master.md",
+            "## Purpose\n\nThe changed demo project.\n",
+        );
+    repo.commit("later");
+    let home_before = identities(&env.instrukt_home());
+    let project_before = identities(repo.path());
+
+    let refused = sync(&env, &repo).failure();
+    insta::assert_snapshot!(without_tmp(&env, &refused.get_output().stderr, &[]), @"instrukt: [TMP]/home/.instrukt/state/eval-fingerprint/current.yaml is a symbolic link or lies behind one; publication writes only inside its root");
+    assert_eq!(identities(&env.instrukt_home()), home_before);
+    assert_eq!(identities(repo.path()), project_before);
+    assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), elsewhere_text);
+    assert_eq!(published_commit(&env, "demo"), published);
 }
