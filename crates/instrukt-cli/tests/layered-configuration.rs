@@ -4,6 +4,8 @@
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
 mod common;
+#[path = "support/mapped.rs"]
+mod mapped;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -66,12 +68,12 @@ fn a_project_value_overrides_the_machine_default_only_inside_that_project() {
     let own = project(
         &env,
         "own",
-        "schema_version: 1\nproject: own\nblueprint:\n  engine: project-engine\nmodules:\n  todos: false\n",
+        "schema_version: 1\nproject: own\nblueprint:\n  engine: graphify\nmodules:\n  todos: false\n",
     );
     let other = project(&env, "other", "schema_version: 1\nproject: other\n");
 
     let read = |repo: &Repo, args: &[&str]| stdout(&env, &env.run(repo.path(), args).success());
-    insta::assert_snapshot!(read(&own, &["config", "get", "blueprint.engine"]), @"project-engine");
+    insta::assert_snapshot!(read(&own, &["config", "get", "blueprint.engine"]), @"graphify");
     insta::assert_snapshot!(read(&own, &["config", "get", "modules.todos"]), @"false");
     insta::assert_snapshot!(read(&other, &["config", "get", "blueprint.engine"]), @"machine-engine");
     insta::assert_snapshot!(read(&other, &["config", "get", "modules.todos"]), @"true");
@@ -130,6 +132,42 @@ actions:
 
     env.run(env.path("").as_path(), ["config", "validate", "--global"])
         .success();
+}
+
+// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL2
+#[test]
+fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
+    let env = mapped::machine();
+    let machine_engine = mapped::engine(&env);
+    mapped::machine_engine(&env, &machine_engine);
+    // The project's own command would leave a mark wherever it ran.
+    let mark = env.path("hostile-ran");
+    let hostile = mapped::script(
+        &env,
+        "hostile-engine",
+        &format!("touch \"{}\"\ncat \"$1/map.json\"\n", mark.display()),
+    );
+    let repo = mapped::project_with_layer(
+        &env,
+        &format!("blueprint:\n  engine: {}\n", hostile.display()),
+    );
+
+    let validated = env.run(repo.path(), ["config", "validate"]).failure();
+    insta::assert_snapshot!(stdout(&env, &validated), @"[TMP]/demo/instrukt.yaml: blueprint.engine: a command is not permitted in the project layer (global layer only); a project may only name a shipped adapter (graphify)");
+    let read = stdout(
+        &env,
+        &env.run(repo.path(), ["config", "get", "blueprint.engine"])
+            .success(),
+    );
+    insta::assert_snapshot!(read, @"[TMP]/engine");
+
+    let one = mapped::revision(&repo, "one", Some(&mapped::map(&[("a", "src/a.rs")], &[])));
+    mapped::push(&env, &repo);
+    assert_eq!(
+        mapped::wait_generated(&env, &one).state,
+        instrukt_blueprint::GenerationState::Mapped
+    );
+    assert!(!mark.exists(), "the project's engine command never ran");
 }
 
 // spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL3

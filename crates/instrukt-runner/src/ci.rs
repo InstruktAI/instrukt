@@ -12,9 +12,11 @@
 //! A source that sent `X-Poll-Interval` is not asked again sooner.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Duration;
 
-use instrukt_core::config::Env;
+use instrukt_core::config::{Configuration, Env};
+use instrukt_core::git;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -202,6 +204,7 @@ impl<'a> CiClient<'a> {
     ) -> Result<String, CiError> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
             .timeout_global(Some(REQUEST_TIMEOUT))
             .build()
             .into();
@@ -297,43 +300,98 @@ pub fn token(env: &Env) -> Option<String> {
     }
 }
 
-/// `owner/repo` from a git remote URL on `api_url`'s GitHub host.
-pub fn repository_from_remote(remote_url: &str, api_url: &str) -> Option<String> {
-    let api_host = host_of(api_url)?;
-    let web_host = api_host
-        .strip_prefix("api.")
-        .unwrap_or(&api_host)
-        .to_owned();
-    let (host, path) = if let Some(rest) = remote_url
-        .strip_prefix("https://")
-        .or_else(|| remote_url.strip_prefix("http://"))
-        .or_else(|| remote_url.strip_prefix("ssh://"))
-    {
-        let (authority, path) = rest.split_once('/')?;
-        let host = authority.rsplit('@').next()?.split(':').next()?;
-        (host.to_owned(), path.to_owned())
-    } else {
-        let (authority, path) = remote_url.split_once(':')?;
-        let host = authority.rsplit('@').next()?;
-        (host.to_owned(), path.to_owned())
-    };
-    if host != web_host && host != api_host {
-        return None;
+/// The project's GitHub repository (`owner/repo`), resolved as work
+/// resolves it (`github-record`, "Writer and convergence"): the
+/// project-layer key `github.repository`, else the repository of the
+/// remote the default branch tracks, when that remote is on
+/// `github.api_url`'s host. The default branch is the remotes' `HEAD`, then
+/// `init.defaultBranch`, then `main`. The reason is returned when none
+/// resolves.
+pub fn repository(config: &Configuration, root: &Path) -> Result<String, String> {
+    if let Some(configured) = config.github_repository().map_err(|e| e.to_string())? {
+        return owner_repo(configured)
+            .ok_or_else(|| format!("`github.repository: {configured}` is not `<owner>/<repo>`"));
     }
-    let path = path.trim_end_matches('/').trim_end_matches(".git");
-    let mut parts = path.split('/');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(owner), Some(repo), None) if !owner.is_empty() && !repo.is_empty() => {
-            Some(format!("{owner}/{repo}"))
+    let host = api_host(config.github_api_url().map_err(|e| e.to_string())?);
+    let branch = default_branch(root)?;
+    let remote = git_value(root, &["config", &format!("branch.{branch}.remote")])?
+        .ok_or_else(|| format!("the default branch `{branch}` tracks no remote"))?;
+    let url = git_value(root, &["remote", "get-url", &remote])?
+        .ok_or_else(|| format!("the remote `{remote}` has no URL"))?;
+    parse_remote_url(&url, &host)
+        .ok_or_else(|| format!("the remote `{remote}` is not a GitHub repository on {host}"))
+}
+
+fn default_branch(root: &Path) -> Result<String, String> {
+    let remotes = git_value(root, &["remote"])?.unwrap_or_default();
+    for remote in remotes.lines().map(str::trim).filter(|r| !r.is_empty()) {
+        let head = format!("refs/remotes/{remote}/HEAD");
+        if let Some(target) = git_value(root, &["symbolic-ref", "--quiet", &head])?
+            && let Some(branch) = target.strip_prefix(&format!("refs/remotes/{remote}/"))
+        {
+            return Ok(branch.to_owned());
         }
-        _ => None,
+    }
+    Ok(git_value(root, &["config", "init.defaultBranch"])?.unwrap_or_else(|| "main".to_owned()))
+}
+
+/// A git query whose "no answer" is a non-zero exit with no output.
+fn git_value(root: &Path, args: &[&str]) -> Result<Option<String>, String> {
+    match git::run(root, args) {
+        Ok(text) => {
+            let text = text.trim();
+            Ok((!text.is_empty()).then(|| text.to_owned()))
+        }
+        Err(git::GitError::Failed { stderr, .. }) if stderr.trim().is_empty() => Ok(None),
+        Err(err) => Err(err.to_string()),
     }
 }
 
-fn host_of(url: &str) -> Option<String> {
-    let rest = url.split_once("://")?.1;
-    let authority = rest.split('/').next()?;
-    Some(authority.split(':').next()?.to_owned())
+/// The host whose repositories the API at `api_url` serves:
+/// `api.github.com` serves `github.com`; any other address its own host.
+pub fn api_host(api_url: &str) -> String {
+    let rest = api_url.split_once("://").map_or(api_url, |(_, rest)| rest);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
+    match host.as_str() {
+        "api.github.com" => "github.com".to_owned(),
+        _ => host,
+    }
+}
+
+/// `owner/repo` of a remote URL on `host`.
+pub fn parse_remote_url(url: &str, host: &str) -> Option<String> {
+    let path = if let Some((_, rest)) = url.split_once("://") {
+        let (authority, path) = rest.split_once('/')?;
+        let authority = authority.rsplit('@').next()?;
+        let remote_host = authority.split(':').next()?;
+        if !remote_host.eq_ignore_ascii_case(host) {
+            return None;
+        }
+        path
+    } else {
+        let (authority, path) = url.split_once(':')?;
+        let remote_host = authority.rsplit('@').next()?;
+        if !remote_host.eq_ignore_ascii_case(host) {
+            return None;
+        }
+        path
+    };
+    owner_repo(path.trim_end_matches('/').trim_end_matches(".git"))
+}
+
+fn owner_repo(text: &str) -> Option<String> {
+    let (owner, repo) = text.split_once('/')?;
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    (valid(owner) && valid(repo)).then(|| format!("{owner}/{repo}"))
 }
 
 #[cfg(test)]
@@ -422,8 +480,9 @@ mod tests {
     }
 
     #[test]
-    fn the_repository_comes_from_a_remote_on_the_api_host() {
-        let api = "https://api.github.com";
+    fn remotes_on_the_api_host_name_their_repository() {
+        assert_eq!(api_host("https://api.github.com"), "github.com");
+        assert_eq!(api_host("https://ghe.example/api/v3"), "ghe.example");
         for url in [
             "git@github.com:acme/tool.git",
             "https://github.com/acme/tool",
@@ -431,22 +490,18 @@ mod tests {
             "https://token@github.com/acme/tool.git/",
         ] {
             assert_eq!(
-                repository_from_remote(url, api).as_deref(),
-                Some("acme/tool"),
+                parse_remote_url(url, "github.com"),
+                owner_repo("acme/tool"),
                 "{url}"
             );
         }
-        assert_eq!(
-            repository_from_remote("git@ghe.example:team/app.git", "https://ghe.example/api/v3")
-                .as_deref(),
-            Some("team/app")
-        );
         for url in [
             "/srv/git/tool.git",
             "git@gitlab.com:acme/tool.git",
             "https://github.com/acme",
+            "https://github.com/acme/../x",
         ] {
-            assert_eq!(repository_from_remote(url, api), None, "{url}");
+            assert_eq!(parse_remote_url(url, "github.com"), None, "{url}");
         }
     }
 }

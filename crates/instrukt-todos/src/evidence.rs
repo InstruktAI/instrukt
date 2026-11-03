@@ -66,6 +66,22 @@ pub struct TodoEvidence {
     pub timing: Option<TaskTiming>,
     /// A task's agent/model preference.
     pub agent: Option<AgentPreference>,
+    /// Whether the implementation plan was seeded: supplied with the
+    /// filing rather than drafted by preparation
+    /// (`implementation_plan.seeded`; `preparation`, "seeded derivation").
+    /// True when its first version was written by the todo's filer before
+    /// any plan review.
+    pub implementation_plan_seeded: bool,
+}
+
+/// One upstream artifact a version was derived from, as it stood when the
+/// version was written: its current digest then, or `None` when it did
+/// not exist (`workflow` domain: drift facts come from recorded
+/// provenance). Drift compares these with the upstream's current digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Upstream {
+    pub artifact: ArtifactName,
+    pub digest: Option<ContentDigest>,
 }
 
 /// Where a todo stands in the record (`work` domain, "Todo" lifecycle).
@@ -104,23 +120,30 @@ impl std::fmt::Display for ArtifactName {
     }
 }
 
-/// Artifact names the fact table reads (`<name>.digest`), plus the intent
-/// record `input` and the build lane's `deferrals`.
+/// Artifact names the fact table reads, plus the intent record `input` and
+/// the build lane's `deferrals`. They are the names the sdlc procedures
+/// write and read (`instrukt todo artifacts write {slug} <name>`),
+/// hyphenated; fact names keep underscores (`implementation_plan.digest`),
+/// and the workflow's fact provider maps between them.
 pub mod artifact_names {
     pub const INPUT: &str = "input";
     pub const PRD: &str = "prd";
     pub const ARCHITECTURE: &str = "architecture";
     pub const DIAGNOSIS: &str = "diagnosis";
-    pub const IMPLEMENTATION_PLAN: &str = "implementation_plan";
-    pub const TASK_PLAN: &str = "task_plan";
-    pub const PRD_REVIEW_FINDINGS: &str = "prd_review_findings";
-    pub const ARCHITECTURE_REVIEW_FINDINGS: &str = "architecture_review_findings";
-    pub const PLAN_REVIEW_FINDINGS: &str = "plan_review_findings";
-    pub const QUALITY_CHECKLIST: &str = "quality_checklist";
+    pub const IMPLEMENTATION_PLAN: &str = "implementation-plan";
+    pub const TASK_PLAN: &str = "task-plan";
+    pub const PRD_REVIEW_FINDINGS: &str = "prd-review-findings";
+    pub const ARCHITECTURE_REVIEW_FINDINGS: &str = "architecture-review-findings";
+    pub const PLAN_REVIEW_FINDINGS: &str = "plan-review-findings";
+    pub const QUALITY_CHECKLIST: &str = "quality-checklist";
     pub const DEFERRALS: &str = "deferrals";
     /// The build review's complete report, which a build-review verdict
     /// binds (`stamps`, "Stamp forms").
-    pub const REVIEW_FINDINGS: &str = "review_findings";
+    pub const REVIEW_FINDINGS: &str = "review-findings";
+    /// Investigation notes the plan draft reads (`lifecycle/prepare/plan-draft`).
+    pub const INVESTIGATION: &str = "investigation";
+    /// The breadcrumb artifact (`todo-creation-discipline`).
+    pub const LOG: &str = "log";
 }
 
 /// A content digest of one artifact version. Its text form is work's to
@@ -154,12 +177,36 @@ pub struct ArtifactHistory {
     pub versions: Vec<ArtifactVersion>,
 }
 
-/// One saved version: its digest, workflow writer and creation time.
+/// One saved version: its digest, workflow writer and creation time, and
+/// its provenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactVersion {
     pub digest: ContentDigest,
     pub writer: Actor,
     pub created: Timestamp,
+    /// The upstream artifacts this version derives from, as recorded when
+    /// it was written (see [`upstream_of`]); empty for an artifact with no
+    /// upstream, and for versions written before provenance was recorded.
+    pub derived_from: Vec<Upstream>,
+}
+
+/// The artifacts an artifact is derived from (`artifact-currency`,
+/// "Substantive settlement": requirements from intent, architecture from
+/// requirements, a plan from everything above it).
+pub fn upstream_of(artifact: &str) -> &'static [&'static str] {
+    use artifact_names::{ARCHITECTURE, DIAGNOSIS, IMPLEMENTATION_PLAN, INPUT, PRD, TASK_PLAN};
+    match artifact {
+        PRD | DIAGNOSIS | TASK_PLAN => &[INPUT],
+        ARCHITECTURE => &[INPUT, PRD],
+        IMPLEMENTATION_PLAN => &[INPUT, PRD, ARCHITECTURE, DIAGNOSIS],
+        _ => &[],
+    }
+}
+
+/// The reviews a kickback invalidates: the plan's review. Also what a
+/// kickback recorded before the field existed reads as.
+pub fn plan_review_only() -> Vec<PreparationReview> {
+    vec![PreparationReview::PlanReview]
 }
 
 /// Who acted: a session, a GitHub account, or a named person outside any
@@ -288,11 +335,15 @@ pub enum StampFact {
         input: ContentDigest,
         conversation: SessionRef,
     },
-    /// `--kickback --reason`.
+    /// `--kickback --reason`. `invalidated_reviews` are the preparation
+    /// reviews it invalidates (`<r>.cleared_by_substantive_drift`): the
+    /// plan's review, the evidence a kickback returns to preparation.
     Kickback {
         reason: String,
         input: ContentDigest,
         invalidated_plan: Option<ContentDigest>,
+        #[serde(default = "plan_review_only")]
+        invalidated_reviews: Vec<PreparationReview>,
     },
     /// `--architecture-skipped <reason>`.
     ArchitectureSkipped { reason: String },

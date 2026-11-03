@@ -23,12 +23,30 @@ pub(crate) enum Pulled {
     Adopted,
     /// A newer remote revision met pending local changes.
     Conflicted,
+    /// A newer remote revision, left unread because a change is about to be
+    /// recorded against the older one (`UC-GR3`: refresh first).
+    Newer,
 }
 
-/// Pulls the item's record from GitHub with a conditional request. A newer
-/// revision is adopted when nothing local is pending, and marks the item
-/// conflicted otherwise.
-pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubError> {
+/// Whether a pull may bring a newer remote revision into the local record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PullFor {
+    /// A read: a newer revision enters the local record.
+    Read,
+    /// A change: a newer revision means the change was made against a
+    /// todo the caller has not read; it is refused until refreshed.
+    Change,
+}
+
+/// Pulls the item's record from GitHub with a conditional request. For a
+/// read, a newer revision is adopted when nothing local is pending; for a
+/// change it is reported as [`Pulled::Newer`] and nothing is adopted.
+/// Pending local changes meeting a newer revision mark the item conflicted.
+pub(crate) fn pull(
+    gh: &GitHub,
+    item: &mut LocalItem,
+    purpose: PullFor,
+) -> Result<Pulled, GitHubError> {
     let (Some(issue), Some(comment)) = (item.reflection.issue, item.reflection.record_comment)
     else {
         return Ok(Pulled::Current);
@@ -56,7 +74,17 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
         item.reflection.etag = etag;
         return Ok(Pulled::Current);
     }
-    let Some(Ok(remote)) = _envelope::parse_record_comment(text) else {
+    let Some(parsed) = trusted_record(&body) else {
+        if _envelope::parse_record_comment(text).is_some() {
+            // An envelope by an author without write access: never applied.
+            return Ok(Pulled::Current);
+        }
+        return Err(GitHubError::Decode {
+            path: format!("/issues/comments/{comment}"),
+            message: "the record comment carries no readable record".to_owned(),
+        });
+    };
+    let Ok(remote) = parsed else {
         return Err(GitHubError::Decode {
             path: format!("/issues/comments/{comment}"),
             message: "the record comment carries no readable record".to_owned(),
@@ -71,6 +99,9 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
     if item.reflection.pending {
         item.reflection.conflicted = true;
         return Ok(Pulled::Conflicted);
+    }
+    if purpose == PullFor::Change {
+        return Ok(Pulled::Newer);
     }
     let record = with_contents(gh, issue.number, remote, &item.record)?;
     item.record = record;
@@ -209,12 +240,12 @@ pub(crate) fn remote_records(
             continue;
         };
         let comments = gh.list(&format!("/issues/{number}/comments"))?;
-        let record =
-            comments.iter().rev().find_map(|comment| {
-                match _envelope::parse_record_comment(comment["body"].as_str()?) {
-                    Some(Ok(record)) if record.id == id => Some(record),
-                    _ => None,
-                }
+        let record = comments
+            .iter()
+            .rev()
+            .find_map(|comment| match trusted_record(comment) {
+                Some(Ok(record)) if record.id == id => Some(record),
+                _ => None,
             });
         if let Some(record) = record {
             records.push((
@@ -304,15 +335,39 @@ fn find_record_comment(
     record: &TodoRecord,
 ) -> Result<Option<(u64, String)>, GitHubError> {
     let comments = gh.list(&format!("/issues/{number}/comments"))?;
-    Ok(comments.iter().rev().find_map(|comment| {
-        let text = comment["body"].as_str()?;
-        match _envelope::parse_record_comment(text) {
-            Some(Ok(found)) if found.id == record.id => {
-                Some((comment["id"].as_u64()?, text.to_owned()))
-            }
+    Ok(comments
+        .iter()
+        .rev()
+        .find_map(|comment| match trusted_record(comment) {
+            Some(Ok(found)) if found.id == record.id => Some((
+                comment["id"].as_u64()?,
+                comment["body"].as_str()?.to_owned(),
+            )),
             _ => None,
-        }
-    }))
+        }))
+}
+
+/// `author_association` values of authors who can write to the
+/// repository: only their record envelopes are records.
+const TRUSTED_ASSOCIATIONS: [&str; 3] = ["OWNER", "MEMBER", "COLLABORATOR"];
+
+/// The record envelope a comment carries, when its author can write to the
+/// repository. An envelope by anyone else (anyone can comment on a public
+/// repository) is reported and never applied.
+fn trusted_record(comment: &Value) -> Option<Result<TodoRecord, serde_json::Error>> {
+    let parsed = _envelope::parse_record_comment(comment["body"].as_str()?)?;
+    let association = comment["author_association"].as_str().unwrap_or_default();
+    if TRUSTED_ASSOCIATIONS.contains(&association) {
+        return Some(parsed);
+    }
+    tracing::warn!(
+        event = "work_untrusted_record_skipped",
+        comment = comment["id"].as_u64().unwrap_or_default(),
+        author = comment["user"]["login"].as_str().unwrap_or_default(),
+        association,
+        "a record envelope by an author without write access is ignored"
+    );
+    None
 }
 
 /// Whether GitHub's record comment is the one this computer last wrote or
@@ -348,7 +403,8 @@ fn remote_is_ours(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Result<
                 item.reflection.etag = etag;
                 Ok(true)
             } else {
-                Ok(false)
+                // Only a trusted envelope is a newer revision.
+                Ok(trusted_record(&body).is_none())
             }
         }
         Err(GitHubError::NotFound { .. }) => {
@@ -677,4 +733,77 @@ fn encode(text: &str) -> String {
 
 fn body_digest(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::Actor;
+    use crate::work::_model::TodoId;
+    use instrukt_core::ids::{ProjectSlug, TodoSlug};
+    use instrukt_runner::interfaces::{CatchUp, TodoKind};
+
+    fn envelope() -> String {
+        _envelope::record_comment(&TodoRecord {
+            schema: 1,
+            id: TodoId::parse(&"cd".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("depth").unwrap(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: jiff::Timestamp::UNIX_EPOCH,
+            created_by: Actor::Person { name: "dev".into() },
+            human_involved: None,
+            revision: 1,
+            artifacts: Vec::new(),
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: CatchUp::Once,
+            agent: None,
+            branch: None,
+            delivery: None,
+            removal: None,
+        })
+        .unwrap()
+    }
+
+    fn comment(association: &str) -> Value {
+        json!({
+            "id": 7,
+            "body": envelope(),
+            "user": {"login": "someone"},
+            "author_association": association,
+        })
+    }
+
+    #[test]
+    fn envelopes_by_authors_with_write_access_are_records() {
+        for association in TRUSTED_ASSOCIATIONS {
+            assert!(
+                matches!(trusted_record(&comment(association)), Some(Ok(_))),
+                "{association}"
+            );
+        }
+    }
+
+    #[test]
+    fn envelopes_by_anyone_else_are_never_records() {
+        for association in ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", ""] {
+            assert!(
+                trusted_record(&comment(association)).is_none(),
+                "{association:?}"
+            );
+        }
+        let mut unlabelled = comment("OWNER");
+        if let Some(fields) = unlabelled.as_object_mut() {
+            fields.remove("author_association");
+        }
+        assert!(trusted_record(&unlabelled).is_none());
+    }
 }

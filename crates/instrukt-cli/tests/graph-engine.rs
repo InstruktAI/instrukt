@@ -1,7 +1,7 @@
-//! A project's own engine (`docs/local/spec/feature/blueprint/graph-engine.md`):
-//! a configured command receives a checkout of the pushed revision and
-//! writes contract JSON; agents' answers come from its output, and output
-//! that breaks the contract is never served.
+//! A developer's own engine (`docs/local/spec/feature/blueprint/graph-engine.md`):
+//! a command configured in the machine's global layer receives a checkout of
+//! the pushed revision and writes contract JSON; agents' answers come from its
+//! output, and output that breaks the contract is never served.
 #![allow(
     clippy::unwrap_used,
     reason = "test setup helpers: a failed setup step fails the test"
@@ -54,7 +54,6 @@ fn answers_come_from_the_projects_own_engine_through_the_same_questions() {
       src/main.rs cli::main
       src/main.rs cli::run
     ");
-    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "query", "what opens the database"], &names), @"the configured engine does not offer `query`");
 }
 
 // spec: local/projects/instrukt/spec/feature/blueprint/graph-engine UC-BE1

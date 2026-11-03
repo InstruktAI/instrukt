@@ -113,7 +113,8 @@ Scenario Outline: Promote a verified candidate
   Given a developer has finalized work ready for integration
   And the project uses <verification> to verify integration candidates
   When the developer has that work integrated
-  Then the canonical branch advances only to the exact candidate that passed verification
+  Then the integrator learns the candidate's verification result without anyone relaying it
+  And the canonical branch advances only to the exact candidate that passed verification
   And a failing or unfinished candidate remains unpromoted
 
   Examples:
@@ -129,6 +130,16 @@ Given a developer's project has a failing canonical branch after a delivery
 When the developer has the failed delivery recovered
 Then the offending delivery is reverted before its cause is repaired
 And repair proceeds as separate work from restoration of the shared baseline
+```
+
+#### UC-IG3: Reviewed direct commits reach the shared branch through the same gate
+
+```gherkin
+Given a developer committed reviewed work directly on their local main
+When the runner next checks the project
+Then the integrator is woken to take those commits through verification
+And only commits whose latest review settled them reach the shared branch
+And the first commit whose review has not settled stops the rest
 ```
 
 ## See Also

@@ -1,6 +1,7 @@
-//! Work's implementations (`instrukt_todos::work`). Each function returns
-//! `None` while `modules.todos` is off for the invocation's project (the
-//! global layer outside a project).
+//! Work's implementations (`instrukt_todos::work`). Core's todo-existence
+//! question is answered only while `modules.todos` is on for the caller's
+//! project; the runner's ports and the evidence read are always wired, and
+//! the runner gates each project by its own effective switch.
 
 use std::sync::Arc;
 
@@ -33,11 +34,11 @@ pub(super) fn todo_existence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn TodoExi
     Ok(Some(Arc::new(WorkExistence::new(work, project))))
 }
 
-/// The runner-declared work interfaces.
+/// The runner-declared work interfaces. Wired whatever the caller's own
+/// switch: a scheduled tick runs from `$HOME`, and the runner considers
+/// each project by its own effective `modules.todos` (`work-dispatch`,
+/// "Execution contract"). The `todo` namespace keeps its own refusal.
 pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
-    if !enabled(ctx)? {
-        return Ok(None);
-    }
     let work = Arc::new(work(ctx));
     Ok(Some(WorkPorts {
         pickup: work.clone(),
@@ -50,11 +51,9 @@ pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
     }))
 }
 
-/// Work's evidence read contract for workflow.
+/// Work's evidence read contract for workflow, wired as the ports are: the
+/// runner's workflow reads it per project.
 pub(super) fn evidence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn WorkEvidence>>> {
-    if !enabled(ctx)? {
-        return Ok(None);
-    }
     Ok(Some(Arc::new(work(ctx))))
 }
 

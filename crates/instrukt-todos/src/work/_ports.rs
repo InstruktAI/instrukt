@@ -12,12 +12,13 @@ use instrukt_runner::interfaces::{
 use jiff::Timestamp;
 
 use super::_error::WorkError;
-use super::_model::{Binding, Claim, TodoRecord};
-use super::_session::{GitHubRead, PendingReason, ReflectionStatus, Session};
+use super::_model::{Binding, Claim, TodoId, TodoRecord};
+use super::_session::{GitHubRead, PendingReason, PullFor, ReflectionStatus, Session};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
     RoleBinding, StampFact, StampRecord, TaskResult, TodoEvidence, TodoStatus, WorkEvidence,
+    artifact_names,
 };
 
 /// The actor automatic holds and runner claims are attributed to: the
@@ -32,6 +33,23 @@ impl Pickup for Work {
     ) -> Result<Vec<PickupCandidate>, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
         s.pull_all()?;
+        let machine = s.machine()?;
+        // The runner's own claims on this computer still awaiting
+        // reflection are offered again, so the claim is reflected and the
+        // todo dispatched once GitHub answers (ruling D).
+        let pending_here: Vec<TodoId> = s
+            .items
+            .iter()
+            .filter(|it| {
+                it.reflection.pending
+                    && it
+                        .record
+                        .claim
+                        .as_ref()
+                        .is_some_and(|c| c.machine == machine && c.session.is_none())
+            })
+            .map(|it| it.record.id.clone())
+            .collect();
         let mut records: Vec<TodoRecord> = s
             .items
             .iter()
@@ -46,7 +64,7 @@ impl Pickup for Work {
         records.retain(|r| {
             r.status == TodoStatus::Active
                 && r.hold.is_none()
-                && r.claim.is_none()
+                && (r.claim.is_none() || pending_here.contains(&r.id))
                 && kinds.contains(&r.kind)
         });
         records.sort_by_key(|r| r.created);
@@ -65,6 +83,7 @@ impl Pickup for Work {
         Ok(ordered
             .into_iter()
             .map(|record| PickupCandidate {
+                claimed_here: pending_here.contains(&record.id),
                 timing: timing(&record),
                 agent: record.agent.clone(),
                 kind: record.kind,
@@ -110,8 +129,12 @@ impl Claims for Work {
             if !s.items[index].reflection.pending {
                 return Ok(ClaimOutcome::AlreadyHeld);
             }
+            // A claim recorded while GitHub was unreachable: reflect it now.
             s.flush()?;
-            return Ok(claim_outcome(s.status(index)));
+            return Ok(match claim_outcome(s.status(index)) {
+                ClaimOutcome::Claimed => ClaimOutcome::AlreadyHeld,
+                other => other,
+            });
         }
         if record.status != TodoStatus::Active {
             return Err(WorkError::refused(format!(
@@ -147,13 +170,20 @@ impl Claims for Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
         let machine = s.machine()?;
-        let Some(claim) = &s.items[index].record.claim else {
+        let record = &s.items[index].record;
+        let Some(claim) = &record.claim else {
             return Ok(());
         };
+        // The holders `work-dispatch` names: on the claiming computer, the
+        // runner for its own claim, or the session that claimed or is bound
+        // to the todo (as `todo update --unclaim`).
         let holds = claim.machine == machine
             && match claimant {
                 Claimant::Runner => claim.session.is_none(),
-                Claimant::Session(session) => claim.session.as_ref() == Some(session),
+                Claimant::Session(session) => {
+                    claim.session.as_ref() == Some(session)
+                        || record.bindings.iter().any(|b| &b.session == session)
+                }
             };
         if !holds {
             return Err(WorkError::refused(format!(
@@ -355,7 +385,7 @@ impl WorkEvidence for Work {
         let mut s = Session::open(self, project)?;
         let record = match s.find(todo, true) {
             Some(index) => {
-                s.pull_through(index)?;
+                s.pull_through(index, PullFor::Read)?;
                 s.items[index].record.clone()
             }
             None => match s.remote_item(todo)? {
@@ -453,6 +483,7 @@ fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
 }
 
 fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
+    let implementation_plan_seeded = seeded(&record);
     TodoEvidence {
         timing: timing(&record),
         project: record.project,
@@ -471,6 +502,7 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
                         digest: v.digest,
                         writer: v.writer,
                         created: v.created,
+                        derived_from: v.derived_from,
                     })
                     .collect(),
             })
@@ -495,7 +527,33 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
         prerequisites,
         delivery: record.delivery.map(|d| d.commit),
         agent: record.agent,
+        implementation_plan_seeded,
     }
+}
+
+/// Whether the implementation plan was seeded: its first version was
+/// written by the todo's filer, before any plan review (`preparation`,
+/// "seeded derivation": a plan present at first entry with no prior
+/// review). No spec names how a seed is recorded; this reads it from the
+/// record rather than adding a surface.
+fn seeded(record: &TodoRecord) -> bool {
+    let Some(first) = record
+        .artifact(artifact_names::IMPLEMENTATION_PLAN)
+        .and_then(|a| a.versions.first())
+    else {
+        return false;
+    };
+    let reviewed_before = record.stamps.iter().any(|s| {
+        s.at <= first.created
+            && matches!(
+                s.fact,
+                StampFact::PreparationVerdict {
+                    phase: crate::evidence::PreparationReview::PlanReview,
+                    ..
+                }
+            )
+    });
+    first.writer == record.created_by && !reviewed_before
 }
 
 /// A task's schedule and its last firing.
@@ -530,4 +588,96 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::{ArtifactName, PreparationReview, ReviewVerdict};
+    use crate::work::_model::{Artifact, TodoId, Version, digest_of};
+    use instrukt_core::ids::ProjectSlug;
+    use instrukt_runner::interfaces::CatchUp;
+
+    fn filer() -> Actor {
+        Actor::Person {
+            name: "filer".into(),
+        }
+    }
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(1_800_000_000 + second).unwrap()
+    }
+
+    fn with_plan(writer: Actor, written: i64) -> TodoRecord {
+        TodoRecord {
+            schema: 1,
+            id: TodoId::parse(&"ef".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("depth").unwrap(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: at(0),
+            created_by: filer(),
+            human_involved: None,
+            revision: 1,
+            artifacts: vec![Artifact {
+                name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
+                address: None,
+                versions: vec![Version {
+                    digest: digest_of("plan"),
+                    writer,
+                    created: at(written),
+                    derived_from: Vec::new(),
+                    remote: None,
+                    content: None,
+                }],
+            }],
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: CatchUp::Once,
+            agent: None,
+            branch: None,
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    #[test]
+    fn a_plan_the_filer_supplied_before_any_review_is_seeded() {
+        assert!(seeded(&with_plan(filer(), 1)));
+    }
+
+    #[test]
+    fn a_plan_drafted_by_preparation_is_not_seeded() {
+        let drafter = Actor::Person {
+            name: "planner".into(),
+        };
+        assert!(!seeded(&with_plan(drafter, 1)));
+    }
+
+    #[test]
+    fn a_plan_first_written_after_a_plan_review_is_not_seeded() {
+        let mut record = with_plan(filer(), 5);
+        record.stamps.push(StampRecord {
+            fact: StampFact::PreparationVerdict {
+                phase: PreparationReview::PlanReview,
+                verdict: ReviewVerdict::NeedsWork,
+                target: digest_of("older"),
+                report: digest_of("report"),
+            },
+            at: at(2),
+            actor: filer(),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+        });
+        assert!(!seeded(&record));
+    }
 }

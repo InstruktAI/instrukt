@@ -19,12 +19,12 @@ use super::_model::{
     Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoId, TodoRecord, TodoRef, Version,
     digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, ReflectionStatus, Session};
+use super::_session::{GitHubRead, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactName, HoldRecord, HoldSource, PreparationReview, ReviewVerdict, StampFact,
-    StampRecord, TodoStatus, artifact_names,
+    StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
 };
 
 /// `instrukt todo create`.
@@ -184,6 +184,7 @@ impl Work {
                     digest: digest_of(&content),
                     writer: actor.clone(),
                     created: now,
+                    derived_from: Vec::new(),
                     remote: None,
                     content: Some(content),
                 }],
@@ -224,7 +225,7 @@ impl Work {
     pub fn show(&self, project: &ProjectRef, slug: &TodoSlug) -> Result<TodoView, WorkError> {
         let mut s = Session::open(self, project)?;
         if let Some(index) = s.find(slug, true) {
-            match s.pull_through(index) {
+            match s.pull_through(index, PullFor::Read) {
                 Ok(()) | Err(WorkError::Conflicted { .. }) => {}
                 Err(err) => return Err(err),
             }
@@ -424,7 +425,7 @@ impl Work {
                 "a live todo is named `{slug}`; restoring would make the name ambiguous — rename one first"
             )));
         }
-        s.pull_through(index)?;
+        s.pull_through(index, PullFor::Change)?;
         s.commit("reactivated", |s| {
             let record = &mut s.items[index].record;
             let from = record
@@ -571,6 +572,12 @@ impl Work {
             if resolved.branch.is_some() {
                 record.branch = resolved.branch;
             }
+            // Ruling H: a claim covers one occurrence; recording that
+            // occurrence's outcome releases it, so the task returns to
+            // pickup (a recurring task fires again, a failed one is seen).
+            if matches!(stamp.fact, StampFact::TaskOutcome { .. }) {
+                record.claim = None;
+            }
             record.stamps.push(stamp);
             Ok(())
         })?;
@@ -606,10 +613,19 @@ impl Work {
                 "`{slug}` is a structural holder; its artifacts are frozen evidence of the split"
             )));
         }
+        // Provenance: the upstream artifacts as they stand now.
+        let derived_from = upstream_of(name)
+            .iter()
+            .map(|upstream| Upstream {
+                artifact: ArtifactName::new(*upstream),
+                digest: record.current_digest(upstream).cloned(),
+            })
+            .collect();
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
             created: s.now,
+            derived_from,
             remote: None,
             content: Some(content.to_owned()),
         };
@@ -980,8 +996,9 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     for prerequisite in &record.after {
         if above.contains(&prerequisite.id) {
             return Err(WorkError::refused(format!(
-                "`{}` cannot depend on `{}`, the group it belongs to",
-                record.slug, prerequisite.slug
+                "`{todo}` would wait on itself: {todo} → {group} → {todo} (`{group}` is the group `{todo}` belongs to)",
+                todo = record.slug,
+                group = prerequisite.slug
             )));
         }
         if let Some(path) = path_to(s, prerequisite, &record.id) {

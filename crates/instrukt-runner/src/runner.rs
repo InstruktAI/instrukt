@@ -50,8 +50,6 @@ pub struct RunnerContext<'a> {
     pub home: &'a Home,
     pub env: &'a Env,
     pub tz: &'a TimeZone,
-    /// The `instrukt` binary, for work's command contract.
-    pub executable: &'a Path,
     pub wiring: &'a RunnerWiring,
 }
 
@@ -151,7 +149,7 @@ fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(
         now,
         tz: cx.tz,
         previous_wake: previous,
-        executable: cx.executable,
+        state,
     };
     for considered in considered_projects(cx.home)? {
         let project = &considered.project;
@@ -225,7 +223,7 @@ fn read_sources(
     let Some(candidate) = observed.candidate else {
         return;
     };
-    let Some(repository) = repository(&considered.config, cx.env, &project.root) else {
+    let Some(repository) = repository(&considered.config, &project.root) else {
         tracing::debug!(event = "ci_repository_unknown", project = %project.slug);
         return;
     };
@@ -260,18 +258,13 @@ fn read_sources(
     }
 }
 
-/// The project's GitHub repository: `github.repository`, else the one the
-/// canonical remote's URL names on the configured GitHub host.
-fn repository(config: &Configuration, env: &Env, root: &Path) -> Option<String> {
-    match config.get_str("github.repository", env) {
-        Ok(repository) => return Some(repository),
-        Err(ConfigError::MissingKey { .. }) => {}
-        Err(err) => {
-            tracing::warn!(event = "github_repository_unreadable", error = %err);
-            return None;
+/// The project's GitHub repository, resolved as work resolves it.
+fn repository(config: &Configuration, root: &Path) -> Option<String> {
+    match ci::repository(config, root) {
+        Ok(repository) => Some(repository),
+        Err(reason) => {
+            tracing::debug!(event = "ci_repository_unresolved", reason);
+            None
         }
     }
-    let url =
-        instrukt_core::git::run(root, ["remote", "get-url", sources::CANONICAL_REMOTE]).ok()?;
-    ci::repository_from_remote(url.trim(), config.github_api_url().ok()?)
 }

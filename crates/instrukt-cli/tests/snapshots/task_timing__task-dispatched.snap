@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/task-timing.rs
+expression: "project.rt.opening(\"s1\")"
+---
+Run `instrukt docs get acme/procedure/run-task --closure` and execute that procedure.
+
+slug: weekly-status
+$ARGUMENTS: weekly-status

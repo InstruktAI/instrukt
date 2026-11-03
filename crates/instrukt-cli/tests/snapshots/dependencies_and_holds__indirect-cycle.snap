@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/dependencies-and-holds.rs
+expression: refused
+---
+instrukt: these prerequisites make a cycle: lexer-depth → nested-lists → parser-depth → lexer-depth

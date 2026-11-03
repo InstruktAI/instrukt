@@ -13,6 +13,10 @@
 )]
 
 mod common;
+#[path = "support/documented.rs"]
+mod documented;
+#[path = "support/flavor.rs"]
+mod flavor;
 #[path = "support/runtime.rs"]
 mod runtime;
 
@@ -20,6 +24,8 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use common::TestEnv;
+use flavor::Tracked;
+use jiff::{SignedDuration, Timestamp, ToSpan as _, Zoned};
 use runtime::{FakeRuntime, global_layer};
 
 /// Recording stand-ins for the schedulers' commands, in `<test>/registrar`.
@@ -172,4 +178,80 @@ fn the_installed_wake_up_runs_the_runner_every_minute_without_an_interactive_run
     let woke: jiff::Timestamp = after["last_wakeup"].as_str().unwrap().parse().unwrap();
     assert!(woke <= jiff::Timestamp::now());
     assert_eq!(after["stale"], serde_json::Value::Bool(false));
+}
+
+/// Now, to the second: a schedule a developer writes.
+fn this_second() -> Timestamp {
+    Timestamp::from_second(Timestamp::now().as_second()).unwrap()
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT1
+#[test]
+fn an_authorized_task_is_dispatched_when_a_wake_up_arrives_at_its_time() {
+    let project = Tracked::new(true);
+    let tomorrow = this_second() + SignedDuration::from_hours(24);
+    project.authorized_task("weekly-status", &tomorrow.to_string(), &[]);
+
+    // Before its time, a wake-up leaves the task alone.
+    project.tick();
+    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+
+    // The developer moves the task to the present moment; the next
+    // wake-up is the one at its time.
+    project.todo([
+        "update",
+        "weekly-status",
+        "--schedule",
+        &this_second().to_string(),
+    ]);
+    project.tick();
+
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    insta::assert_snapshot!("task-dispatched", project.rt.opening("s1"));
+}
+
+/// A cron schedule matching every minute of the day except this local
+/// minute and the next two, so several occurrences lie behind the next
+/// wake-up and none is on time at it.
+fn every_minute_but_now() -> String {
+    let now = Zoned::now();
+    let minute = i32::from(now.minute());
+    let skipped: Vec<i32> = (0..3).map(|offset| (minute + offset) % 60).collect();
+    let minutes: Vec<String> = (0..60)
+        .filter(|m| !skipped.contains(m))
+        .map(|m| m.to_string())
+        .collect();
+    format!("cron:{} * * * *", minutes.join(","))
+}
+
+/// The computer was off: its last wake-up was three hours ago.
+fn last_woke_three_hours_ago(env: &TestEnv) {
+    let then = Zoned::now().checked_sub(3.hours()).unwrap().timestamp();
+    let path = env.instrukt_home().join("state/runner/last-wakeup");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, format!("{then}\n")).unwrap();
+}
+
+fn missed_occurrences(policy: &str) -> usize {
+    let project = Tracked::new(true);
+    project.authorized_task(
+        "hourly-sync",
+        &every_minute_but_now(),
+        &["--catch-up", policy],
+    );
+    last_woke_three_hours_ago(&project.env);
+    project.tick();
+    project.rt.calls().len()
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT2
+#[test]
+fn missed_occurrences_with_one_catch_up_dispatch_one_execution() {
+    assert_eq!(missed_occurrences("once"), 1);
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT2
+#[test]
+fn missed_occurrences_with_skip_dispatch_nothing() {
+    assert_eq!(missed_occurrences("skip"), 0);
 }

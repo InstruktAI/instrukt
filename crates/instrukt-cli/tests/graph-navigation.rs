@@ -203,7 +203,7 @@ fn with_graphify(env: &mut TestEnv) {
     env.set_env("PATH", &path);
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     let mut env = TestEnv::new();
@@ -228,7 +228,7 @@ fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn an_explanation_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     let mut env = TestEnv::new();
@@ -243,4 +243,34 @@ fn an_explanation_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     blueprint graph of 0123456789abcdef0123456789abcdef01234567
     graphify explain [api::serve] over 5 nodes
     ");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
+#[test]
+fn an_engine_that_answers_no_free_questions_says_so() {
+    let env = TestEnv::new();
+    // The machine's own engine command: it offers only what the contract
+    // supports.
+    let global = env.instrukt_home().join("instrukt.yaml");
+    std::fs::create_dir_all(global.parent().unwrap()).unwrap();
+    std::fs::write(
+        &global,
+        "schema_version: 1\nblueprint:\n  engine: own-engine\n",
+    )
+    .unwrap();
+    let repo = project(&env, true);
+    seed(&env, mapped());
+    let query = stdout(
+        env.run(
+            repo.path(),
+            ["blueprint", "query", "how does the cli reach the db"],
+        )
+        .success(),
+    );
+    insta::assert_snapshot!(query, @"the configured engine does not offer `query`");
+    let explain = stdout(
+        env.run(repo.path(), ["blueprint", "explain", "api::serve"])
+            .success(),
+    );
+    insta::assert_snapshot!(explain, @"the configured engine does not offer `explain`");
 }

@@ -14,11 +14,12 @@ use jiff::{SignedDuration, Timestamp};
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_model::{TodoId, TodoRecord, TodoRef};
-use super::_provider;
+pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
 use super::_store::{self, IssueRef, LocalItem, Store};
 use super::Work;
 use crate::evidence::{Actor, TodoStatus};
+use instrukt_core::github;
 
 /// The fixed recovery window of withdrawn work.
 const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
@@ -87,23 +88,26 @@ impl<'w> Session<'w> {
     pub fn open(work: &'w Work, project: &ProjectRef) -> Result<Self, WorkError> {
         let lock = _store::lock(work.home())?;
         let config = Configuration::load(work.home(), Some(&project.root))?;
-        let repository = _provider::repository(&config, &project.root)?;
+        // The address the token is sent to comes from the machine's own
+        // layer, never from a repository's.
+        let api_url = github::api_url(work.home())?;
+        let repository = github::repository(&config, &api_url, &project.root)?;
         let store = Store::open(work.home(), &project.slug)?;
         let items = store.items()?;
         let now = work.now();
-        let remote = match _provider::token(work.env()) {
+        let remote = match github::credentials(work.env()) {
             None => Remote::Unavailable(PendingReason::NoCredentials),
             Some(token) => match store.provider()?.deferred_until {
                 Some(until) if until > now => {
                     Remote::Unavailable(PendingReason::RateLimited { until: Some(until) })
                 }
                 _ => Remote::Client {
-                    gh: GitHub::new(config.github_api_url()?, &repository, token),
+                    gh: GitHub::new(&api_url, &repository, token),
                     down: None,
                 },
             },
         };
-        let base = _provider::default_branch(&project.root)?;
+        let base = github::default_branch(&project.root)?;
         let mut session = Self {
             work,
             _lock: lock,
@@ -190,7 +194,7 @@ impl<'w> Session<'w> {
                     todo: slug.clone(),
                 })?,
         };
-        self.pull_through(index)?;
+        self.pull_through(index, PullFor::Change)?;
         Ok(index)
     }
 
@@ -198,7 +202,7 @@ impl<'w> Session<'w> {
     pub fn enter_ref(&mut self, target: &TodoRef) -> Result<usize, WorkError> {
         match self.find_id(&target.id) {
             Some(index) => {
-                self.pull_through(index)?;
+                self.pull_through(index, PullFor::Change)?;
                 Ok(index)
             }
             None => self.enter(&target.slug),
@@ -228,13 +232,17 @@ impl<'w> Session<'w> {
     }
 
     /// Pulls item `index` from GitHub with a conditional request; refuses
-    /// when it is (or becomes) conflicted.
-    pub fn pull_through(&mut self, index: usize) -> Result<(), WorkError> {
+    /// when it is (or becomes) conflicted, and, for a change, when GitHub
+    /// holds a revision newer than the one this computer last read.
+    pub fn pull_through(&mut self, index: usize, purpose: PullFor) -> Result<(), WorkError> {
         let before = self.items[index].clone();
         let result = match &self.remote {
-            Remote::Client { gh, down: None } => Some(_reflect::pull(gh, &mut self.items[index])),
+            Remote::Client { gh, down: None } => {
+                Some(_reflect::pull(gh, &mut self.items[index], purpose))
+            }
             _ => None,
         };
+        let newer = matches!(result, Some(Ok(Pulled::Newer)));
         match result {
             Some(Ok(Pulled::Adopted)) => tracing::info!(
                 event = "work_pulled",
@@ -249,7 +257,15 @@ impl<'w> Session<'w> {
         if self.items[index] != before {
             self.store.save(&self.items[index])?;
         }
-        if self.items[index].reflection.conflicted {
+        if self.items[index].reflection.conflicted || newer {
+            if newer {
+                tracing::debug!(
+                    event = "work_change_refused_stale",
+                    project = %self.project.slug,
+                    todo = %self.items[index].record.slug,
+                    "GitHub holds a newer revision than this computer last read; refresh first"
+                );
+            }
             return Err(WorkError::Conflicted {
                 todo: self.items[index].record.slug.clone(),
             });
@@ -260,7 +276,7 @@ impl<'w> Session<'w> {
     /// Pulls every local item, without refusing conflicted ones.
     pub fn pull_all(&mut self) -> Result<(), WorkError> {
         for index in 0..self.items.len() {
-            match self.pull_through(index) {
+            match self.pull_through(index, PullFor::Read) {
                 Ok(()) | Err(WorkError::Conflicted { .. }) => {}
                 Err(err) => return Err(err),
             }

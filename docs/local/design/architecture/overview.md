@@ -114,7 +114,8 @@ contract without executing its operation.
 - **Git hooks belong to everyone.** instrukt touches only its marked section,
   never uses `exec`, and never blocks git after the fact.
 - **A cloned repository does not decide what runs on a machine.** The runtime
-  mapping lives only in the global layer.
+  mapping lives only in the global layer, and so does the command form of
+  `blueprint.engine`; a project layer may only name a shipped adapter.
 - **Agents read; instrukt computes.** Freshness, ownership and state are
   instrukt's to compute; agents consume answers that name what they reflect
   (a SHA, a version).

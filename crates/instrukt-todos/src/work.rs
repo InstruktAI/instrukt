@@ -23,7 +23,6 @@ mod _github;
 mod _model;
 mod _ops;
 mod _ports;
-mod _provider;
 mod _reflect;
 mod _session;
 mod _stamps;

@@ -32,7 +32,7 @@ pub use _layer::{
 pub use _module::Module;
 pub use _render::render_yaml;
 pub use _runtime::{Env, RuntimeEntry};
-pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind};
+pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES};
 pub use _validate::validate;
 
 use crate::home::Home;

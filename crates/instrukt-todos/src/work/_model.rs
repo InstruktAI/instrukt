@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::evidence::{
-    Actor, ArtifactName, ContentDigest, HoldRecord, StampFact, StampRecord, TodoStatus,
+    Actor, ArtifactName, ContentDigest, HoldRecord, StampFact, StampRecord, TodoStatus, Upstream,
 };
 
 /// The record schema this build writes and reads.
@@ -180,6 +180,9 @@ pub struct Version {
     pub digest: ContentDigest,
     pub writer: Actor,
     pub created: Timestamp,
+    /// The upstream artifacts as they stood when this version was written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_from: Vec<Upstream>,
     /// The provider's version number once uploaded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<u64>,
