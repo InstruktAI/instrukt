@@ -586,8 +586,7 @@ fn a_linked_later_output_is_refused_before_anything_is_written() {
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
-// Unbound: UC-PUB8 tells the developer of the leftover in a run that
-// publishes; this run is refused, so it does not realize that scenario.
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB8
 #[cfg(unix)]
 #[test]
 fn a_refused_sync_still_reports_the_leftover_it_could_not_remove() {
