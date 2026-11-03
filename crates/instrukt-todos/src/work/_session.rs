@@ -19,8 +19,9 @@ pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
 use super::_store::{self, IssueRef, LocalItem, Store};
 use super::Work;
-use crate::evidence::{Actor, TodoStatus};
+use crate::evidence::{Actor, ModelIdentity, ModelProvenance, TodoStatus};
 use instrukt_core::github;
+use instrukt_runner::sessions::Sessions;
 
 /// The fixed recovery window of withdrawn work.
 const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
@@ -146,6 +147,22 @@ impl<'w> Session<'w> {
             runtime: RuntimeName::parse(&entry.name).ok()?,
             id: SessionId::parse(id).ok()?,
         })
+    }
+
+    /// The model a stamp by `actor` records: for a session, what its
+    /// runtime's `model` template reports, else explicitly unknown;
+    /// outside a session, none.
+    pub fn model_of(&self, actor: &Actor) -> (Option<ModelIdentity>, ModelProvenance) {
+        let Actor::Session(session) = actor else {
+            return (None, ModelProvenance::OutsideSession);
+        };
+        match Sessions::new(&self.config, self.work.env()).model(session) {
+            Some((model, version)) => (
+                Some(ModelIdentity { model, version }),
+                ModelProvenance::Reported,
+            ),
+            None => (None, ModelProvenance::Unknown),
+        }
     }
 
     /// Who acts: the caller's session, or outside one the person git names.

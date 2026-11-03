@@ -8,7 +8,7 @@ reflection: reflected to GitHub
 nested-lists · feature · active
 identity: <id 1>
 created: <time> by Test Developer
-revision: 4
+revision: 6
 intent:
   Keep the depth of nested lists when parsing Markdown.
 reflection: reflected to GitHub
@@ -21,5 +21,8 @@ artifacts:
   prd (2 versions)
     <digest 1> by Test Developer at <time>
     <digest 3> by Test Developer at <time>
+  prd-review-findings (1 version)
+    <digest 4> by Test Developer at <time>
 stamps:
-  <time> prd approved by a human — <digest 1> — by session thread-host:thread-7
+  #4 <time> prd_review verdict approve — target <digest 1>, report <digest 4> — by Test Developer
+  #5 <time> prd approved by a human — <digest 1> — by session thread-host:thread-7, model unknown

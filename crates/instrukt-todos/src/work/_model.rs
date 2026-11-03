@@ -406,6 +406,7 @@ mod tests {
             role: None,
             human_involved: None,
             sequence: 0,
+            model_provenance: Default::default(),
         };
         let mut record: TodoRecord = serde_json::from_value(serde_json::json!({
             "schema": 1, "id": "ab".repeat(16), "project": "demo", "slug": "depth",

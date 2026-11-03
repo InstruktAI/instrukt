@@ -307,6 +307,25 @@ pub struct StampRecord {
     /// [`ArtifactVersion::sequence`]).
     #[serde(default)]
     pub sequence: u64,
+    /// What `model` says: absent outside a session, unknown when the
+    /// session's runtime could not report it, reported otherwise.
+    #[serde(default)]
+    pub model_provenance: ModelProvenance,
+}
+
+/// Where a stamp's model identity stands (`stamps`, "Evidence and
+/// attribution"): no identity is guessed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelProvenance {
+    /// The actor acted outside an agent session: no model.
+    #[default]
+    OutsideSession,
+    /// An agent session whose runtime has no `model` template, or whose
+    /// template failed: the model is explicitly unknown.
+    Unknown,
+    /// The session's runtime reported the model and version.
+    Reported,
 }
 
 /// A preparation review phase (`--phase prd_review|architecture_review|plan_review`).
@@ -394,6 +413,9 @@ pub enum StampFact {
         by: ApprovedBy,
         target: ContentDigest,
         carried_from: Option<ContentDigest>,
+        /// A peer approval's reasoning.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
     },
     /// `--intent-checked`: the `input` version checked and the
     /// conversation it was authored in.

@@ -159,6 +159,7 @@ impl EvidenceBuilder {
             role: None,
             human_involved: None,
             sequence: u64::try_from(self.tick).unwrap_or_default(),
+            model_provenance: Default::default(),
         });
         self
     }

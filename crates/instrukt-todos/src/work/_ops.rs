@@ -563,15 +563,17 @@ impl Work {
             Some(actor) => actor,
             None => s.actor()?,
         };
+        let (model, model_provenance) = s.model_of(&actor);
         let stamp = StampRecord {
             fact: resolved.fact,
             at: s.now,
             role: role_of(&record, &actor),
             actor: actor.clone(),
-            model: None,
+            model,
             eval_fingerprint: EvalFingerprint::current(self.home())?.map(|f| f.fingerprint),
             human_involved: None,
             sequence: 0,
+            model_provenance,
         };
         if let StampFact::FinalizeReady { commit } = &stamp.fact {
             let log = events.ok_or_else(|| {
@@ -1482,6 +1484,7 @@ mod tests {
             role: None,
             human_involved: None,
             sequence: 0,
+            model_provenance: Default::default(),
         });
         assert!(matches!(
             change_kind(&mut started, TodoKind::Bug, true),

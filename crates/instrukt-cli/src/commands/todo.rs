@@ -20,7 +20,7 @@ use instrukt_runner::interfaces::{
 };
 use instrukt_todos::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, DriftClass, HoldSource,
-    PreparationReview, ReviewVerdict, StampFact, TaskResult, TodoStatus,
+    ModelProvenance, PreparationReview, ReviewVerdict, StampFact, TaskResult, TodoStatus,
 };
 use instrukt_todos::work::{
     CreateRequest, DiffLine, ListEntry, Outcome, ReflectionStatus, Selection, StampRequest,
@@ -213,12 +213,19 @@ struct StampArgs {
     /// The reviewed phase.
     #[arg(long, requires = "verdict")]
     phase: Option<PhaseArg>,
-    /// Approval of the current prd, with `--by`.
-    #[arg(long, requires = "by")]
+    /// Approval of the current prd, with `--by` (or `--carry-from`).
+    #[arg(long)]
     prd_approved: bool,
-    /// Approval of the current task plan, with `--by`.
-    #[arg(long, requires = "by")]
+    /// Approval of the current task plan, with `--by` (or `--carry-from`).
+    #[arg(long)]
     task_approved: bool,
+    /// A peer approval's reasoning (required with `--by peer`).
+    #[arg(long, value_name = "TEXT")]
+    reasoning: Option<String>,
+    /// Carry the approval stamp with this number (`todo show` numbers
+    /// stamps) to the current evidence.
+    #[arg(long, value_name = "STAMP", conflicts_with = "by")]
+    carry_from: Option<u64>,
     /// Who approved.
     #[arg(long, value_name = "human|peer")]
     by: Option<ByArg>,
@@ -641,18 +648,33 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         (args.prd_approved, ApprovalGate::Prd),
         (args.task_approved, ApprovalGate::Task),
     ] {
-        if set {
-            let by = match args.by {
-                Some(ByArg::Human) => ApprovedBy::Human,
-                Some(ByArg::Peer) => ApprovedBy::Peer,
-                None => bail!("an approval names who approved with `--by human|peer`"),
-            };
-            forms.push(StampRequest::Approval {
-                gate,
-                by,
-                session: args.session.clone(),
-            });
+        if !set {
+            continue;
         }
+        if let Some(from) = args.carry_from {
+            forms.push(StampRequest::CarriedApproval { gate, from });
+            continue;
+        }
+        let by = match args.by {
+            Some(ByArg::Human) => ApprovedBy::Human,
+            Some(ByArg::Peer) => ApprovedBy::Peer,
+            None => bail!(
+                "an approval names who approved with `--by human|peer`, or carries one with `--carry-from <stamp>`"
+            ),
+        };
+        forms.push(StampRequest::Approval {
+            gate,
+            by,
+            session: args.session.clone(),
+            reasoning: args.reasoning.clone(),
+        });
+    }
+    if (args.reasoning.is_some() || args.carry_from.is_some() || args.by.is_some())
+        && !(args.prd_approved || args.task_approved)
+    {
+        bail!(
+            "`--by`, `--reasoning` and `--carry-from` go with `--prd-approved` or `--task-approved`"
+        );
     }
     if args.intent_checked {
         forms.push(StampRequest::IntentChecked);
@@ -1004,7 +1026,8 @@ fn render_view(view: &TodoView) -> String {
     }
     for stamp in &record.stamps {
         stamps.push(format!(
-            "  {} {} — by {}{}{}",
+            "  #{} {} {} — by {}{}{}{}",
+            stamp.sequence,
             time(stamp.at),
             fact(&stamp.fact),
             actor(&stamp.actor),
@@ -1013,6 +1036,12 @@ fn render_view(view: &TodoView) -> String {
                 .as_ref()
                 .map(|r| format!(" as {r}"))
                 .unwrap_or_default(),
+            match (&stamp.model_provenance, &stamp.model) {
+                (ModelProvenance::Reported, Some(model)) =>
+                    format!(", model {} {}", model.model, model.version),
+                (ModelProvenance::Unknown, _) => ", model unknown".to_owned(),
+                _ => String::new(),
+            },
             stamp
                 .eval_fingerprint
                 .as_ref()
@@ -1091,8 +1120,9 @@ fn fact(fact: &StampFact) -> String {
             by,
             target,
             carried_from,
+            reasoning,
         } => format!(
-            "{} approved by {} — {target}{}",
+            "{} approved by {} — {target}{}{}",
             match gate {
                 ApprovalGate::Prd => "prd",
                 ApprovalGate::Task => "task plan",
@@ -1104,6 +1134,10 @@ fn fact(fact: &StampFact) -> String {
             carried_from
                 .as_ref()
                 .map(|c| format!(", carried from {c}"))
+                .unwrap_or_default(),
+            reasoning
+                .as_ref()
+                .map(|r| format!(" — reasoning: {r}"))
                 .unwrap_or_default()
         ),
         StampFact::IntentChecked {

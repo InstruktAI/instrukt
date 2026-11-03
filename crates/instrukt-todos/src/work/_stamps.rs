@@ -29,12 +29,18 @@ pub enum StampRequest {
     },
     /// `--verdict approve|changes_requested --phase build_review`.
     BuildVerdict { verdict: BuildVerdict },
-    /// `--prd-approved|--task-approved --by human|peer [--session <runtime:id>]`.
+    /// `--prd-approved|--task-approved --by human|peer [--session
+    /// <runtime:id>] [--reasoning <text>]`; a peer approval names its
+    /// session and reasoning.
     Approval {
         gate: ApprovalGate,
         by: ApprovedBy,
         session: Option<SessionRef>,
+        reasoning: Option<String>,
     },
+    /// `--prd-approved|--task-approved --carry-from <stamp-id>`: an earlier
+    /// approval carried to the current evidence (`approvals`).
+    CarriedApproval { gate: ApprovalGate, from: u64 },
     /// `--intent-checked`.
     IntentChecked,
     /// `--kickback --reason <text>`.
@@ -137,27 +143,115 @@ pub(crate) fn resolve(
             target: head(inputs.cwd)?,
             report: current(record, artifact_names::REVIEW_FINDINGS)?,
         }),
-        StampRequest::Approval { gate, by, session } => {
-            let target = match gate {
-                ApprovalGate::Prd => current(record, artifact_names::PRD)?,
-                ApprovalGate::Task => {
-                    if record.kind != TodoKind::Task {
-                        return Err(WorkError::refused(
-                            "only a task carries a task approval; approve a repository change's prd with `--prd-approved`",
-                        ));
-                    }
-                    current(record, artifact_names::TASK_PLAN)?
+        StampRequest::Approval {
+            gate,
+            by,
+            session,
+            reasoning,
+        } => {
+            let target = approval_target(record, *gate)?;
+            let reasoning = reasoning
+                .as_deref()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(str::to_owned);
+            let session = session.clone().or_else(|| inputs.session.cloned());
+            if *by == ApprovedBy::Peer {
+                // A peer approval is the peer session's judgment, with its
+                // reasoning, of the evidence it approved.
+                if session.is_none() {
+                    return Err(WorkError::refused(
+                        "a peer approval names the peer session that judged it: run it in that session, or pass `--session <runtime:id>`",
+                    ));
                 }
-            };
+                if reasoning.is_none() {
+                    return Err(WorkError::refused(
+                        "a peer approval records the peer's reasoning with `--reasoning <text>`",
+                    ));
+                }
+            } else if reasoning.is_some() {
+                return Err(WorkError::refused(
+                    "`--reasoning` records a peer's judgment; a human approval carries none",
+                ));
+            }
             Resolved {
                 fact: StampFact::Approval {
                     gate: *gate,
                     by: *by,
                     target,
                     carried_from: None,
+                    reasoning,
                 },
                 branch: None,
-                actor: session.clone().map(Actor::Session),
+                actor: session.map(Actor::Session),
+                already_recorded: false,
+                releases_claim: false,
+            }
+        }
+        StampRequest::CarriedApproval { gate, from } => {
+            let target = approval_target(record, *gate)?;
+            let earlier = record
+                .stamps
+                .iter()
+                .find(|s| s.sequence == *from)
+                .ok_or_else(|| {
+                    WorkError::refused(format!(
+                        "this todo has no stamp #{from}; `instrukt todo show` numbers its stamps"
+                    ))
+                })?;
+            let StampFact::Approval {
+                gate: earlier_gate,
+                by,
+                target: earlier_target,
+                reasoning,
+                ..
+            } = &earlier.fact
+            else {
+                return Err(WorkError::refused(format!(
+                    "stamp #{from} is no approval; a carry carries an earlier approval"
+                )));
+            };
+            if earlier_gate != gate {
+                return Err(WorkError::refused(format!(
+                    "stamp #{from} approves another gate"
+                )));
+            }
+            // Carry is accepted only under a current independent review's
+            // approval of the new evidence.
+            let reviewed = record.stamps.iter().rev().find_map(|s| match &s.fact {
+                StampFact::PreparationVerdict {
+                    phase,
+                    verdict,
+                    target: reviewed,
+                    ..
+                } if *phase == review_of(*gate) => Some((*verdict, reviewed.clone())),
+                _ => None,
+            });
+            if reviewed != Some((ReviewVerdict::Approve, target.clone())) {
+                return Err(WorkError::refused(format!(
+                    "carrying an approval needs a current `{}` verdict `approve` binding the current {} ({target}); none is recorded",
+                    match review_of(*gate) {
+                        PreparationReview::PrdReview => "prd_review",
+                        PreparationReview::ArchitectureReview => "architecture_review",
+                        PreparationReview::PlanReview => "plan_review",
+                    },
+                    match gate {
+                        ApprovalGate::Prd => artifact_names::PRD,
+                        ApprovalGate::Task => artifact_names::TASK_PLAN,
+                    }
+                )));
+            }
+            Resolved {
+                fact: StampFact::Approval {
+                    gate: *gate,
+                    by: *by,
+                    target,
+                    carried_from: Some(earlier_target.clone()),
+                    reasoning: reasoning.clone(),
+                },
+                branch: None,
+                // The original approver stays attributed.
+                actor: Some(earlier.actor.clone()),
                 already_recorded: false,
                 releases_claim: false,
             }
@@ -324,6 +418,29 @@ pub(crate) fn resolve(
             }
         }
     })
+}
+
+/// The evidence gate `gate` approves: the current prd, or a task's plan.
+fn approval_target(record: &TodoRecord, gate: ApprovalGate) -> Result<ContentDigest, WorkError> {
+    match gate {
+        ApprovalGate::Prd => current(record, artifact_names::PRD),
+        ApprovalGate::Task => {
+            if record.kind != TodoKind::Task {
+                return Err(WorkError::refused(
+                    "only a task carries a task approval; approve a repository change's prd with `--prd-approved`",
+                ));
+            }
+            current(record, artifact_names::TASK_PLAN)
+        }
+    }
+}
+
+/// The independent review whose verdict binds a gate's evidence.
+fn review_of(gate: ApprovalGate) -> PreparationReview {
+    match gate {
+        ApprovalGate::Prd => PreparationReview::PrdReview,
+        ApprovalGate::Task => PreparationReview::PlanReview,
+    }
 }
 
 /// One recorded task firing: its occurrence and who started it.

@@ -303,6 +303,7 @@ impl TaskFirings for Work {
         let fingerprint = instrukt_core::publication::EvalFingerprint::current(self.home())
             .map_err(WorkError::from)?
             .map(|f| f.fingerprint);
+        let (model, model_provenance) = s.model_of(&actor);
         s.commit("task firing started", |s| {
             let record = &mut s.items[index].record;
             let role = record
@@ -315,11 +316,12 @@ impl TaskFirings for Work {
                 fact: StampFact::TaskFiringStarted { occurrence },
                 at: now,
                 actor,
-                model: None,
+                model,
                 eval_fingerprint: fingerprint,
                 role,
                 human_involved: None,
                 sequence,
+                model_provenance,
             });
             Ok(())
         })?;
@@ -686,6 +688,7 @@ mod tests {
             role: None,
             human_involved: None,
             sequence: 0,
+            model_provenance: Default::default(),
         });
         assert!(!seeded(&record));
     }

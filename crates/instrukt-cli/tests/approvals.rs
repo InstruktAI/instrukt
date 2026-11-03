@@ -29,6 +29,22 @@ fn an_approval_names_its_source_and_stays_bound_to_the_approved_evidence() {
         "prd",
         "Lists keep their depth through parse and render.",
     ]);
+    // The required review is complete.
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd-review-findings",
+        "No findings.",
+    ]);
+    project.ok([
+        "stamp",
+        "nested-lists",
+        "--verdict",
+        "approve",
+        "--phase",
+        "prd_review",
+    ]);
 
     let approved = project.ok([
         "stamp",
