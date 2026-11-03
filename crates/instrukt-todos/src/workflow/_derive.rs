@@ -212,6 +212,7 @@ effects:
     /// only holds for bugs.
     const WALK: &str = "\
 flow: work
+orchestrator: builder
 initial: start
 states: [start, middle, end, side]
 transitions:
@@ -367,6 +368,7 @@ transitions:
     fn revisiting_a_state_is_an_invalid_evaluation() {
         let cyclic = "\
 flow: work
+orchestrator: builder
 initial: start
 states: [start, middle]
 transitions:

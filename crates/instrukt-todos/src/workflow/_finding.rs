@@ -51,6 +51,8 @@ pub enum Problem {
     DuplicateRole(String),
     #[error("{0}")]
     InvalidRole(String),
+    #[error("orchestrator role `{0}` is not declared under `roles` in actions.yaml")]
+    UndeclaredOrchestrator(String),
     #[error("declared `flow: {declared}` does not match the file name `{expected}`")]
     FlowMismatch { declared: String, expected: String },
     #[error("state `{0}` is declared more than once")]

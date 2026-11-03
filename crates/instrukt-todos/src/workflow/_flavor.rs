@@ -68,6 +68,9 @@ pub(crate) struct Transition {
 /// the initial state and the ordered transitions.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Definition {
+    /// The role of the flow's orchestrator: it owns every action whose
+    /// command names no procedure.
+    pub orchestrator: RoleName,
     pub initial: StateName,
     pub transitions: Vec<Transition>,
 }
@@ -131,6 +134,14 @@ impl Flavor {
     /// The roles `actions.yaml` declares, in declaration order.
     pub fn roles(&self) -> &[RoleName] {
         &self.roles
+    }
+
+    /// The orchestrator role a flow declares; `None` for an unknown flow.
+    pub fn orchestrator(&self, flow: &str) -> Option<&RoleName> {
+        self.flows
+            .iter()
+            .find(|(name, _)| name.as_str() == flow)
+            .map(|(_, definition)| &definition.orchestrator)
     }
 
     /// The flows the flavor defines (`workflow/<flow>.yaml`), in name order.
@@ -375,7 +386,7 @@ fn parse_definition(
     let fields = fields(
         doc,
         "",
-        &["flow", "initial", "states", "transitions"],
+        &["flow", "orchestrator", "initial", "states", "transitions"],
         report,
     )?;
     let before = report.count();
@@ -390,6 +401,24 @@ fn parse_definition(
             },
         );
     }
+    let orchestrator = required_string(fields, "orchestrator", "", report).and_then(|raw| {
+        match RoleName::parse(raw) {
+            Ok(role) => match catalog {
+                Some(catalog) if !catalog.roles.is_empty() && !catalog.roles.contains(&role) => {
+                    report.push(
+                        "orchestrator",
+                        Problem::UndeclaredOrchestrator(raw.to_owned()),
+                    );
+                    None
+                }
+                _ => Some(role),
+            },
+            Err(err) => {
+                report.push("orchestrator", Problem::InvalidRole(err.to_string()));
+                None
+            }
+        }
+    });
     let states = parse_states(fields.get("states"), report);
     let initial = required_string(fields, "initial", "", report);
     if let Some(initial) = initial
@@ -418,6 +447,7 @@ fn parse_definition(
         return None;
     }
     Some(Definition {
+        orchestrator: orchestrator?,
         initial: StateName::new(initial?),
         transitions,
     })
@@ -591,6 +621,7 @@ effects:
 
     const FLOW: &str = "\
 flow: work
+orchestrator: builder
 initial: start
 states: [start, building]
 transitions:
@@ -640,6 +671,31 @@ transitions:
         let dir = flavor_dir(&[]);
         let err = Flavor::load(&dir.path().join("absent")).unwrap_err();
         assert!(matches!(err, FlavorError::Unreadable { .. }));
+    }
+
+    #[test]
+    fn every_flow_declares_an_orchestrator_role_from_roles() {
+        let template = ("templates/build.md", "x");
+        let actions = ("actions.yaml", ACTIONS);
+        let without = FLOW.replace("orchestrator: builder\n", "");
+        assert_eq!(
+            findings(&[actions, ("work.yaml", &without), template]),
+            ["work.yaml: required key `orchestrator` is missing"]
+        );
+        let undeclared = FLOW.replace("orchestrator: builder", "orchestrator: integrator");
+        assert_eq!(
+            findings(&[actions, ("work.yaml", &undeclared), template]),
+            [
+                "work.yaml: orchestrator: orchestrator role `integrator` is not declared under `roles` in actions.yaml"
+            ]
+        );
+        let dir = flavor_dir(&[actions, ("work.yaml", FLOW), template]);
+        let flavor = Flavor::load(dir.path()).unwrap();
+        assert_eq!(
+            flavor.orchestrator("work").map(RoleName::as_str),
+            Some("builder")
+        );
+        assert_eq!(flavor.orchestrator("prepare"), None);
     }
 
     #[test]
@@ -723,6 +779,7 @@ effects:
     fn every_definition_reference_must_resolve() {
         let flow = "\
 flow: prepare
+orchestrator: builder
 initial: begin
 states: [start, building, start]
 transitions:

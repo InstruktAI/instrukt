@@ -92,6 +92,21 @@ fn prepared_feature() -> Facts {
 // ---- prepare ----
 
 #[test]
+fn each_flow_names_its_lane_orchestrator() {
+    let flavor = sdlc();
+    let orchestrator = |flow| {
+        flavor
+            .orchestrator(flow)
+            .map(|role| role.as_str().to_owned())
+    };
+    assert_eq!(
+        orchestrator("prepare").as_deref(),
+        Some("prepare-orchestrator")
+    );
+    assert_eq!(orchestrator("work").as_deref(), Some("work-orchestrator"));
+}
+
+#[test]
 fn prepare_routes_each_kind_to_its_first_derivation() {
     for (kind, expected) in [
         ("feature", ("prd_drafting", "draft-prd")),
