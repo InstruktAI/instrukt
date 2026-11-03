@@ -236,6 +236,24 @@ fn a_file_the_engine_spells_differently_is_still_known() {
 
 // spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
+fn a_store_that_cannot_be_used_is_reported_not_answered_as_no_graph() {
+    let env = TestEnv::new();
+    let repo = project(&env, true);
+    let store_path = store(&env).dir().to_path_buf();
+    std::fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+    std::fs::write(&store_path, "not a store").unwrap();
+    let assert = env
+        .run(repo.path(), ["blueprint", "affected", "src/a.rs"])
+        .failure();
+    let output = assert.get_output();
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .replace(&env.home().display().to_string(), "[HOME]");
+    insta::assert_snapshot!(stderr, @"instrukt: cannot use the blueprint store of demo: [HOME]/.instrukt/state/blueprint/demo is not a directory; the blueprint store needs one there");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+#[test]
 fn with_the_module_off_the_command_refuses_and_names_the_switch() {
     let env = TestEnv::new();
     let repo = project(&env, false);

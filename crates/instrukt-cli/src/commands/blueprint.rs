@@ -137,7 +137,8 @@ fn path(ctx: &mut Ctx, root: Option<&Path>, from: &str, to: &str) -> anyhow::Res
 
 /// The project's latest graph with the repository root it answers for;
 /// `None` when there is none to answer from: outside a repository, without
-/// a project slug, with no graph yet, or with an unreadable one.
+/// a project slug, with no graph yet, or with an unreadable one. A store
+/// that cannot be used (not a directory, not readable) is an error.
 fn latest_graph(ctx: &Ctx, root: Option<&Path>) -> anyhow::Result<Option<(PathBuf, LatestGraph)>> {
     let Some(root) = root else {
         tracing::debug!(
@@ -158,6 +159,10 @@ fn latest_graph(ctx: &Ctx, root: Option<&Path>) -> anyhow::Result<Option<(PathBu
     match GraphStore::new(&ctx.home, &project).latest() {
         Ok(Some(latest)) => Ok(Some((root.to_path_buf(), latest))),
         Ok(None) => Ok(None),
+        Err(err) if !err.is_unreadable_graph() => {
+            Err(anyhow::Error::new(err)
+                .context(format!("cannot use the blueprint store of {project}")))
+        }
         Err(err) => {
             tracing::warn!(
                 event = "blueprint_graph_unreadable",

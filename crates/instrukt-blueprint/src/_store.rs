@@ -79,8 +79,24 @@ pub enum StoreError {
         sha: CommitSha,
         source: ContractError,
     },
+    #[error("{path} is not a directory; the blueprint store needs one there")]
+    NotADirectory { path: PathBuf },
     #[error(transparent)]
     Fs(#[from] FsError),
+}
+
+impl StoreError {
+    /// Whether the error is about the latest graph itself — its pointer or
+    /// its file missing or not satisfying the contract — rather than about
+    /// storage that cannot be used. The spec answers the former as "no
+    /// graph"; the latter is a failure to report.
+    pub fn is_unreadable_graph(&self) -> bool {
+        match self {
+            Self::Contract { .. } | Self::Pointer { .. } => true,
+            Self::Read { source, .. } => source.kind() == io::ErrorKind::NotFound,
+            Self::Write { .. } | Self::NotADirectory { .. } | Self::Fs(_) => false,
+        }
+    }
 }
 
 /// The latest complete graph and the revision it reflects.
@@ -131,18 +147,12 @@ impl GraphStore {
         &self.dir
     }
 
-    /// The latest complete graph; `None` when the project has none yet. An
-    /// error means a pointer or graph exists but cannot be read or does not
-    /// satisfy the contract.
+    /// The latest complete graph; `None` when the project has none yet (no
+    /// store, or a store without a pointer). An error means the store cannot
+    /// be used, or a pointer exists whose graph cannot be read or does not
+    /// satisfy the contract ([`StoreError::is_unreadable_graph`]).
     pub fn latest(&self) -> Result<Option<LatestGraph>, StoreError> {
-        self.latest_with(|| {})
-    }
-
-    /// [`Self::latest`], running `resolved` after the pointer is read and
-    /// before the graph it names is opened — the window pruning must not
-    /// enter. Tests use it to force interleavings.
-    fn latest_with(&self, resolved: impl FnOnce()) -> Result<Option<LatestGraph>, StoreError> {
-        if !self.dir.is_dir() {
+        if !self.store_exists()? {
             return Ok(None);
         }
         let (sha, mut file, path) = {
@@ -151,7 +161,6 @@ impl GraphStore {
             let Some(pointer) = self.pointer()? else {
                 return Ok(None);
             };
-            resolved();
             let path = self.graph_file(&pointer.latest);
             let file = std::fs::File::open(&path).map_err(|source| StoreError::Read {
                 path: path.clone(),
@@ -170,11 +179,31 @@ impl GraphStore {
     }
 
     /// Whether a complete graph of `sha` is stored: present, readable and
-    /// satisfying the contract.
-    pub fn has_graph(&self, sha: &CommitSha) -> bool {
-        std::fs::read(self.graph_file(sha))
-            .ok()
-            .is_some_and(|bytes| Graph::from_json(&bytes).is_ok())
+    /// satisfying the contract. A missing or contract-breaking graph is
+    /// `false`; storage that cannot be read is an error.
+    pub fn has_graph(&self, sha: &CommitSha) -> Result<bool, StoreError> {
+        let path = self.graph_file(sha);
+        match std::fs::read(&path) {
+            Ok(bytes) => Ok(Graph::from_json(&bytes).is_ok()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(StoreError::Read { path, source }),
+        }
+    }
+
+    /// `false` only when the store's directory genuinely does not exist;
+    /// anything else at that path, or a failure to look, is an error.
+    fn store_exists(&self) -> Result<bool, StoreError> {
+        match std::fs::metadata(&self.dir) {
+            Ok(meta) if meta.is_dir() => Ok(true),
+            Ok(_) => Err(StoreError::NotADirectory {
+                path: self.dir.clone(),
+            }),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(StoreError::Read {
+                path: self.dir.clone(),
+                source,
+            }),
+        }
     }
 
     /// Makes `graph` the complete graph of `sha` and the latest graph, in
@@ -186,8 +215,10 @@ impl GraphStore {
     /// `Ok` means the pointer now names `sha`; `Err` means it is unchanged.
     /// Pruning failures after the swap are reported in [`Published`].
     pub fn publish(&self, sha: &CommitSha, graph: &Graph) -> Result<Published, StoreError> {
+        // Refuse storage that is not a directory before creating anything.
+        self.store_exists()?;
         let _lock = LockGuard::acquire(&self.dir.join(LOCK_FILE), PUBLISH_LOCK_TIMEOUT)?;
-        if !self.has_graph(sha) {
+        if !self.has_graph(sha)? {
             self.write_complete(sha, graph)?;
         }
         let previous = match self.pointer() {
@@ -224,20 +255,16 @@ impl GraphStore {
         })?;
         let staging = self.dir.join(format!("{STAGING_PREFIX}{sha}"));
         let target = self.dir.join(sha.as_str());
-        if staging.exists() {
-            // Left behind by an interrupted publication; we hold the lock.
-            std::fs::remove_dir_all(&staging).map_err(write(&staging))?;
-        }
+        // Left behind by an interrupted publication; we hold the lock.
+        remove_if_present(&staging)?;
         std::fs::create_dir_all(&staging).map_err(write(&staging))?;
         let file_path = staging.join(GRAPH_FILE);
         let mut file = std::fs::File::create(&file_path).map_err(write(&file_path))?;
         file.write_all(&bytes).map_err(write(&file_path))?;
         file.sync_all().map_err(write(&file_path))?;
         drop(file);
-        if target.exists() {
-            // A directory without a complete graph is not a graph.
-            std::fs::remove_dir_all(&target).map_err(write(&target))?;
-        }
+        // A directory without a complete graph is not a graph.
+        remove_if_present(&target)?;
         std::fs::rename(&staging, &target).map_err(write(&target))?;
         Ok(())
     }
@@ -325,6 +352,14 @@ impl GraphStore {
     }
 }
 
+/// Removes the directory at `path`; one that does not exist is fine.
+fn remove_if_present(path: &Path) -> Result<(), StoreError> {
+    match std::fs::remove_dir_all(path) {
+        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(write(path)(err)),
+        _ => Ok(()),
+    }
+}
+
 fn write(path: &Path) -> impl Fn(io::Error) -> StoreError + '_ {
     move |source| StoreError::Write {
         path: path.to_path_buf(),
@@ -387,8 +422,8 @@ mod tests {
         let latest = store.latest().unwrap().unwrap();
         assert_eq!(latest.sha, sha('a'));
         assert_eq!(latest.graph.nodes()[0].id, "first");
-        assert!(store.has_graph(&sha('a')));
-        assert!(!store.has_graph(&sha('b')));
+        assert!(store.has_graph(&sha('a')).unwrap());
+        assert!(!store.has_graph(&sha('b')).unwrap());
     }
 
     #[test]
@@ -454,7 +489,7 @@ mod tests {
         let stray = store.dir().join(sha('b').as_str());
         std::fs::create_dir_all(&stray).unwrap();
         std::fs::write(stray.join("graph.json"), b"[]").unwrap();
-        assert!(!store.has_graph(&sha('b')));
+        assert!(!store.has_graph(&sha('b')).unwrap());
 
         publish_ok(&store, &sha('b'), &graph("b"));
         let latest = store.latest().unwrap().unwrap();
@@ -493,39 +528,68 @@ mod tests {
     }
 
     #[test]
-    fn a_reader_racing_two_publications_gets_the_old_graph_not_an_error() {
+    fn a_graph_stays_readable_while_a_reader_holds_the_prune_lock() {
         let (_dir, store) = store();
         publish_ok(&store, &sha('a'), &graph("a"));
+        publish_ok(&store, &sha('b'), &graph("b"));
+        // A reader between reading the pointer (naming `a` before `b` was
+        // published, say) and opening its graph holds this lock shared.
+        let reader = SharedLockGuard::acquire(
+            &store.dir().join(PRUNE_LOCK_FILE),
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        // Publishing `c` would prune `a`.
         let publisher = store.clone();
-        let mut publications = None;
-        let read = store
-            .latest_with(|| {
-                // The reader has resolved `a`. Two publications follow; the
-                // second would prune `a`.
-                let handle = std::thread::spawn(move || {
-                    publish_ok(&publisher, &sha('b'), &graph("b"));
-                    publish_ok(&publisher, &sha('c'), &graph("c"));
-                });
-                // Wait (bounded) until the first publication has swapped the
-                // pointer: it now waits to prune behind the reader.
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-                while store.pointer().unwrap().unwrap().latest != sha('b') {
-                    assert!(std::time::Instant::now() < deadline, "publication stalled");
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                // Both publications finish once the reader has opened its
-                // graph; joined below.
-                publications = Some(handle);
-            })
-            .unwrap()
-            .unwrap();
-        publications.unwrap().join().unwrap();
+        let publication = std::thread::spawn(move || publisher.publish(&sha('c'), &graph("c")));
 
-        assert_eq!(read.sha, sha('a'));
-        assert_eq!(read.graph.nodes()[0].id, "a");
-        // Both publications completed and `a` was pruned after the read.
-        assert_eq!(store.latest().unwrap().unwrap().sha, sha('c'));
-        assert!(!store.dir().join(sha('a').as_str()).exists());
+        // The swap is not held up by readers: `c` becomes the latest graph.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while store.latest().unwrap().map(|latest| latest.sha) != Some(sha('c')) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the publication never swapped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Pruning waits behind the reader: `a` is still a complete graph.
+        assert!(store.has_graph(&sha('a')).unwrap());
+        assert!(!publication.is_finished());
+
+        drop(reader);
+        let published = publication.join().unwrap().unwrap();
+        assert!(published.cleanup_failures.is_empty(), "{published:?}");
+        assert!(!store.has_graph(&sha('a')).unwrap());
+        assert_eq!(
+            shas_on_disk(&store),
+            [sha('b').to_string(), sha('c').to_string()]
+        );
+    }
+
+    #[test]
+    fn a_file_where_the_store_belongs_is_an_error_not_an_empty_store() {
+        let (_dir, store) = store();
+        std::fs::create_dir_all(store.dir().parent().unwrap()).unwrap();
+        std::fs::write(store.dir(), b"not a store").unwrap();
+        let latest = store.latest();
+        assert!(
+            matches!(latest, Err(StoreError::NotADirectory { .. })),
+            "{latest:?}"
+        );
+        assert!(!latest.unwrap_err().is_unreadable_graph());
+        let published = store.publish(&sha('a'), &graph("a"));
+        assert!(
+            matches!(published, Err(StoreError::NotADirectory { .. })),
+            "{published:?}"
+        );
+        // Above the store, a file makes the path itself unusable.
+        let (_dir, store) = self::store();
+        let state = store.dir().parent().unwrap().parent().unwrap();
+        std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+        std::fs::write(state, b"not a directory").unwrap();
+        let latest = store.latest();
+        assert!(matches!(latest, Err(StoreError::Read { .. })), "{latest:?}");
+        assert!(!latest.unwrap_err().is_unreadable_graph());
     }
 
     #[test]
