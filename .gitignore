@@ -1,3 +1,5 @@
 AGENTS.md
 /target
 /.claude/worktrees/
+*.pending-snap
+*.snap.new
