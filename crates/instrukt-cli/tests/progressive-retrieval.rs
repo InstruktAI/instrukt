@@ -376,14 +376,30 @@ fn refused_files() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Project `demo` with the procedures closures read and refuse, published.
+fn published_closures(env: &TestEnv) -> Repo {
+    let mut files = demo_files();
+    files.extend(refused_files());
+    let demo = project(env, "demo", &["acme", "beta"], &files);
+    sync(env, &demo);
+    demo
+}
+
+/// The refusal of the closure of `id`: nothing on stdout, the reason on
+/// stderr.
+fn refused_closure(env: &TestEnv, demo: &Repo, id: &str) -> String {
+    let refused = env
+        .run(demo.path(), ["docs", "get", "--closure", id])
+        .failure();
+    assert!(refused.get_output().stdout.is_empty(), "{id}");
+    stderr(env, &refused)
+}
+
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     let env = TestEnv::new();
-    let mut files = demo_files();
-    files.extend(refused_files());
-    let demo = project(&env, "demo", &["acme", "beta"], &files);
-    sync(&env, &demo);
+    let demo = published_closures(&env);
 
     // `start` requires `rules` and, through a fragment, `terms`; both
     // require `care`, which the closure holds once.
@@ -394,21 +410,46 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
         )
         .success();
     insta::assert_snapshot!("closure", stdout(&env, &closure));
+}
 
-    for (name, id) in [
-        ("closure-refused-pending", "acme/procedure/blocked"),
-        (
-            "closure-refused-pending-through-fragment",
-            "acme/procedure/blocked-through-fragment",
-        ),
-        ("closure-refused-unreadable", "acme/procedure/broken"),
-    ] {
-        let refused = env
-            .run(demo.path(), ["docs", "get", "--closure", id])
-            .failure();
-        assert!(refused.get_output().stdout.is_empty(), "{id}");
-        insta::assert_snapshot!(name, stderr(&env, &refused));
-    }
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+#[test]
+fn a_closure_whose_required_read_is_pending_is_refused_naming_it() {
+    let env = TestEnv::new();
+    let demo = published_closures(&env);
+    insta::assert_snapshot!(
+        "closure-refused-pending",
+        refused_closure(&env, &demo, "acme/procedure/blocked")
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+#[test]
+fn a_closure_whose_fragment_requires_a_pending_read_is_refused_naming_it() {
+    let env = TestEnv::new();
+    let demo = published_closures(&env);
+    insta::assert_snapshot!(
+        "closure-refused-pending-through-fragment",
+        refused_closure(&env, &demo, "acme/procedure/blocked-through-fragment")
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+#[test]
+fn a_closure_whose_required_read_cannot_be_read_is_refused_naming_it() {
+    let env = TestEnv::new();
+    let demo = published_closures(&env);
+    insta::assert_snapshot!(
+        "closure-refused-unreadable",
+        refused_closure(&env, &demo, "acme/procedure/broken")
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+#[test]
+fn a_closure_is_read_for_exactly_one_procedure() {
+    let env = TestEnv::new();
+    let demo = published_closures(&env);
 
     let two = env
         .run(
@@ -423,6 +464,13 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
         )
         .failure();
     insta::assert_snapshot!("closure-of-two-ids", stderr(&env, &two));
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+#[test]
+fn a_closure_is_read_only_for_a_procedure() {
+    let env = TestEnv::new();
+    let demo = published_closures(&env);
 
     let not_a_procedure = env
         .run(
@@ -509,4 +557,31 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         .run(demo.path(), ["docs", "get", "acme/procedure/fragile"])
         .failure();
     insta::assert_snapshot!("failed-command", stdout(&env, &failed));
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+#[test]
+fn a_fragment_path_climbing_out_of_the_published_fragments_is_refused() {
+    let env = TestEnv::new();
+    let climbing = snippet(
+        "policy",
+        "Climbing",
+        "Includes a fragment from outside the fragments.",
+        "",
+        &[],
+        "Before.\n\n<!-- @include: docs/snippets/../acme/policy/climbing.md -->\n",
+    );
+    let demo = project(
+        &env,
+        "demo",
+        &["acme"],
+        &[("docs/global/acme/policy/climbing.md", climbing)],
+    );
+    sync(&env, &demo);
+
+    let refused = env
+        .run(demo.path(), ["docs", "get", "acme/policy/climbing"])
+        .failure();
+    assert!(refused.get_output().stdout.is_empty());
+    insta::assert_snapshot!("fragment-climbing-out", stderr(&env, &refused));
 }

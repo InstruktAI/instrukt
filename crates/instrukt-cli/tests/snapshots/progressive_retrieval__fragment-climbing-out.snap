@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stderr(&env, &refused)"
+---
+instrukt: [TMP]/home/.instrukt/docs/snippets/../acme/policy/climbing.md lies outside the home's published tree or climbs out of it; documentation is read only inside it
