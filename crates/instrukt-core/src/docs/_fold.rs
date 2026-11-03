@@ -546,11 +546,11 @@ mod tests {
         let head = "---\ndescription: d\n---\n";
         let text = format!("{head}<!-- planned:a -->\n{ADDED}<!-- /planned:a -->\n{FOREIGN_BLOCK}");
         let out = fold_one(&text, "a").unwrap().unwrap();
-        // The addition's two marker lines are gone, its content and the
-        // other todo's block stay.
-        assert_eq!(out.lines().count(), text.lines().count() - 2);
-        assert_eq!(planned(&out), BTreeSet::from([slug("b")]));
-        assert_eq!(_markers::scan(split_frontmatter(&out).body).blocks.len(), 1);
+        // Lines: 0-2 frontmatter, 3 open a, 4 add, 5 close a, 6-8 b's block.
+        // The addition's marker lines go; its content and b's block stay.
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let kept: String = [0, 1, 2, 4, 6, 7, 8].iter().map(|i| lines[*i]).collect();
+        assert_eq!(out, kept);
     }
 
     fn write(root: &Path, rel: &str, text: &str) {

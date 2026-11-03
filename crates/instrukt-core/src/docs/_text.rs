@@ -325,17 +325,9 @@ pub(super) fn references(lines: &[Line<'_>]) -> Vec<RawRef> {
 pub enum Directive {
     /// `<!-- @include: <path> -->` — the fragment path as written
     /// (`docs/snippets/<name>.md`).
-    Include {
-        path: String,
-        span: Range<usize>,
-        argument: Range<usize>,
-    },
+    Include { path: String, span: Range<usize> },
     /// `<!-- @exec: <command> -->` — the command as written.
-    Exec {
-        command: String,
-        span: Range<usize>,
-        argument: Range<usize>,
-    },
+    Exec { command: String, span: Range<usize> },
 }
 
 impl Directive {
@@ -344,16 +336,6 @@ impl Directive {
     pub fn span(&self) -> Range<usize> {
         match self {
             Directive::Include { span, .. } | Directive::Exec { span, .. } => span.clone(),
-        }
-    }
-
-    /// The byte range of the argument (path or command) in the body it was
-    /// read from: exactly the source bytes the argument holds.
-    pub fn argument_span(&self) -> Range<usize> {
-        match self {
-            Directive::Include { argument, .. } | Directive::Exec { argument, .. } => {
-                argument.clone()
-            }
         }
     }
 }
@@ -379,20 +361,15 @@ pub(super) fn directives(lines: &[Line<'_>]) -> Vec<Directive> {
             if argument.is_empty() {
                 continue;
             }
-            let lead = (inner.len() - padded.len()) + prefix + (raw.len() - raw.trim_start().len());
-            let start = line.span.start + comment.inner.start + lead;
-            let argument_span = start..start + argument.len();
             let span = line.span.start + comment.whole.start..line.span.start + comment.whole.end;
             out.push(match kind {
                 "include" => Directive::Include {
                     path: argument.to_owned(),
                     span,
-                    argument: argument_span,
                 },
                 _ => Directive::Exec {
                     command: argument.to_owned(),
                     span,
-                    argument: argument_span,
                 },
             });
         }
@@ -462,8 +439,9 @@ mod tests {
         // must not shorten it.
         let body = "<!-- @exec: echo `date` -->\n";
         let found = directives(&lines(body));
-        assert!(matches!(&found[..], [Directive::Exec { .. }]));
-        assert_eq!(found[0].argument_span(), 12..23);
+        assert!(
+            matches!(&found[..], [Directive::Exec { command, .. }] if command.as_str() == &body[12..23])
+        );
         assert_eq!(found[0].span(), 0..27);
     }
 
@@ -477,7 +455,9 @@ mod tests {
             [Directive::Exec { .. }, Directive::Include { .. }]
         ));
         assert_eq!(found[0].span(), 2..39);
-        assert_eq!(found[1].argument_span(), 76..94);
+        assert!(
+            matches!(&found[1], Directive::Include { path, .. } if path.as_str() == &body[76..94])
+        );
     }
 
     #[test]
