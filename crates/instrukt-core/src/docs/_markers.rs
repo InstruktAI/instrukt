@@ -135,6 +135,35 @@ fn markers(body: &str) -> (Vec<Marker>, Vec<Problem>) {
     (found, problems)
 }
 
+/// `body` with the slug of every live marker naming `from` rewritten to
+/// `to`; everything else, padding inside the markers included, is kept.
+pub(super) fn rename(body: &str, from: &TodoSlug, to: &TodoSlug) -> String {
+    let mut out = String::with_capacity(body.len());
+    for raw in body.split_inclusive('\n') {
+        let line = raw.trim_end_matches(['\n', '\r']);
+        let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
+        for comment in visible_comments(line) {
+            let inner = &line[comment.inner.clone()];
+            let Some((_, _, slug)) = parse_marker(inner) else {
+                continue;
+            };
+            if slug != from.as_str() {
+                continue;
+            }
+            let end = comment.inner.start + inner.trim_end_matches([' ', '\t']).len();
+            cuts.push(end - slug.len()..end);
+        }
+        let mut at = 0;
+        for cut in cuts {
+            out.push_str(&raw[at..cut.start]);
+            out.push_str(to.as_str());
+            at = cut.end;
+        }
+        out.push_str(&raw[at..]);
+    }
+    out
+}
+
 #[derive(Debug)]
 enum Open {
     Addition(Marker),
