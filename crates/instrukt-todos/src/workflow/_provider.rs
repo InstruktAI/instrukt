@@ -128,6 +128,10 @@ pub(crate) struct Observations {
     /// version's recorded grounding shows against current evidence; an
     /// artifact without an entry shows no grounding change.
     pub grounding: std::collections::BTreeMap<String, GroundingChange>,
+    /// For each tracked artifact whose latest drift judgment recorded the
+    /// grounding it assessed, what that grounding shows now; a cosmetic
+    /// judgment holds only while it shows no change.
+    pub judged_grounding: std::collections::BTreeMap<String, GroundingChange>,
 }
 
 /// What a version's recorded grounding shows now (`artifact-currency`,
@@ -587,7 +591,11 @@ fn drift(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Res
                 let upstream_changed = upstream_of(name)
                     .iter()
                     .any(|upstream| ledger.rewritten_after(upstream, at));
-                Some(if upstream_changed {
+                let assessed_changed = observed
+                    .judged_grounding
+                    .get(name)
+                    .is_some_and(|change| change.drifted());
+                Some(if upstream_changed || assessed_changed {
                     member::PENDING
                 } else {
                     member::COSMETIC
@@ -1357,6 +1365,7 @@ mod tests {
             unreviewed_claim_commits: vec![sha('c')],
             reviewed_change: None,
             grounding: Default::default(),
+            judged_grounding: Default::default(),
         };
         let facts = facts_of(&todo(TodoKind::Change).build(), &observed);
         assert_eq!(get(&facts, "worktree.exists").cloned(), yes());
@@ -1776,6 +1785,64 @@ mod tests {
         assert_eq!(
             get(&facts, "drift.implementation_plan"),
             Some(&value(member::COSMETIC))
+        );
+    }
+
+    // ---- the evidence a cosmetic judgment assessed ----
+
+    /// A grounded plan whose code changed since it was written, judged
+    /// cosmetic; `since_judgment` is what the judgment's recorded grounding
+    /// shows now.
+    fn judged_plan(since_judgment: GroundingChange) -> (TodoEvidence, Observations) {
+        let evidence = grounded_plan()
+            .stamp(cosmetic(artifact_names::IMPLEMENTATION_PLAN))
+            .build();
+        let mut observed = plan_grounding(GroundingChange {
+            code: CodeChange::Changed,
+            ..GroundingChange::default()
+        });
+        observed.judged_grounding = [(
+            artifact_names::IMPLEMENTATION_PLAN.to_owned(),
+            since_judgment,
+        )]
+        .into_iter()
+        .collect();
+        (evidence, observed)
+    }
+
+    #[test]
+    fn a_cosmetic_judgment_holds_while_its_assessed_evidence_matches() {
+        let (evidence, observed) = judged_plan(GroundingChange::default());
+        let facts = facts_of(&evidence, &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::COSMETIC))
+        );
+    }
+
+    #[test]
+    fn a_code_change_after_a_cosmetic_judgment_is_pending_again() {
+        let (evidence, observed) = judged_plan(GroundingChange {
+            code: CodeChange::Changed,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&evidence, &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
+        );
+    }
+
+    #[test]
+    fn a_snippet_change_after_a_cosmetic_judgment_is_pending_again() {
+        let (evidence, observed) = judged_plan(GroundingChange {
+            snippets: true,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&evidence, &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
         );
     }
 }

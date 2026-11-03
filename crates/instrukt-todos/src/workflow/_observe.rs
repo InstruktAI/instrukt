@@ -19,7 +19,7 @@ use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
 use instrukt_core::repository::{self, RepositoryError};
 
-use crate::evidence::{ContentDigest, Grounding, TodoEvidence};
+use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
 
 use super::_provider::{
     ChangeSinceReview, CodeChange, DRIFT_FACTS, GroundingChange, Observations, WorktreeObservation,
@@ -83,7 +83,7 @@ pub(crate) fn observe(
         }
         _ => None,
     };
-    let grounding = grounding(home, project_root, evidence, prerequisites)?;
+    let (grounding, judged_grounding) = grounding(home, project_root, evidence, prerequisites)?;
     Ok(Observations {
         worktree,
         branch_head,
@@ -91,6 +91,7 @@ pub(crate) fn observe(
         unreviewed_claim_commits,
         reviewed_change,
         grounding,
+        judged_grounding,
     })
 }
 
@@ -274,11 +275,18 @@ fn grounding(
     project_root: &Path,
     evidence: &TodoEvidence,
     prerequisites: &[TodoEvidence],
-) -> Result<BTreeMap<String, GroundingChange>, ObservationError> {
+) -> Result<(Changes, Changes), ObservationError> {
     let main = git::default_branch(project_root, REMOTE)?;
     let canonical = resolve(project_root, &format!("refs/remotes/{REMOTE}/{main}"))?;
-    let mut corpus: Option<Corpus> = None;
-    let mut out = BTreeMap::new();
+    let mut reader = Current {
+        home,
+        project_root,
+        canonical,
+        corpus: None,
+        prerequisites,
+    };
+    let mut versions = BTreeMap::new();
+    let mut judged = BTreeMap::new();
     for (name, _) in DRIFT_FACTS {
         let Some(version) = evidence
             .artifacts
@@ -288,25 +296,63 @@ fn grounding(
         else {
             continue;
         };
-        let recorded = &version.grounding;
-        let code = code_change(project_root, recorded, canonical.as_ref());
+        versions.insert((*name).to_owned(), reader.change(&version.grounding)?);
+        // The evidence the latest drift judgment of the artifact assessed,
+        // when it recorded any.
+        let assessed = evidence
+            .stamps
+            .iter()
+            .rev()
+            .find_map(|stamp| match &stamp.fact {
+                StampFact::DriftReviewed {
+                    artifact,
+                    grounding,
+                    ..
+                } if artifact.as_str() == name => Some(grounding),
+                _ => None,
+            });
+        if let Some(assessed) = assessed.filter(|g| **g != Grounding::default()) {
+            judged.insert((*name).to_owned(), reader.change(assessed)?);
+        }
+    }
+    Ok((versions, judged))
+}
+
+/// What recorded grounding shows now, by tracked artifact name.
+type Changes = BTreeMap<String, GroundingChange>;
+
+/// Current evidence, read once per call, to compare recorded grounding
+/// with.
+struct Current<'a> {
+    home: &'a Home,
+    project_root: &'a Path,
+    canonical: Option<CommitSha>,
+    corpus: Option<Corpus>,
+    prerequisites: &'a [TodoEvidence],
+}
+
+impl Current<'_> {
+    /// What `recorded` shows against current evidence.
+    fn change(&mut self, recorded: &Grounding) -> Result<GroundingChange, ObservationError> {
+        let code = code_change(self.project_root, recorded, self.canonical.as_ref());
         let mut snippets = false;
         for snippet in recorded
             .referenced_snippets
             .iter()
             .chain(&recorded.owned_snippets)
         {
-            if corpus.is_none() {
-                corpus = Some(Corpus::load(project_root, home)?);
+            if self.corpus.is_none() {
+                self.corpus = Some(Corpus::load(self.project_root, self.home)?);
             }
-            let current = match &corpus {
-                Some(corpus) => snippet_digest(home, project_root, corpus, &snippet.id)?,
+            let current = match &self.corpus {
+                Some(corpus) => snippet_digest(self.home, self.project_root, corpus, &snippet.id)?,
                 None => None,
             };
             snippets |= current != snippet.digest;
         }
         let dependencies = recorded.dependencies.iter().any(|dependency| {
-            let current = prerequisites
+            let current = self
+                .prerequisites
                 .iter()
                 .find(|todo| todo.slug == dependency.todo)
                 .and_then(|todo| {
@@ -318,16 +364,12 @@ fn grounding(
                 .map(|version| &version.digest);
             current != dependency.digest.as_ref()
         });
-        out.insert(
-            (*name).to_owned(),
-            GroundingChange {
-                code,
-                snippets,
-                dependencies,
-            },
-        );
+        Ok(GroundingChange {
+            code,
+            snippets,
+            dependencies,
+        })
     }
-    Ok(out)
 }
 
 /// Whether a non-merge commit between the recorded canonical head and the
