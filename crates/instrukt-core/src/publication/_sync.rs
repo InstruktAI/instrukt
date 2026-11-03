@@ -13,7 +13,7 @@ use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
 use super::_tree::{self, BUNDLE_FILE, Outputs, PublisherRecord};
 use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
-use crate::config::{self, Configuration, Layer, Module};
+use crate::config::{self, ConfigError, Configuration, Layer, Module};
 use crate::docs::{self, Corpus, ExecPolicy, Finding, ValidationRequest};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::home::Home;
@@ -82,9 +82,6 @@ pub enum SyncOutcome {
     Published {
         project: ProjectSlug,
         commit: CommitSha,
-        /// The replaced publication's copy that could not be removed; a
-        /// later sync removes it.
-        leftover: Option<PathBuf>,
     },
     /// Main equals the published commit; nothing changed.
     Unchanged {
@@ -99,13 +96,26 @@ pub enum SyncOutcome {
     },
 }
 
+/// What a sync did, and the leftovers it could not remove.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncReport {
+    pub outcome: SyncOutcome,
+    /// Copies of replaced or interrupted publications still in the home:
+    /// every sync removes those it can, and a later sync tries the rest
+    /// again. They are not part of the published corpus.
+    pub leftovers: Vec<PathBuf>,
+}
+
 /// Publishes the project `request.cwd` stands in from the committed state
 /// of its canonical main, under the docs lock. A refused or failed sync
-/// leaves the previous publication in place and records no commit.
-pub fn sync(request: &SyncRequest<'_>) -> Result<SyncOutcome, PublicationError> {
+/// leaves the previous publication in place and records no commit. Every
+/// sync, the no-op included, first removes the leftovers earlier syncs
+/// could not.
+pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, PublicationError> {
     let started = Instant::now();
     let project = _source::locate(request.cwd)?;
     let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)?;
+    let mut leftovers = sweep(request.home.root())?;
     let (branch, commit) = _source::canonical_main(&project.primary)?;
     let previous = PublishedRecord::load(request.home, &project.slug)?;
     let outcome = if !request.force && previous.is_some_and(|r| r.commit == commit) {
@@ -114,7 +124,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncOutcome, PublicationError> 
             commit: commit.clone(),
         }
     } else {
-        publish(request, &project, &commit)?
+        publish(request, &project, &commit, &mut leftovers)?
     };
     let label = match &outcome {
         SyncOutcome::Published { .. } => "published",
@@ -128,9 +138,10 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncOutcome, PublicationError> 
         commit = %commit,
         forced = request.force,
         outcome = label,
+        leftovers = leftovers.len(),
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
-    Ok(outcome)
+    Ok(SyncReport { outcome, leftovers })
 }
 
 /// Everything a sync computed before it writes anything.
@@ -155,6 +166,7 @@ fn publish(
     request: &SyncRequest<'_>,
     project: &Project,
     commit: &CommitSha,
+    leftovers: &mut Vec<PathBuf>,
 ) -> Result<SyncOutcome, PublicationError> {
     let home = request.home;
     config::migrate(home, &Layer::Global)?;
@@ -168,8 +180,16 @@ fn publish(
             source,
         })?;
     committed.materialize(checkout.path())?;
-    config::migrate(home, &Layer::Project(checkout.path().to_path_buf()))?;
-    let committed_slug = config::project_slug(checkout.path())?;
+    // The committed layer is migrated in the temporary checkout only when
+    // it needs it: migration takes a lock named after the layer's path, and
+    // a fresh checkout path would leave a new lock file per sync.
+    let committed_slug = match config::project_slug(checkout.path()) {
+        Err(ConfigError::OlderSchema { .. }) => {
+            config::migrate(home, &Layer::Project(checkout.path().to_path_buf()))?;
+            config::project_slug(checkout.path())?
+        }
+        other => other?,
+    };
     if committed_slug.as_ref() != Some(&project.slug) {
         return Err(PublicationError::SlugMismatch {
             committed: committed_slug.map(|s| s.to_string()).unwrap_or_default(),
@@ -281,16 +301,14 @@ fn publish(
         entrypoints,
         settings,
     };
-    refuse_links(home, project, &prepared)?;
-    sweep(home.root())?;
+    preflight(home, project, commit, &prepared)?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, &prepared, &mut tx) {
         Ok(()) => {
-            let leftover = tx.commit();
+            leftovers.extend(tx.commit());
             Ok(SyncOutcome::Published {
                 project: project.slug.clone(),
                 commit: commit.clone(),
-                leftover,
             })
         }
         Err(err) => {
@@ -300,14 +318,18 @@ fn publish(
     }
 }
 
-/// Refuses the sync before anything is written when a location the
-/// repository or instrukt controls — a compiled output in the project, one
-/// recorded for retraction, or a published domain, the index or the
-/// project's records in the home — is, or lies behind, a symbolic link.
-/// The writes check again; this makes the refusal precede every write.
-fn refuse_links(
+/// Checks every location the sync will write or remove, before the first
+/// write. A location the repository or instrukt controls — a compiled
+/// output in the project or one recorded for retraction; in the home a
+/// published domain, a fragment, a third-party doc, the index, the eval
+/// fingerprint records, the outputs record or the published record — that
+/// is, or lies behind, a symbolic link refuses the sync. An agent-CLI file
+/// in the user's home whose link leads nowhere does too. The writes check
+/// again as a backstop.
+fn preflight(
     home: &Home,
     project: &Project,
+    commit: &CommitSha,
     prepared: &Prepared,
 ) -> Result<(), PublicationError> {
     let previous = Outputs::load(home, &project.slug)?;
@@ -319,16 +341,46 @@ fn refuse_links(
     {
         confined(&project.primary, rel)?;
     }
+    let user_home = home.user_home();
+    for rel in prepared
+        .entrypoints
+        .iter()
+        .map(|(rel, _)| rel)
+        .chain(prepared.settings.iter().map(|(rel, _)| rel))
+        .chain(&previous.entrypoints)
+    {
+        resolved(user_home, rel)?;
+    }
     let root = home.root();
+    let mine = |owner: &ProjectSlug| owner == &project.slug;
     let domains = prepared.publishes.iter().map(|p| &p.domain).chain(
         prepared
             .publishers
             .iter()
-            .filter(|(_, record)| record.publisher == project.slug)
+            .filter(|(_, record)| mine(&record.publisher))
             .map(|(domain, _)| domain),
     );
     let mut targets: Vec<PathBuf> = domains.map(|d| home.domain_dir(d)).collect();
+    let docs = home.docs_dir();
+    for index in [&prepared.index, &prepared.patched] {
+        targets.extend(
+            index
+                .fragments
+                .iter()
+                .filter(|f| mine(&f.source_project))
+                .map(|f| docs.join(&f.path)),
+        );
+        targets.extend(
+            index
+                .third_party
+                .iter()
+                .filter(|d| mine(&d.source_project))
+                .map(|d| docs.join(&d.path)),
+        );
+    }
     targets.push(home.index_file());
+    targets.extend(_fingerprint::record_paths(home, commit));
+    targets.push(Outputs::record_path(home, &project.slug));
     targets.push(record_path(home, &project.slug));
     for target in targets {
         confined(root, &relative_to(root, &target)?)?;

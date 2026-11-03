@@ -338,11 +338,11 @@ pub(super) fn resolved(root: &Path, rel: &Path) -> Result<PathBuf, PublicationEr
 
 /// Deletes what earlier syncs left below `home_root` — trash a finished
 /// sync could not delete, staging an interrupted one never moved. Callers
-/// hold the docs lock. What cannot be deleted is reported and left.
-pub(super) fn sweep(home_root: &Path) -> Result<(), PublicationError> {
+/// hold the docs lock. What cannot be deleted is returned, sorted, and left.
+pub(super) fn sweep(home_root: &Path) -> Result<Vec<PathBuf>, PublicationError> {
     let entries = match std::fs::read_dir(home_root) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => {
             return Err(PublicationError::Io {
                 path: home_root.to_path_buf(),
@@ -350,6 +350,7 @@ pub(super) fn sweep(home_root: &Path) -> Result<(), PublicationError> {
             });
         }
     };
+    let mut kept = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| PublicationError::Io {
             path: home_root.to_path_buf(),
@@ -364,8 +365,10 @@ pub(super) fn sweep(home_root: &Path) -> Result<(), PublicationError> {
         }
         let path = entry.path();
         if let Err(error) = remove_any(&path) {
-            tracing::warn!(event = "sync_leftover_kept", path = %path.display(), %error);
+            tracing::debug!(event = "sync_leftover_kept", path = %path.display(), %error);
+            kept.push(path);
         }
     }
-    Ok(())
+    kept.sort();
+    Ok(kept)
 }

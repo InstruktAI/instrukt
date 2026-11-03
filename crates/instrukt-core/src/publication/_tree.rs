@@ -103,13 +103,13 @@ pub(super) struct Outputs {
 }
 
 impl Outputs {
-    fn path(home: &Home, project: &ProjectSlug) -> PathBuf {
+    pub(super) fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
         home.publication_outputs_dir()
             .join(format!("{}.yaml", project.as_str()))
     }
 
     pub(super) fn load(home: &Home, project: &ProjectSlug) -> Result<Self, PublicationError> {
-        let path = Self::path(home, project);
+        let path = Self::record_path(home, project);
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
@@ -125,6 +125,6 @@ impl Outputs {
         project: &ProjectSlug,
     ) -> Result<(PathBuf, Vec<u8>), PublicationError> {
         let text = serde_yaml_ng::to_string(self).map_err(PublicationError::Render)?;
-        Ok((Self::path(home, project), text.into_bytes()))
+        Ok((Self::record_path(home, project), text.into_bytes()))
     }
 }
