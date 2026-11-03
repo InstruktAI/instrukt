@@ -59,6 +59,10 @@ pub(crate) struct ReflectionState {
     /// Comment ids of inbound `/instrukt` commands already answered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands_seen: Vec<u64>,
+    /// `/instrukt` command comments the last pull found and no command has
+    /// answered yet; never stored.
+    #[serde(skip)]
+    pub inbound: Vec<serde_json::Value>,
     /// Local changes not yet reflected.
     #[serde(default)]
     pub pending: bool,

@@ -88,6 +88,29 @@ pub(crate) fn committed(comments: &[Value], id: &TodoId) -> Option<Committed> {
     head
 }
 
+/// The `/instrukt` command comments not yet answered.
+fn commands(comments: &[Value], seen: &[u64]) -> Vec<Value> {
+    comments
+        .iter()
+        .filter(|c| {
+            c["body"]
+                .as_str()
+                .is_some_and(|b| b.trim_start().starts_with(super::_inbound::COMMAND))
+                && c["id"].as_u64().is_some_and(|id| !seen.contains(&id))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Answers on the todo's issue.
+pub(crate) fn reply(gh: &GitHub, issue: IssueRef, text: &str) -> Result<(), GitHubError> {
+    gh.post(
+        &format!("/issues/{}/comments", issue.number),
+        &json!({ "body": text }),
+    )
+    .map(|_| ())
+}
+
 /// Whether two records hold the same committed state: a revision that
 /// already landed is recognized by its content, not by having seen the
 /// answer to the request that wrote it.
@@ -125,6 +148,7 @@ pub(crate) fn pull(
         Err(err) => return Err(err),
     };
     let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+    item.reflection.inbound = commands(&comments, &item.reflection.commands_seen);
     let Some(head) = committed(&comments, &item.record.id) else {
         item.reflection.etag = etag;
         return Ok(Pulled::Current);

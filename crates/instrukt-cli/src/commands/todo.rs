@@ -1202,6 +1202,21 @@ fn fact(fact: &StampFact) -> String {
                 .unwrap_or_default(),
             time(*occurrence)
         ),
+        StampFact::ChangesRequested {
+            gate,
+            target,
+            reason,
+        } => format!(
+            "changes requested on {}: {reason}{}",
+            match gate {
+                ApprovalGate::Prd => "prd",
+                ApprovalGate::Task => "task plan",
+            },
+            target
+                .as_ref()
+                .map(|t| format!(" — {t}"))
+                .unwrap_or_default()
+        ),
     }
 }
 

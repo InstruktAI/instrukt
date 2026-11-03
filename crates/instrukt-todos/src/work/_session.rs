@@ -14,13 +14,18 @@ use jiff::{SignedDuration, Timestamp};
 use super::_envelope::status_name as status_word;
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
+use super::_inbound;
 use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
 pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
 use super::_store::{self, IssueRef, LocalItem, Store};
 use super::Work;
-use crate::evidence::{Actor, ModelIdentity, ModelProvenance, TodoStatus};
+use crate::evidence::{
+    Actor, ApprovalGate, ApprovedBy, ModelIdentity, ModelProvenance, StampFact, StampRecord,
+    TodoStatus, artifact_names,
+};
 use instrukt_core::github;
+use instrukt_core::publication::EvalFingerprint;
 use instrukt_runner::sessions::Sessions;
 
 /// The fixed recovery window of withdrawn work.
@@ -280,6 +285,9 @@ impl<'w> Session<'w> {
         if self.items[index] != before {
             self.store.save(&self.items[index])?;
         }
+        if !self.items[index].reflection.conflicted && !newer {
+            self.answer_commands(index)?;
+        }
         if self.items[index].reflection.conflicted || newer {
             if newer {
                 tracing::debug!(
@@ -294,6 +302,148 @@ impl<'w> Session<'w> {
             });
         }
         Ok(())
+    }
+
+    /// Answers the approvers' `/instrukt` commands the last pull found on
+    /// item `index`'s issue (`github-record`, "Writer and convergence"). An
+    /// approval applies only when its digest prefix matches the gate's
+    /// current evidence, attributed to the approver's GitHub login; a
+    /// change request is recorded with its reason. A command from anyone not
+    /// in `github.approvers` with write access changes nothing. Every
+    /// command is answered on the issue, once.
+    fn answer_commands(&mut self, index: usize) -> Result<(), WorkError> {
+        let commands = std::mem::take(&mut self.items[index].reflection.inbound);
+        let Some(issue) = self.items[index].reflection.issue else {
+            return Ok(());
+        };
+        let approvers: Vec<String> = self
+            .config
+            .github_approvers()?
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        for comment in commands {
+            let Some(id) = comment["id"].as_u64() else {
+                continue;
+            };
+            let login = comment["user"]["login"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let answer = if !(approvers.contains(&login) && _reflect::has_write_access(&comment)) {
+                format!(
+                    "@{login}: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed."
+                )
+            } else {
+                match _inbound::parse(comment["body"].as_str().unwrap_or_default()) {
+                    Err(why) => format!("@{login}: {why}; nothing changed."),
+                    Ok(command) => self.apply_command(index, &login, command)?,
+                }
+            };
+            self.items[index].reflection.commands_seen.push(id);
+            self.store.save(&self.items[index])?;
+            let result = match &self.remote {
+                Remote::Client { gh, down: None } => Some(_reflect::reply(gh, issue, &answer)),
+                _ => None,
+            };
+            if let Some(Err(err)) = result {
+                self.note(err);
+            }
+        }
+        Ok(())
+    }
+
+    /// Records an approver's command; returns the answer for the issue.
+    fn apply_command(
+        &mut self,
+        index: usize,
+        login: &str,
+        command: _inbound::Command,
+    ) -> Result<String, WorkError> {
+        let record = &self.items[index].record;
+        if record.status != TodoStatus::Active {
+            return Ok(format!(
+                "@{login}: `{}` is not active work; nothing changed.",
+                record.slug
+            ));
+        }
+        let gate = match &command {
+            _inbound::Command::Approve { gate, .. }
+            | _inbound::Command::RequestChanges { gate, .. } => *gate,
+        };
+        let gate_name = match gate {
+            ApprovalGate::Prd => "prd",
+            ApprovalGate::Task => "task",
+        };
+        let evidence = match gate {
+            ApprovalGate::Prd => record.current_digest(artifact_names::PRD).cloned(),
+            ApprovalGate::Task => record.current_digest(artifact_names::TASK_PLAN).cloned(),
+        };
+        let (fact, answer) = match command {
+            _inbound::Command::Approve { prefix, .. } => {
+                let Some(current) = evidence else {
+                    return Ok(format!(
+                        "@{login}: there is no {gate_name} evidence to approve; nothing changed."
+                    ));
+                };
+                if !_inbound::digest_hex(&current).starts_with(&prefix) {
+                    return Ok(format!(
+                        "@{login}: the {gate_name} evidence changed since `{prefix}`; review it and approve the current one again: `/instrukt approve {gate_name} {}`. Nothing changed.",
+                        _inbound::shown(&current)
+                    ));
+                }
+                (
+                    StampFact::Approval {
+                        gate,
+                        by: ApprovedBy::Human,
+                        target: current.clone(),
+                        carried_from: None,
+                        reasoning: None,
+                    },
+                    format!(
+                        "@{login}: recorded your approval of {gate_name} `{}`.",
+                        _inbound::shown(&current)
+                    ),
+                )
+            }
+            _inbound::Command::RequestChanges { reason, .. } => (
+                StampFact::ChangesRequested {
+                    gate,
+                    target: evidence,
+                    reason,
+                },
+                format!("@{login}: recorded your change request on {gate_name}."),
+            ),
+        };
+        let now = self.now;
+        let actor = Actor::GitHub {
+            login: login.to_owned(),
+        };
+        let fingerprint = EvalFingerprint::current(self.work.home())?.map(|f| f.fingerprint);
+        self.commit("inbound command", |s| {
+            let record = &mut s.items[index].record;
+            let sequence = record.next_sequence();
+            record.stamps.push(StampRecord {
+                fact,
+                at: now,
+                actor,
+                model: None,
+                eval_fingerprint: fingerprint,
+                role: None,
+                human_involved: None,
+                sequence,
+                model_provenance: ModelProvenance::OutsideSession,
+            });
+            Ok(())
+        })?;
+        tracing::info!(
+            event = "work_inbound_command",
+            project = %self.project.slug,
+            todo = %self.items[index].record.slug,
+            login,
+            "an approver's command was recorded"
+        );
+        Ok(answer)
     }
 
     /// Pulls every local item, without refusing conflicted ones.

@@ -468,6 +468,14 @@ pub enum StampFact {
         result: TaskResult,
         reason: Option<String>,
     },
+    /// An approver's `/instrukt request-changes <prd|task> <reason>` on the
+    /// todo's issue (`github-record`, "Writer and convergence"): the gate's
+    /// evidence then, when it had any, and the reason.
+    ChangesRequested {
+        gate: ApprovalGate,
+        target: Option<ContentDigest>,
+        reason: String,
+    },
 }
 
 /// The held execution claim.

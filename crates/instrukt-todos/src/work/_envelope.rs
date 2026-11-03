@@ -48,13 +48,21 @@ impl IssueFields {
 /// The issue of `record`.
 pub(crate) fn issue(record: &TodoRecord) -> IssueFields {
     let mut lines = vec![format!("{ISSUE_MARKER}{}{COMMENT_CLOSE}", record.id)];
-    lines.push(format!(
-        "**Kind:** {} · **Status:** {}",
-        record.kind,
-        status_name(record.status)
-    ));
+    // The record's status, never a workflow phase.
+    let status = match (record.status, &record.hold) {
+        (TodoStatus::Active, Some(_)) => "held",
+        (TodoStatus::Removed, _) => "withdrawn",
+        (status, _) => status_name(status),
+    };
+    lines.push(format!("**Kind:** {} · **Status:** {status}", record.kind));
     if let Some(hold) = &record.hold {
         lines.push(format!("**On hold:** {}", hold.reason));
+    }
+    for (gate, digest) in open_gates(record) {
+        let shown = super::_inbound::shown(&digest);
+        lines.push(format!(
+            "**Awaiting approval:** {gate} `{shown}` — an approver approves it with `/instrukt approve {gate} {shown}`"
+        ));
     }
     if let Some(group) = &record.group {
         lines.push(format!("**Group:** {}", group.slug));
@@ -180,6 +188,33 @@ pub(crate) fn artifact_type(name: &str) -> &'static str {
         artifact_names::IMPLEMENTATION_PLAN | artifact_names::TASK_PLAN => "plan",
         _ => "generic",
     }
+}
+
+/// The approval gates whose current evidence no approval binds yet: a
+/// prd's, and a task's plan.
+fn open_gates(record: &TodoRecord) -> Vec<(&'static str, crate::evidence::ContentDigest)> {
+    use crate::evidence::{ApprovalGate, StampFact};
+    let approved = |gate: ApprovalGate, digest: &crate::evidence::ContentDigest| {
+        record.stamps.iter().any(|s| {
+            matches!(&s.fact, StampFact::Approval { gate: g, target, .. } if *g == gate && target == digest)
+        })
+    };
+    let mut open = Vec::new();
+    if record.status != TodoStatus::Active {
+        return open;
+    }
+    if let Some(prd) = record.current_digest(artifact_names::PRD)
+        && !approved(ApprovalGate::Prd, prd)
+    {
+        open.push(("prd", prd.clone()));
+    }
+    if record.kind == TodoKind::Task
+        && let Some(plan) = record.current_digest(artifact_names::TASK_PLAN)
+        && !approved(ApprovalGate::Task, plan)
+    {
+        open.push(("task", plan.clone()));
+    }
+    open
 }
 
 pub(crate) fn status_name(status: TodoStatus) -> &'static str {
