@@ -10,9 +10,9 @@
 //! engine's typed facts. The types carry recorded evidence only — no
 //! currency, drift or readiness judgment, which are workflow's.
 //!
-//! Ownership for wave 3: the work builder owns this file and implements the
-//! trait; the workflow builder reads it. Changes are additive and
-//! announced, so the fact provider never meets a renamed field.
+//! The work context owns this contract and implements it; the workflow
+//! context consumes it. It changes only additively, so the fact provider
+//! never meets a renamed or removed field.
 
 use std::path::PathBuf;
 

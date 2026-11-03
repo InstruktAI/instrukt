@@ -3,10 +3,11 @@
 //! artifacts`), with workflow's `prepare|work` flattened in from
 //! [`todo_flow`] (`docs/local/spec/feature/work/`).
 //!
-//! The work builder owns this file; the workflow builder owns
-//! `todo_flow.rs`. The one-line abouts below appear in the `todo --help`
-//! snapshot. The `modules.todos` refusal that names its door covers the
-//! whole namespace and runs in [`run`], before dispatch.
+//! These subcommands translate between the command line and the work
+//! context; `todo_flow.rs` does the same for workflow's subcommands. The
+//! one-line abouts below are the `todo --help` contract. The
+//! `modules.todos` refusal that names its door covers the whole namespace
+//! and runs in [`run`], before dispatch.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
