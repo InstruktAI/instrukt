@@ -1,0 +1,36 @@
+[package]
+name = "instrukt-cli"
+description = "The instrukt command-line interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "instrukt"
+path = "src/main.rs"
+
+[dependencies]
+instrukt-core.workspace = true
+instrukt-blueprint.workspace = true
+instrukt-runner.workspace = true
+instrukt-todos.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+insta.workspace = true
+predicates.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+tempfile.workspace = true
+walkdir.workspace = true
+
+[lints]
+workspace = true

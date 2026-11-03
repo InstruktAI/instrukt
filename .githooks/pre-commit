@@ -1,0 +1,7 @@
+#!/bin/sh
+# instrukt repository checks: fmt, clippy, test (docs/local/policy/testing.md).
+# Enable once per clone with `make hooks`.
+set -e
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked --quiet

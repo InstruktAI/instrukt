@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/instrukt-cli",
+    "crates/instrukt-core",
+    "crates/instrukt-blueprint",
+    "crates/instrukt-runner",
+    "crates/instrukt-todos",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/InstruktAI/instrukt"
+
+[workspace.dependencies]
+instrukt-core = { path = "crates/instrukt-core" }
+instrukt-blueprint = { path = "crates/instrukt-blueprint" }
+instrukt-runner = { path = "crates/instrukt-runner" }
+instrukt-todos = { path = "crates/instrukt-todos" }
+
+anyhow = "1"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+hex = "0.4"
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml_ng = "0.10"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+walkdir = "2"
+
+# test-only
+assert_cmd = "2"
+insta = { version = "1", features = ["yaml", "json"] }
+predicates = "3"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"

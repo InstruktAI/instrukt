@@ -1,0 +1,83 @@
+//! Interfaces core declares for answers only an optional module has.
+//!
+//! Core never depends on an optional module (architecture overview,
+//! "Modules and crates"). Where a core context needs such an answer, it
+//! declares the question here; the CLI wires the module's implementation
+//! into [`CoreWiring`] only when that module is switched on. A `None` slot
+//! means the module is off, and the core context behaves as the spec says
+//! for that case.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::ids::{CommitSha, ProjectSlug, RoleName, TodoSlug};
+
+/// An optional module could not answer a core question.
+#[derive(Debug, thiserror::Error)]
+#[error("{module}: {message}")]
+pub struct InterfaceError {
+    /// The answering module (`todos`, `blueprint`).
+    pub module: &'static str,
+    pub message: String,
+}
+
+/// Whether a todo slug names an existing todo of a project (work, through
+/// the `todos` module). Used by docs for pending-doc slugs and by repository
+/// for `Todo:` / `Planned-Todo:` trailers.
+pub trait TodoExistence: Send + Sync {
+    fn todo_exists(&self, project: &ProjectSlug, slug: &TodoSlug) -> Result<bool, InterfaceError>;
+}
+
+/// The roles the selected workflow flavor declares (workflow, through the
+/// `todos` module). Used by docs to validate procedure roles.
+pub trait FlavorRoles: Send + Sync {
+    /// The declared roles for the project at `project_root`, read from the
+    /// published flavor its configuration selects.
+    fn declared_roles(&self, project_root: &Path) -> Result<Vec<RoleName>, InterfaceError>;
+}
+
+/// How a remote-main revision reached this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainAdvance {
+    /// This machine pushed the revision to main (pre-push).
+    Push,
+    /// A pull moved local main to the revision (post-merge, post-rewrite).
+    Pull,
+}
+
+/// One remote-main revision handed from a hook run to graph generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenerationRequest {
+    pub project: ProjectSlug,
+    /// The repository's primary worktree.
+    pub project_root: PathBuf,
+    pub sha: CommitSha,
+    pub advance: MainAdvance,
+}
+
+/// Graph generation for a revision of main (blueprint, through the
+/// `blueprint` module). Repository's hook runs call it; it records the
+/// revision and returns without waiting for the graph.
+pub trait GraphGeneration: Send + Sync {
+    fn start_generation(&self, request: &GenerationRequest) -> Result<(), InterfaceError>;
+}
+
+/// The optional-module implementations the CLI wired for this invocation.
+/// Built once in the CLI's composition root; core contexts receive it by
+/// reference.
+#[derive(Clone, Default)]
+pub struct CoreWiring {
+    pub todo_existence: Option<Arc<dyn TodoExistence>>,
+    pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
+    pub graph_generation: Option<Arc<dyn GraphGeneration>>,
+}
+
+impl std::fmt::Debug for CoreWiring {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CoreWiring")
+            .field("todo_existence", &self.todo_existence.is_some())
+            .field("flavor_roles", &self.flavor_roles.is_some())
+            .field("graph_generation", &self.graph_generation.is_some())
+            .finish()
+    }
+}
