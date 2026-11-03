@@ -212,6 +212,15 @@ impl Tracked {
         run
     }
 
+    /// A wake-up whose clock reads `at` (`INSTRUKT_NOW`), as the OS
+    /// scheduler would give it at that time.
+    pub fn tick_at(&mut self, at: &str) -> Assert {
+        self.env.set_env("INSTRUKT_NOW", at);
+        let run = self.tick();
+        self.env.remove_env("INSTRUKT_NOW");
+        run
+    }
+
     /// An authorized task with `schedule` and `extra` creation flags.
     pub fn authorized_task(&self, slug: &str, schedule: &str, extra: &[&str]) {
         let mut args = vec![
