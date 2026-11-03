@@ -986,6 +986,15 @@ fn render_view(view: &TodoView) -> String {
     }
     if let Some(removal) = &record.removal {
         out.push(format!("withdrawn: {}", time(removal.at)));
+        if let Some(branch) = &removal.branch {
+            out.push(format!(
+                "  released branch {} at {}",
+                branch.name, branch.head
+            ));
+        }
+        for worktree in &removal.worktrees {
+            out.push(format!("  released worktree {}", worktree.display()));
+        }
     }
     if !record.bindings.is_empty() {
         out.push("sessions:".to_owned());

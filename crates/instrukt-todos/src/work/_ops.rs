@@ -981,19 +981,28 @@ fn release_resources(
     WorkError,
 > {
     let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
-    let worktrees: Vec<std::path::PathBuf> = listed
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .map(std::path::PathBuf::from)
-        .collect();
-    let main = worktrees.first().cloned();
-    let mut owned: Vec<std::path::PathBuf> = Vec::new();
-    for binding in &record.bindings {
-        if let Some(path) = &binding.worktree
-            && worktrees.iter().any(|w| w == path)
-            && main.as_ref() != Some(path)
-            && !owned.contains(path)
+    // Each worktree with the branch it has checked out.
+    let mut checked_out: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
+    for line in listed.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            checked_out.push((std::path::PathBuf::from(path), None));
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/")
+            && let Some(last) = checked_out.last_mut()
         {
+            last.1 = Some(branch.to_owned());
+        }
+    }
+    let main = checked_out.first().map(|(path, _)| path.clone());
+    // The todo's working copies: worktrees its sessions returned, and any
+    // other worktree with its work branch checked out.
+    let mut owned: Vec<std::path::PathBuf> = Vec::new();
+    for (path, branch) in &checked_out {
+        let bound = record
+            .bindings
+            .iter()
+            .any(|b| b.worktree.as_ref() == Some(path));
+        let on_branch = branch.is_some() && branch.as_ref() == record.branch.as_ref();
+        if (bound || on_branch) && main.as_ref() != Some(path) && !owned.contains(path) {
             owned.push(path.clone());
         }
     }
