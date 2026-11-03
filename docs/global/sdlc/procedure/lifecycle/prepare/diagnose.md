@@ -1,0 +1,385 @@
+---
+eval: true
+description: Prepare-driver procedure for bug diagnosis. Triage before dispatch, challenge the peer-authored mechanism, and stamp only a settled or explicitly unresolved outcome.
+visibility: public
+---
+
+# Bug Diagnose — Procedure
+
+## Required reads
+
+- @~/.instrukt/docs/sdlc/bundle.md
+- @~/.instrukt/docs/sdlc/procedure/debugging.md
+- @~/.instrukt/docs/sdlc/policy/process-change-authority.md
+- @~/.instrukt/docs/general/policy/human-involvement-recording.md
+- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
+
+## Goal
+
+For a `bug`, drive the cause to a **verified root cause** before any fix is planned or
+written. The driving session triages the todo and takes one of two routes. When the filing
+already carries an independently auditable causal account that triage confirms in full, it
+settles that account (step 1a). Otherwise it dispatches the peer, interrogates its artifact,
+and stamps the outcome. It never investigates in parallel, and it never settles an account
+it wrote.
+
+- **`diagnosis`** — the reproduction, the avenues walked, the observations recorded as
+  re-verifiable facts, and the causal mechanism those observations ground: _why_ the code
+  produces the wrong behavior, traced to the specific code where the bad value or state
+  originates. Investigation and conclusion are one act by one author.
+
+The dispatched peer owns investigation and every artifact revision under
+`sdlc/procedure/lifecycle/prepare/diagnose-peer`. The driving session owns
+only triage, dispatch, interrogation, and lifecycle stamps. This procedure is the driver's
+contract; the peer procedure is the artifact schema's single owner.
+
+Diagnosis grounds the cause and stops there. Neither session opens a worktree, writes
+production code, commits, or **prescribes a fix or verification approach** — the planner
+decides the fix that removes the cause, and the builder writes it during `sdlc/procedure/lifecycle/work/build`. A
+diagnosis that reaches for a fix has shifted its objective from _understand_ to _alleviate_,
+and an objective of alleviation never reliably reaches cause.
+
+## Preconditions
+
+- `kind == bug`, and the current derived preparation obligation is diagnosis.
+- `instrukt todo artifacts read {slug} input` exists with the reported symptom and discovery
+  context.
+- A `diagnosis` carrying no current settled stamp means the phase is mid-exchange, not
+  complete.
+
+## Steps
+
+### 1. Triage — the driving session, before any peer is dispatched
+
+Simultaneous log scans and human reports produce near-coincident reports of the same
+defect, each scaffolding its own bug todo. The report-time moment cannot catch this — each
+reporter checks before the other's todo exists — but by the time this phase runs the sibling
+already exists. Triage therefore runs here, ahead of the dispatch, so a twin never costs an
+independent diagnosis.
+
+Read this todo's reported symptom (`instrukt todo artifacts read {slug} input`), list the
+in-flight todos (`instrukt todo list`), select those of kind `bug`, and read
+the `input` of the candidates that look related. A
+**duplicate** is another bug todo whose reported defect shares the same root symptom — the
+same error signature, the same failing surface — not merely the same file or area; that
+judgment is yours to make from the symptoms, not a string match.
+
+- **Judge the filing evidence first.** Find, in the `input` and the creation record, the
+  occurrence or dangerous path the filing cites, and confirm it as
+  `sdlc/policy/todo-creation-discipline` requires. A bug whose evidence holds continues
+  through the rest of triage. A bug without evidence, or whose cited evidence fails a check,
+  is retired: record the reason in the todo's `log`, run `instrukt todo remove {slug}`, and end
+  the session without dispatching a peer. A fix the human asked for in their own words is
+  authorized intent and is not retired here; a human's acknowledgement of an agent's report
+  is not such a request.
+- **If a sibling for the same defect is already in flight, retire this todo as the
+  duplicate.** Resolve the race deterministically so two simultaneous sessions never both
+  retire themselves: the **survivor** is whichever twin is already further along (has a
+  `diagnosis` or a live peer in this phase); when both sit at the same fresh state, the
+  survivor is the **earliest-created** todo, tie-broken by lexically-first slug. If this todo
+  is not the survivor, remove it — `instrukt todo remove {slug}`, naming the surviving slug in
+  the reason — and end the session. Dispatch no peer.
+- **Hand forward material info — only when sure it helps.** Before removing, compare this
+  twin's `input` against the survivor's. If this twin carries discovery context the survivor
+  does not surface — a distinct reproduction, a second occurrence site, an environment
+  detail — and you are **confident it is genuinely additive**, send a single informational
+  message to the survivor's active session (`instrukt sessions send <session_id> "<info>"`)
+  before retiring. Substance only: no acknowledgement, no echo, no narration. If you are not
+  sure it adds, stay silent and just retire.
+- **If the reported signal is a no-fix candidate, decide that before
+  dispatching.** A report may describe expected behavior, an intentionally
+  accepted limit, or a symptom already fixed. Confirm that conclusion against
+  `input`, current contracts and targeted evidence. Record the evidence in
+  `log`, remove the todo and end this diagnosis assignment. When confidence is
+  insufficient, retain the todo and dispatch. No suppression ledger participates.
+- **Triage a fix-shaped input.** When the `input` names a missing capability or a solution
+  rather than an observed wrong behavior ("X has no way to do Y", "add Z"), re-derive the
+  symptom from evidence — the observable wrong behavior that prompted the report — and pass
+  that to the peer. The embedded solution is an unratified suggestion carrying no authority
+  into the diagnosis or the plan (`sdlc/policy/process-change-authority`).
+
+- **Check whether the filing already settles the cause.** When the `input` carries a
+  causal account its reporter established — the chain from trigger to the wrong behavior,
+  each transition tied to an observation or source address, the strongest rival checked,
+  the unknowns stated — decide under step 1a whether that account can be settled here.
+  A confident account with no auditable evidence behind it does not qualify.
+
+Otherwise, proceed to the dispatch.
+
+### 1a. Settle a reporter's evidenced cause — the driving session, instead of a dispatch
+
+A diagnosis peer supplies an independent causal frame where none exists yet. When the
+reporter already produced an auditable frame, and a session other than the driver wrote
+it, what remains to decide is whether anything is left to discover. The driver answers by
+confirming the account against the sources it cites, which is the act triage already
+performs on a filing's cited occurrence, and not by investigating.
+
+An account qualifies when all of these hold:
+
+- A session other than the driving session wrote it, and the `input` carries it apart
+  from the observations it interprets.
+- Every causal transition cites an observation or source address a third party can open,
+  and names what would falsify it.
+- It explains each reported occurrence, and for a shared contract named as the root it
+  accounts for the producers, entry paths, and consumers.
+- The strongest rival is named together with the observation that separates it, and that
+  observation is recorded.
+- Provenance carries one of the three verdicts with that verdict's evidence, and what is
+  unknown is stated.
+
+Confirm by opening the cited sources. When every transition, every occurrence, and the
+strongest rival check out against them, and confirming needed no investigation of your
+own, settle: write the account and its source references into `diagnosis` unchanged in
+substance; add a confirmation record naming, per transition, the source opened and what it
+showed; state why further discovery adds nothing; stamp `--diagnosis-settled` as step 4
+does; then call `instrukt todo prepare {slug}`.
+
+A gap, a source that does not show what the account says, a rival the evidence leaves
+standing, or any check that would take an investigation means discovery remains: dispatch
+the peer (step 2). Reporter confidence, a proposed fix, and bare code pointers establish
+none of the five conditions.
+
+Plan review applies the settlement standard to this `diagnosis` as it does to a peer's
+(`sdlc/procedure/lifecycle/prepare/review-plan`), so the route changes who spends the
+discovery effort and leaves unchanged what stands between a cause and a plan.
+
+### 2. Dispatch the peer — the driving session
+
+Dispatch one peer session for this phase through `instrukt sessions run`.
+Use the procedure's `dispatch` order or global `agents.order`, taking the
+first agent the runtime reports available. Without an availability check,
+a failed start tries the next entry; exhaustion is an anomaly.
+Record and reuse the peer's session id with `instrukt sessions alive` and
+`instrukt sessions send`; read its conversation through
+`instrukt sessions conversation` when needed. A quiet session is not grounds
+for another diagnosis dispatch.
+
+The driving session remains the execution claimant. The peer owns investigation
+and every diagnosis revision; its session binding records that assignment.
+
+Brief it with the reported symptom and the creation context, and with nothing that names a
+cause. The driving session holds no causal authority here, and a dispatch that arrives
+carrying a suspected mechanism has already decided what the peer will find. Candidate
+commits fall under the same prohibition: hand over the symptom and the evidence, and leave
+the history unframed.
+
+### 3. The interrogation — the driving session tests the written mechanism
+
+A written `diagnosis` is not yet settled. The burden of proof is the peer's: it must convince
+the driving session from the artifact and from targeted answers. The driver is a skeptical
+examiner, not a competing diagnostician — it does not re-run the investigation, and a driver
+that diagnoses in parallel has spent a second session to buy back the framing this phase
+exists to separate.
+
+Interrogate in this order:
+
+1. **Find the weakest or largest jump in the causal chain**, and put it under the question
+   below rather than accepting the chain as a whole.
+2. **Ask which observation _proves_ that transition** rather than merely fitting it. Evidence
+   compatible with the claim is not evidence for it; the question is what the observation
+   rules out.
+3. **Ask why the trace stops at the claimed origin** rather than at an upstream cause. A
+   stopping point that reflects where the investigation began, rather than where the system
+   boundary is, is the most common way a located symptom passes as a mechanism. Apply the
+   debugging procedure's operation-outcome and failure-handling distinction to the claimed
+   stopping point. Challenge whether the cited contract applies to the observed conditions
+   and whether the evidence supports the diagnosis's occurrence coverage.
+4. **Challenge horizontal completeness.** When the claimed origin is a shared contract, ask
+   which producers, entry paths, and consumers implement it and what evidence accounts for
+   each one. An unexplained sibling path means the root is not settled, even when the vertical
+   causal chain for the reproducing path is sound.
+5. **Ask for the strongest rival explanation and the observation that separates it** from the
+   claimed one. A `diagnosis` whose alternatives section is empty owes a reason, not silence.
+6. **Missing evidence is the peer's to gather.** Name the gap and return it; do not go and
+   close it yourself. Investigating on the peer's behalf rebuilds the single-frame failure
+   from the other end.
+7. **The peer keeps the pen.** Every revision is written by the peer. The driving session
+   never authors this artifact, at any point in the exchange.
+
+**An answer is not an endpoint.** Each answer becomes the next claim under attack. A
+restatement, a circular explanation, or a merely plausible account is challenged again, and
+the drill continues until every transition **bottoms out in independently auditable
+observation** — one whose provenance a third party can inspect and whose inference they can
+evaluate without trusting its author. Auditable is not the same as repeatable: a race, a
+historical incident, or a timing failure may never reproduce, and its limits are stated
+rather than disqualifying it.
+
+**Existing evidence may answer a challenge.** The artifact often already carries what the
+question asks for, and demanding a fresh check every time turns interrogation into ceremony.
+What matters is that the answer bottoms out, not that it is new.
+
+
+**The peer may attack the interrogation.** A question can assume the wrong boundary, or
+contradict evidence already recorded. The peer says so and shows it, and that answer is then
+interrogated like any other. The driver's authority over the lifecycle is never authority
+over the argument.
+
+### 4. Settle and advance — the driving session
+
+Settle when three conditions hold, all readable from the artifact rather than from either
+party's confidence: **every causal transition is evidenced**; **the strongest rival no
+longer explains the observations**; and **the diagnosis explains the reported discrepancy
+across the reported occurrences**. Excluding an occurrence requires evidence that it does
+not instantiate that discrepancy; an unexplained occurrence is not excluded merely because
+it falls outside the proposed causal account. Recording a missing observation does not
+satisfy this condition. Conviction is the judgment that applies that standard; it
+is never the standard itself, which is why a plan reviewer can re-run it later against the
+same text.
+
+After the peer completes the artifact revision being interrogated, the driving session stamps
+the settled cause with `instrukt todo stamp {slug} --diagnosis-settled`. The driver's lifecycle
+claim remains unchanged before and after peer revisions. The stamp binds to the artifact's
+current digest, so a later revision invalidates it and the cause must be settled again.
+
+Then call `instrukt todo prepare {slug}`. The engine derives the next action
+from the settled evidence; the planner consumes the root cause and derives the fix.
+
+Plan review then applies the same standard again, and that is depth rather than repetition:
+this phase tests the cause while there is still no plan to defend, and plan review both
+catches what the interrogation missed and validates the derivation from cause to fix — which
+does not exist yet here and so cannot be tested here.
+
+An interrogation that cannot reach all three settlement conditions is not resolved by the
+driver's authority. It is the unresolved outcome in Recovery. On step 1a's route the
+confirmation record is the evidence the three conditions are read from.
+
+### Pre-completion checklist
+
+- The root is the earliest violated contract within the stated system boundary, and the trace
+  accounts for why comparable non-failing cases are not caught by it.
+- A shared-contract root carries an evidence-backed census of every producer, entry path, and
+  consumer within the system boundary; no sibling implementation is left unexplained.
+- The mechanism is stated as a shape decidable at one site, and the family census records
+  its two searches and every site found, each marked matching, not matching, or undecided
+  (`sdlc/procedure/debugging`). A census that investigated a site's reachability, or
+  searched beyond its two searches, is returned to the peer to be cut back.
+- Every causal transition cites the observations that carry it, names what would falsify it,
+  and bottoms out in independently auditable observation. Repeatability limits, where they
+  exist, are stated rather than hidden.
+- The reproduction is recorded, or the reason it is unstable, and any synthetic reproduction
+  is labelled with its gap from the organic path.
+- Observations are stated apart from their interpretation, and superseded entries are marked
+  rather than deleted.
+- The strongest credible rival is named, the check that separates it was run, and its result
+  is recorded — or the absence of a rival carries a reason.
+- Provenance carries one of the three verdicts with that verdict's evidence: a named commit
+  and its diff hunk for Regression; both the introducing and the reachability change for
+  Latent; the files, range, and search terms actually covered for Provenance not established.
+  Any sibling damage a named commit reveals is recorded for its own triage, never folded into
+  this fix (`sdlc/procedure/debugging`, step 5).
+- The root cause states its minimal causal set and its counterfactual, and prescribes no fix
+  and no verification approach.
+
+- Every version of the artifact carries the dispatched peer as its principal; on step 1a's route it carries the driving session as transcriber and names the reporter's account and sources.
+
+- The Attack record names the transitions challenged and the evidence that resolved each.
+- Status matches reality, and the settled stamp is current for the artifact's digest.
+
+## Outputs
+
+- A `diagnosis` artifact — symptom, evidence as re-verifiable facts, and the causal mechanism
+  they ground — authored by a dispatched peer at every revision, or, on step 1a's route,
+  transcribed by the driving session from the reporter's account with its confirmation
+  record, and settled by a stamp the driving session applies once the three conditions
+  are met.
+
+- No fix or verification prescription, no code changes, no worktree commits.
+
+## Discipline
+
+The failure this phase exists to prevent is one confidently wrong problem frame selecting the
+evidence, declaring the cause, and shaping the fix before any other intelligence has formed a
+view. Independence that waits for the driving session to doubt itself never arrives, because
+confident error does not feel uncertain — which is why authorship moves and the challenge is
+structural rather than triggered by self-assessment.
+
+The reporter-account route keeps the separation structural. The causal frame was written
+before the driving session read it, by a session that does not drive this phase, and the
+driver's confirmation is a bounded check against cited sources with an exit to the peer
+whenever it would take an investigation. A driver that settles past those bounds has
+returned to the single-frame failure this phase exists to prevent.
+
+Slides to refuse: (1) accepting a located symptom as a root cause; (2) prescribing a fix or
+verification approach here; (3) asserting a cause the recorded evidence does not carry;
+(4) writing a "likely" cause to keep moving when the mechanism will not ground; (5)
+dispatching past a filing that carries neither an occurrence nor a dangerous path, a
+duplicate, or a high-confidence expected or won't-fix signal; (6) adopting
+a fix-shaped input's premise; (7) briefing the peer with a suspected cause, which decides
+what it finds before it looks; (8) tracing one reproducing path vertically while leaving
+sibling implementations of the same contract horizontally unexamined.
+
+The interrogation has failure modes of its own. The peer folds because the driver dispatched
+it, drives the lifecycle — agreement bought by standing rather than evidence,
+which is why settlement is measured against the artifact and not against either party's
+sense of being done. The driver presses its own mechanism until the peer writes it down, at
+which point the driver has authored the conclusion through another session's hands. Or the
+driver stops early, because a chain that reads well is easy to accept and every further
+question costs a round.
+
+The opposite mistake is also real: a driver that misreads the boundary can drill a sound
+chain toward `Unresolved`. The peer's licence to attack the interrogation is the counterweight
+— and the outcome is not a failure. An unresolved bug retains both positions and
+the observation that would separate them. Its next contribution is assigned under
+`general/policy/human-contract`; disagreement alone never makes the human its owner.
+
+The diagnosis is judged again by the plan reviewer; write it to be refuted, not
+to look right.
+
+## Recovery
+
+### No cause grounds, or the disagreement is evidenced and persistent
+
+Two outcomes take this path: no mechanism grounds for the peer at all, or a mechanism is
+written and the interrogation does not reach all three settlement conditions. Both end the
+same way, because an unsettled cause and an absent one are equally unsafe to plan against.
+
+Persistent disagreement is an outcome, not a deadlock to break. Where both positions rest on
+evidence and neither dislodges the other, the artifact records **both**, with the observation
+that would separate them. Apply the evidence and ownership requirements of
+`general/policy/human-contract`: an unresolved technical result remains with its
+agent owner. Settlement is never reached by conversational exhaustion, and the
+driver's lifecycle authority breaks no evidentiary tie.
+
+The peer records in `diagnosis` what it verified, what remains contested, and which
+observation would separate the rival mechanisms; its Status reads `Unresolved`.
+The driving session applies the actionable-continuation and retirement rules of
+`sdlc/policy/todo-creation-discipline` before choosing a hold.
+
+For a justified hold, record the concrete next contribution, its owner, and
+the condition and evidence that release it. Stamp
+`instrukt todo stamp {slug} --diagnosis-unresolved --reason "<condition and next contribution>"`.
+This records an audited `diagnosis_unresolved` hold without a settled stamp.
+When no actionable continuation remains, preserve the unresolved diagnosis and
+retire through the governing cleanup and removal path instead of keeping the
+phase available for another identical dispatch.
+
+When a justified hold's condition is satisfied, the driving session records
+the new evidence and releases it through `instrukt todo update {slug} --release`.
+The independent peer still owns every diagnosis revision, and the settlement
+standard is unchanged. A decision in the closed human lane is routed under
+`general/policy/human-contract` by asking in its thread with the specific input required. The
+`diagnosis` carries the unresolved positions and recovery evidence; no
+substitute approval artifact is created.
+
+### The reported behavior is correct
+
+If the peer finds the reported behavior is not a defect, it records that in
+`diagnosis` and reports it. The driving session records the evidenced
+classification and closes or reclassifies the todo rather than planning a fix.
+
+### The cause is a process-design gap
+
+If the grounded root cause is a **process-design gap** — removing it would require a
+behavioral delta to a process-layer contract — the `diagnosis` is still written and
+settled (the cause is still the cause), and the bug may correct that defect within its
+authorized symptom and causal scope (`sdlc/policy/process-change-authority`).
+
+### The cause is a governing decision
+
+When the settled mechanism is one a governing design or decision record prescribes
+(`sdlc/procedure/debugging`, Name the mechanism), the `diagnosis` names that contract and
+states whether its design's `Failure modes` already record this failure. The interrogation
+tests both claims like any other transition. A repeat makes the remedy reopen the decision
+(`sdlc/policy/preparation-artifact-quality`, Structural decisions carry architecture
+review), and the prepare session records the failure in that design when the plan reflects
+its documentation; diagnosis itself commits nothing.

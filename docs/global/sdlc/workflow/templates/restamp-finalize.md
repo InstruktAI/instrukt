@@ -1,0 +1,5 @@
+# Finalize reconciliation — {slug}
+
+Read actual worktree, local branch, remote and stamped commit. Reconcile the mismatch before stamping readiness. Re-publish where needed, obtain current review for changed todo content, then record `instrukt todo stamp {slug} --finalize-ready` only when the worktree is clean and all four commit identities match. The stamp records the handoff and appends `workflow.finalized` idempotently keyed by project/todo/SHA. Do not make a blind readiness stamp.
+
+Before starting, read the role binding with `instrukt todo show {slug}` and observe its recorded session through `instrukt sessions alive <id>`. Continue an available session with `instrukt sessions send <id> '<brief>'`; `run` is the start branch, not an implicit reuse operation. The runner records the returned runtime-native id per todo and role; preserve that binding. Choose the first available entry in the procedure's dispatch order or the global order. A reply or ended turn does not establish completion.

@@ -1,0 +1,5 @@
+# Claim commit reviews — {slug}
+
+Owed: independent commit review for every SHA in {claim_commits.unreviewed}. Follow the commit-review procedure; `instrukt repo stamp <sha…> --verdict approve --report <file>` records the verdict and report digest as git notes, or use `needs_work` for findings. For a commit owing no review, its author records `instrukt repo stamp <sha> --verdict exempt --reason <text>`. A `needs_work` note remains in the unsettled set; only `approve` or `exempt` permits release. A count or a reply is insufficient.
+
+Before starting, read the role binding with `instrukt todo show {slug}` and observe its recorded session through `instrukt sessions alive <id>`. Continue an available session with `instrukt sessions send <id> '<brief>'`; `run` is the start branch, not an implicit reuse operation. The runner records the returned runtime-native id per todo and role; preserve that binding. Choose the first available entry in the procedure's dispatch order or the global order. A reply or ended turn does not establish completion.

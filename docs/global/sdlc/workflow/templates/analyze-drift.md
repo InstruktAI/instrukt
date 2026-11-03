@@ -1,0 +1,5 @@
+# Drift analysis — {slug}
+
+Inspect pending artifact evidence with `instrukt todo show {slug}`. Assess every applicable pending class, including unavailable provenance and unresolved references. For each affected artifact record `instrukt todo stamp {slug} --drift-reviewed <artifact> cosmetic '<reason>'` or `instrukt todo stamp {slug} --drift-reviewed <artifact> substantive '<reason>'`; the reason accounts for every assessed class. The record captures the evidence anchor. Age alone is no trigger. Keep artifact derivation with its owning layer; finish at the required stamps.
+
+Before starting, read the role binding with `instrukt todo show {slug}` and observe its recorded session through `instrukt sessions alive <id>`. Continue an available session with `instrukt sessions send <id> '<brief>'`; `run` is the start branch, not an implicit reuse operation. The runner records the returned runtime-native id per todo and role; preserve that binding. Choose the first available entry in the procedure's dispatch order or the global order. A reply or ended turn does not establish completion.

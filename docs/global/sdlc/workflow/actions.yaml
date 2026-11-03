@@ -1,0 +1,171 @@
+roles:
+  - architect
+  - architecture-reviewer
+  - bug-hunter
+  - build-reviewer
+  - builder
+  - commit-reviewer
+  - config-assessor
+  - coordinator
+  - deferrer
+  - diagnoser
+  - drift-analyzer
+  - finalizer
+  - intaker
+  - integrator
+  - knowledge-author
+  - plan-reviewer
+  - planner
+  - prd-reviewer
+  - prepare-orchestrator
+  - project-analyst
+  - task-preparer
+  - task-runner
+  - third-party-researcher
+  - upstream-watcher
+  - work-orchestrator
+# Commands are configured obligations, not evaluator side effects.
+# A sessions.run command is used only after record lookup/alive requires a start;
+# available recorded sessions receive the rendered brief through sessions.send.
+# Run build Git effects in the runtime-reported todo worktree; worktree.remove
+# runs from the project checkout outside that worktree. Resolve main to
+# the actual canonical default branch. Stop on failure; re-derive after mutation.
+# Render the brief as UTF-8 stdin for --brief -, never interpolate prose into shell text.
+# For sessions.send, pass the rendered brief as one argument through an argv API
+# or correct shell quoting; never substitute its raw bytes into command text.
+# Serialize a SHA list as space-separated SHAs in the single --args argument.
+# Placeholders may name facts or configuration paths, resolved as config get does.
+# Cleanup enumerates sessions.bound only after claim.held is confirmed false.
+draft-prd:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  template: templates/draft-prd.md
+rederive-prd:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  template: templates/rederive-prd.md
+revise-prd:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  template: templates/revise-prd.md
+draft-architecture:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/architecture --closure
+  template: templates/draft-architecture.md
+rederive-architecture:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/architecture --closure
+  template: templates/rederive-architecture.md
+revise-architecture:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/architecture --closure
+  template: templates/revise-architecture.md
+draft-plan:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  template: templates/draft-plan.md
+rederive-plan:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  template: templates/rederive-plan.md
+revise-plan:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  template: templates/revise-plan.md
+redraft-plan-seeded:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  template: templates/redraft-plan-seeded.md
+review-prd:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-prd --args {slug} --brief -
+  template: templates/review-prd.md
+review-architecture:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-architecture --args {slug} --brief -
+  template: templates/review-architecture.md
+review-plan:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-plan --args {slug} --brief -
+  template: templates/review-plan.md
+await-prd-approval:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/overview --closure
+  template: templates/await-prd-approval.md
+dispatch-diagnosis:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/diagnose --closure
+  template: templates/dispatch-diagnosis.md
+examine-diagnosis:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/diagnose --closure
+  template: templates/examine-diagnosis.md
+analyze-drift:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/drift-analyze --args {slug} --brief -
+  template: templates/analyze-drift.md
+review-claim-commits:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-commits --args '{claim_commits.unreviewed}' --brief -
+  template: templates/review-claim-commits.md
+release-prepared:
+  command: instrukt todo update {slug} --unclaim
+  template: templates/release-prepared.md
+return-to-prepare-kickback:
+  command: instrukt todo update {slug} --unclaim
+  template: templates/return-to-prepare-kickback.md
+return-to-prepare-drift:
+  command: instrukt todo update {slug} --unclaim
+  template: templates/return-to-prepare-drift.md
+await-dependencies:
+  command: instrukt todo show {slug}
+  template: templates/await-dependencies.md
+await-prepare:
+  command: instrukt docs get sdlc/procedure/lifecycle/prepare/overview --closure
+  template: templates/await-prepare.md
+prepare-task:
+  command: instrukt docs get sdlc/procedure/lifecycle/task/prepare-task --closure
+  template: templates/prepare-task.md
+await-task-runner:
+  command: instrukt todo show {slug}
+  template: templates/await-task-runner.md
+await-build-start:
+  command: instrukt todo show {slug}
+  template: templates/await-build-start.md
+setup-workspace:
+  command: instrukt sessions run --worktree {slug}/work --brief -
+  template: templates/setup-workspace.md
+cleanup-delivered:
+  command: instrukt todo show {slug}
+  template: templates/cleanup-delivered.md
+dispatch-build:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --brief -
+  template: templates/dispatch-build.md
+reconcile-build:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --brief -
+  template: templates/reconcile-build.md
+review-build:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-build --args {slug} --worktree {slug}/work --brief -
+  template: templates/review-build.md
+review-evidence-undetermined:
+  command: instrukt todo show {slug}
+  template: templates/review-evidence-undetermined.md
+relay-findings:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --brief -
+  template: templates/relay-findings.md
+process-deferrals:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/deferrals --args {slug} --worktree {slug}/work --brief -
+  template: templates/process-deferrals.md
+dispatch-finalize:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --brief -
+  template: templates/dispatch-finalize.md
+restamp-finalize:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --brief -
+  template: templates/restamp-finalize.md
+hand-off-integration:
+  command: instrukt todo show {slug}
+  template: templates/hand-off-integration.md
+effects:
+  record.refresh:
+    command: instrukt todo show {slug}
+  git.fetch-main:
+    command: git fetch origin main
+    done_when:
+      exists: build.start_base_sha
+  git.merge-main:
+    command: git merge origin/main --no-edit --no-overwrite-ignore
+    done_when:
+      exists: build.start_base_sha
+  branch.publish:
+    command: git push --force-with-lease origin HEAD:{slug}
+    done_when:
+      same:
+      - worktree.head
+      - remote.head
+  worktree.remove:
+    command: git worktree remove {worktree.path}
+    done_when:
+      not:
+        exists: worktree.exists

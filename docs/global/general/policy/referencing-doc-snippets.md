@@ -1,0 +1,109 @@
+---
+description: 'Policy for referencing documentation snippets in AI agent prompts.'
+visibility: 'public'
+---
+
+# Referencing Doc Snippets — Policy
+
+## Rules
+
+- Use inline `@` references only for **static Required reads declarations** in published agent artifacts and documentation snippets. They are expanded when those artifacts are assembled.
+- Runtime-generated briefs, formatter messages, and peer messages must never use inline `@` references. Name the canonical snippet ID and, when needed, the `instrukt docs get <id>` invocation instead. Expanding a reference into an already-running session duplicates context and bypasses that session's own required-read discipline.
+- Global doc references use the tilde form `@~/.instrukt/docs/...`, as
+  committed. The `instrukt-docs` git smudge filter expands `@~/.instrukt` to
+  `@$HOME/.instrukt` in the working tree and restores the tilde form on commit.
+  No home variable appears in docs.
+- A published domain's generated baseline bundle is a valid global Required Read at
+  `@~/.instrukt/docs/<domain>/bundle.md`. This exact generated-artifact
+  shape is the sole exception to the taxonomy-segment requirement. Validation accepts it only
+  for a published domain, and publication generates it before compiling agent entrypoints.
+- A generated global documentation artifact resolves to the published generation, never to a
+  publisher source tree. The global index and every published domain's baseline bundle are the
+  artifacts this covers; every authored global snippet resolves to the project that owns it.
+- Local doc references use `@docs/local/...`, relative to the root of the
+  project that holds both the referencing and the referenced snippet.
+- A published snippet never references local material, neither as a Required
+  read nor as a citation. It states the general contract. How one project realizes
+  that contract lives in the project's own local snippets, which agents working
+  there load themselves.
+- A local snippet references its own project's local snippets or published ones,
+  never another project's local snippets.
+- A placeholder pattern that names the reader's own project — `local/projects/<slug>/…`
+  where `<slug>` is the reader's project — is a pattern, not a reference, and may
+  appear in any snippet.
+- Third-party sources must appear under **See also** only (soft references).
+  They must not appear in Required reads.
+
+### Inline citations
+
+- A rule another snippet owns is cited in prose, never restated: a one-clause
+  gist followed by the owner's backticked id — _orient the human before a
+  consequential move (`general/policy/leadership`)_. The gist carries the rule's
+  force where the reader acts; the id routes the reader to the single place that
+  states it in full, with its reason. A Gherkin scenario is a rule for this
+  purpose: a predicate another spec owns is not re-authored as a use case under
+  a different actor or surface; the citing spec carries its one-sentence
+  contribution and the owner's id.
+- A bare backticked id is a pointer, not a citation. Use it where the reader
+  needs to know where something lives, not what it requires.
+- Cite by id only — never by file path, never by section anchor. A rule that can
+  only be located with an anchor lives in a snippet too large to own it.
+- A citation never paraphrases the owner beyond its gist. When the citing text
+  needs more of the rule than one clause carries, the reader needs the owner:
+  make it a Required read, or narrow the citing text so one clause suffices.
+- A gist names what the rule requires where the citing text acts, in the
+  owner's own terms — never the owner's internal structure (a list, a section,
+  a heading). A gist that names structure breaks silently when the owner is
+  reorganised.
+
+## Rationale
+
+- Inline `@` references are the single enforced mechanism for mandatory reading declared by a static artifact. Runtime instructions name the required snippet without expanding it so the receiving session controls the read once.
+- A stable global root (`~/.instrukt/docs`, committed in the tilde form)
+  prevents ambiguity across repos. The smudge filter expands it per machine, so
+  refs remain machine-local but consistent within one operator's environment.
+- Repo‑relative `@docs/...` keeps project docs portable and consistent.
+- A published snippet is read in every project, and a local snippet only in its
+  own. A citation into local material is a dead end for every other reader, and
+  it ties the general contract to one project's implementation. The dependency runs
+  from the specific toward the general, never the reverse.
+- Soft references prevent third-party docs from being auto-included in agent context.
+- A rule stated in two snippets is two rules to a reader: each wording is read
+  as possibly distinct, and the copies drift until they contradict. The gist
+  keeps the emphasis a repetition was reaching for; the id keeps one owner.
+- A citation is only reviewed when something touches it. Reviewing every
+  citation in a changed snippet, and every citer of a changed owner, catches
+  drift from both directions without opening review to unrelated content.
+- An authored global snippet resolves to its publisher source because that source is readable
+  before a host has published anything. A generated artifact has no such source, so the same
+  mapping substitutes a file nothing regenerates for the one the reference names. The substitute
+  keeps resolving, so the reference looks healthy while its content stops tracking the sources it
+  was generated from, and every artifact compiled from it inherits the stale copy with no check
+  failing.
+
+## Scope
+
+- Applies to all AI agents, all repositories, and all documentation references in static artifacts or runtime messages.
+- Static-declaration rules apply to `AGENTS.md`, baseline indexes, and any doc snippet that requires prerequisites.
+
+## Enforcement
+
+- Static Required reads must appear in a `Required reads` section immediately after the H1 title.
+- Static Required reads must use inline `@` references only.
+- Runtime brief, formatter, and peer-message output containing an inline `@` documentation reference is a defect.
+- Soft references must appear in a `See also` section at the bottom and must not use `@`.
+- Reviewers treat a restated rule whose owner is another snippet as a finding and
+  replace it with a citation.
+- A change to a snippet extends reference review to the whole of that snippet:
+  the reviewer checks every citation in it, touched or not, and fixes are
+  limited to the citations themselves — never the snippet's own content.
+- A change to what a snippet establishes extends reference review to the
+  snippets that cite it: its author finds them by its id, and the reviewer
+  checks that each citation still holds against the changed owner.
+- Whether a backticked id in prose is a citation, an example, or a placeholder
+  is a reading judgment, so no scanner checks inline citations
+  (`general/principle/intelligence-boundaries`).
+
+## Exceptions
+
+- None.

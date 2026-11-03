@@ -1,0 +1,295 @@
+# Flavor definition; paths are relative to the selected flavor root.
+# Task evidence and terminal cleanup boundaries are explicit in their templates.
+# Admission facts carry only eligible evidence: current input must be intent-checked
+# before phase derivation; otherwise prepare-task/intake/diagnose/plan-draft checks it
+# before authoring. A new input invalidates that check.
+# prd_approval.digest is eligible only for the configured approvals.prd approver;
+# a peer stamp cannot satisfy a human-required gate. Task authorization follows
+# approvals.task identically. Configuration placeholders resolve by config get path.
+# claim_commits.unreviewed includes missing and needs_work verdicts; only approve
+# or exempt settles a commit. Release checks these preconditions again.
+flow: prepare
+initial: start
+states:
+- start
+- task_preparation
+- prd_drafting
+- diagnose
+- plan_drafting
+- prd_rederivation
+- prd_review
+- prd_revision
+- architecture_drafting
+- architecture_rederivation
+- architecture_review
+- architecture_revision
+- prd_approval
+- diagnosis_examination
+- plan_rederivation
+- plan_seeded
+- plan_review
+- plan_revision
+- drift_analysis
+- commit_review_owed
+- prepared_release_pending
+transitions:
+- from: start
+  to: task_preparation
+  when:
+    equals:
+    - kind
+    - task
+  action: prepare-task
+- from: start
+  to: prd_drafting
+  when:
+    equals:
+    - kind
+    - feature
+  action: draft-prd
+- from: start
+  to: diagnose
+  when:
+    equals:
+    - kind
+    - bug
+  action: dispatch-diagnosis
+- from: start
+  to: plan_drafting
+  when:
+    equals:
+    - kind
+    - change
+  action: draft-plan
+- from: task_preparation
+  to: prepared_release_pending
+  when:
+    all:
+    - same: [task_plan.digest, task_approved.target_digest]
+    - any:
+      - equals: [task_approved.by, human]
+      - equals: [task_approved.by, peer]
+  action: release-prepared
+- from: prd_drafting
+  to: prd_rederivation
+  when:
+    any:
+    - equals:
+      - prd_review.cleared_by_substantive_drift
+      - true
+    - equals:
+      - drift.prd
+      - substantive
+  action: rederive-prd
+- from: prd_drafting
+  to: prd_review
+  when:
+    exists: prd.digest
+  action: review-prd
+- from: prd_review
+  to: prd_revision
+  when:
+    all:
+    - equals:
+      - prd_review.verdict
+      - needs_work
+    - same:
+      - prd_review.target_digest
+      - prd.digest
+    - same:
+      - prd_review.report_digest
+      - prd_review_findings.digest
+  action: revise-prd
+- from: architecture_drafting
+  to: architecture_rederivation
+  when:
+    any:
+    - equals:
+      - architecture_review.cleared_by_substantive_drift
+      - true
+    - equals:
+      - drift.architecture
+      - substantive
+  action: rederive-architecture
+- from: architecture_drafting
+  to: architecture_review
+  when:
+    exists: architecture.digest
+  action: review-architecture
+- from: architecture_review
+  to: architecture_revision
+  when:
+    all:
+    - equals:
+      - architecture_review.verdict
+      - needs_work
+    - same:
+      - architecture_review.target_digest
+      - architecture.digest
+    - same:
+      - architecture_review.report_digest
+      - architecture_review_findings.digest
+  action: revise-architecture
+- from: prd_review
+  to: prd_approval
+  when:
+    all:
+    - equals:
+      - prd_review.verdict
+      - approve
+    - same:
+      - prd_review.target_digest
+      - prd.digest
+    - same:
+      - prd_review.report_digest
+      - prd_review_findings.digest
+  action: await-prd-approval
+- from: prd_approval
+  to: plan_drafting
+  when:
+    all:
+    - same:
+      - prd_approval.digest
+      - prd.digest
+    - exists: architecture_skipped.reason
+  action: draft-plan
+- from: prd_approval
+  to: architecture_drafting
+  when:
+    same:
+    - prd_approval.digest
+    - prd.digest
+  action: draft-architecture
+- from: architecture_review
+  to: plan_drafting
+  when:
+    all:
+    - equals:
+      - architecture_review.verdict
+      - approve
+    - same:
+      - architecture_review.target_digest
+      - architecture.digest
+    - same:
+      - architecture_review.report_digest
+      - architecture_review_findings.digest
+  action: draft-plan
+- from: diagnose
+  to: diagnosis_examination
+  when:
+    exists: diagnosis.digest
+  action: examine-diagnosis
+- from: diagnosis_examination
+  to: plan_drafting
+  when:
+    same:
+    - diagnosis_settled.digest
+    - diagnosis.digest
+  action: draft-plan
+- from: plan_drafting
+  to: plan_rederivation
+  when:
+    any:
+    - equals:
+      - plan_review.cleared_by_substantive_drift
+      - true
+    - equals:
+      - drift.implementation_plan
+      - substantive
+  action: rederive-plan
+- from: plan_drafting
+  to: plan_seeded
+  when:
+    equals:
+    - implementation_plan.seeded
+    - true
+  action: redraft-plan-seeded
+- from: plan_drafting
+  to: plan_review
+  when:
+    exists: implementation_plan.digest
+  action: review-plan
+- from: plan_review
+  to: plan_revision
+  when:
+    all:
+    - equals:
+      - plan_review.verdict
+      - needs_work
+    - same:
+      - plan_review.target_digest
+      - implementation_plan.digest
+    - same:
+      - plan_review.report_digest
+      - plan_review_findings.digest
+  action: revise-plan
+- from: plan_review
+  to: drift_analysis
+  when:
+    all:
+    - all:
+      - all:
+        - equals:
+          - plan_review.verdict
+          - approve
+        - same:
+          - plan_review.target_digest
+          - implementation_plan.digest
+        - same:
+          - plan_review.report_digest
+          - plan_review_findings.digest
+      - not:
+          equals:
+          - implementation_plan.seeded
+          - true
+    - any:
+      - equals:
+        - drift.prd
+        - pending
+      - equals:
+        - drift.architecture
+        - pending
+      - equals:
+        - drift.implementation_plan
+        - pending
+  action: analyze-drift
+- from: plan_review
+  to: commit_review_owed
+  when:
+    all:
+    - all:
+      - all:
+        - equals:
+          - plan_review.verdict
+          - approve
+        - same:
+          - plan_review.target_digest
+          - implementation_plan.digest
+        - same:
+          - plan_review.report_digest
+          - plan_review_findings.digest
+      - not:
+          equals:
+          - implementation_plan.seeded
+          - true
+    - exists: claim_commits.unreviewed
+  action: review-claim-commits
+- from: plan_review
+  to: prepared_release_pending
+  when:
+    all:
+    - all:
+      - equals:
+        - plan_review.verdict
+        - approve
+      - same:
+        - plan_review.target_digest
+        - implementation_plan.digest
+      - same:
+        - plan_review.report_digest
+        - plan_review_findings.digest
+    - not:
+        equals:
+        - implementation_plan.seeded
+        - true
+  action: release-prepared

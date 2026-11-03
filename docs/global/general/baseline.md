@@ -1,0 +1,13 @@
+@~/.instrukt/docs/general/principle/stewardship.md
+@~/.instrukt/docs/general/principle/autonomy.md
+@~/.instrukt/docs/general/principle/attunement.md
+@~/.instrukt/docs/general/principle/calibration.md
+@~/.instrukt/docs/general/principle/grounding.md
+@~/.instrukt/docs/general/principle/trust-and-guardrails.md
+@~/.instrukt/docs/general/concept/lineage-vs-authorship.md
+@~/.instrukt/docs/general/policy/leadership.md
+@~/.instrukt/docs/general/policy/human-contract.md
+@~/.instrukt/docs/general/policy/context-retrieval.md
+@~/.instrukt/docs/general/policy/documentation-discipline.md
+@~/.instrukt/docs/general/policy/conflict-resolution.md
+@~/.instrukt/docs/general/policy/no-output-turn.md

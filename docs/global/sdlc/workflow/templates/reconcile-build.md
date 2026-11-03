@@ -1,0 +1,8 @@
+# Build plan reconciliation — {slug}
+
+The build was bound to {build.plan_digest}; the current plan is {implementation_plan.digest}. Read `instrukt todo artifacts diff {slug} implementation-plan {build.plan_digest} {implementation_plan.digest}`. Reuse the live builder to preserve what serves the current plan, undo what it invalidates and complete the remaining tasks. Before resuming implementation, re-record `instrukt todo stamp {slug} --build-started` against the current approved plan, preserving the original base. Record dispositions and, after reconciliation is complete, `instrukt todo stamp {slug} --build-complete`.
+
+The runtime owns worktree creation/reattachment. At a required start, request the derived worktree name `{slug}/work` through the runtime mapping; preparation stays on canonical main and has no worktree. `{slug}/prepare` is the corresponding derived preparation name if a runtime needs a lane name, never a request to move preparation off main. Use the runtime's returned location, not an invented `trees/` path.
+Workspace setup, upstream synchronization, opening commit, build-start recording and checklist creation precede this implementation dispatch. Re-derive on changed evidence; failed setup remains owed.
+
+Before starting, read the role binding with `instrukt todo show {slug}` and observe its recorded session through `instrukt sessions alive <id>`. Continue an available session with `instrukt sessions send <id> '<brief>'`; `run` is the start branch, not an implicit reuse operation. The runner records the returned runtime-native id per todo and role; preserve that binding. Choose the first available entry in the procedure's dispatch order or the global order. A reply or ended turn does not establish completion.

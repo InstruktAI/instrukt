@@ -1,0 +1,341 @@
+# Runtime workspace setup precedes sync, opening commit, build-start, checklist and implementation dispatch.
+# Delivery cleanup bypasses all build effects; worktree.exists is present only while the worktree exists.
+# build.complete holds only for completion of the current build/fix target; changed todo
+# commits after changes_requested invalidate it until the builder stamps completion.
+# quality_checklist.digest is the current quality-checklist artifact digest.
+# delivery.commit is the confirmed commit supplied to todo deliver.
+# Kickback invalidation exposes the same cleared review markers used by the return route.
+flow: work
+initial: start
+states:
+- start
+- task_runner_route
+- dependencies_open
+- returned_to_prepare
+- drift_analysis
+- not_prepared
+- build_admission_pending
+- workspace_request
+- building
+- build_reconcile
+- review
+- review_undetermined
+- fixing
+- approved
+- deferrals_owed
+- handoff_pending
+- finalize_mismatch
+- delivered_cleanup
+transitions:
+- from: start
+  to: delivered_cleanup
+  when:
+    exists: delivery.commit
+  action: cleanup-delivered
+  effects:
+  - worktree.remove
+- from: start
+  to: task_runner_route
+  when:
+    equals:
+    - kind
+    - task
+  action: await-task-runner
+- from: start
+  to: dependencies_open
+  when:
+    not:
+      equals:
+      - deps.delivered
+      - true
+  action: await-dependencies
+- from: start
+  to: returned_to_prepare
+  when:
+    any:
+    - equals:
+      - drift.prd
+      - substantive
+    - equals:
+      - drift.architecture
+      - substantive
+    - equals:
+      - drift.implementation_plan
+      - substantive
+  action: return-to-prepare-drift
+- from: start
+  to: returned_to_prepare
+  when:
+    any:
+    - equals:
+      - prd_review.cleared_by_substantive_drift
+      - true
+    - equals:
+      - architecture_review.cleared_by_substantive_drift
+      - true
+    - equals:
+      - plan_review.cleared_by_substantive_drift
+      - true
+  action: return-to-prepare-kickback
+- from: start
+  to: drift_analysis
+  when:
+    all:
+    - not:
+        exists: build.start_base_sha
+    - any:
+      - equals:
+        - drift.prd
+        - pending
+      - equals:
+        - drift.architecture
+        - pending
+      - equals:
+        - drift.implementation_plan
+        - pending
+  action: analyze-drift
+- from: start
+  to: not_prepared
+  when:
+    not:
+      all:
+      - any:
+        - all:
+          - equals:
+            - kind
+            - feature
+          - all:
+            - all:
+              - equals:
+                - prd_review.verdict
+                - approve
+              - same:
+                - prd_review.target_digest
+                - prd.digest
+              - same:
+                - prd_review.report_digest
+                - prd_review_findings.digest
+            - same:
+              - prd_approval.digest
+              - prd.digest
+            - any:
+              - exists: architecture_skipped.reason
+              - all:
+                - equals:
+                  - architecture_review.verdict
+                  - approve
+                - same:
+                  - architecture_review.target_digest
+                  - architecture.digest
+                - same:
+                  - architecture_review.report_digest
+                  - architecture_review_findings.digest
+        - equals:
+          - kind
+          - change
+        - all:
+          - equals:
+            - kind
+            - bug
+          - same:
+            - diagnosis_settled.digest
+            - diagnosis.digest
+      - all:
+        - all:
+          - equals:
+            - plan_review.verdict
+            - approve
+          - same:
+            - plan_review.target_digest
+            - implementation_plan.digest
+          - same:
+            - plan_review.report_digest
+            - plan_review_findings.digest
+        - not:
+            equals:
+            - implementation_plan.seeded
+            - true
+  action: await-prepare
+- from: start
+  to: workspace_request
+  when:
+    not:
+      exists: worktree.path
+  action: setup-workspace
+- from: start
+  to: build_admission_pending
+  when:
+    any:
+    - not:
+        exists: build.start_base_sha
+    - not:
+        exists: build.plan_digest
+    - not:
+        exists: quality_checklist.digest
+  action: await-build-start
+  effects:
+  - record.refresh
+  - git.fetch-main
+  - git.merge-main
+- from: start
+  to: building
+  when:
+    all:
+    - any:
+      - all:
+        - equals:
+          - kind
+          - feature
+        - all:
+          - all:
+            - equals:
+              - prd_review.verdict
+              - approve
+            - same:
+              - prd_review.target_digest
+              - prd.digest
+            - same:
+              - prd_review.report_digest
+              - prd_review_findings.digest
+          - same:
+            - prd_approval.digest
+            - prd.digest
+          - any:
+            - exists: architecture_skipped.reason
+            - all:
+              - equals:
+                - architecture_review.verdict
+                - approve
+              - same:
+                - architecture_review.target_digest
+                - architecture.digest
+              - same:
+                - architecture_review.report_digest
+                - architecture_review_findings.digest
+      - equals:
+        - kind
+        - change
+      - all:
+        - equals:
+          - kind
+          - bug
+        - same:
+          - diagnosis_settled.digest
+          - diagnosis.digest
+    - all:
+      - all:
+        - equals:
+          - plan_review.verdict
+          - approve
+        - same:
+          - plan_review.target_digest
+          - implementation_plan.digest
+        - same:
+          - plan_review.report_digest
+          - plan_review_findings.digest
+      - not:
+          equals:
+          - implementation_plan.seeded
+          - true
+  action: dispatch-build
+- from: building
+  to: build_reconcile
+  when:
+    not:
+      same:
+      - build.plan_digest
+      - implementation_plan.digest
+  action: reconcile-build
+- from: building
+  to: approved
+  when:
+    all:
+    - equals:
+      - build_review.verdict
+      - approve
+    - any:
+      - equals:
+        - build_review.binding
+        - exact_target
+      - equals:
+        - build_review.binding
+        - clean_upstream_merges
+  action: dispatch-finalize
+- from: building
+  to: review
+  when:
+    equals:
+    - build.complete
+    - true
+  action: review-build
+- from: review
+  to: review_undetermined
+  when:
+    equals:
+    - build_review.binding
+    - undetermined
+  action: review-evidence-undetermined
+- from: review
+  to: fixing
+  when:
+    all:
+    - equals:
+      - build_review.verdict
+      - changes_requested
+    - any:
+      - equals:
+        - build_review.binding
+        - exact_target
+      - equals:
+        - build_review.binding
+        - clean_upstream_merges
+  action: relay-findings
+- from: review
+  to: approved
+  when:
+    all:
+    - equals:
+      - build_review.verdict
+      - approve
+    - any:
+      - equals:
+        - build_review.binding
+        - exact_target
+      - equals:
+        - build_review.binding
+        - clean_upstream_merges
+  action: dispatch-finalize
+- from: approved
+  to: deferrals_owed
+  when:
+    equals:
+    - deferrals.pending
+    - true
+  action: process-deferrals
+- from: approved
+  to: handoff_pending
+  when:
+    all:
+    - equals:
+      - finalize.status
+      - ready
+    - equals:
+      - worktree.clean
+      - true
+    - same:
+      - worktree.head
+      - branch.head
+    - same:
+      - branch.head
+      - remote.head
+    - same:
+      - finalize.sha
+      - worktree.head
+  action: hand-off-integration
+- from: approved
+  to: finalize_mismatch
+  when:
+    equals:
+    - finalize.status
+    - ready
+  action: restamp-finalize

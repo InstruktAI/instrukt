@@ -1,0 +1,115 @@
+---
+description: Attributed commits — `instrukt repo commit` authors an agent's commit as that agent, records its session and the caller's declaration of human involvement, names the work item when given, refuses caller-written trailers, and outside any session leaves the developer's own identity untouched.
+delivered_by: [instrukt-first-build]
+---
+# Attributed Commit — Spec
+
+## What it is
+
+A commit records who did the work and under which circumstances. When an
+agent commits through `instrukt repo commit`, the commit is authored by that
+agent, names the session it ran in, carries the caller's declaration of
+whether a human was involved, and names the work item when one is given.
+These facts come from the caller's environment and configuration, never from
+guesswork: what cannot be resolved is left out, and outside any agent session
+the commit is the developer's own. The trailers are instrukt's alone; a
+message that writes them itself is refused.
+
+## Canonical fields
+
+### Resolution
+
+| Fact | Source | Unresolved |
+| --- | --- | --- |
+| Active runtime and its session id | the first runtime mapping entry whose session variable is set in the caller's environment (`local/projects/instrukt/spec/domain/configuration`) | no `Session:` trailer |
+| Active agent | the first agent CLI entry of the runtime mapping whose session variable is set | the git user's own identity as author |
+| Agent author | the global layer's `agents.<name>.git_author` for the active agent | refuse and name `agents.<name>.git_author` |
+
+A runtime that hosts agent CLIs and an agent CLI can both be set at once; the
+runtime mapping's order decides the active runtime, and the active agent is
+resolved from the agent CLI entries alone.
+
+### The message
+
+- The caller supplies one message: a subject and an explanatory body.
+- instrukt appends, after a blank line, in this order:
+  - `Session: <runtime>:<id>` — when a runtime resolves;
+  - `Human-Involved: true|false` — always; the caller's declaration through
+    `--human-involved true|false`, `false` when omitted;
+  - `Todo: <slug>` for a recorded work item, or `Planned-Todo: <slug>` for a
+    planned association — when the caller supplies `--todo`.
+- **Refusal.** A message containing a line whose key is `Session`,
+  `Human-Involved`, `Todo` or `Planned-Todo`, in any letter case, is refused before anything
+  is committed; the refusal names the options that supply those facts.
+- The work-item slug is checked for form; whether the item exists is checked
+  only when the todos module is on (`local/projects/instrukt/spec/domain/work`).
+  With todos off, `--todo <slug>` writes `Todo: <slug>` as given; it never
+  infers a planned association. With todos on, recorded and planned
+  associations follow the existence check above.
+
+### What is committed
+
+- `--only <paths>` commits exactly those paths as they are in the working
+  tree, new files included, and leaves everything else in the index as it
+  was.
+- The project's own git hooks run as for any commit; a hook that refuses the
+  commit leaves nothing committed.
+- Works in any git repository; the project layer is not required.
+
+### Commit-review notes
+
+`instrukt repo stamp <sha…> --verdict approve|needs_work --report <file>`
+writes the verdict and the complete report's digest as a git note on each
+named commit. Notes travel with push and need no separate work record or
+enabled todos module. The integrator reads these notes when assessing settled
+direct commits for integration.
+
+`instrukt repo stamp <sha…> --verdict exempt --reason <text>` records
+the author's own-stamp exemption and reason for a commit requiring no review.
+The integrator takes commits noted `approve` or `exempt`, stopping at the
+first commit with neither verdict.
+
+### Use cases
+
+#### UC-RC1: An agent acting for a person commits its work under its own name
+
+```gherkin
+Given an agent working for a developer in a session of a configured runtime
+And the agent's git author is configured on the computer
+When the agent commits its work, declaring that the developer was involved, for a named work item
+Then the commit is authored by the agent
+And the commit records the runtime and session it was made in
+And the commit records that a human was involved and names the work item
+When the agent's message itself contains a session line
+Then nothing is committed and the agent is told how to supply that fact
+```
+
+#### UC-RC2: A developer committing outside any agent session keeps their own identity
+
+```gherkin
+Given a developer at a terminal with no agent session in its environment
+When the developer commits through instrukt
+Then the commit is authored by the developer's own git identity
+And the commit records no session
+And the commit records whether a human was involved as the developer declared
+```
+
+#### UC-RC3: A developer makes settled direct work available for integration
+
+```gherkin
+Given a developer has direct commits ready to join the shared baseline
+When an agent acting for the developer records their review outcomes or justified exemptions
+Then settled commits become available for integration in order
+And integration stops at the first commit without an accepting outcome
+```
+
+## Known caveats
+
+- An agent with no configured git author is refused with the door `agents.<name>.git_author`.
+- An entry with `agent: <name>` is an agent CLI.
+- Without `--only`, commit includes what the caller staged, as plain git; `--only` commits exactly the given paths.
+
+## See Also
+
+- docs/local/spec/domain/repository.md — the repository context.
+- docs/local/spec/domain/configuration.md — the runtime mapping and the agents' git authors.

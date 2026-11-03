@@ -1,0 +1,4 @@
+# Task preparation — {slug}
+
+Follow the task procedure on canonical main: check `input`, repository boundary and duplicates, then draft/refine `task-plan` with `instrukt todo artifacts write {slug} task-plan '<content>'`. Request the configured authorization in the responsible thread; a task has no PRD, implementation plan or separate reviewer verdict. Creation and scheduling never authorize it.
+Use `task_plan.digest`, `task_approved.target_digest` and `task_approved.by` to check current authorization. After the configured decision record `instrukt todo stamp {slug} --task-approved --by human|peer [--session <runtime:id>]`; GitHub approvals arrive by pull. Matching digests and attribution satisfying the configured approver permit preparation release; a stale or missing binding remains owed. Never execute the task from prepare.

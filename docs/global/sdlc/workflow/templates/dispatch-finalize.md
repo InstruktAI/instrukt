@@ -1,0 +1,5 @@
+# Finalize — {slug}
+
+Current independent approval permits finalization; deferrals must already be processed. Follow the finalizer procedure: fetch and merge accepted upstream, preserve both intents on conflict, publish with `git push origin HEAD:{slug}`, and record `instrukt todo stamp {slug} --finalize-ready` only on matching clean worktree/local branch/remote/commit evidence. Changed todo or findings require current review; only clean upstream merges may retain its binding. The stamp records the handoff and appends `workflow.finalized` idempotently keyed by project/todo/SHA. Add no suite run and perform no integration.
+
+Before starting, read the role binding with `instrukt todo show {slug}` and observe its recorded session through `instrukt sessions alive <id>`. Continue an available session with `instrukt sessions send <id> '<brief>'`; `run` is the start branch, not an implicit reuse operation. The runner records the returned runtime-native id per todo and role; preserve that binding. Choose the first available entry in the procedure's dispatch order or the global order. A reply or ended turn does not establish completion.

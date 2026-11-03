@@ -1,0 +1,3 @@
+# Diagnosis — {slug}
+
+Load the driver procedure inline. Triage the filing before dispatching a diagnosis peer; a confirmed independently auditable reporter account can settle without starting a redundant investigator. Otherwise start `sdlc/procedure/lifecycle/prepare/diagnose-peer` through `instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/diagnose-peer --args {slug} --brief -`, supplying the rendered brief on stdin and retaining and reusing its recorded session. The peer owns investigation and diagnosis revisions; the driver owns examination and stamps. Diagnosis prescribes neither fix nor verification. A diagnosis opens no worktree.

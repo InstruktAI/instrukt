@@ -1,0 +1,59 @@
+---
+description: 'An ADR is created only for a real, contestable architectural decision; the default is none. Keeps the decision record minimal and high-signal, free of ceremonial noise, so primary artifacts describe the contract and agents spend no cycles on records that carry no fork.'
+visibility: 'public'
+---
+
+# ADR Discipline — Policy
+
+## Required reads
+
+- @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
+
+## Rules
+
+- An ADR records one real, contestable decision — a fork where genuine alternatives existed and one was chosen over them. It is created only for such a decision, and only because that reasoning is needed to work safely with what was built.
+- The default is none. New and tightened contracts, clarifications, restatements, and alignment to already-settled decisions carry no fork and take no ADR. An unclear case takes none. An ADR is never produced preemptively, to satisfy a process step, or by clerical habit.
+- The ADR is authored BEFORE or ALONGSIDE the primary artifact change, never retroactively long after.
+- ADRs live at `docs/local/adr/NNNN-<kebab-case-title>.md` (peer to `spec/`, `design/`, `policy/`, `procedure/`, `concept/` — NOT under `design/`, because ADRs are reasoning records, not design exploration), follow the `type: adr` schema (Context / Decision / Consequences, with required `date` and `number` frontmatter), and are discovered via `instrukt docs index --areas adr`.
+- Primary artifacts (specs, procedures, principles) MUST describe the _current state_ — they are NOT reasoning logs. The reasoning belongs in the accompanying ADR, not inline.
+- The converse also holds: an ADR contains only the _why_ of a contested fork. Content that defines a term, states a contract, or describes current state is spec / policy / schema material, not ADR material. A record whose substance is definition, restatement, or current-state description carries no fork and is not an ADR — even when cast in the ADR form.
+- When a **project-scoped** snippet relates to an ADR, point to it from the
+  snippet's `## See Also` section — a soft reference. A global snippet never
+  points to a project ADR: global doctrine must remain usable in another
+  repository without a project dependency. The project ADR remains discoverable
+  through its project ADR index and records why that project adopted the global
+  contract. Never name ADR reasoning inline in a primary artifact body;
+  the body states current contract.
+- An ADR's **body** (Context / Decision / Consequences / Alternatives Considered) is an immutable historical record — never edited after the fact. The single mutable element is its **`## Status`**: an optional section recording the decision's standing. A new ADR never edits an earlier ADR's body; a decision that reverses or narrows an earlier one is recorded as its own new ADR, and the earlier ADR's `## Status` is then set to `Superseded by ADR-NNNN` (or `Superseded in part by ADR-NNNN`, or `Deprecated`) — the one change permitted to an existing ADR. An ADR with no `## Status` is live and accepted. **ADRs are superseded, never deleted:** the record of what was decided, and that it no longer holds, both stay on the timeline.
+- An ADR is one **atomic** decision — an immutable reasoning report on the architecture's decision timeline. One ADR records one decision. A cohesive contract whose parts must cross-reference is a spec or domain doc, not a set of mutually-referencing ADRs; each constituent decision is still its own standalone ADR.
+- **An ADR's body references run backward only.** The body may reference an _earlier_ ADR — a decision that already existed when it was written — and may NEVER reference a _later_ ADR, because at its moment that decision did not exist. The sole forward link is the **`## Status` supersession pointer**, added at supersession time (not at authoring), naming the later ADR that supersedes this one. That is the only place a later ADR id appears in an earlier ADR. (This governs ADR → ADR only; a spec or other snippet pointing at an ADR via its own `## See Also`, per the rule above, is unaffected and correct.)
+- **An ADR records a decision, never work.** No todo, slug, `delivered_by`, delivery, or anything TBD appears in an ADR — those are not points on the decision timeline, and the future is not knowable from a past entry. ADRs sit outside the pending/delivery machinery: an `adr` snippet carries no `delivered_by` and has no companion file; it lands when its decision is made.
+
+## Rationale
+
+A decision record earns its place only by recording a real fork that future work depends on understanding. Two failures bound it. Reasoning smeared inline through specs and procedures turns primary artifacts into history logs that conflate "what is" with "what was considered," making them harder to consume. Records produced by reflex breed cross-reference clutter that costs every agent cycles to wade through and dilutes the signal of the records that matter. The discipline holds the record minimal and high-signal: primary artifacts describe the contract, and an ADR exists only where a genuine contested decision must be understood to work with what was built.
+
+## Scope
+
+All agents authoring or modifying:
+
+- Doc snippets under `docs/`
+- Architecture documents under `docs/local/design/architecture/`
+- Policies, principles, procedures, concepts, specs at any level
+
+## Enforcement
+
+- The doc-snippet-authoring procedure cross-references this policy: agents authoring snippets must consult ADR discipline as part of the procedure.
+- Reviewers verify that any ADR present records a real, contestable decision, and reject a record produced for a change that carries no fork.
+
+## Exceptions
+
+- **Trivial changes.** Typos, formatting, example additions, reorganization without semantic change, broken-reference fixes. No ADR required.
+- **Inventory documentation.** When documenting existing state that wasn't the result of a fresh decision, no ADR is required for the inventory work itself. The decision was made when the original implementation landed; the inventory is just describing reality.
+- **Internal-only changes inside a snippet's body** that don't reflect a decision — clarifying wording, restructuring a section for readability. No ADR.
+
+When in doubt, write none. Doubt is the signal that no decision worth recording is present.
+
+## See Also
+
+- ~/.instrukt/docs/general/procedure/adr-authoring.md
