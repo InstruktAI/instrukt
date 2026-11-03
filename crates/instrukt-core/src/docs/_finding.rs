@@ -59,6 +59,8 @@ codes! {
     ParametersInvalid => "frontmatter-parameters-invalid",
     DispatchWithoutRole => "frontmatter-dispatch-without-role",
     DispatchInvalid => "frontmatter-dispatch-invalid",
+    /// A `dispatch` agent the configured runtime mapping cannot start.
+    DispatchAgentUnknown => "frontmatter-dispatch-agent-unknown",
     /// An `adr` without a well-formed `date`.
     AdrDateInvalid => "frontmatter-adr-date-invalid",
     /// An `adr` without a `number` matching its file name prefix.
@@ -104,9 +106,25 @@ codes! {
     MarkerNested => "pending-marker-nested",
     MarkerUnbalanced => "pending-marker-unbalanced",
     MarkerOverlapping => "pending-marker-overlapping",
+    /// `delivered_by`, a companion or a planned block on an `adr`.
+    AdrPendingCarrier => "pending-carrier-on-adr",
 
     // Third-party
     SourceInvalid => "third-party-source-invalid",
+    /// A frontmatter field other than `description` on a third-party doc.
+    ThirdPartyFieldNotAllowed => "third-party-field-not-allowed",
+
+    // Workflow flavor
+    /// A workflow schema finding, located in its file.
+    WorkflowSchemaInvalid => "workflow-schema-invalid",
+    /// A flow's `orchestrator` role that no procedure declares.
+    OrchestratorWithoutProcedure => "workflow-orchestrator-without-procedure",
+    /// An action naming a procedure that declares no `role`.
+    ActionProcedureWithoutRole => "workflow-action-procedure-without-role",
+
+    // Configuration
+    /// `requires` names a module the effective switches turn off.
+    RequiresModuleOff => "configuration-requires-module-off",
 }
 
 impl fmt::Display for FindingCode {

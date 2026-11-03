@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+expression: run.out
+---
+docs/local/spec/x.md: identity-undeclared-project

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+expression: run.out
+---
+docs/global/acme/concept/borrowing.md: reference-unresolved: ~/.instrukt/docs/general/principle/absent.md
+docs/global/acme/concept/borrowing.md: reference-unresolved: ~/.instrukt/docs/nowhere/bundle.md

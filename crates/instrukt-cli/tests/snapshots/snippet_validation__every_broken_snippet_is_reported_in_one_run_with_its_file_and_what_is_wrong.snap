@@ -1,7 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/snippet-validation.rs
-assertion_line: 225
-expression: out
+expression: run.out
 ---
 docs/global/acme/baseline-progressive.md: baseline-line-invalid: not a reference
 docs/global/acme/baseline-progressive.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/shape.md
@@ -23,9 +22,16 @@ docs/global/acme/principle/shape.md: structure-see-also-not-last
 docs/global/acme/procedure/both.md: frontmatter-activation-conflict
 docs/global/acme/procedure/both.md: frontmatter-subscriptions-without-role
 docs/global/acme/procedure/both.md: frontmatter-parameters-without-role
+docs/global/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
+docs/global/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
 docs/global/loose.md: identity-missing-domain: loose
 docs/local/adr/0001-choice.md: frontmatter-adr-date-invalid
 docs/local/adr/0001-choice.md: frontmatter-adr-number-invalid
+docs/local/adr/0002-pending.later.md: pending-carrier-on-adr: companion
+docs/local/adr/0002-pending.md: pending-carrier-on-adr: delivered_by
+docs/local/adr/0002-pending.md: pending-carrier-on-adr: planned
+docs/local/baseline.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/care.md
+docs/local/baseline.md: baseline-already-carried: ~/.instrukt/docs/acme/principle/care.md
 docs/local/spec/pending.Not_A_Slug.md: pending-slug-invalid: Not_A_Slug
 docs/local/spec/pending.md: pending-delivered-by-invalid: []
 docs/local/spec/pending.md: pending-slug-invalid: Bad_Slug
@@ -35,3 +41,5 @@ docs/local/spec/pending.md: pending-marker-unbalanced: <!-- /planned:a -->
 docs/local/spec/pending.md: pending-marker-unbalanced: <!-- planned:open -->
 docs/third-party/tool/broken.md: frontmatter-description-missing
 docs/third-party/tool/broken.md: third-party-source-invalid: somewhere on the web
+docs/third-party/tool/broken.md: third-party-field-not-allowed: type
+docs/third-party/tool/broken.md: third-party-field-not-allowed: visibility

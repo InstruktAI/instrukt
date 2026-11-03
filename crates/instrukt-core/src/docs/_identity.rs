@@ -180,7 +180,8 @@ pub(super) enum Placement {
     /// A fragment under `docs/global/snippets/`, named by its path below
     /// that root.
     Fragment(String),
-    /// A third-party doc, identified by its path below `docs/third-party/`.
+    /// A third-party doc, identified by its path below `docs/third-party/`
+    /// prefixed with `third-party/`.
     ThirdParty(ThirdPartyId),
     /// Under `docs/global/<domain>/workflow/`: not a snippet.
     Workflow,
@@ -212,7 +213,7 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
         ["global", tail @ ..] => place_published(tail),
         ["local", tail @ ..] => place_local(tail, project),
         ["third-party", tail @ ..] if !tail.is_empty() => {
-            match ThirdPartyId::parse(&tail.join("/")) {
+            match ThirdPartyId::parse(&format!("third-party/{}", tail.join("/"))) {
                 Ok(id) => Placement::ThirdParty(id),
                 Err(_) => Placement::Unplaced(Unplaced::Outside),
             }
@@ -322,22 +323,36 @@ mod tests {
         ProjectSlug::parse("demo").unwrap()
     }
 
-    fn id_of(rel: &str, project: Option<&ProjectSlug>) -> Option<String> {
+    fn id_of(rel: &str, project: Option<&ProjectSlug>) -> Option<SnippetId> {
         match place(rel, project)? {
-            Placement::Snippet(c) => Some(c.id.to_string()),
+            Placement::Snippet(c) => Some(c.id),
             _ => None,
         }
+    }
+
+    fn id(text: &str) -> Option<SnippetId> {
+        SnippetId::parse(text).ok()
     }
 
     #[test]
     fn published_and_local_halves_derive_their_identities() {
         assert_eq!(
-            id_of("docs/global/sdlc/policy/rust/core.md", None).as_deref(),
-            Some("sdlc/policy/rust/core")
+            id_of("docs/global/sdlc/policy/rust/core.md", None),
+            id("sdlc/policy/rust/core")
         );
         assert_eq!(
-            id_of("docs/local/spec/feature/docs/x.md", Some(&slug())).as_deref(),
-            Some("local/projects/demo/spec/feature/docs/x")
+            id_of("docs/local/spec/feature/docs/x.md", Some(&slug())),
+            id("local/projects/demo/spec/feature/docs/x")
+        );
+    }
+
+    #[test]
+    fn third_party_ids_keep_their_prefix() {
+        assert_eq!(
+            place("docs/third-party/tool/usage.md", None),
+            Some(Placement::ThirdParty(
+                ThirdPartyId::parse("third-party/tool/usage").unwrap()
+            ))
         );
     }
 
@@ -411,9 +426,9 @@ mod tests {
             prop_assume!(!RESERVED_DOMAINS.contains(&domain.as_str()));
             let rest = rest.join("/");
             let published = id_of(&format!("docs/global/{domain}/{}/{rest}.md", tax.dir()), None);
-            prop_assert_eq!(published, Some(format!("{domain}/{}/{rest}", tax.dir())));
+            prop_assert_eq!(published, id(&format!("{domain}/{}/{rest}", tax.dir())));
             let local = id_of(&format!("docs/local/{}/{rest}.md", tax.dir()), Some(&slug()));
-            prop_assert_eq!(local, Some(format!("local/projects/demo/{}/{rest}", tax.dir())));
+            prop_assert_eq!(local, id(&format!("local/projects/demo/{}/{rest}", tax.dir())));
         }
     }
 }

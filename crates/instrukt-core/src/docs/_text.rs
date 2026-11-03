@@ -5,9 +5,6 @@
 //! model and validation build on these readings.
 
 use std::ops::Range;
-use std::sync::LazyLock;
-
-use regex::Regex;
 
 /// A source split into its frontmatter and its body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,21 +103,91 @@ fn fence_opener(trimmed: &str) -> Option<(char, usize)> {
     (len >= 3).then_some((ch, len))
 }
 
-static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| compile(r"`+[^`]*`+"));
-static HTML_COMMENT: LazyLock<Regex> = LazyLock::new(|| compile(r"<!--.*?-->"));
-
 /// `text` with every inline code span blanked to spaces, so byte offsets
-/// keep their meaning.
+/// keep their meaning. A span opens with a run of backticks and closes with
+/// the next run of the same length; an unclosed run is literal text.
 pub(super) fn mask_inline_code(text: &str) -> String {
-    blank(text, &INLINE_CODE)
+    let bytes = text.as_bytes();
+    let mut blank = vec![false; bytes.len()];
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let run = bytes[i..].iter().take_while(|b| **b == b'`').count();
+        let mut j = i + run;
+        let mut closed = None;
+        while j < bytes.len() {
+            if bytes[j] == b'`' {
+                let len = bytes[j..].iter().take_while(|b| **b == b'`').count();
+                if len == run {
+                    closed = Some(j + len);
+                    break;
+                }
+                j += len;
+            } else {
+                j += 1;
+            }
+        }
+        match closed {
+            Some(end) => {
+                blank[i..end].iter_mut().for_each(|flag| *flag = true);
+                i = end;
+            }
+            None => i += run,
+        }
+    }
+    blanked(text, &blank)
 }
 
-fn blank(text: &str, pattern: &Regex) -> String {
-    pattern
-        .replace_all(text, |caps: &regex::Captures<'_>| {
-            " ".repeat(caps.get(0).map_or(0, |m| m.as_str().len()))
+/// `text` with the bytes flagged in `blank` replaced by spaces. Only whole
+/// characters are ever flagged, so the result stays valid UTF-8.
+fn blanked(text: &str, blank: &[bool]) -> String {
+    text.char_indices()
+        .map(|(at, ch)| {
+            if blank.get(at).copied().unwrap_or(false) {
+                " ".repeat(ch.len_utf8())
+            } else {
+                ch.to_string()
+            }
         })
-        .into_owned()
+        .collect()
+}
+
+/// One HTML comment on a line: byte ranges of the whole comment and of the
+/// text between `<!--` and `-->`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Comment {
+    pub whole: Range<usize>,
+    pub inner: Range<usize>,
+}
+
+/// The HTML comments of one line, in order.
+pub(super) fn comments(line: &str) -> Vec<Comment> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(open) = line[from..].find("<!--").map(|i| from + i) {
+        let inner_start = open + 4;
+        let Some(close) = line[inner_start..].find("-->").map(|i| inner_start + i) else {
+            break;
+        };
+        out.push(Comment {
+            whole: open..close + 3,
+            inner: inner_start..close,
+        });
+        from = close + 3;
+    }
+    out
+}
+
+/// The comments of `line` that are not inside inline code.
+pub(super) fn visible_comments(line: &str) -> Vec<Comment> {
+    let masked = mask_inline_code(line);
+    comments(line)
+        .into_iter()
+        .filter(|c| masked.get(c.whole.start..c.whole.start + 4) == Some("<!--"))
+        .collect()
 }
 
 /// A Markdown ATX heading outside fenced code.
@@ -172,8 +239,56 @@ pub(super) struct RawRef {
     pub line: usize,
 }
 
-static REF_LINE: LazyLock<Regex> = LazyLock::new(|| compile(r"^\s*(?:[-*+]\s+)?@(\S+)\s*$"));
-static REF_TOKEN: LazyLock<Regex> = LazyLock::new(|| compile(r"(?:^|[^\w@`])@([\w~./\-]+\.md)\b"));
+/// The target of a line holding only a reference: `@x`, or a list item
+/// `- @x` (`*`, `+` too).
+fn reference_line(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    let item = ["- ", "* ", "+ ", "-\t", "*\t", "+\t"]
+        .iter()
+        .find_map(|bullet| trimmed.strip_prefix(bullet))
+        .map_or(trimmed, str::trim_start);
+    let target = item.strip_prefix('@')?;
+    (!target.is_empty() && !target.contains(char::is_whitespace)).then_some(target)
+}
+
+fn is_word(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn is_path_char(ch: char) -> bool {
+    is_word(ch) || matches!(ch, '~' | '.' | '/' | '-')
+}
+
+/// The `@<path>.md` tokens of a line of prose: an `@` not preceded by a
+/// word character, `@` or a backtick, followed by path characters up to the
+/// last `.md` that ends a word.
+fn reference_tokens(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut previous: Option<char> = None;
+    for (at, ch) in line.char_indices() {
+        let starts = ch == '@' && previous.is_none_or(|p| !is_word(p) && p != '@' && p != '`');
+        previous = Some(ch);
+        if !starts {
+            continue;
+        }
+        let rest = &line[at + 1..];
+        let run_len = rest
+            .char_indices()
+            .find(|(_, c)| !is_path_char(*c))
+            .map_or(rest.len(), |(i, _)| i);
+        let run = &rest[..run_len];
+        let token = run
+            .match_indices(".md")
+            .map(|(i, _)| i + 3)
+            .filter(|end| rest[*end..].chars().next().is_none_or(|c| !is_word(c)))
+            .filter(|end| *end > 3)
+            .last();
+        if let Some(end) = token {
+            out.push(run[..end].to_owned());
+        }
+    }
+    out
+}
 
 /// The `@` references on the lines of `body`, outside fenced code, inline
 /// code and HTML comments: a line holding only a reference (`@x` or
@@ -184,24 +299,22 @@ pub(super) fn references(lines: &[Line<'_>]) -> Vec<RawRef> {
         if line.fenced {
             continue;
         }
-        let masked = blank(&mask_inline_code(line.text), &HTML_COMMENT);
-        if let Some(caps) = REF_LINE.captures(&masked) {
-            if let Some(target) = caps.get(1) {
-                out.push(RawRef {
-                    target: target.as_str().to_owned(),
-                    line: index,
-                });
-            }
-            continue;
+        let code_masked = mask_inline_code(line.text);
+        let mut blank = vec![false; code_masked.len()];
+        for comment in comments(&code_masked) {
+            blank[comment.whole]
+                .iter_mut()
+                .for_each(|flag| *flag = true);
         }
-        for caps in REF_TOKEN.captures_iter(&masked) {
-            if let Some(target) = caps.get(1) {
-                out.push(RawRef {
-                    target: target.as_str().to_owned(),
-                    line: index,
-                });
-            }
-        }
+        let masked = blanked(&code_masked, &blank);
+        let targets = match reference_line(&masked) {
+            Some(target) => vec![target.to_owned()],
+            None => reference_tokens(&masked),
+        };
+        out.extend(targets.into_iter().map(|target| RawRef {
+            target,
+            line: index,
+        }));
     }
     out
 }
@@ -227,26 +340,28 @@ impl Directive {
     }
 }
 
-static DIRECTIVE: LazyLock<Regex> =
-    LazyLock::new(|| compile(r"<!--[ \t]*@(include|exec):[ \t]*(.*?)[ \t]*-->"));
-
-/// The directives of a body, outside fenced and inline code. A directive
-/// with nothing after its colon is not one.
+/// The directives of a body, outside fenced and inline code. The argument
+/// is read from the source as written, so backticks inside a command stay.
+/// A directive with nothing after its colon is not one.
 pub(super) fn directives(lines: &[Line<'_>]) -> Vec<Directive> {
     let mut out = Vec::new();
     for line in lines.iter().filter(|line| !line.fenced) {
-        let masked = mask_inline_code(line.text);
-        for caps in DIRECTIVE.captures_iter(&masked) {
-            let (Some(whole), Some(kind), Some(arg)) = (caps.get(0), caps.get(1), caps.get(2))
-            else {
+        for comment in visible_comments(line.text) {
+            let inner = &line.text[comment.inner.clone()];
+            let inner = inner.trim_start_matches([' ', '\t']);
+            let (kind, argument) = if let Some(arg) = inner.strip_prefix("@include:") {
+                ("include", arg)
+            } else if let Some(arg) = inner.strip_prefix("@exec:") {
+                ("exec", arg)
+            } else {
                 continue;
             };
-            let argument = arg.as_str().trim();
+            let argument = argument.trim();
             if argument.is_empty() {
                 continue;
             }
-            let span = line.span.start + whole.start()..line.span.start + whole.end();
-            out.push(match kind.as_str() {
+            let span = line.span.start + comment.whole.start..line.span.start + comment.whole.end;
+            out.push(match kind {
                 "include" => Directive::Include {
                     path: argument.to_owned(),
                     span,
@@ -261,74 +376,86 @@ pub(super) fn directives(lines: &[Line<'_>]) -> Vec<Directive> {
     out
 }
 
-/// Compiles a pattern literal of this crate.
-#[allow(
-    clippy::expect_used,
-    reason = "only built-in literal patterns reach here, and every one is compiled by the unit tests"
-)]
-pub(super) fn compile(pattern: &str) -> Regex {
-    Regex::new(pattern).expect("built-in pattern compiles")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const YAML: &str = "description: x\n";
+    const BODY: &str = "\n# T — Spec\n";
+
     #[test]
     fn frontmatter_splits_at_the_closing_fence() {
-        let text = "---\ndescription: x\n---\n\n# T — Spec\n";
-        let split = split_frontmatter(text);
-        assert_eq!(split.frontmatter, Some("description: x\n"));
-        assert_eq!(split.body, "\n# T — Spec\n");
+        let text = format!("---\n{YAML}---\n{BODY}");
+        let split = split_frontmatter(&text);
+        assert_eq!(split.frontmatter, Some(YAML));
+        assert_eq!(split.body, BODY);
         assert_eq!(&text[split.body_offset..], split.body);
     }
 
     #[test]
     fn an_unclosed_or_absent_frontmatter_leaves_the_whole_body() {
-        assert_eq!(split_frontmatter("---\nx: 1\n").frontmatter, None);
-        assert_eq!(split_frontmatter("# T\n").body, "# T\n");
+        let unclosed = format!("---\n{YAML}");
+        assert_eq!(split_frontmatter(&unclosed).frontmatter, None);
+        assert_eq!(split_frontmatter(BODY).body, BODY);
     }
 
     #[test]
     fn fenced_lines_are_marked_and_their_headings_ignored() {
         let body = "## A\n```\n## not\n```\n## B\n";
         let lines = lines(body);
-        let titles: Vec<_> = headings(&lines).into_iter().map(|h| h.title).collect();
-        assert_eq!(titles, ["A", "B"]);
+        let found: Vec<usize> = headings(&lines).into_iter().map(|h| h.line).collect();
+        assert_eq!(found, [0, 4]);
+        assert_eq!(lines.iter().filter(|l| l.fenced).count(), 3);
     }
 
     #[test]
     fn titles_normalize_case_and_punctuation() {
-        assert_eq!(normalize_title("See Also"), "see also");
-        assert_eq!(normalize_title("Inputs/Outputs"), "inputs outputs");
+        assert_eq!(normalize_title("See Also"), normalize_title("see also"));
+        assert_eq!(
+            normalize_title("Inputs/Outputs"),
+            normalize_title("inputs outputs")
+        );
+        assert_ne!(normalize_title("See Also"), normalize_title("See"));
     }
+
+    const LISTED: &str = "~/.instrukt/docs/a/policy/b.md";
+    const PROSE: &str = "docs/local/spec/x.md";
 
     #[test]
     fn references_skip_code_comments_and_emails() {
-        let body = "- @~/.instrukt/docs/a/policy/b.md\nsee @docs/local/spec/x.md now\n\
-                    `@docs/local/spec/y.md`\nmail me@host.md\n<!-- @docs/local/z.md -->\n";
-        let refs: Vec<_> = references(&lines(body))
+        let body = format!(
+            "- @{LISTED}\nsee @{PROSE} now\n`@docs/local/spec/y.md`\nmail me@host.md\n<!-- @docs/local/z.md -->\n"
+        );
+        let refs: Vec<_> = references(&lines(&body))
             .into_iter()
             .map(|r| r.target)
             .collect();
-        assert_eq!(
-            refs,
-            ["~/.instrukt/docs/a/policy/b.md", "docs/local/spec/x.md"]
-        );
+        assert_eq!(refs, [LISTED, PROSE]);
+    }
+
+    const COMMAND: &str = "echo `date`";
+    const FRAGMENT: &str = "docs/snippets/f.md";
+
+    #[test]
+    fn directive_arguments_keep_their_backticks() {
+        let body = format!("<!-- @exec: {COMMAND} -->\n");
+        let found = directives(&lines(&body));
+        assert!(matches!(&found[..], [Directive::Exec { command, .. }] if command == COMMAND));
     }
 
     #[test]
     fn directives_are_read_outside_code_with_their_spans() {
-        let body = "a\n<!-- @exec: instrukt config get x -->\n`<!-- @exec: no -->`\n\
-                    <!-- @include: docs/snippets/f.md -->\n";
-        let found = directives(&lines(body));
+        let exec = format!("<!-- @exec: {COMMAND} -->");
+        let body = format!("a\n{exec}\n`<!-- @exec: no -->`\n<!-- @include: {FRAGMENT} -->\n");
+        let found = directives(&lines(&body));
         assert_eq!(found.len(), 2);
-        assert_eq!(
-            &body[found[0].span()],
-            "<!-- @exec: instrukt config get x -->"
-        );
-        assert!(
-            matches!(&found[1], Directive::Include { path, .. } if path == "docs/snippets/f.md")
-        );
+        assert_eq!(body[found[0].span()], exec);
+        assert!(matches!(&found[1], Directive::Include { path, .. } if path == FRAGMENT));
+    }
+
+    #[test]
+    fn a_directive_in_inline_code_or_fences_is_not_one() {
+        let body = "`<!-- @exec: x -->`\n```\n<!-- @exec: y -->\n```\n";
+        assert!(directives(&lines(body)).is_empty());
     }
 }
