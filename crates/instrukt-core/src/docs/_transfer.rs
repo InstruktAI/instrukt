@@ -516,23 +516,39 @@ mod tests {
         assert_eq!(state(&memory), state(&after));
     }
 
+    /// Applies the steps with operation `fail_at` failing, and checks the
+    /// transfer failed with every file back as it was.
+    fn assert_restored_after_failing(fail_at: usize) {
+        let mut memory = Memory::new(&BEFORE, fail_at, fail_at + 1);
+        let result = apply(&steps(), &mut memory);
+        assert!(
+            matches!(&result, Err(DocsError::TransferFailed { unrestored, .. }) if unrestored.is_empty()),
+            "{result:?}"
+        );
+        assert_eq!(state(&memory), state(&Memory::new(&BEFORE, 0, 0)));
+    }
+
+    // Operations in order: 1 write a, 2 write c.child, 3 remove c.parent,
+    // 4 write b.
+
     #[test]
-    fn a_write_failing_part_way_restores_every_file_already_changed() {
-        // Operations: 1 write a, 2 write c.child, 3 remove c.parent,
-        // 4 write b. Each failure point leaves the files as they were.
-        for fail_at in 1..=4 {
-            let mut memory = Memory::new(&BEFORE, fail_at, fail_at + 1);
-            let result = apply(&steps(), &mut memory);
-            assert!(
-                matches!(&result, Err(DocsError::TransferFailed { unrestored, .. }) if unrestored.is_empty()),
-                "{fail_at}: {result:?}"
-            );
-            assert_eq!(
-                state(&memory),
-                state(&Memory::new(&BEFORE, 0, 0)),
-                "{fail_at}"
-            );
-        }
+    fn a_failed_first_write_changes_nothing() {
+        assert_restored_after_failing(1);
+    }
+
+    #[test]
+    fn a_failed_write_of_a_renamed_companion_restores_the_earlier_writes() {
+        assert_restored_after_failing(2);
+    }
+
+    #[test]
+    fn a_failed_removal_of_a_renamed_companions_old_file_restores_the_companion() {
+        assert_restored_after_failing(3);
+    }
+
+    #[test]
+    fn a_failed_later_write_restores_the_earlier_writes_and_the_rename() {
+        assert_restored_after_failing(4);
     }
 
     #[test]

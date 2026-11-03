@@ -74,3 +74,4 @@ isolation, network-boundary fakes and scenario provenance.
 ## Exceptions
 
 - The test harness's safety self-tests, which prove that the temporary-home guard detects writes outside the temporary home (directly or through a symbolic link), bind no use case. They live beside the harness in `crates/instrukt-cli/tests/`. The exception covers only tests of the guard itself; any other harness behaviour is checked through the use cases that run under it.
+- In pure colocated unit tests, equality between a whole returned identifier, path or node id and the expected value is a value assertion, not a `TQ-07` string-content assertion. Substring, prefix, suffix or pattern assertions on such values remain `TQ-07` findings, and rendered text and messages stay governed by `TQ-07` and the CLI snapshot rule.
