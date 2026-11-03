@@ -15,16 +15,40 @@ const INTERPRETER_LINE: &str = "#!/bin/sh\n";
 /// Interpreters that run instrukt's section as written.
 const SHELLS: [&str; 7] = ["sh", "bash", "dash", "zsh", "ksh", "ash", "mksh"];
 
-/// The one call a section holds, and the line a hook manager is given to
-/// keep instrukt's behaviour: the hook run, never `exec`, never failing the
-/// hook.
+/// The call a section makes, and the line a hook manager is given to keep
+/// instrukt's behaviour: the hook run, never `exec`ing a command, never
+/// failing the hook.
 pub fn hook_run_line(hook: Hook) -> String {
-    format!("instrukt hooks run {} \"$@\" || true", hook.name())
+    format!("{} || true", hook_run_call(hook))
+}
+
+fn hook_run_call(hook: Hook) -> String {
+    format!("instrukt hooks run {} \"$@\"", hook.name())
 }
 
 /// The whole section for `hook`, markers included, ending in a newline.
+///
+/// Git passes pre-push its ref list on stdin, which every section of the
+/// hook may need. The pre-push section copies it to a temporary file, feeds
+/// that file to the hook run, then restores the hook's stdin from the file
+/// with a redirection-only `exec` and removes the file: the open descriptor
+/// keeps the list readable for the sections after it, and nothing stays in
+/// the temporary directory.
 pub(crate) fn section(hook: Hook) -> String {
-    format!("{SECTION_START}\n{}\n{SECTION_END}\n", hook_run_line(hook))
+    let body = match hook {
+        Hook::PrePush => [
+            "if instrukt_refs=\"$(mktemp \"${TMPDIR:-/tmp}/instrukt-pre-push.XXXXXX\")\"; then"
+                .to_owned(),
+            "  cat >\"$instrukt_refs\" || true".to_owned(),
+            format!("  {} <\"$instrukt_refs\" || true", hook_run_call(hook)),
+            "  exec 0<\"$instrukt_refs\"".to_owned(),
+            "  rm -f \"$instrukt_refs\"".to_owned(),
+            "fi".to_owned(),
+        ]
+        .join("\n"),
+        _ => hook_run_line(hook),
+    };
+    format!("{SECTION_START}\n{body}\n{SECTION_END}\n")
 }
 
 /// A hook file instrukt creates: an interpreter line and the section.
@@ -195,12 +219,61 @@ fn locate(text: &str) -> Result<Option<Span>, SectionError> {
 /// The first line that runs `exec`, with its number and byte offset.
 fn first_exec_line(text: &str) -> Option<(usize, usize)> {
     lines(text)
-        .find(|(_, _, line)| {
-            line.trim_start()
-                .strip_prefix("exec")
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
-        })
+        .find(|(_, _, line)| execs_a_command(line))
         .map(|(number, offset, _)| (number, offset))
+}
+
+/// Whether `line` is an `exec` that replaces the shell with a command; an
+/// `exec` holding only redirections (`exec 1>&2`, `exec 0<"$file"`) keeps
+/// the shell, so the lines after it still run.
+fn execs_a_command(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix("exec") else {
+        return false;
+    };
+    if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+        return false;
+    }
+    let mut words = rest.split_whitespace();
+    while let Some(word) = words.next() {
+        if word.starts_with('#') {
+            return false;
+        }
+        match redirection(word) {
+            Some(Target::Next) => {
+                words.next();
+            }
+            Some(Target::Attached) => {}
+            None => return true,
+        }
+    }
+    false
+}
+
+/// Where a redirection word's target is.
+enum Target {
+    /// In the word itself (`2>&1`, `0<"$f"`).
+    Attached,
+    /// In the next word (`> file`).
+    Next,
+}
+
+/// The target of `word` when it is a redirection; `None` when it is not
+/// one. A descriptor number or `{name}` may precede the operator.
+fn redirection(word: &str) -> Option<Target> {
+    let operator = match word.strip_prefix('{') {
+        Some(rest) => rest.split_once('}').map_or(word, |(_, after)| after),
+        None => word.trim_start_matches(|c: char| c.is_ascii_digit()),
+    };
+    ["<<-", "<<", ">>", "<&", ">&", "<>", ">|", "<", ">"]
+        .iter()
+        .find_map(|op| operator.strip_prefix(op))
+        .map(|target| {
+            if target.is_empty() {
+                Target::Next
+            } else {
+                Target::Attached
+            }
+        })
 }
 
 #[cfg(test)]
@@ -262,6 +335,45 @@ mod tests {
         assert_eq!(locate(&stray), Err(SectionError::StrayEnd { line: 2 }));
         let twice = format!("{}{}", section(HOOK), section(HOOK));
         assert_eq!(locate(&twice), Err(SectionError::Duplicate { line: 4 }));
+    }
+
+    #[test]
+    fn only_an_exec_running_a_command_counts_and_a_redirection_does_not() {
+        for command in [
+            "exec npx lint-staged",
+            "  exec \"$@\"",
+            "exec 2>&1 other-tool",
+            "exec > log other-tool",
+        ] {
+            assert!(execs_a_command(command), "{command}");
+        }
+        for kept in [
+            "exec 1>&2",
+            "exec 0<\"$instrukt_refs\"",
+            "exec > log 2>&1",
+            "exec {fd}<file",
+            "exec",
+            "exec # nothing",
+            "executable=1",
+            "# exec npx",
+        ] {
+            assert!(!execs_a_command(kept), "{kept}");
+        }
+        for hook in Hook::ALL {
+            assert_eq!(first_exec_line(&section(hook)), None, "{hook}");
+        }
+    }
+
+    #[test]
+    fn a_pre_push_section_goes_before_a_command_exec_and_after_a_redirection() {
+        let own = "#!/bin/sh\nexec 1>&2\nexec other-tool pre-push \"$@\"\n";
+        let Installed::BeforeExec { text, line } = install(own, Hook::PrePush).unwrap() else {
+            panic!("expected an insertion before the command exec");
+        };
+        assert_eq!(line, 3);
+        assert_eq!(state(&text, Hook::PrePush).unwrap(), SectionState::Current);
+        assert_eq!(install(&text, Hook::PrePush).unwrap(), Installed::Unchanged);
+        assert_eq!(remove(&text).unwrap().as_deref(), Some(own));
     }
 
     #[test]

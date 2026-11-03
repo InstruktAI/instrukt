@@ -257,3 +257,104 @@ fn review_outcomes_and_exemptions_are_noted_on_each_commit_in_order() {
     let notes = repo.git(["log", "--reverse", "--format=%H%n%N--", notes_arg.as_str()]);
     insta::assert_snapshot!("notes-in-order", label(notes));
 }
+
+/// A machine's clone of `remote` at `<test dir>/<name>`.
+fn clone_of(env: &TestEnv, remote: &std::path::Path, name: &str) -> Repo {
+    env.clone_repo(remote, name)
+}
+
+fn stdout(env: &TestEnv, assert: &Assert) -> String {
+    shown(env, &assert.get_output().stdout)
+}
+
+/// The review note of `commit` as the remote holds it.
+fn remote_note(env: &TestEnv, remote: &std::path::Path, commit: &str) -> String {
+    env.git(remote, ["notes", "--ref", REVIEW_NOTES_REF, "show", commit])
+}
+
+fn stamp_exempt(env: &TestEnv, repo: &Repo, commit: &str, reason: &str) -> Assert {
+    env.run(
+        repo.path(),
+        [
+            "repo",
+            "stamp",
+            commit,
+            "--verdict",
+            "exempt",
+            "--reason",
+            reason,
+        ],
+    )
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+#[test]
+fn a_second_machine_stamping_after_the_first_merges_both_outcomes_onto_the_remote() {
+    let env = TestEnv::new();
+    let remote = env.bare_remote("origin");
+    let first = clone_of(&env, &remote, "first");
+    first.write("one.md", "one\n");
+    let commit = first.commit("add one");
+    first.git(["push", "--quiet", "--set-upstream", "origin", "main"]);
+    let second = clone_of(&env, &remote, "second");
+
+    let report = env.path("review-report.md");
+    std::fs::write(&report, "# Review\n\nNo findings.\n").unwrap();
+    let approved = env
+        .instrukt(first.path())
+        .args(["repo", "stamp", &commit, "--verdict", "approve", "--report"])
+        .arg(&report)
+        .assert()
+        .success();
+    let merged = stamp_exempt(&env, &second, &commit, "generated file").success();
+
+    let label = |text: String| text.replace(&commit, "<commit>");
+    insta::assert_snapshot!("first-machine-stamp", label(stdout(&env, &approved)));
+    insta::assert_snapshot!(
+        "second-machine-stamp-after-rejection",
+        label(stdout(&env, &merged))
+    );
+    insta::assert_snapshot!(
+        "remote-note-with-both-outcomes",
+        remote_note(&env, &remote, &commit)
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+#[test]
+fn a_stamp_made_while_the_remote_is_unreachable_is_delivered_by_the_next_stamp() {
+    let env = TestEnv::new();
+    let remote = env.bare_remote("origin");
+    let repo = clone_of(&env, &remote, "demo");
+    let mut commits = Vec::new();
+    for name in ["one", "two"] {
+        repo.write(&format!("{name}.md"), &format!("{name}\n"));
+        commits.push(repo.commit(&format!("add {name}")));
+    }
+    repo.git(["push", "--quiet", "--set-upstream", "origin", "main"]);
+    let label = |text: String| {
+        commits.iter().enumerate().fold(text, |text, (index, sha)| {
+            text.replace(sha, &format!("<commit {}>", index + 1))
+        })
+    };
+
+    let away = env.path("origin-away.git");
+    std::fs::rename(&remote, &away).unwrap();
+    let pending = stamp_exempt(&env, &repo, &commits[0], "typo fix").success();
+    insta::assert_snapshot!("stamp-while-unreachable", label(stdout(&env, &pending)));
+    let local = repo.git(["notes", "--ref", REVIEW_NOTES_REF, "show", &commits[0]]);
+    insta::assert_snapshot!("note-kept-locally", local);
+
+    std::fs::rename(&away, &remote).unwrap();
+    let delivered = stamp_exempt(&env, &repo, &commits[1], "comment only").success();
+    insta::assert_snapshot!("next-stamp-delivers", label(stdout(&env, &delivered)));
+    assert_eq!(
+        remote_note(&env, &remote, &commits[0]),
+        local,
+        "the pending note arrived"
+    );
+    insta::assert_snapshot!(
+        "delivered-second-note",
+        remote_note(&env, &remote, &commits[1])
+    );
+}

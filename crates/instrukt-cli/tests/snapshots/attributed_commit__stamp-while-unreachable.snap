@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/attributed-commit.rs
+expression: "label(stdout(&env, &pending))"
+---
+<commit 1>: exempt
+review notes push to origin pending: the remote could not be reached; the stamp is recorded locally and the next stamp that reaches origin delivers every note

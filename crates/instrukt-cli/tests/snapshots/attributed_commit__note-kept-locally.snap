@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/attributed-commit.rs
+expression: local
+---
+verdict: exempt; reason: typo fix

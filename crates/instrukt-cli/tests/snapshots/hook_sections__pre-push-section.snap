@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-cli/tests/hook-sections.rs
+expression: with_section
+---
+#!/bin/sh
+# >>> instrukt >>>
+if instrukt_refs="$(mktemp "${TMPDIR:-/tmp}/instrukt-pre-push.XXXXXX")"; then
+  cat >"$instrukt_refs" || true
+  instrukt hooks run pre-push "$@" <"$instrukt_refs" || true
+  exec 0<"$instrukt_refs"
+  rm -f "$instrukt_refs"
+fi
+# <<< instrukt <<<

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/attributed-commit.rs
+expression: "label(stdout(&env, &delivered))"
+---
+<commit 2>: exempt
+review notes pushed to origin

@@ -182,6 +182,77 @@ fn with_blueprint_on_the_pre_push_section_is_installed_and_a_push_still_complete
     );
 }
 
+/// The names in the test machine's temporary directory.
+fn temporary_files(env: &TestEnv) -> Vec<PathBuf> {
+    let mut names: Vec<PathBuf> = std::fs::read_dir(env.path("tmp"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    names.sort();
+    names
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+#[test]
+fn a_pre_push_section_after_instrukts_reads_the_full_ref_list() {
+    let env = machine();
+    let without = env.bare_remote("without-instrukt");
+    let with = env.bare_remote("with-instrukt");
+    let repo = project(&env, "demo");
+    for remote in [&without, &with] {
+        let name = remote.file_stem().unwrap();
+        repo.git([
+            std::ffi::OsStr::new("remote"),
+            std::ffi::OsStr::new("add"),
+            name,
+            remote.as_os_str(),
+        ]);
+    }
+    repo.write(
+        "instrukt.yaml",
+        &format!(
+            "{}modules:\n  blueprint: true\n",
+            repo.read("instrukt.yaml")
+        ),
+    );
+    repo.commit("switch blueprint on");
+    let captured = env.path("captured");
+    std::fs::create_dir_all(&captured).unwrap();
+    // The developer's own section: keeps the ref list git sent, per remote.
+    let own_section = format!("cat > \"{}/$1\"\n", captured.display());
+    let pre_push = hook_path(&repo, "pre-push");
+
+    write_hook(&pre_push, &format!("#!/bin/sh\n{own_section}"), 0o755);
+    repo.git(["push", "--quiet", "without-instrukt", "main"]);
+
+    std::fs::remove_file(&pre_push).unwrap();
+    env.run(repo.path(), ["hooks", "install"]).success();
+    let with_section = std::fs::read_to_string(&pre_push).unwrap();
+    insta::assert_snapshot!("pre-push-section", with_section);
+    write_hook(&pre_push, &format!("{with_section}{own_section}"), 0o755);
+
+    let temporary_before = temporary_files(&env);
+    repo.git(["push", "--quiet", "with-instrukt", "main"]);
+
+    let sent = std::fs::read(captured.join("without-instrukt")).unwrap();
+    assert!(!sent.is_empty(), "git sent a ref list");
+    assert_eq!(
+        std::fs::read(captured.join("with-instrukt")).unwrap(),
+        sent,
+        "the section after instrukt's read the same full ref list"
+    );
+    assert_eq!(
+        env.git(&with, ["rev-parse", "main"]),
+        repo.head(),
+        "the push completed"
+    );
+    assert_eq!(
+        temporary_files(&env),
+        temporary_before,
+        "no temporary file stays behind"
+    );
+}
+
 // spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK2
 #[test]
 fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() {

@@ -12,7 +12,8 @@ Commands:
           `Planned-Todo:` with --todo. Outside an agent session the commit is the git user's own.
           Prints the commit's id
   stamp   Record a commit-review verdict with the report's digest, or an exemption with its reason,
-          as a git note on each named commit
+          as a git note on each named commit, and push the notes to the remote the default branch
+          tracks
   help    Print this message or the help of the given subcommand(s)
 
 Options:

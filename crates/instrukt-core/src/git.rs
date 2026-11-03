@@ -141,6 +141,17 @@ where
     Ok(output.stdout)
 }
 
+/// Runs `git <args>` in `dir` and returns its whole output whatever its
+/// exit status, for commands whose standard output says what failed
+/// (`push --porcelain`). Only a git that cannot be started is an error.
+pub fn run_output<I, S>(dir: &Path, args: I) -> Result<Output, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    raw(dir, args).map(|(_, output)| output)
+}
+
 /// The top-level directory of the working tree containing `dir`, or `None`
 /// when git positively reports that `dir` is not inside a working tree.
 /// Any other failure (a corrupt configuration, an unreadable repository) is
