@@ -191,6 +191,51 @@ impl GitHub {
         decode(path, &answer)
     }
 
+    /// A GraphQL document with its variables (never interpolated values);
+    /// the `data` of the answer. An `errors` answer is a failure naming
+    /// them.
+    pub fn graphql(&self, document: &str, variables: &Value) -> Result<Value, GitHubError> {
+        let url = self.graphql_url();
+        let text = serde_json::json!({ "query": document, "variables": variables }).to_string();
+        let started = Instant::now();
+        let mut response = self
+            .with_headers(self.agent.post(&url))
+            .header("Content-Type", "application/json")
+            .send(&text)
+            .map_err(transport)?;
+        let status = response.status().as_u16();
+        log(status, "POST", "/graphql", started);
+        let answer = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+        check(status, &response, "POST", "/graphql", &answer)?;
+        let value = decode("/graphql", &answer)?;
+        if let Some(errors) = value["errors"].as_array().filter(|e| !e.is_empty()) {
+            let message = errors
+                .iter()
+                .filter_map(|e| e["message"].as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(GitHubError::Status {
+                method: "POST",
+                path: "/graphql".to_owned(),
+                status,
+                message,
+            });
+        }
+        Ok(value["data"].clone())
+    }
+
+    /// GitHub's GraphQL endpoint beside the REST address: `/graphql` of
+    /// the public API, `/api/graphql` beside an enterprise `/api/v3`.
+    fn graphql_url(&self) -> String {
+        match self.api.strip_suffix("/api/v3") {
+            Some(host) => format!("{host}/api/graphql"),
+            None => format!("{}/graphql", self.api),
+        }
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}/repos/{}{}", self.api, self.repository, path)
     }

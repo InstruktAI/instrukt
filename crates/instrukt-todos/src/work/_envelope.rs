@@ -45,15 +45,24 @@ impl IssueFields {
     }
 }
 
+/// The record's status as the issue and board show it: active, iceboxed,
+/// held, delivered or withdrawn (a structural holder is active work),
+/// never a workflow phase.
+pub(crate) fn record_status(record: &TodoRecord) -> &'static str {
+    match (record.status, &record.hold) {
+        (TodoStatus::Delivered, _) => "delivered",
+        (TodoStatus::Removed, _) => "withdrawn",
+        (TodoStatus::Iceboxed, _) => "iceboxed",
+        (_, Some(_)) => "held",
+        (TodoStatus::Active | TodoStatus::StructuralHolder, None) => "active",
+    }
+}
+
 /// The issue of `record`.
 pub(crate) fn issue(record: &TodoRecord) -> IssueFields {
     let mut lines = vec![format!("{ISSUE_MARKER}{}{COMMENT_CLOSE}", record.id)];
     // The record's status, never a workflow phase.
-    let status = match (record.status, &record.hold) {
-        (TodoStatus::Active, Some(_)) => "held",
-        (TodoStatus::Removed, _) => "withdrawn",
-        (status, _) => status_name(status),
-    };
+    let status = record_status(record);
     lines.push(format!("**Kind:** {} · **Status:** {status}", record.kind));
     if let Some(hold) = &record.hold {
         lines.push(format!("**On hold:** {}", hold.reason));

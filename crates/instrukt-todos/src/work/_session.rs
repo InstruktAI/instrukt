@@ -515,17 +515,32 @@ impl<'w> Session<'w> {
 
     /// Flushes pending reflection of every local item under the lock.
     pub fn flush(&mut self) -> Result<(), WorkError> {
+        // The optional board; a board setting naming no project is reported
+        // and never blocks the issue or the record.
+        let board = match self.config.board() {
+            Ok(board) => board,
+            Err(err) => {
+                tracing::warn!(event = "work_board_unconfigured", error = %err, "board reflection skipped");
+                None
+            }
+        };
         for index in 0..self.items.len() {
             let owed = self.items[index].reflection.pending
-                || _reflect::pull_request_owed(&self.items[index]);
+                || _reflect::pull_request_owed(&self.items[index])
+                || (board.is_some()
+                    && self.items[index].reflection.issue.is_some()
+                    && _reflect::board_owed(&self.items[index]));
             if !owed || self.items[index].reflection.conflicted {
                 continue;
             }
             let before = self.items[index].clone();
             let result = match &self.remote {
-                Remote::Client { gh, down: None } => {
-                    Some(_reflect::flush(gh, &mut self.items[index], &self.base))
-                }
+                Remote::Client { gh, down: None } => Some(_reflect::flush(
+                    gh,
+                    &mut self.items[index],
+                    &self.base,
+                    board.as_ref(),
+                )),
                 _ => None,
             };
             if let Some(Err(err)) = result {
