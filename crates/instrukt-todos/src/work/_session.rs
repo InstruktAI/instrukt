@@ -11,9 +11,10 @@ use instrukt_core::machine::{self, MachineId};
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::{SignedDuration, Timestamp};
 
+use super::_envelope::status_name as status_word;
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
-use super::_model::{TodoId, TodoRecord, TodoRef};
+use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
 pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
 use super::_store::{self, IssueRef, LocalItem, Store};
@@ -63,6 +64,13 @@ enum Remote {
         down: Option<GitHubError>,
     },
     Unavailable(PendingReason),
+}
+
+/// Where [`Session::locate`] found an entry.
+pub(crate) enum Located {
+    Local(usize),
+    /// Reflected work of another computer, read and not stored.
+    Remote(Box<LocalItem>),
 }
 
 pub(crate) struct Session<'w> {
@@ -187,12 +195,10 @@ impl<'w> Session<'w> {
     pub fn enter(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
         let index = match self.find(slug, false) {
             Some(index) => index,
-            None => self
-                .localize_slug(slug)?
-                .ok_or_else(|| WorkError::UnknownTodo {
-                    project: self.project.slug.clone(),
-                    todo: slug.clone(),
-                })?,
+            None => match self.localize_slug(slug)? {
+                Some(index) => index,
+                None => return Err(self.absent(slug)),
+            },
         };
         self.pull_through(index, PullFor::Change)?;
         Ok(index)
@@ -452,6 +458,109 @@ impl<'w> Session<'w> {
 
     /// A record of reflected work read directly from GitHub, with its
     /// artifact contents, stored nowhere.
+    /// The entry `address` names: a plain slug means the live item (local,
+    /// else reflected); `<slug>@<prefix>` the exact entry, retained ones
+    /// included. A plain slug with only retained entries is refused naming
+    /// their addresses; a lookup GitHub could not answer is reported as
+    /// undetermined, never as "no todo".
+    pub fn locate(&mut self, address: &TodoAddress) -> Result<Located, WorkError> {
+        let slug = &address.slug;
+        if address.identity.is_none() {
+            if let Some(index) = self.find(slug, false) {
+                return Ok(Located::Local(index));
+            }
+            if let Some(item) = self.remote_matching(|r| &r.slug == slug && r.is_live())? {
+                return Ok(Located::Remote(Box::new(item)));
+            }
+            let retained: Vec<String> = self
+                .items
+                .iter()
+                .map(|it| &it.record)
+                .filter(|r| &r.slug == slug)
+                .map(|r| format!("`{}` ({})", TodoAddress::exact(r), status_word(r.status)))
+                .collect();
+            if retained.is_empty() {
+                return Err(self.absent(slug));
+            }
+            return Err(WorkError::refused(format!(
+                "no live todo is named `{slug}`; address a retained entry exactly: {}",
+                retained.join(", ")
+            )));
+        }
+        let local: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| address.names(&it.record))
+            .map(|(i, _)| i)
+            .collect();
+        match local.as_slice() {
+            [index] => return Ok(Located::Local(*index)),
+            [] => {}
+            many => {
+                let ids: Vec<String> = many
+                    .iter()
+                    .map(|i| self.items[*i].record.id.to_string())
+                    .collect();
+                return Err(WorkError::refused(format!(
+                    "`{address}` names several entries; give more of the identity: {}",
+                    ids.join(", ")
+                )));
+            }
+        }
+        match self.remote_matching(|r| address.names(r))? {
+            Some(item) => Ok(Located::Remote(Box::new(item))),
+            None => Err(self.absent(slug)),
+        }
+    }
+
+    /// The error for a todo neither this computer nor GitHub has: unknown
+    /// when GitHub answered, undetermined (with the cause) when it could
+    /// not.
+    pub fn absent(&self, slug: &TodoSlug) -> WorkError {
+        match self.github_read() {
+            GitHubRead::Read => WorkError::UnknownTodo {
+                project: self.project.slug.clone(),
+                todo: slug.clone(),
+            },
+            GitHubRead::NotRead(reason) => WorkError::refused(format!(
+                "`{slug}` is not on this computer, and whether it exists cannot be determined: {}",
+                describe(&reason)
+            )),
+        }
+    }
+
+    /// The newest reflected record `wanted` accepts, read with its
+    /// verified contents and stored nowhere; `None` when GitHub holds none.
+    pub fn remote_matching(
+        &mut self,
+        wanted: impl Fn(&TodoRecord) -> bool,
+    ) -> Result<Option<LocalItem>, WorkError> {
+        let Some(records) = self.remote_all() else {
+            return Ok(None);
+        };
+        let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
+        let found = records
+            .into_iter()
+            .filter(|(record, _)| wanted(record) && !local.contains(&record.id))
+            .max_by_key(|(record, _)| (record.is_live(), record.created));
+        let Some((record, issue)) = found else {
+            return Ok(None);
+        };
+        let result = match &self.remote {
+            Remote::Client { gh, down: None } => _reflect::localize(gh, record, issue),
+            _ => return Ok(None),
+        };
+        result.map(Some).map_err(|err| self.github_failure(err))
+    }
+
+    /// Makes a reflected record found by [`Session::locate`] a local item.
+    pub fn adopt(&mut self, item: LocalItem) -> Result<usize, WorkError> {
+        self.store.save(&item)?;
+        self.items.push(item);
+        Ok(self.items.len() - 1)
+    }
+
     pub fn remote_item(&mut self, slug: &TodoSlug) -> Result<Option<LocalItem>, WorkError> {
         let found = match self.remote_all() {
             Some(records) => records

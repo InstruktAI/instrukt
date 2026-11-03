@@ -24,7 +24,7 @@ use instrukt_todos::evidence::{
 };
 use instrukt_todos::work::{
     CreateRequest, DiffLine, ListEntry, Outcome, ReflectionStatus, Selection, StampRequest,
-    TodoView, UpdateRequest, Work, describe,
+    TodoAddress, TodoView, UpdateRequest, Work, describe,
 };
 use jiff::{SignedDuration, Timestamp};
 
@@ -47,7 +47,7 @@ enum TodoCommand {
     /// The project's work: active by default, or iceboxed, removed or delivered.
     List(ListArgs),
     /// A todo's record, evidence, holds, claim and session bindings.
-    Show(SlugArg),
+    Show(AddressArg),
     /// Change a todo's metadata, relationships, hold or claim.
     Update(UpdateArgs),
     /// Refresh a conflicted todo from GitHub.
@@ -74,6 +74,14 @@ enum TodoCommand {
 struct SlugArg {
     /// The todo's slug.
     slug: TodoSlug,
+}
+
+#[derive(Debug, clap::Args)]
+struct AddressArg {
+    /// The live todo's slug, or `<slug>@<identity-prefix>` for a retained
+    /// entry.
+    #[arg(value_name = "TODO")]
+    todo: TodoAddress,
 }
 
 #[derive(Debug, clap::Args)]
@@ -271,9 +279,9 @@ struct ArtifactsArgs {
 #[derive(Debug, clap::Subcommand)]
 enum ArtifactsCommand {
     /// A todo's artifacts and their retained versions.
-    List { slug: TodoSlug },
+    List { slug: TodoAddress },
     /// An artifact's current content.
-    Read { slug: TodoSlug, name: String },
+    Read { slug: TodoAddress, name: String },
     /// Append a version to an artifact.
     Write {
         slug: TodoSlug,
@@ -282,7 +290,7 @@ enum ArtifactsCommand {
     },
     /// The line diff between two retained versions, by digest.
     Diff {
-        slug: TodoSlug,
+        slug: TodoAddress,
         name: String,
         old_digest: String,
         new_digest: String,
@@ -400,7 +408,7 @@ impl Session<'_> {
                 Ok(ExitCode::SUCCESS)
             }
             TodoCommand::Show(args) => {
-                let view = work.show(project, &args.slug)?;
+                let view = work.show(project, &args.todo)?;
                 ctx.out.text(&render_view(&view))?;
                 Ok(ExitCode::SUCCESS)
             }

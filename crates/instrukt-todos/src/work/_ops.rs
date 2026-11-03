@@ -16,10 +16,10 @@ use instrukt_runner::interfaces::{AgentPreference, CatchUp, ProjectRef, TaskSche
 use super::_diff::{DiffLine, diff_lines};
 use super::_error::WorkError;
 use super::_model::{
-    Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoId, TodoRecord, TodoRef, Version,
-    digest_of, valid_artifact_name,
+    Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef,
+    Version, digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, PullFor, ReflectionStatus, Session};
+use super::_session::{GitHubRead, Located, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
@@ -229,26 +229,31 @@ impl Work {
         })
     }
 
-    pub fn show(&self, project: &ProjectRef, slug: &TodoSlug) -> Result<TodoView, WorkError> {
+    /// The todo `address` names: a plain slug is the live item;
+    /// `<slug>@<identity-prefix>` an exact entry, retained ones included.
+    pub fn show(&self, project: &ProjectRef, address: &TodoAddress) -> Result<TodoView, WorkError> {
         let mut s = Session::open(self, project)?;
-        if let Some(index) = s.find(slug, true) {
-            match s.pull_through(index, PullFor::Read) {
-                Ok(()) | Err(WorkError::Conflicted { .. }) => {}
-                Err(err) => return Err(err),
+        match s.locate(address)? {
+            Located::Local(index) => {
+                match s.pull_through(index, PullFor::Read) {
+                    Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+                    Err(err) => return Err(err),
+                }
+                let item = s.items[index].clone();
+                let view = view(&mut s, item.record, true);
+                Ok(TodoView {
+                    reflection: Some(s.status(index)),
+                    issue: item.reflection.issue.map(|i| i.number),
+                    pull: item.reflection.pull,
+                    ..view
+                })
             }
-            let item = s.items[index].clone();
-            let view = view(&mut s, item.record, true);
-            return Ok(TodoView {
-                reflection: Some(s.status(index)),
-                issue: item.reflection.issue.map(|i| i.number),
-                pull: item.reflection.pull,
-                ..view
-            });
+            Located::Remote(item) => {
+                let issue = item.reflection.issue.map(|i| i.number);
+                let view = view(&mut s, item.record, false);
+                Ok(TodoView { issue, ..view })
+            }
         }
-        let item = s.remote_item(slug)?.ok_or_else(|| unknown(&s, slug))?;
-        let issue = item.reflection.issue.map(|i| i.number);
-        let view = view(&mut s, item.record, false);
-        Ok(TodoView { issue, ..view })
     }
 
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
@@ -383,15 +388,29 @@ impl Work {
         project: &ProjectRef,
         slug: &TodoSlug,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
-        self.transition(project, slug, "removed", |record, now| {
-            writable(record)?;
+        let mut s = Session::open(self, project)?;
+        let index = s.enter(slug)?;
+        writable(&s.items[index].record)?;
+        // Release the working resources first; a worktree holding
+        // uncommitted work refuses the withdrawal rather than losing it.
+        let (worktrees, branch) = release_resources(&project.root, &s.items[index].record)?;
+        let now = s.now;
+        s.commit("removed", |s| {
+            let record = &mut s.items[index].record;
             record.removal = Some(Removal {
                 at: now,
                 from: record.status,
+                branch,
+                worktrees,
             });
             record.status = TodoStatus::Removed;
             record.claim = None;
             Ok(())
+        })?;
+        s.flush()?;
+        Ok(Outcome {
+            value: s.items[index].record.clone(),
+            reflection: s.status(index),
         })
     }
 
@@ -402,23 +421,36 @@ impl Work {
         key: &str,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
+        // An identity, a slug, or `<slug>@<identity-prefix>`.
+        let address: Option<TodoAddress> = key.parse().ok();
+        let wanted = |record: &TodoRecord| {
+            record.status == TodoStatus::Removed
+                && (record.id.as_str() == key || address.as_ref().is_some_and(|a| a.names(record)))
+        };
         let removed: Vec<usize> = s
             .items
             .iter()
             .enumerate()
-            .filter(|(_, it)| {
-                it.record.status == TodoStatus::Removed
-                    && (it.record.id.as_str() == key || it.record.slug.as_str() == key)
-            })
+            .filter(|(_, it)| wanted(&it.record))
             .map(|(i, _)| i)
             .collect();
         let index = match removed.as_slice() {
             [index] => *index,
-            [] => {
-                return Err(WorkError::refused(format!(
-                    "no withdrawn todo `{key}` within its recovery window on this computer"
-                )));
-            }
+            [] => match s.remote_matching(wanted)? {
+                // Withdrawn on another computer, still inside its window.
+                Some(item) => s.adopt(item)?,
+                None => {
+                    return Err(match s.github_read() {
+                        GitHubRead::Read => WorkError::refused(format!(
+                            "no withdrawn todo `{key}` within its recovery window"
+                        )),
+                        GitHubRead::NotRead(reason) => WorkError::refused(format!(
+                            "no withdrawn todo `{key}` on this computer, and GitHub cannot be read to look further: {}",
+                            super::_session::describe(&reason)
+                        )),
+                    });
+                }
+            },
             many => {
                 let ids: Vec<String> = many
                     .iter()
@@ -713,10 +745,11 @@ impl Work {
     pub fn read_artifact(
         &self,
         project: &ProjectRef,
-        slug: &TodoSlug,
+        address: &TodoAddress,
         name: &str,
     ) -> Result<Version, WorkError> {
-        let view = self.show(project, slug)?;
+        let view = self.show(project, address)?;
+        let slug = &address.slug;
         view.record
             .artifact(name)
             .and_then(|a| a.versions.last())
@@ -728,12 +761,13 @@ impl Work {
     pub fn diff_artifact(
         &self,
         project: &ProjectRef,
-        slug: &TodoSlug,
+        address: &TodoAddress,
         name: &str,
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let view = self.show(project, slug)?;
+        let view = self.show(project, address)?;
+        let slug = &address.slug;
         let artifact = view
             .record
             .artifact(name)
@@ -909,6 +943,84 @@ fn apply_update(
         record.claim = None;
     }
     Ok(warnings)
+}
+
+/// Releases the working resources a withdrawn todo owns (`todos`,
+/// "Parking, withdrawal and delivery"): each worktree its session bindings
+/// returned that is a worktree of this project, then its work branch.
+/// Only git's own worktree list and the recorded branch are acted on; a
+/// path that is not one of the project's worktrees is left alone. A
+/// worktree with uncommitted work refuses the withdrawal. Returns what was
+/// released, as recovery evidence.
+fn release_resources(
+    root: &Path,
+    record: &TodoRecord,
+) -> Result<
+    (
+        Vec<std::path::PathBuf>,
+        Option<super::_model::ReleasedBranch>,
+    ),
+    WorkError,
+> {
+    let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
+    let worktrees: Vec<std::path::PathBuf> = listed
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(std::path::PathBuf::from)
+        .collect();
+    let main = worktrees.first().cloned();
+    let mut released = Vec::new();
+    for binding in &record.bindings {
+        let Some(path) = &binding.worktree else {
+            continue;
+        };
+        let owned = worktrees.iter().any(|w| w == path) && main.as_ref() != Some(path);
+        if !owned || released.contains(path) {
+            continue;
+        }
+        let target = path.to_string_lossy().into_owned();
+        match git::run(root, ["worktree", "remove", target.as_str()]) {
+            Ok(_) => released.push(path.clone()),
+            Err(git::GitError::Failed { stderr, .. }) => {
+                return Err(WorkError::refused(format!(
+                    "the worktree {} holds work git would lose ({}); commit or discard it, then withdraw again",
+                    path.display(),
+                    stderr.trim()
+                )));
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    let mut branch = None;
+    if let Some(name) = &record.branch {
+        let reference = format!("refs/heads/{name}");
+        let head = match git::run(
+            root,
+            ["rev-parse", "--verify", "--quiet", reference.as_str()],
+        ) {
+            Ok(sha) => CommitSha::parse(sha.trim()).ok(),
+            Err(git::GitError::Failed { .. }) => None,
+            Err(err) => return Err(err.into()),
+        };
+        let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
+            Ok(current) => Some(current.trim().to_owned()),
+            Err(git::GitError::Failed { .. }) => None,
+            Err(err) => return Err(err.into()),
+        };
+        if let Some(head) = head {
+            if current.as_deref() == Some(name.as_str()) {
+                return Err(WorkError::refused(format!(
+                    "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
+                )));
+            }
+            git::run(root, ["branch", "-D", name.as_str()])?;
+            branch = Some(super::_model::ReleasedBranch {
+                name: name.clone(),
+                head,
+            });
+        }
+    }
+    Ok((released, branch))
 }
 
 fn change_kind(record: &mut TodoRecord, kind: TodoKind, force: bool) -> Result<(), WorkError> {
@@ -1188,10 +1300,7 @@ fn role_of(record: &TodoRecord, actor: &Actor) -> Option<instrukt_core::ids::Rol
 }
 
 fn unknown(s: &Session<'_>, slug: &TodoSlug) -> WorkError {
-    WorkError::UnknownTodo {
-        project: s.project.slug.clone(),
-        todo: slug.clone(),
-    }
+    s.absent(slug)
 }
 
 fn no_artifact(slug: &TodoSlug, name: &str) -> WorkError {

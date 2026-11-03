@@ -47,6 +47,78 @@ impl std::fmt::Display for TodoId {
     }
 }
 
+/// How a command addresses a todo (`todos`, "Identity and creation"): a
+/// plain slug means the live item; `<slug>@<identity-prefix>` addresses
+/// an exact entry, retained ones included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoAddress {
+    pub slug: TodoSlug,
+    /// A prefix of the durable identity (lowercase hex).
+    pub identity: Option<String>,
+}
+
+/// The shortest identity prefix commands show for `<slug>@<prefix>`.
+pub(crate) const SHOWN_PREFIX: usize = 8;
+
+impl TodoAddress {
+    /// The address of `record`'s exact entry.
+    pub fn exact(record: &TodoRecord) -> Self {
+        Self {
+            slug: record.slug.clone(),
+            identity: Some(record.id.as_str()[..SHOWN_PREFIX].to_owned()),
+        }
+    }
+
+    /// Whether `record` is the entry this address names (for a plain slug:
+    /// any entry with that slug).
+    pub(crate) fn names(&self, record: &TodoRecord) -> bool {
+        record.slug == self.slug
+            && self
+                .identity
+                .as_deref()
+                .is_none_or(|prefix| record.id.as_str().starts_with(prefix))
+    }
+}
+
+impl std::fmt::Display for TodoAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.identity {
+            Some(prefix) => write!(f, "{}@{prefix}", self.slug),
+            None => write!(f, "{}", self.slug),
+        }
+    }
+}
+
+/// A todo address that is neither a slug nor `<slug>@<identity-prefix>`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("`{0}` is not a todo address: a slug, or `<slug>@<identity-prefix>` for a retained entry")]
+pub struct AddressError(String);
+
+impl std::str::FromStr for TodoAddress {
+    type Err = AddressError;
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let refused = || AddressError(text.to_owned());
+        let (slug, identity) = match text.split_once('@') {
+            Some((slug, prefix)) => {
+                let valid = !prefix.is_empty()
+                    && prefix.len() <= 32
+                    && prefix
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
+                if !valid {
+                    return Err(refused());
+                }
+                (slug, Some(prefix.to_owned()))
+            }
+            None => (text, None),
+        };
+        Ok(Self {
+            slug: TodoSlug::parse(slug).map_err(|_| refused())?,
+            identity,
+        })
+    }
+}
+
 /// A reference to another todo of the project: its identity, and the slug
 /// it was last known under (renames update references).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +188,20 @@ pub struct TodoRecord {
 pub struct Removal {
     pub at: Timestamp,
     pub from: TodoStatus,
+    /// The working resources withdrawal released, kept as recovery
+    /// evidence: the work branch and the commit it pointed at, and the
+    /// worktrees removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<ReleasedBranch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub worktrees: Vec<PathBuf>,
+}
+
+/// A work branch withdrawal deleted, and the commit it pointed at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleasedBranch {
+    pub name: String,
+    pub head: CommitSha,
 }
 
 impl TodoRecord {

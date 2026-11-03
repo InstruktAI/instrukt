@@ -30,6 +30,34 @@ fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity()
 
 // spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
 #[test]
+fn work_withdrawn_on_another_computer_is_restored_there_under_its_identity() {
+    let project = Project::new();
+    project.create(
+        "nested-lists",
+        "feature",
+        "Keep the depth of nested lists when parsing Markdown.",
+    );
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd",
+        "Lists keep their depth through parse and render.",
+    ]);
+    project.ok(["remove", "nested-lists"]);
+
+    let elsewhere = project.other_computer();
+    let restored = elsewhere.ok(["reactivate", "nested-lists"]);
+    let shown = elsewhere.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "restored-elsewhere",
+        redact(&format!("{restored}---\n{shown}"))
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
+#[test]
 fn withdrawn_work_is_restored_with_its_intent_and_evidence_under_its_identity() {
     let project = Project::new();
     project.create(
