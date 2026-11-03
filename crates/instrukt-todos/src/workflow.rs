@@ -45,5 +45,5 @@ pub use _render::{ConfigLookup, ConfigLookupError, RenderFailure, RenderFinding,
 pub use _schema::WorkflowSchema;
 pub use _service::{
     Flow, Next, Pickup, SelectedFlavorRoles, Workflow, WorkflowError, preparation_complete,
-    related_todos, todos_enabled,
+    related_evidence, related_todos, todos_enabled,
 };
