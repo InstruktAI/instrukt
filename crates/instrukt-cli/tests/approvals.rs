@@ -8,10 +8,151 @@
 )]
 
 mod common;
+#[path = "support/runtime.rs"]
+mod runtime;
 #[path = "support/work.rs"]
 mod support;
+#[path = "support/workflow.rs"]
+mod workflow;
 
+use instrukt_core::config::CURRENT_SCHEMA_VERSION;
 use support::{Project, REPOSITORY, redact};
+use workflow::Crew;
+
+// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP3
+#[test]
+fn an_earlier_approval_carries_to_the_revised_outcome_only_under_a_current_review() {
+    let project = Project::new();
+    project.create(
+        "nested-lists",
+        "feature",
+        "Keep the depth of nested lists when parsing Markdown.",
+    );
+    reviewed_prd(&project, "Lists keep their depth through parse and render.");
+    // Stamp #5: the developer's approval of that outcome.
+    project.ok([
+        "stamp",
+        "nested-lists",
+        "--prd-approved",
+        "--by",
+        "human",
+        "--session",
+        "thread-host:thread-7",
+    ]);
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd",
+        "Lists keep their depth, and numbering restarts per level.",
+    ]);
+
+    let unreviewed = project
+        .todo([
+            "stamp",
+            "nested-lists",
+            "--prd-approved",
+            "--carry-from",
+            "5",
+        ])
+        .failure();
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd-review-findings",
+        "No findings on the revision.",
+    ]);
+    project.ok([
+        "stamp",
+        "nested-lists",
+        "--verdict",
+        "approve",
+        "--phase",
+        "prd_review",
+    ]);
+    let carried = project.ok([
+        "stamp",
+        "nested-lists",
+        "--prd-approved",
+        "--carry-from",
+        "5",
+    ]);
+    let shown = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "carried",
+        redact(&format!(
+            "{}---\n{carried}---\n{shown}",
+            String::from_utf8_lossy(&unreviewed.get_output().stderr)
+        ))
+    );
+}
+
+/// The `crew` project with `approvals.prd` set to `approver`.
+fn prd_approved_by(crew: &Crew, approver: &str) {
+    crew.project.repo.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\napprovals:\n  prd: {approver}\n"
+        ),
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP4
+#[test]
+fn a_peer_approves_where_the_project_allows_it_with_its_session_and_reason() {
+    let mut crew = Crew::new();
+    let slug = "nested-lists";
+    prd_approved_by(&crew, "peer");
+    crew.project.create(
+        slug,
+        "feature",
+        "Keep the depth of nested lists when parsing Markdown.",
+    );
+    crew.next("prepare", slug);
+    crew.write(slug, "prd", "Lists keep their depth.");
+    crew.write(slug, "prd-review-findings", "No findings.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    let approve = ["stamp", slug, "--prd-approved", "--by", "peer"];
+
+    // In the peer's session but stating no reason; then with no session.
+    crew.project.env.set_env("AGENT_SESSION", "peer-2");
+    let unreasoned = crew.project.todo(approve).failure();
+    crew.project.env.remove_env("AGENT_SESSION");
+    let sessionless = crew
+        .project
+        .todo(
+            approve
+                .iter()
+                .copied()
+                .chain(["--reason", "it follows the input"]),
+        )
+        .failure();
+
+    crew.project.env.set_env("AGENT_SESSION", "peer-2");
+    let approved = crew.todo(
+        approve
+            .iter()
+            .copied()
+            .chain(["--reason", "it follows the input"]),
+    );
+    crew.project.env.set_env("AGENT_SESSION", "lead-1");
+    let allowed = crew.next("prepare", slug);
+    // The project reserves the gate for the developer.
+    prd_approved_by(&crew, "human");
+    let reserved = crew.next("prepare", slug);
+    let shown = crew.todo(["show", slug]);
+
+    insta::assert_snapshot!(
+        "peer-approval",
+        redact(&format!(
+            "{}---\n{}---\n{approved}---\npeer allowed:\n{allowed}---\nhuman required:\n{reserved}---\n{shown}",
+            String::from_utf8_lossy(&unreasoned.get_output().stderr),
+            String::from_utf8_lossy(&sessionless.get_output().stderr),
+        ))
+    );
+}
 
 /// Writes the prd version `text` of `nested-lists` and records its
 /// independent review's approval.
