@@ -426,7 +426,7 @@ fn stamp(args: StampArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         }
     };
     // The clock is read here, at the composition root, and handed down.
-    let at = StampTime::from_system(std::time::SystemTime::now())?;
+    let at = StampTime::from_system(std::time::SystemTime::from(ctx.clock.now()))?;
     let outcome = repository::stamp(&ctx.cwd, &args.commits, &stamp, at)?;
     for commit in &outcome.commits {
         ctx.out

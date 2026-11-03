@@ -104,6 +104,16 @@ references are checked for unresolved keys and cycles without executing commands
   settings preserved, through the same atomic write as a patch.
 - A document already at the current version is left untouched.
 
+### Environment
+
+`INSTRUKT_NOW=<RFC 3339>` overrides the clock, for verification and
+diagnosis. While it is set, every command takes it as the current time in
+place of the system clock — for retention windows, schedules and due times,
+and the times it records. It is read once, where the command constructs its
+clock. It is never silent: while it is set, every command prints
+`instrukt: clock overridden to <value>` to stderr. A value that is not RFC 3339
+refuses the command; it never falls back to the system clock.
+
 ### Use cases
 
 #### UC-CL1: A developer overrides a machine default for one project

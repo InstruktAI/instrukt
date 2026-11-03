@@ -152,6 +152,14 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the withdrawn todo is gone and can no longer be restored
 ```
 
+#### UC-TD3: A developer is told how to enable work tracking
+
+```gherkin
+  Given a developer's project has work tracking switched off
+  When they ask to file, change, prepare or work on a todo
+  Then the command refuses and names the switch that would enable it
+```
+
 ## Known caveats
 
 None.
