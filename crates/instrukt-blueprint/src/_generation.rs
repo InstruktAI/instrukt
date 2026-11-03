@@ -349,15 +349,11 @@ pub fn last_generation(
     let Some(record) = files.read::<Record>(&files.status())? else {
         return Ok(None);
     };
-    let state = match &record.outcome {
-        Outcome::Mapped { .. } => GenerationState::Mapped,
-        Outcome::Failed { error, .. } => GenerationState::Failed {
-            error: error.clone(),
-        },
-        Outcome::Running if free.is_none() => GenerationState::Running,
-        Outcome::Running if engine_alive(&record) => GenerationState::Orphaned,
-        Outcome::Running => GenerationState::Interrupted,
-    };
+    let lock_free = free.is_some();
+    // The OS is asked only about a running record's engine, and only when
+    // no worker holds the lock.
+    let alive = lock_free && engine_alive(running_group(&record));
+    let state = state_of(&record, lock_free, alive);
     drop(free);
     Ok(Some(LastGeneration {
         sha: record.sha,
@@ -365,11 +361,44 @@ pub fn last_generation(
     }))
 }
 
-/// Whether a running record's engine group still has a member. A group
-/// that cannot be asked about is reported and counted as alive: guessing
-/// it dead could start a second engine beside it.
-fn engine_alive(record: &Record) -> bool {
-    let Some(group) = record.engine_group else {
+/// What a record says about its generation, given whether the generation
+/// lock was free when it was read and whether its engine group lives.
+fn state_of(record: &Record, lock_free: bool, engine_alive: bool) -> GenerationState {
+    match &record.outcome {
+        Outcome::Mapped { .. } => GenerationState::Mapped,
+        Outcome::Failed { error, .. } => GenerationState::Failed {
+            error: error.clone(),
+        },
+        Outcome::Running if !lock_free => GenerationState::Running,
+        Outcome::Running if engine_alive => GenerationState::Orphaned,
+        Outcome::Running => GenerationState::Interrupted,
+    }
+}
+
+/// The engine group of a running generation; `None` for an ended one, and
+/// for one whose engine has not started — or whose record predates engine
+/// groups, written by a worker that held the lock for its engine's life.
+fn running_group(record: &Record) -> Option<u32> {
+    (record.outcome == Outcome::Running)
+        .then_some(record.engine_group)
+        .flatten()
+}
+
+/// Who holds the generation: a worker while the lock is held, else the
+/// last generation's engine while its group lives, else nobody.
+fn holder(lock_free: bool, engine_alive: bool) -> Holder {
+    match (lock_free, engine_alive) {
+        (false, _) => Holder::Worker,
+        (true, true) => Holder::AbandonedEngine,
+        (true, false) => Holder::Nobody,
+    }
+}
+
+/// Whether the engine group `group` still has a member; no group, none. A
+/// group that cannot be asked about is reported and counted as alive:
+/// guessing it dead could start a second engine beside it.
+fn engine_alive(group: Option<u32>) -> bool {
+    let Some(group) = group else {
         return false;
     };
     match group_alive(group) {
@@ -429,12 +458,22 @@ fn generate(
             }
         }
     };
-    files.record(&Record {
-        sha: queued.sha.clone(),
-        started_at_ms,
-        engine_group: None,
-        outcome,
-    })
+    files
+        .record(&Record {
+            sha: queued.sha.clone(),
+            started_at_ms,
+            engine_group: None,
+            outcome,
+        })
+        .inspect_err(|err| {
+            tracing::error!(
+                event = "blueprint_generation_unrecorded",
+                project = %project,
+                sha = %queued.sha,
+                error = %err,
+                "the generation's outcome cannot be recorded"
+            );
+        })
 }
 
 /// Makes the revision's complete graph the latest graph: the stored one,
@@ -466,14 +505,22 @@ fn map(
                 })?;
             let tree = scratch.path().join("tree");
             check_out(&queued.project_root, &queued.sha, scratch.path(), &tree)?;
+            // The engine may start only once its group is durably recorded:
+            // an engine the record does not name could run beside the next.
             engine.generate(&tree, scratch.path(), ENGINE_TIMEOUT, &mut |group| {
                 let record = Record {
                     engine_group: Some(group),
                     ..running.clone()
                 };
-                if let Err(err) = files.record(&record) {
-                    tracing::warn!(event = "blueprint_engine_group_unrecorded", error = %err);
-                }
+                files.record(&record).map_err(|err| {
+                    tracing::warn!(
+                        event = "blueprint_engine_group_unrecorded",
+                        group,
+                        error = %err,
+                        "the engine is not started"
+                    );
+                    err.to_string()
+                })
             })?
         }
     };
@@ -595,12 +642,9 @@ impl Files {
             let running = record
                 .as_ref()
                 .filter(|record| record.outcome == Outcome::Running);
-            let alive = running.is_some_and(engine_alive);
-            let holder = match (&lock, alive) {
-                (None, _) => Holder::Worker,
-                (Some(_), true) => Holder::AbandonedEngine,
-                (Some(_), false) => Holder::Nobody,
-            };
+            let group = record.as_ref().and_then(running_group);
+            let alive = engine_alive(group);
+            let holder = holder(lock.is_some(), alive);
             let elapsed = running.map(|record| {
                 Duration::from_millis(millis(now()).saturating_sub(record.started_at_ms))
             });
@@ -608,7 +652,7 @@ impl Files {
                 Step::Generate => return Ok(lock),
                 Step::Wait => {}
                 Step::EndEngine => {
-                    if let Some(group) = running.and_then(|record| record.engine_group) {
+                    if let Some(group) = group {
                         tracing::warn!(
                             event = "blueprint_overdue_engine_ended",
                             project = %project,
@@ -716,11 +760,15 @@ mod tests {
     }
 
     #[test]
-    fn an_abandoned_engine_is_waited_for_within_its_limit_and_ended_past_it() {
+    fn an_abandoned_engine_within_its_limit_is_waited_for() {
         assert_eq!(
             next_step(Holder::AbandonedEngine, true, Some(ENGINE_TIMEOUT - MINUTE)),
             Step::Wait
         );
+    }
+
+    #[test]
+    fn an_abandoned_engine_past_its_limit_is_ended() {
         assert_eq!(
             next_step(Holder::AbandonedEngine, true, Some(ENGINE_TIMEOUT + MINUTE)),
             Step::EndEngine
@@ -729,23 +777,83 @@ mod tests {
 
     #[test]
     fn a_live_worker_is_waited_for_while_its_current_generation_is_within_its_limit() {
-        // The holder has run for long, but its current generation started
-        // recently: its elapsed time is that generation's own.
+        // The holder may have run long, but its current generation started
+        // 13 minutes ago: elapsed is that generation's own.
         assert_eq!(
             next_step(Holder::Worker, true, Some(13 * MINUTE)),
             Step::Wait
         );
+    }
+
+    #[test]
+    fn a_live_worker_just_past_the_engine_limit_is_still_given_its_grace() {
         assert_eq!(
             next_step(Holder::Worker, true, Some(ENGINE_TIMEOUT + MINUTE)),
             Step::Wait
         );
+    }
+
+    #[test]
+    fn a_live_worker_between_generations_is_waited_for() {
         assert_eq!(next_step(Holder::Worker, false, None), Step::Wait);
     }
 
     #[test]
-    fn a_live_worker_past_its_limit_and_grace_has_its_engine_ended_or_is_given_up_on() {
+    fn a_live_worker_past_its_limit_and_grace_has_its_engine_ended() {
         let overdue = Some(ENGINE_TIMEOUT + HOLDER_GRACE + MINUTE);
         assert_eq!(next_step(Holder::Worker, true, overdue), Step::EndEngine);
+    }
+
+    #[test]
+    fn a_live_worker_past_its_limit_and_grace_with_no_engine_is_given_up_on() {
+        let overdue = Some(ENGINE_TIMEOUT + HOLDER_GRACE + MINUTE);
         assert_eq!(next_step(Holder::Worker, false, overdue), Step::GiveUp);
+    }
+
+    /// `generation.json` as a worker wrote it before engine groups were
+    /// recorded: a running generation with no `engine_group`.
+    const OLD_RUNNING_RECORD: &str = r#"{
+  "sha": "0123456789abcdef0123456789abcdef01234567",
+  "started_at_ms": 1700000000000,
+  "outcome": {
+    "state": "running"
+  }
+}"#;
+
+    fn old_running_record() -> Record {
+        serde_json::from_str(OLD_RUNNING_RECORD).unwrap()
+    }
+
+    #[test]
+    fn an_old_running_record_names_no_engine_to_ask_about() {
+        assert_eq!(running_group(&old_running_record()), None);
+    }
+
+    #[test]
+    fn an_old_running_record_with_the_lock_free_is_generated_past() {
+        // Its worker held the lock for its engine's whole life: with the
+        // lock free, nothing of it runs, and the next revision generates.
+        let record = old_running_record();
+        let alive = engine_alive(running_group(&record));
+        let elapsed = Some(MINUTE);
+        assert_eq!(
+            next_step(holder(true, alive), alive, elapsed),
+            Step::Generate
+        );
+    }
+
+    #[test]
+    fn an_old_running_record_with_the_lock_free_reads_as_interrupted() {
+        let record = old_running_record();
+        let alive = engine_alive(running_group(&record));
+        assert_eq!(state_of(&record, true, alive), GenerationState::Interrupted);
+    }
+
+    #[test]
+    fn an_old_running_record_with_the_lock_held_reads_as_running() {
+        assert_eq!(
+            state_of(&old_running_record(), false, false),
+            GenerationState::Running
+        );
     }
 }

@@ -87,6 +87,8 @@ pub enum EngineError {
     },
     #[error("the graph engine did not finish within {}s and was ended", .0.as_secs())]
     TimedOut(Duration),
+    #[error("the graph engine was not started: its process group could not be recorded ({0})")]
+    Untracked(String),
     #[error("the graph engine produced no graph at {0}")]
     NoOutput(PathBuf),
     #[error("the graph engine's output at {0} is a symbolic link; it is not read")]
@@ -125,15 +127,16 @@ impl Engine {
     /// engine's captured output; `timeout` bounds the run, after which the
     /// engine's whole process group is ended.
     ///
-    /// The engine runs in a process group of its own, with no input;
-    /// `started` receives the group's id once it runs. When its main
-    /// process ends, any process left in the group is ended too.
+    /// The engine runs in a process group of its own, with no input.
+    /// `started` receives the group's id before any engine code runs and
+    /// records it; the engine starts only when it returns `Ok`. When its
+    /// main process ends, any process left in the group is ended too.
     pub fn generate(
         &self,
         tree: &Path,
         scratch: &Path,
         timeout: Duration,
-        started: &mut dyn FnMut(u32),
+        started: &mut dyn FnMut(u32) -> Result<(), String>,
     ) -> Result<Graph, EngineError> {
         let mut runner = Runner {
             scratch,
@@ -215,7 +218,7 @@ impl Engine {
         let stdout = Runner {
             scratch,
             timeout,
-            started: &mut |_| {},
+            started: &mut |_| Ok(()),
         }
         .run(GRAPHIFY, command)?;
         let bytes = std::fs::read(&stdout).map_err(|source| EngineError::Io {
@@ -244,7 +247,7 @@ fn shell(line: &str, tree: &Path) -> Command {
 struct Runner<'a> {
     scratch: &'a Path,
     timeout: Duration,
-    started: &'a mut dyn FnMut(u32),
+    started: &'a mut dyn FnMut(u32) -> Result<(), String>,
 }
 
 impl Runner<'_> {
@@ -283,19 +286,25 @@ impl Runner<'_> {
             source,
         })?;
         let group = child.id();
-        (self.started)(group);
-        let go = child
-            .stdin
-            .take()
-            .map(|mut stdin| stdin.write_all(b"go\n"))
-            .transpose();
-        let status = match go {
-            Ok(_) => wait(&mut child, self.timeout),
-            Err(source) => Err(EngineError::Io {
-                what: "cannot start the engine in",
-                path: self.scratch.to_path_buf(),
-                source,
-            }),
+        let stdin = child.stdin.take();
+        let status = match go_ahead((self.started)(group)) {
+            // Closing its input without the line makes the shell exit
+            // without running the engine.
+            Start::Withhold(reason) => {
+                drop(stdin);
+                if let Err(err) = child.wait() {
+                    tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
+                }
+                Err(EngineError::Untracked(reason))
+            }
+            Start::Go => match stdin.map(|mut stdin| stdin.write_all(b"go\n")).transpose() {
+                Ok(_) => wait(&mut child, self.timeout),
+                Err(source) => Err(EngineError::Io {
+                    what: "cannot start the engine in",
+                    path: self.scratch.to_path_buf(),
+                    source,
+                }),
+            },
         };
         // Whatever the engine left behind in its group ends with it.
         if group_alive(group).unwrap_or(true) {
@@ -321,6 +330,22 @@ impl Runner<'_> {
             });
         }
         Ok(stdout_path)
+    }
+}
+
+/// Whether an engine whose group was announced may start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Start {
+    Go,
+    /// The group was not recorded; the reason.
+    Withhold(String),
+}
+
+/// The go-ahead: only an engine whose group is recorded starts.
+fn go_ahead(recorded: Result<(), String>) -> Start {
+    match recorded {
+        Ok(()) => Start::Go,
+        Err(reason) => Start::Withhold(reason),
     }
 }
 
@@ -429,4 +454,22 @@ fn remove_entry(path: &Path) -> Result<(), EngineError> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_engine_whose_group_is_recorded_is_given_the_go_ahead() {
+        assert_eq!(go_ahead(Ok(())), Start::Go);
+    }
+
+    #[test]
+    fn an_engine_whose_group_could_not_be_recorded_is_withheld() {
+        assert_eq!(
+            go_ahead(Err("disk full".to_owned())),
+            Start::Withhold("disk full".to_owned())
+        );
+    }
 }
