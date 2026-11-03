@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/event-activation.rs
+expression: "rt.sent(\"s1\", 1).replace(&second, \"<revision>\")"
+---
+instrukt events:
+{"event":"runner.upstream_changed","project":"fork","remote":"upstream","ref":"refs/heads/main","revision":"<revision>"}

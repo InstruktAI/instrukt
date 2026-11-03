@@ -9,9 +9,31 @@
 //! - [`events`] — the event vocabulary and the event-log append the runner
 //!   implements and work's finalize-ready stamp uses.
 //!
-//! Everything else here (run/tick, the lock, the event log and its
-//! sources, dispatch, the sessions facade, task timing, anomalies) is the
-//! runner builder's in wave 3.
+//! - [`runner`] — `tick` and `run`: the lock, the wake-up and the
+//!   projects considered.
+//! - [`sessions`] and [`launch`] — the sessions facade over the runtime
+//!   mapping, and procedure launches.
+//! - [`event_log`], [`sources`], [`ci`] and [`standing`] — the event log,
+//!   the event sources and standing-agent delivery.
+//! - [`dispatch`], [`agents`] and [`timing`] — todo pickup, the agent
+//!   order and task due times.
+//! - [`anomaly`], [`ticks`] and [`install`] — notification, wake-up
+//!   accounting and the OS scheduler registration.
 
+pub mod agents;
+pub mod anomaly;
+pub mod ci;
+pub mod dispatch;
+pub mod event_log;
 pub mod events;
+pub mod install;
 pub mod interfaces;
+pub mod launch;
+pub mod process;
+pub mod runner;
+pub mod sessions;
+pub mod sources;
+pub mod standing;
+pub mod state;
+pub mod ticks;
+pub mod timing;

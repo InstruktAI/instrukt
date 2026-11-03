@@ -4,7 +4,16 @@ expression: help
 ---
 The sessions facade over the configured runtime
 
-Usage: instrukt sessions
+Usage: instrukt sessions <COMMAND>
+
+Commands:
+  run           Start a session through the runtime mapping; prints its id
+  send          Send text to a session; prints its id
+  alive         Print a session's status: running, needs-input, ended ok, ended failed or gone
+  conversation  Print a session's conversation
+  link          Link two sessions of one runtime, or remove their link
+  end           End a session
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

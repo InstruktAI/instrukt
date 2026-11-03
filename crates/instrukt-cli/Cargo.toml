@@ -16,6 +16,7 @@ instrukt-core.workspace = true
 instrukt-blueprint.workspace = true
 instrukt-runner.workspace = true
 instrukt-todos.workspace = true
+jiff.workspace = true
 anyhow.workspace = true
 tempfile.workspace = true
 clap.workspace = true

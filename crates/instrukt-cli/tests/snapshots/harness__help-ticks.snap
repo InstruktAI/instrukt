@@ -4,7 +4,11 @@ expression: help
 ---
 Scheduled tick status
 
-Usage: instrukt ticks
+Usage: instrukt ticks <COMMAND>
+
+Commands:
+  status  Show the last wake-up; warns when none arrived for five minutes
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help
