@@ -23,8 +23,8 @@ use super::_session::{GitHubRead, Located, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
-    Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, PreparationReview,
-    ReviewVerdict, StampFact, StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
+    Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, StampFact, StampRecord,
+    TodoStatus, Upstream, artifact_names, upstream_of,
 };
 
 /// `instrukt todo create`.
@@ -133,7 +133,15 @@ impl Work {
         project: &ProjectRef,
         request: CreateRequest,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
+        let preparation = match &request.group {
+            Some(parent) => self.parent_preparation(project, parent)?,
+            None => ParentPreparation::NotAsked,
+        };
+        if let (ParentPreparation::Unavailable, Some(parent)) = (preparation, &request.group) {
+            tracing::warn!(event = "work_preparation_undetermined", todo = %parent, "{}", unavailable_preparation(parent));
+        }
         let mut s = Session::open(self, project)?;
+        s.parent_preparation = preparation;
         if request.content.trim().is_empty() {
             return Err(WorkError::refused(
                 "a todo records substantive intent; the content is empty",
@@ -321,14 +329,23 @@ impl Work {
         slug: &TodoSlug,
         request: UpdateRequest,
     ) -> Result<Outcome<UpdateReport>, WorkError> {
+        let preparation = match &request.group {
+            Some(Some(parent)) => self.parent_preparation(project, parent)?,
+            _ => ParentPreparation::NotAsked,
+        };
         let mut s = Session::open(self, project)?;
+        s.parent_preparation = preparation;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
         if request.after.is_some() || request.group.is_some() {
             // A relationship is judged against the current graph.
             s.pull_all()?;
         }
-        let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
+        let mut warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
+        if let (ParentPreparation::Unavailable, Some(Some(parent))) = (preparation, &request.group)
+        {
+            warnings.push(unavailable_preparation(parent));
+        }
         s.flush()?;
         Ok(Outcome {
             value: UpdateReport {
@@ -1176,10 +1193,11 @@ fn join_group(
     }
     let p = s.enter_ref(parent)?;
     let now = s.now;
+    let prepared = s.parent_preparation == ParentPreparation::Determined(true);
     let holder = &mut s.items[p].record;
     match holder.status {
         TodoStatus::StructuralHolder => {}
-        TodoStatus::Active | TodoStatus::Iceboxed if !prepared(holder) => {
+        TodoStatus::Active | TodoStatus::Iceboxed if !prepared => {
             // Its pending documentation moves to its first child once the
             // whole change has validated (see `transfer_documentation`).
             s.pending_transfer = Some((holder.slug.clone(), child.slug.clone()));
@@ -1235,22 +1253,71 @@ fn transfer_documentation(s: &mut Session<'_>) -> Result<(), WorkError> {
     }
 }
 
-/// Whether preparation completed: an approved plan review or task
-/// approval is recorded.
-fn prepared(record: &TodoRecord) -> bool {
-    record.stamps.iter().any(|s| {
-        matches!(
-            s.fact,
-            StampFact::PreparationVerdict {
-                phase: PreparationReview::PlanReview,
-                verdict: ReviewVerdict::Approve,
-                ..
-            } | StampFact::Approval {
-                gate: crate::evidence::ApprovalGate::Task,
-                ..
+impl Work {
+    /// Whether `parent` has completed preparation, as workflow determines
+    /// it (`dependencies-and-holds`, "Structural holders": only work still
+    /// before prepared becomes a holder; workflow owns that determination).
+    /// `None` when workflow cannot say (no published flavor with a
+    /// `prepare` or `work` flow). Asked before the write session opens:
+    /// workflow reads the evidence through work.
+    fn preparation_of(
+        &self,
+        project: &ProjectRef,
+        parent: &TodoSlug,
+    ) -> Result<Option<bool>, WorkError> {
+        let read = |slug: &TodoSlug| {
+            crate::evidence::WorkEvidence::evidence(self, project, slug)
+                .map_err(|err| WorkError::refused(err.to_string()))
+        };
+        let Some(evidence) = read(parent)? else {
+            return Ok(None);
+        };
+        let mut others = Vec::new();
+        for slug in crate::workflow::related_todos(&evidence) {
+            if let Some(other) = read(&slug)? {
+                others.push(other);
             }
-        )
-    })
+        }
+        crate::workflow::preparation_complete(self.home(), &project.root, &evidence, &others)
+            .map_err(|err| {
+                WorkError::refused(format!(
+                    "workflow cannot tell whether `{parent}` completed preparation: {err}"
+                ))
+            })
+    }
+}
+
+impl Work {
+    /// [`Work::preparation_of`] as grouping uses it.
+    fn parent_preparation(
+        &self,
+        project: &ProjectRef,
+        parent: &TodoSlug,
+    ) -> Result<ParentPreparation, WorkError> {
+        Ok(match self.preparation_of(project, parent)? {
+            Some(prepared) => ParentPreparation::Determined(prepared),
+            None => ParentPreparation::Unavailable,
+        })
+    }
+}
+
+/// The warning when workflow could not say whether a parent is prepared.
+fn unavailable_preparation(parent: &TodoSlug) -> String {
+    format!(
+        "workflow could not determine whether `{parent}` completed preparation (no published flavor with a prepare or work flow); grouping was not blocked"
+    )
+}
+
+/// What grouping knows of the parent's preparation, asked of workflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParentPreparation {
+    /// No grouping in this change.
+    NotAsked,
+    /// Workflow's determination.
+    Determined(bool),
+    /// Workflow could not determine it; grouping is not blocked on a
+    /// work-side guess.
+    Unavailable,
 }
 
 /// The structural holders above `id`, nearest first.

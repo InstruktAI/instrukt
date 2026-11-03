@@ -98,6 +98,9 @@ pub(crate) struct Session<'w> {
     pub docs_changed: Vec<std::path::PathBuf>,
     /// A group parent's pending documentation owed to its first child.
     pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
+    /// What workflow said of a group parent's preparation, asked before
+    /// the session opened.
+    pub parent_preparation: super::_ops::ParentPreparation,
 }
 
 impl<'w> Session<'w> {
@@ -140,6 +143,7 @@ impl<'w> Session<'w> {
             purged: Vec::new(),
             docs_changed: Vec::new(),
             pending_transfer: None,
+            parent_preparation: super::_ops::ParentPreparation::NotAsked,
         };
         session.purge()?;
         Ok(session)
