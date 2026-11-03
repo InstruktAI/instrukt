@@ -23,12 +23,13 @@ use jiff::tz::TimeZone;
 
 use crate::agents::{agent_order, global_order};
 use crate::anomaly;
+use crate::executions::{Execution, Executions};
 use crate::interfaces::{
-    ClaimOutcome, Claimant, HoldCause, Lane, PickupCandidate, ProjectRef, RunnerWiring,
-    SessionBinding, TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
+    ClaimOutcome, Claimant, Lane, PickupCandidate, ProjectRef, RunnerWiring, SessionBinding,
+    TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
 };
 use crate::launch;
-use crate::sessions::{Sessions, SessionsError, StartRequest};
+use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
 use crate::state::{self, RunnerState};
 use crate::timing::{self, Decision};
 
@@ -48,22 +49,10 @@ pub struct DispatchContext<'a> {
 /// What dispatch did with one todo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dispatched {
-    Started {
-        todo: TodoSlug,
-    },
-    ClaimedElsewhere {
-        todo: TodoSlug,
-    },
-    ClaimPending {
-        todo: TodoSlug,
-    },
-    Exhausted {
-        todo: TodoSlug,
-    },
-    /// The task's last firing failed; the anomaly was reported.
-    TaskFailed {
-        todo: TodoSlug,
-    },
+    Started { todo: TodoSlug },
+    ClaimedElsewhere { todo: TodoSlug },
+    ClaimPending { todo: TodoSlug },
+    Exhausted { todo: TodoSlug },
 }
 
 /// The kinds `runner.autostart` picks up automatically in `config`.
@@ -124,17 +113,24 @@ fn pickup(
     workflow: &dyn WorkflowAssignments,
     project: &ProjectRef,
 ) -> Vec<Dispatched> {
-    let kinds = autostart_kinds(config);
-    if kinds.is_empty() {
-        return Vec::new();
-    }
-    let candidates = match work.pickup.pickup_candidates(project, &kinds) {
+    let offered = match work.pickup.pickup_candidates(project, &TodoKind::ALL) {
         Ok(candidates) => candidates,
         Err(err) => {
             tracing::warn!(event = "pickup_unreadable", project = %project.slug, error = %err);
             return Vec::new();
         }
     };
+    if let Err(err) = Executions::new(cx.state).observe(config, cx.env, workflow, project, &offered)
+    {
+        tracing::warn!(event = "executions_unobservable", project = %project.slug, error = %err);
+    }
+    for candidate in &offered {
+        report_failed_firing(cx, config, work, project, candidate);
+    }
+    let kinds = autostart_kinds(config);
+    if kinds.is_empty() {
+        return Vec::new();
+    }
     let index = match GlobalIndex::load(cx.home) {
         Ok(index) => index.unwrap_or_default(),
         Err(err) => {
@@ -142,8 +138,9 @@ fn pickup(
             return Vec::new();
         }
     };
-    candidates
+    offered
         .iter()
+        .filter(|candidate| kinds.contains(&candidate.kind))
         .filter_map(|candidate| {
             dispatch_one(cx, config, work, workflow, &index, project, candidate)
         })
@@ -160,9 +157,6 @@ fn dispatch_one(
     candidate: &PickupCandidate,
 ) -> Option<Dispatched> {
     let todo = &candidate.todo;
-    if let Some(failed) = report_failed_firing(cx, config, work, project, candidate) {
-        return Some(failed);
-    }
     let assignment = match workflow.assignment(project, todo) {
         Ok(Some(assignment)) => assignment,
         Ok(None) => return None,
@@ -188,7 +182,7 @@ fn dispatch_one(
         Lane::Prepare | Lane::Work => (assignment.orchestrator?, None),
     };
     let Some(procedure) = procedure_for_role(index, config, &role) else {
-        tracing::warn!(event = "no_procedure_for_role", project = %project.slug, todo = %todo, role = %role);
+        tracing::warn!(event = "no_procedure_for_role", project = %project.slug, todo = %todo, role = %role, "no procedure of the selected flavor's domain declares this role");
         return None;
     };
     match work.claims.record_claim(project, todo, &Claimant::Runner) {
@@ -206,7 +200,10 @@ fn dispatch_one(
             return None;
         }
     }
-    let prepared = match launch::prepare(procedure, Some(todo.as_str()), None) {
+    // A task's session learns which scheduled occurrence it executes, so
+    // its start and outcome stamps can carry that occurrence.
+    let brief = occurrence.map(|occurrence| format!("occurrence: {occurrence}"));
+    let prepared = match launch::prepare(procedure, Some(todo.as_str()), brief.as_deref()) {
         Ok(prepared) => prepared,
         Err(err) => {
             tracing::warn!(event = "launch_refused", project = %project.slug, todo = %todo, error = %err);
@@ -253,7 +250,7 @@ fn dispatch_one(
         session: started.session.clone(),
         worktree: started.worktree,
     };
-    let bind_role = prepared.role.unwrap_or(role);
+    let bind_role = prepared.role.clone().unwrap_or(role);
     if let Err(err) = work
         .bindings
         .bind_session(project, todo, &bind_role, &binding)
@@ -267,42 +264,58 @@ fn dispatch_one(
     {
         tracing::warn!(event = "task_firing_unrecorded", project = %project.slug, todo = %todo, error = %err);
     }
+    if let Err(err) = Executions::new(cx.state).record(Execution {
+        project: project.slug.clone(),
+        todo: todo.clone(),
+        role: bind_role,
+        session: started.session.clone(),
+        state: assignment.state.clone(),
+        recovery_sent: false,
+        anomaly_raised: false,
+    }) {
+        tracing::warn!(event = "execution_unrecorded", project = %project.slug, todo = %todo, error = %err);
+    }
     tracing::info!(event = "todo_dispatched", project = %project.slug, todo = %todo, session = %started.session);
     Some(Dispatched::Started { todo: todo.clone() })
 }
 
-/// The procedure declaring `role`, preferring the selected flavor's domain.
+/// The procedure declaring `role` in the selected flavor's domain
+/// (`workflow.domain`); a declaration in another domain does not count.
 pub fn procedure_for_role<'i>(
     index: &'i GlobalIndex,
     config: &Configuration,
     role: &RoleName,
 ) -> Option<&'i IndexEntry> {
-    let domain = config.workflow_domain().ok();
-    let declaring = || {
-        index.snippets.iter().filter(|entry| {
-            entry.taxonomy == "procedure" && entry.role.as_deref() == Some(role.as_str())
-        })
-    };
-    declaring()
-        .find(|entry| domain.as_ref().is_some_and(|d| entry.domain == d.as_str()))
-        .or_else(|| declaring().next())
+    let domain = config.workflow_domain().ok()?;
+    index.snippets.iter().find(|entry| {
+        entry.taxonomy == "procedure"
+            && entry.domain == domain.as_str()
+            && entry.role.as_deref() == Some(role.as_str())
+    })
 }
 
-/// A task whose last firing recorded `error` waits in no thread: report it
-/// once per firing through `runner.notify`, referencing the session bound
-/// to the task-runner role, and set the automatic hold the failure
-/// causes. A firing already reported is passed over, so a developer who
-/// released the hold gets the next occurrence.
+/// A task whose last firing recorded `error` is an anomaly once its
+/// conversation waits for nobody: reported once per firing through
+/// `runner.notify`, referencing the session bound to the task-runner role.
+/// A session still `running` or `needs-input` holds the failure in its own
+/// thread, and a session that cannot be observed is retried next tick. The
+/// task sets no hold: its next occurrence runs when its time arrives.
 fn report_failed_firing(
     cx: &DispatchContext<'_>,
     config: &Configuration,
     work: &WorkPorts,
     project: &ProjectRef,
     candidate: &PickupCandidate,
-) -> Option<Dispatched> {
-    let firing = candidate.timing.as_ref()?.last_fired.as_ref()?;
-    let Some(TaskOutcome::Error { reason }) = &firing.outcome else {
-        return None;
+) {
+    let Some(firing) = candidate
+        .timing
+        .as_ref()
+        .and_then(|t| t.last_fired.as_ref())
+    else {
+        return;
+    };
+    let Some(TaskOutcome::Error { .. }) = &firing.outcome else {
+        return;
     };
     let todo = &candidate.todo;
     let key = format!("{}/{todo}/{}", project.slug, firing.occurrence);
@@ -311,34 +324,44 @@ fn report_failed_firing(
         Ok(reported) => reported.unwrap_or_default(),
         Err(err) => {
             tracing::warn!(event = "failed_firings_unreadable", error = %err);
-            return None;
+            return;
         }
     };
     if reported.contains(&key) {
-        return None;
+        return;
     }
-    let role = RoleName::parse(TASK_RUNNER_ROLE).ok()?;
-    let reference = match work.bindings.session_binding(project, todo, &role) {
-        Ok(Some(binding)) => binding.session.to_string(),
-        Ok(None) => format!("{}/{todo}", project.slug),
+    let Ok(role) = RoleName::parse(TASK_RUNNER_ROLE) else {
+        return;
+    };
+    let binding = match work.bindings.session_binding(project, todo, &role) {
+        Ok(binding) => binding,
         Err(err) => {
             tracing::warn!(event = "task_binding_unreadable", project = %project.slug, todo = %todo, error = %err);
-            format!("{}/{todo}", project.slug)
+            return;
         }
+    };
+    let reference = match binding {
+        None => format!("{}/{todo}", project.slug),
+        Some(binding) => match Sessions::new(config, cx.env).alive(&binding.session) {
+            Ok(Observation::State(SessionState::Running | SessionState::NeedsInput)) => {
+                tracing::debug!(event = "task_failure_in_thread", project = %project.slug, todo = %todo, session = %binding.session);
+                return;
+            }
+            Ok(Observation::Unobservable(reason)) => {
+                tracing::warn!(event = "task_failure_unobservable", project = %project.slug, todo = %todo, session = %binding.session, reason);
+                return;
+            }
+            Err(err) => {
+                tracing::warn!(event = "task_failure_unobservable", project = %project.slug, todo = %todo, session = %binding.session, error = %err);
+                return;
+            }
+            Ok(Observation::State(_)) => binding.session.to_string(),
+        },
     };
     tracing::warn!(event = "task_failed", project = %project.slug, todo = %todo, occurrence = %firing.occurrence, session = %reference);
     anomaly::notify(config, cx.env, &reference, None);
-    let cause = HoldCause::TaskFailed {
-        reason: reason
-            .clone()
-            .unwrap_or_else(|| "no reason recorded".to_owned()),
-    };
-    if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
-        tracing::warn!(event = "task_failure_hold_failed", project = %project.slug, todo = %todo, error = %err);
-    }
     reported.insert(key);
     if let Err(err) = state::write_json(&path, &reported) {
         tracing::warn!(event = "failed_firings_unwritable", error = %err);
     }
-    Some(Dispatched::TaskFailed { todo: todo.clone() })
 }

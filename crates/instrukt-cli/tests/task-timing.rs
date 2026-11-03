@@ -25,7 +25,6 @@ use std::path::{Path, PathBuf};
 
 use common::TestEnv;
 use flavor::Tracked;
-use runtime::{FakeRuntime, global_layer};
 
 /// Recording stand-ins for the schedulers' commands, in `<test>/registrar`.
 fn registrar_stubs(env: &mut TestEnv) -> PathBuf {
@@ -44,6 +43,15 @@ fn registrar_stubs(env: &mut TestEnv) -> PathBuf {
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // The developer is signed in to GitHub's CLI; the scheduler's wake-up
+    // carries no token of its own.
+    let gh = dir.join("gh");
+    std::fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1 $2\" = \"auth token\" ]; then echo test-token; else exit 1; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = format!(
         "{}:{}",
         dir.display(),
@@ -128,12 +136,15 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
     }
 }
 
-fn run_registered(registered: &Registered, cwd: &Path) {
+/// Fires the registered wake-up as the scheduler would at `at`: its
+/// program, in the environment it declares, with the clock at `at`.
+fn run_registered(registered: &Registered, cwd: &Path, at: &str) {
     let (program, args) = registered.program.split_first().unwrap();
     let output = std::process::Command::new(program)
         .args(args)
         .env_clear()
         .envs(registered.env.iter().map(|(k, v)| (k, v)))
+        .env("INSTRUKT_NOW", at)
         .current_dir(cwd)
         .output()
         .unwrap();
@@ -144,39 +155,29 @@ fn run_registered(registered: &Registered, cwd: &Path) {
     );
 }
 
-fn ticks_status(env: &TestEnv, cwd: &Path) -> serde_json::Value {
-    let out = env.run(cwd, ["ticks", "status", "--json"]).success();
-    serde_json::from_slice(&out.get_output().stdout).unwrap()
-}
-
 // spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT3
 #[test]
-fn the_installed_wake_up_runs_the_runner_every_minute_without_an_interactive_runner() {
-    let mut env = TestEnv::new();
-    let stubs = registrar_stubs(&mut env);
-    let rt = FakeRuntime::new(&env, "rt", false);
-    global_layer(&env, "todos: true, events: true", &[&rt]);
-    let cwd = env.path("");
-
-    let before = ticks_status(&env, &cwd);
-    assert!(before["last_wakeup"].is_null(), "no wake-up yet: {before}");
-
-    env.run(&cwd, ["install"]).success();
-    let calls = std::fs::read_to_string(stubs.join("calls")).unwrap();
-    let registered = registered(&env, &calls);
-    assert_eq!(
-        registered.program.last().map(String::as_str),
-        Some("tick"),
-        "{:?}",
-        registered.program
+fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
+    let mut project = Tracked::new(true);
+    let stubs = registrar_stubs(&mut project.env);
+    project.authorized_task(
+        "quarter-hourly-sync",
+        "cron:*/15 * * * *",
+        &["--catch-up", "once"],
     );
 
-    // The scheduler fires the registered wake-up, with nobody at a runner.
-    run_registered(&registered, env.home());
-    let after = ticks_status(&env, &cwd);
-    let woke: jiff::Timestamp = after["last_wakeup"].as_str().unwrap().parse().unwrap();
-    assert!(woke <= jiff::Timestamp::now());
-    assert_eq!(after["stale"], serde_json::Value::Bool(false));
+    project.env.run(project.env.home(), ["install"]).success();
+    let calls = std::fs::read_to_string(stubs.join("calls")).unwrap();
+    let registered = registered(&project.env, &calls);
+
+    // The scheduler fires the registered wake-up with nobody at a runner:
+    // at 09:05 nothing is due; the computer is then off until 11:05, past
+    // several occurrences, and one catch-up run is dispatched.
+    run_registered(&registered, project.env.home(), "2030-01-06T09:05:00Z");
+    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    run_registered(&registered, project.env.home(), "2030-01-06T11:05:00Z");
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    insta::assert_snapshot!("installed-catch-up", project.rt.opening("s1"));
 }
 
 // spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT1
@@ -226,4 +227,36 @@ fn missed_occurrences_with_one_catch_up_dispatch_one_execution() {
 #[test]
 fn missed_occurrences_with_skip_dispatch_nothing() {
     assert_eq!(missed_occurrences("skip"), 0);
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
+#[test]
+fn a_recurring_task_continues_after_a_completed_and_after_a_failed_run() {
+    let mut project = Tracked::new(true);
+    project.authorized_task("quarter-hourly-sync", "cron:*/15 * * * *", &[]);
+
+    project.tick_at("2030-01-06T09:00:20Z");
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    project.todo_in_session(
+        "s1",
+        ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
+    );
+
+    project.tick_at("2030-01-06T09:15:20Z");
+    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    project.todo_in_session(
+        "s2",
+        [
+            "stamp",
+            "quarter-hourly-sync",
+            "--task-outcome",
+            "error",
+            "--reason",
+            "the sync target was down",
+        ],
+    );
+
+    project.tick_at("2030-01-06T09:30:20Z");
+    assert_eq!(project.rt.calls().len(), 3, "{:?}", project.rt.calls());
+    insta::assert_snapshot!("third-occurrence", project.rt.opening("s3"));
 }

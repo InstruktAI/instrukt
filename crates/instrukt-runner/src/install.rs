@@ -165,11 +165,7 @@ pub fn install(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Installed, Ins
         }
         Scheduler::Crontab => {
             let listed = Invocation::program("crontab", &["-l"]).run(REGISTRAR_TIMEOUT)?;
-            let current = if listed.success {
-                listed.stdout
-            } else {
-                String::new()
-            };
+            let current = current_crontab(listed.success, &listed.stdout, &listed.stderr)?;
             let updated = crontab_with_wakeup(&current, wake);
             registrar(&["crontab", "-"], Some(updated.as_bytes()))?;
         }
@@ -179,6 +175,22 @@ pub fn install(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Installed, Ins
         scheduler,
         file: files.first().map(|file| file.path.clone()),
     })
+}
+
+/// The user's current crontab from `crontab -l`. Only cron's own answer
+/// that the user has no crontab reads as empty; any other failure keeps
+/// the table untouched and fails the installation.
+fn current_crontab(success: bool, stdout: &str, stderr: &str) -> Result<String, InstallError> {
+    if success {
+        Ok(stdout.to_owned())
+    } else if stderr.to_ascii_lowercase().contains("no crontab for") {
+        Ok(String::new())
+    } else {
+        Err(InstallError::Registrar {
+            command: "crontab -l".into(),
+            detail: stderr.trim().to_owned(),
+        })
+    }
 }
 
 fn registrar(argv: &[&str], input: Option<&[u8]>) -> Result<(), InstallError> {
@@ -281,11 +293,27 @@ mod tests {
             executable: &exe,
             path_env: "/usr/bin",
         };
-        let once = crontab_with_wakeup("0 3 * * * backup\n", &wake);
+        let other = "0 3 * * * backup";
+        let once = crontab_with_wakeup(&format!("{other}\n"), &wake);
         let twice = crontab_with_wakeup(&once, &wake);
         assert_eq!(once, twice);
         assert_eq!(once.lines().count(), 2);
-        assert_eq!(once.lines().next(), Some("0 3 * * * backup"));
+        assert_eq!(once.lines().next(), Some(other));
+    }
+
+    #[test]
+    fn only_an_absent_crontab_reads_as_empty() {
+        let kept = "0 3 * * * backup\n";
+        assert_eq!(current_crontab(true, kept, "").unwrap(), kept);
+        assert!(
+            current_crontab(false, "", "crontab: no crontab for dev\n")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            current_crontab(false, "", "crontab: permission denied\n"),
+            Err(InstallError::Registrar { .. })
+        ));
     }
 
     #[test]
