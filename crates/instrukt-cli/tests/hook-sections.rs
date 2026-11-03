@@ -301,6 +301,109 @@ fn a_pre_push_section_after_instrukts_reads_the_full_ref_list() {
     );
 }
 
+/// A step of the pre-push section made to fail from outside: a program on
+/// `PATH` standing in for the one the step runs, or the temporary directory
+/// the section is given.
+enum Failure {
+    /// `rm` cannot remove the temporary file.
+    Removal,
+    /// The temporary directory does not exist, so no file can be made.
+    TemporaryFile,
+    /// `cat` cannot copy the ref list.
+    Copy,
+    /// The temporary file is gone by the time stdin is restored from it.
+    FileGone,
+}
+
+/// Pushes through a pre-push hook that runs under `set -eu`, holds
+/// instrukt's section, and after it a developer section recording that it
+/// ran, with `failure` arranged; asserts git's push result is that of a
+/// push without failure and that the following section ran.
+fn push_with_failing_step(failure: &Failure) {
+    let mut env = machine();
+    let fakes = env.path("fake-bin");
+    std::fs::create_dir_all(&fakes).unwrap();
+    let fake = |name: &str, script: &str| write_hook(&fakes.join(name), script, 0o755);
+    match failure {
+        Failure::Removal => fake("rm", "#!/bin/sh\nexit 1\n"),
+        Failure::Copy => fake("cat", "#!/bin/sh\nexit 1\n"),
+        Failure::FileGone => fake(
+            "cat",
+            "#!/bin/sh\nfor f in \"$TMPDIR\"/instrukt-pre-push.*; do /bin/rm -f \"$f\"; done\n",
+        ),
+        Failure::TemporaryFile => {
+            env.set_env("TMPDIR", &env.path("no-such-dir").display().to_string());
+        }
+    }
+    let bin = Path::new(env!("CARGO_BIN_EXE_instrukt")).parent().unwrap();
+    let path = format!(
+        "{}:{}:{}",
+        fakes.display(),
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    env.set_env("PATH", &path);
+
+    let remote = env.bare_remote("origin");
+    let repo = project(&env, "demo");
+    repo.git([
+        std::ffi::OsStr::new("remote"),
+        std::ffi::OsStr::new("add"),
+        std::ffi::OsStr::new("origin"),
+        remote.as_os_str(),
+    ]);
+    repo.write(
+        "instrukt.yaml",
+        &format!(
+            "{}modules:\n  blueprint: true\n",
+            repo.read("instrukt.yaml")
+        ),
+    );
+    repo.commit("switch blueprint on");
+    let pre_push = hook_path(&repo, "pre-push");
+    write_hook(&pre_push, "#!/bin/sh\nset -eu\n", 0o755);
+    env.run(repo.path(), ["hooks", "install"]).success();
+    let ran = env.path("following-section-ran");
+    let installed = std::fs::read_to_string(&pre_push).unwrap();
+    write_hook(
+        &pre_push,
+        &format!("{installed}echo ran > \"{}\"\n", ran.display()),
+        0o755,
+    );
+
+    git_returns(&env, &repo, &["push", "--quiet", "origin", "main"]);
+    assert_eq!(
+        env.git(&remote, ["rev-parse", "main"]),
+        repo.head(),
+        "the push landed"
+    );
+    assert!(ran.exists(), "the section after instrukt's ran");
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+#[test]
+fn a_temporary_file_that_cannot_be_removed_leaves_the_push_and_later_sections_alone() {
+    push_with_failing_step(&Failure::Removal);
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+#[test]
+fn a_temporary_file_that_cannot_be_made_leaves_the_push_and_later_sections_alone() {
+    push_with_failing_step(&Failure::TemporaryFile);
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+#[test]
+fn a_failed_copy_of_the_ref_list_leaves_the_push_and_later_sections_alone() {
+    push_with_failing_step(&Failure::Copy);
+}
+
+// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+#[test]
+fn a_temporary_file_gone_before_stdin_is_restored_leaves_the_push_and_later_sections_alone() {
+    push_with_failing_step(&Failure::FileGone);
+}
+
 // spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK2
 #[test]
 fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() {

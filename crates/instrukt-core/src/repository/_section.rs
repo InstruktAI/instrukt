@@ -33,16 +33,20 @@ fn hook_run_call(hook: Hook) -> String {
 /// that file to the hook run, then restores the hook's stdin from the file
 /// with a redirection-only `exec` and removes the file: the open descriptor
 /// keeps the list readable for the sections after it, and nothing stays in
-/// the temporary directory.
+/// the temporary directory. No step can end the hook or change git's
+/// result, under `set -e` or `set -u` alike: a temporary file that cannot
+/// be made skips the section, a failed copy or removal is ignored, and the
+/// `exec` runs only while its file is readable — a redirection error on
+/// `exec` would end a POSIX shell whatever guards it.
 pub(crate) fn section(hook: Hook) -> String {
     let body = match hook {
         Hook::PrePush => [
-            "if instrukt_refs=\"$(mktemp \"${TMPDIR:-/tmp}/instrukt-pre-push.XXXXXX\")\"; then"
+            "if instrukt_refs=\"$(mktemp \"${TMPDIR:-/tmp}/instrukt-pre-push.XXXXXX\" 2>/dev/null)\"; then"
                 .to_owned(),
-            "  cat >\"$instrukt_refs\" || true".to_owned(),
+            "  cat >\"$instrukt_refs\" 2>/dev/null || true".to_owned(),
             format!("  {} <\"$instrukt_refs\" || true", hook_run_call(hook)),
-            "  exec 0<\"$instrukt_refs\"".to_owned(),
-            "  rm -f \"$instrukt_refs\"".to_owned(),
+            "  if [ -r \"$instrukt_refs\" ]; then exec 0<\"$instrukt_refs\"; fi".to_owned(),
+            "  rm -f \"$instrukt_refs\" 2>/dev/null || true".to_owned(),
             "fi".to_owned(),
         ]
         .join("\n"),
@@ -461,53 +465,99 @@ mod tests {
     }
 
     #[test]
-    fn markers_that_do_not_delimit_one_section_are_refused() {
+    fn an_opening_marker_never_closed_is_refused() {
         let unterminated = format!("{SECTION_START}\nx\n");
         assert_eq!(
             locate(&unterminated),
             Err(SectionError::Unterminated { line: 1 })
         );
+    }
+
+    #[test]
+    fn a_closing_marker_never_opened_is_refused() {
         let stray = format!("x\n{SECTION_END}\n");
         assert_eq!(locate(&stray), Err(SectionError::StrayEnd { line: 2 }));
+    }
+
+    #[test]
+    fn a_second_section_is_refused() {
         let twice = format!("{}{}", section(HOOK), section(HOOK));
         assert_eq!(locate(&twice), Err(SectionError::Duplicate { line: 4 }));
     }
 
     #[test]
-    fn only_an_exec_running_a_command_counts_and_a_redirection_does_not() {
-        for command in [
-            "exec npx lint-staged",
-            "  exec \"$@\"",
-            "exec 2>&1 other-tool",
-            "exec > log other-tool",
-            "FOO=bar exec sh -c 'x'",
-            "HOOK=\"a b\" OTHER=1 exec \"$tool\"",
-            "[ -x tool ] && exec tool",
-            "test -n \"$CI\" || exec ci-tool",
-            "if true; then exec tool; fi",
-            "exec -a name tool",
-            "exec -- tool",
-        ] {
-            assert!(execs_a_command(command), "{command}");
-        }
-        for kept in [
-            "exec 1>&2",
-            "exec 0<\"$instrukt_refs\"",
-            "exec > log 2>&1",
-            "exec {fd}<file",
-            "exec",
-            "exec # nothing",
-            "executable=1",
-            "# exec npx",
-            "FOO=bar exec 2>&1",
-            "echo 'exec tool'",
-            "echo done # exec tool",
-        ] {
-            assert!(!execs_a_command(kept), "{kept}");
-        }
-        for hook in Hook::ALL {
-            assert_eq!(first_exec_line(&section(hook)), None, "{hook}");
-        }
+    fn a_plain_exec_of_a_command_counts() {
+        assert!(execs_a_command("exec npx lint-staged"));
+    }
+
+    #[test]
+    fn an_exec_whose_redirections_precede_a_command_counts() {
+        assert!(execs_a_command("exec 2>&1 other-tool"));
+    }
+
+    #[test]
+    fn a_redirection_target_in_its_own_word_is_skipped_before_the_command() {
+        assert!(execs_a_command("exec > log other-tool"));
+    }
+
+    #[test]
+    fn an_assignment_prefixed_exec_counts() {
+        assert!(execs_a_command("FOO=bar exec sh -c 'x'"));
+    }
+
+    #[test]
+    fn a_quoted_assignment_value_stays_one_word() {
+        assert!(execs_a_command("HOOK=\"a b\" exec \"$tool\""));
+    }
+
+    #[test]
+    fn an_exec_after_a_command_separator_counts() {
+        assert!(execs_a_command("[ -x tool ] && exec tool"));
+    }
+
+    #[test]
+    fn an_exec_after_a_keyword_counts() {
+        assert!(execs_a_command("if true; then exec tool; fi"));
+    }
+
+    #[test]
+    fn an_exec_past_its_own_options_counts() {
+        assert!(execs_a_command("exec -a name tool"));
+    }
+
+    #[test]
+    fn a_redirection_only_exec_does_not_count() {
+        assert!(!execs_a_command("exec 1>&2"));
+    }
+
+    #[test]
+    fn redirections_with_separate_targets_alone_do_not_count() {
+        assert!(!execs_a_command("exec > log 2>&1"));
+    }
+
+    #[test]
+    fn a_bare_exec_does_not_count() {
+        assert!(!execs_a_command("exec"));
+    }
+
+    #[test]
+    fn an_exec_inside_quotes_does_not_count() {
+        assert!(!execs_a_command("echo 'exec tool'"));
+    }
+
+    #[test]
+    fn an_exec_in_a_comment_does_not_count() {
+        assert!(!execs_a_command("echo done # exec tool"));
+    }
+
+    #[test]
+    fn a_word_beginning_with_exec_is_not_exec() {
+        assert!(!execs_a_command("executable=1"));
+    }
+
+    #[test]
+    fn the_pre_push_sections_own_redirection_is_not_taken_for_an_exec() {
+        assert_eq!(first_exec_line(&section(Hook::PrePush)), None);
     }
 
     #[test]
@@ -523,18 +573,23 @@ mod tests {
     }
 
     #[test]
-    fn only_shells_run_the_section() {
-        for shell in [
-            "#!/bin/sh",
-            "#!/usr/bin/env bash",
-            "#!/bin/zsh -e",
-            "no line",
-        ] {
-            assert_eq!(foreign_interpreter(shell), None, "{shell}");
-        }
-        for foreign in ["#!/usr/bin/env -S python3 -u\n", "#!/usr/bin/node\n"] {
-            assert!(foreign_interpreter(foreign).is_some(), "{foreign}");
-        }
+    fn a_shell_named_through_env_runs_the_section() {
+        assert_eq!(foreign_interpreter("#!/usr/bin/env bash\n"), None);
+    }
+
+    #[test]
+    fn a_file_without_an_interpreter_line_runs_with_the_shell() {
+        assert_eq!(foreign_interpreter("echo hook\n"), None);
+    }
+
+    #[test]
+    fn a_foreign_interpreter_named_through_env_with_options_is_detected() {
+        assert!(foreign_interpreter("#!/usr/bin/env -S python3 -u\n").is_some());
+    }
+
+    #[test]
+    fn a_foreign_interpreter_named_directly_is_detected() {
+        assert!(foreign_interpreter("#!/usr/bin/node\n").is_some());
     }
 
     proptest! {

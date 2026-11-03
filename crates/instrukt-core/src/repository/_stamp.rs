@@ -454,88 +454,132 @@ mod tests {
     }
 
     #[test]
-    fn a_review_carries_the_digest_of_the_whole_report() {
-        let one = Stamp::review(true, b"report one");
-        let same = Stamp::review(true, b"report one");
-        let other = Stamp::review(true, b"report two");
-        assert_eq!(one, same);
-        assert_ne!(one, other);
+    fn the_same_report_gives_the_same_digest() {
         assert_eq!(
-            Stamp::review(false, b"report one").verdict(),
+            Stamp::review(true, b"report one"),
+            Stamp::review(true, b"report one")
+        );
+    }
+
+    #[test]
+    fn a_different_report_gives_a_different_digest() {
+        assert_ne!(
+            Stamp::review(true, b"report one"),
+            Stamp::review(true, b"report two")
+        );
+    }
+
+    #[test]
+    fn a_review_that_does_not_approve_needs_work() {
+        assert_eq!(
+            Stamp::review(false, b"report").verdict(),
             Verdict::NeedsWork
         );
     }
 
-    #[test]
-    fn every_stamp_reads_back_from_its_note_line() {
-        for stamp in [
-            timed(1_793_724_900, approve()),
-            timed(0, needs_work()),
-            timed(
-                951_782_400,
-                Stamp::exempt("typo; nothing\nto review").unwrap(),
-            ),
-        ] {
-            let read = TimedStamp::parse_line(&stamp.line()).unwrap();
-            assert_eq!(read.at, stamp.at);
-            assert_eq!(read.line(), stamp.line());
-        }
-        assert_eq!(
-            TimedStamp::parse_line("verdict: approve; report_sha256: x"),
-            None
-        );
+    fn reads_back(stamp: &TimedStamp) {
+        let read = TimedStamp::parse_line(&stamp.line()).unwrap();
+        assert_eq!(&read, stamp);
     }
 
     #[test]
-    fn note_lines_sort_in_time_order_and_impossible_dates_are_refused() {
-        let earlier = timed(1_000, exempt()).line();
-        let later = timed(1_000_000_000, needs_work()).line();
-        assert!(earlier < later);
-        let impossible = later.replacen("2001-09-09", "2001-02-30", 1);
-        assert_ne!(impossible, later, "the fixture's date was replaced");
+    fn an_approval_reads_back_from_its_note_line() {
+        reads_back(&timed(1_793_724_900, approve()));
+    }
+
+    #[test]
+    fn a_needs_work_verdict_reads_back_from_its_note_line() {
+        reads_back(&timed(0, needs_work()));
+    }
+
+    #[test]
+    fn an_exemption_reason_spanning_lines_reads_back_on_one_line() {
+        let stamp = timed(
+            951_782_400,
+            Stamp::exempt("typo; nothing\nto review").unwrap(),
+        );
+        let read = TimedStamp::parse_line(&stamp.line()).unwrap();
+        assert_eq!(read.at, stamp.at);
+        assert_eq!(read.line(), stamp.line());
+    }
+
+    #[test]
+    fn a_line_without_its_time_records_no_stamp() {
+        let line = timed(1, approve()).line();
+        let (_, untimed) = line.split_once("; ").unwrap();
+        assert_eq!(TimedStamp::parse_line(untimed), None);
+    }
+
+    #[test]
+    fn note_lines_sort_in_time_order() {
+        assert!(timed(1_000, exempt()).line() < timed(1_000_000_000, needs_work()).line());
+    }
+
+    #[test]
+    fn a_day_past_its_months_end_is_refused() {
+        let line = timed(1_000_000_000, needs_work()).line();
+        let impossible = line.replacen("2001-09-09", "2001-02-30", 1);
+        assert_ne!(impossible, line, "the fixture's date was replaced");
         assert_eq!(TimedStamp::parse_line(&impossible), None);
     }
 
     #[test]
-    fn the_latest_stamp_decides() {
+    fn a_commit_without_stamps_is_unsettled() {
         assert_eq!(Settlement::of(&[]), Settlement::Unsettled);
-        let superseded = [timed(1, needs_work()), timed(2, approve())];
-        assert_eq!(
-            Settlement::of(&superseded),
-            Settlement::Settled(Verdict::Approve)
-        );
-        let reopened = [timed(1, approve()), timed(2, needs_work())];
-        assert_eq!(
-            Settlement::of(&reopened),
-            Settlement::Settled(Verdict::NeedsWork)
-        );
-        assert!(!Settlement::of(&reopened).releases());
-        assert!(Settlement::of(&superseded).releases());
     }
 
     #[test]
-    fn stamps_tied_at_the_latest_time_settle_only_when_all_approve_or_all_exempt() {
-        let agreeing = [
+    fn a_later_approval_supersedes_an_earlier_needs_work() {
+        let settled = Settlement::of(&[timed(1, needs_work()), timed(2, approve())]);
+        assert_eq!(settled, Settlement::Settled(Verdict::Approve));
+        assert!(settled.releases());
+    }
+
+    #[test]
+    fn a_later_needs_work_reopens_an_approved_commit() {
+        let settled = Settlement::of(&[timed(1, approve()), timed(2, needs_work())]);
+        assert_eq!(settled, Settlement::Settled(Verdict::NeedsWork));
+        assert!(!settled.releases());
+    }
+
+    #[test]
+    fn approvals_tied_at_the_latest_time_settle_as_approve() {
+        let stamps = [
             timed(1, needs_work()),
             timed(2, approve()),
             timed(2, approve()),
         ];
         assert_eq!(
-            Settlement::of(&agreeing),
+            Settlement::of(&stamps),
             Settlement::Settled(Verdict::Approve)
         );
-        let exempted = [timed(2, exempt()), timed(2, exempt())];
+    }
+
+    #[test]
+    fn exemptions_tied_at_the_latest_time_settle_as_exempt() {
+        let stamps = [timed(2, exempt()), timed(2, exempt())];
         assert_eq!(
-            Settlement::of(&exempted),
+            Settlement::of(&stamps),
             Settlement::Settled(Verdict::Exempt)
         );
-        for disagreeing in [
-            [timed(2, approve()), timed(2, needs_work())],
-            [timed(2, approve()), timed(2, exempt())],
-            [timed(2, needs_work()), timed(2, needs_work())],
-        ] {
-            assert_eq!(Settlement::of(&disagreeing), Settlement::Unsettled);
-        }
+    }
+
+    #[test]
+    fn an_approval_tied_with_needs_work_is_unsettled() {
+        let stamps = [timed(2, approve()), timed(2, needs_work())];
+        assert_eq!(Settlement::of(&stamps), Settlement::Unsettled);
+    }
+
+    #[test]
+    fn an_approval_tied_with_an_exemption_is_unsettled() {
+        let stamps = [timed(2, approve()), timed(2, exempt())];
+        assert_eq!(Settlement::of(&stamps), Settlement::Unsettled);
+    }
+
+    #[test]
+    fn needs_work_tied_with_needs_work_is_unsettled() {
+        let stamps = [timed(2, needs_work()), timed(2, needs_work())];
+        assert_eq!(Settlement::of(&stamps), Settlement::Unsettled);
     }
 
     #[test]
