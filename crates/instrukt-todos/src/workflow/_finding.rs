@@ -51,6 +51,8 @@ pub enum Problem {
     DuplicateRole(String),
     #[error("{0}")]
     InvalidRole(String),
+    #[error("the command names procedure `{id}`, which is not a valid snippet id: {reason}")]
+    InvalidProcedure { id: String, reason: String },
     #[error("orchestrator role `{0}` is not declared under `roles` in actions.yaml")]
     UndeclaredOrchestrator(String),
     #[error("declared `flow: {declared}` does not match the file name `{expected}`")]
