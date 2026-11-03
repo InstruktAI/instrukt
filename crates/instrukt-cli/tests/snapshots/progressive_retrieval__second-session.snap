@@ -1,0 +1,24 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &second)"
+---
+# instrukt docs get: acme/procedure/report
+
+---
+id: acme/procedure/report
+type: procedure
+domain: acme
+scope: global
+description: Reports into the session.
+---
+# Report — Procedure
+
+## Steps
+
+Your session:
+
+```
+session-two
+```
+
+Then report.

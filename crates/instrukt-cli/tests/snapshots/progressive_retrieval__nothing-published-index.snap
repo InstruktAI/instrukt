@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &nothing)"
+---
+# Nothing is published yet: run `instrukt sync` in a project to publish its documentation.

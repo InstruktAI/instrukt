@@ -65,7 +65,8 @@ impl Fragments<'_> {
             return Ok(None);
         };
         let root = self.home().fragments_dir();
-        let Some(text) = read_confined(&root, Path::new(name))? else {
+        let outside = |path| DocsError::OutsideHome { path };
+        let Some(text) = read_confined(&root, Path::new(name), outside)? else {
             return Ok(None);
         };
         Ok(Some(_text::split_frontmatter(&text).body.to_owned()))
@@ -74,15 +75,18 @@ impl Fragments<'_> {
 
 /// Reads `root/relative` when it exists and lies inside `root` once
 /// symbolic links are resolved; `None` when it does not exist. A relative
-/// path climbing out of `root`, or a link leading out of it, is refused.
-pub(super) fn read_confined(root: &Path, relative: &Path) -> Result<Option<String>, DocsError> {
+/// path climbing out of `root`, or a link leading out of it, is refused
+/// with the error `outside` makes of the path.
+pub(super) fn read_confined(
+    root: &Path,
+    relative: &Path,
+    outside: fn(PathBuf) -> DocsError,
+) -> Result<Option<String>, DocsError> {
     let climbs = relative
         .components()
         .any(|c| !matches!(c, Component::Normal(_)));
     if climbs {
-        return Err(DocsError::OutsideHome {
-            path: root.join(relative),
-        });
+        return Err(outside(root.join(relative)));
     }
     let path = root.join(relative);
     let resolved = match path.canonicalize() {
@@ -95,7 +99,7 @@ pub(super) fn read_confined(root: &Path, relative: &Path) -> Result<Option<Strin
         source,
     })?;
     if !resolved.starts_with(&root) {
-        return Err(DocsError::OutsideHome { path });
+        return Err(outside(path));
     }
     std::fs::read_to_string(&resolved)
         .map(Some)

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stderr(&env, &unpublished)"
+---
+instrukt: unknown snippet id: acme/policy/rules; nothing is published yet: run `instrukt sync` in a project to publish its documentation

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stderr(&env, &not_a_procedure)"
+---
+instrukt: cannot read acme/policy/rules as a closure: it is a policy, not a procedure

@@ -59,8 +59,11 @@
 //! home's published fragments; [`Fragments::CorpusFirst`] reads the
 //! corpus's own `docs/global/snippets/` first, then the home's.
 //!
-//! Reading the home and the index is retrieval (`docs index`, `docs get`);
-//! publication's copying and indexing belong to publication.
+//! Retrieval reads what publication wrote into the home: [`index`] lists
+//! the global index's entries for an [`IndexRequest`], [`get`] reads the
+//! snippets a [`GetRequest`] names through the read pipeline, with their
+//! required reads named or, as a closure, included. Neither writes
+//! anything; publication's copying and indexing belong to publication.
 
 mod _corpus;
 mod _finding;
@@ -70,6 +73,7 @@ mod _identity;
 mod _markers;
 mod _refs;
 mod _render;
+mod _retrieval;
 mod _text;
 mod _validate;
 
@@ -89,12 +93,17 @@ pub use _render::{
     EXEC_TIME_LIMIT, ExecFailure, ExecOutcome, ExecPolicy, Fragments, RenderContext, Rendered,
     render,
 };
+pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
 pub use _text::Directive;
 pub use _validate::{ValidationRequest, validate};
 
 use crate::config::ConfigError;
 use crate::fsx::FsError;
+use crate::git::GitError;
+use crate::ids::{ProjectSlug, SnippetId};
+use crate::index::IndexError;
 use crate::interfaces::InterfaceError;
+use crate::publication::PublicationStateError;
 
 /// The docs context could not do what was asked. Findings are not errors;
 /// these are.
@@ -146,6 +155,47 @@ pub enum DocsError {
         outcome: ExecOutcome,
         stderr: String,
     },
+    #[error(transparent)]
+    Index(#[from] IndexError),
+    #[error(transparent)]
+    PublicationState(#[from] PublicationStateError),
+    #[error(transparent)]
+    Git(#[from] GitError),
+    #[error("unknown snippet id{}: {}{}", plural(ids.len()), ids.join(", "), if *nothing_published {
+        "; nothing is published yet: run `instrukt sync` in a project to publish its documentation"
+    } else {
+        ""
+    })]
+    UnknownIds {
+        ids: Vec<String>,
+        nothing_published: bool,
+    },
+    #[error("unknown domain{}: {}; the published domains are: {}", plural(unknown.len()), unknown.join(", "), valid.join(", "))]
+    UnknownDomains {
+        unknown: Vec<String>,
+        valid: Vec<String>,
+    },
+    #[error("cannot read {id} as a closure: {reason}")]
+    ClosureRefused { id: String, reason: String },
+    #[error(
+        "the local file of project `{project}` is missing at {}; run `instrukt sync` in that project to republish its documentation",
+        path.display()
+    )]
+    MissingLocalFile { project: ProjectSlug, path: PathBuf },
+    #[error(
+        "the published file of project `{project}` is missing at {}; run `instrukt sync` in that project to republish its documentation",
+        path.display()
+    )]
+    MissingPublishedFile { project: ProjectSlug, path: PathBuf },
+    #[error(
+        "the index entry of {id} carries the path {}, which is not that snippet's place; run `instrukt sync` in its project to republish it",
+        path.display()
+    )]
+    IndexMismatch { id: SnippetId, path: PathBuf },
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 fn stderr_suffix(stderr: &str) -> String {

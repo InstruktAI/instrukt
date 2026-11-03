@@ -1,0 +1,58 @@
+---
+source: crates/instrukt-cli/tests/pending-documentation.rs
+expression: "stdout(&env, &lens)"
+---
+# instrukt docs get --target build-it: acme/spec/fresh acme/policy/reworked acme/spec/live acme/concept/old
+
+---
+id: acme/spec/fresh
+type: spec
+domain: acme
+scope: global
+description: A new contract build-it delivers.
+---
+# Fresh — Spec
+
+## What it is
+
+New with build-it.
+
+---
+id: acme/policy/reworked
+type: policy
+domain: acme
+scope: global
+description: A live policy with a next version.
+---
+# Reworked — Policy
+
+## Rules
+
+The rules as build-it delivers them.
+
+---
+id: acme/spec/live
+type: spec
+domain: acme
+scope: global
+description: A live contract with pending additions.
+---
+# Live — Spec
+
+## What it is
+
+The current text.
+
+Added by build-it.
+
+## Canonical fields
+
+- field: replaced by build-it
+
+---
+id: acme/concept/old
+type: concept
+domain: acme
+scope: global
+description: A concept build-it retires.
+---
