@@ -1,0 +1,29 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: "redact(&format!(\"{}---\\n{refreshed}---\\n{recorded}---\\n{shown}\",\nString::from_utf8_lossy(&refused.get_output().stderr)))"
+---
+instrukt: todo `nested-lists` changed on GitHub since this computer last read it; refresh it with `instrukt todo refresh nested-lists`, then re-apply your change
+---
+refreshed nested-lists to revision 2
+reflection: reflected to GitHub
+---
+wrote prd of nested-lists: <digest 1>
+reflection: reflected to GitHub
+---
+nested-lists · feature · active
+identity: <id 1>
+created: <time> by Test Developer
+revision: 3
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: waiting for the renderer rewrite (manual, by Other Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

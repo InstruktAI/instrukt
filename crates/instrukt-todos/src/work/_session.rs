@@ -259,7 +259,7 @@ impl<'w> Session<'w> {
         }
         if self.items[index].reflection.conflicted || newer {
             if newer {
-                tracing::info!(
+                tracing::debug!(
                     event = "work_change_refused_stale",
                     project = %self.project.slug,
                     todo = %self.items[index].record.slug,

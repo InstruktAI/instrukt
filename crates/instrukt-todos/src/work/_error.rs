@@ -52,7 +52,7 @@ pub enum WorkError {
         todo: TodoSlug,
     },
     #[error(
-        "todo `{todo}` is conflicted with GitHub; refresh it with `instrukt todo refresh {todo}`, then re-apply your change"
+        "todo `{todo}` changed on GitHub since this computer last read it; refresh it with `instrukt todo refresh {todo}`, then re-apply your change"
     )]
     Conflicted { todo: TodoSlug },
     /// The record's contract refuses the change.

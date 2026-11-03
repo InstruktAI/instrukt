@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/dependencies-and-holds.rs
+expression: refused
+---
+instrukt: `nested-lists` would wait on itself: nested-lists → list-depth → nested-lists (`list-depth` is the group `nested-lists` belongs to)

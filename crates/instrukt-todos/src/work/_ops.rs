@@ -996,8 +996,9 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     for prerequisite in &record.after {
         if above.contains(&prerequisite.id) {
             return Err(WorkError::refused(format!(
-                "`{}` cannot depend on `{}`, the group it belongs to",
-                record.slug, prerequisite.slug
+                "`{todo}` would wait on itself: {todo} → {group} → {todo} (`{group}` is the group `{todo}` belongs to)",
+                todo = record.slug,
+                group = prerequisite.slug
             )));
         }
         if let Some(path) = path_to(s, prerequisite, &record.id) {

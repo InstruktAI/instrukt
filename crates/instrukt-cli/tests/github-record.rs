@@ -12,7 +12,148 @@ mod common;
 mod support;
 
 use serde_json::Value;
-use support::{Project, REPOSITORY, redact};
+use support::{Project, REPOSITORY, redact, stdout};
+
+const INTENT: &str = "Keep the depth of nested lists when parsing Markdown.";
+
+// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
+#[test]
+fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending() {
+    let mut project = Project::new();
+    let gh_config = project.env.path("gh-config");
+    std::fs::create_dir_all(&gh_config).unwrap();
+    project
+        .env
+        .remove_env("GITHUB_TOKEN")
+        .set_env("GH_CONFIG_DIR", gh_config.to_str().unwrap());
+
+    let recorded = project.create("nested-lists", "feature", INTENT);
+    let shown = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "recorded-without-credentials",
+        redact(&format!("{recorded}---\n{shown}"))
+    );
+    assert!(
+        project.github.requests().is_empty(),
+        "nothing reached GitHub"
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
+#[test]
+fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests() {
+    let project = Project::new();
+    // GitHub limits the next two requests; its window has already reset.
+    project.github.rate_limit_next(2, 0);
+
+    let limited = project.create("nested-lists", "feature", INTENT);
+    let still_limited = project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd",
+        "Lists keep their depth through parse and render.",
+    ]);
+    let accepted = project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd",
+        "Lists keep their depth, and numbering restarts per level.",
+    ]);
+
+    insta::assert_snapshot!(
+        "rate-limited-then-reflected",
+        redact(&format!("{limited}---\n{still_limited}---\n{accepted}"))
+    );
+    let reflected: Vec<(String, usize)> = project
+        .github
+        .artifacts(REPOSITORY, 1)
+        .iter()
+        .map(|a| {
+            (
+                a["artifact"]["name"].as_str().unwrap().to_owned(),
+                a["versions"].as_array().unwrap().len(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reflected,
+        [("input".to_owned(), 1), ("prd".to_owned(), 2)],
+        "every accepted version reached GitHub"
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR3
+#[test]
+fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
+    let project = Project::new();
+    project.create("nested-lists", "feature", INTENT);
+    other_computer_holds(&project, "waiting for the renderer rewrite");
+
+    let refused = project
+        .todo([
+            "artifacts",
+            "write",
+            "nested-lists",
+            "prd",
+            "Lists keep their depth through parse and render.",
+        ])
+        .failure();
+    let refreshed = project.ok(["refresh", "nested-lists"]);
+    let recorded = project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd",
+        "Lists keep their depth through parse and render.",
+    ]);
+    let shown = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "refused-then-refreshed",
+        redact(&format!(
+            "{}---\n{refreshed}---\n{recorded}---\n{shown}",
+            String::from_utf8_lossy(&refused.get_output().stderr)
+        ))
+    );
+    assert!(
+        stdout(&refused).is_empty(),
+        "the refused change reports nothing as recorded"
+    );
+}
+
+/// Another computer records a hold on todo #1: its instrukt writes the
+/// next revision into the record comment, as GitHub then serves it.
+fn other_computer_holds(project: &Project, reason: &str) {
+    const MARKER: &str = "<!-- instrukt:work-record:v1:";
+    const CLOSE: &str = " -->";
+    let comment = project
+        .github
+        .comments(REPOSITORY, 1)
+        .into_iter()
+        .find(|c| c["body"].as_str().unwrap().contains(MARKER))
+        .unwrap();
+    let body = comment["body"].as_str().unwrap();
+    let line = body.lines().find(|l| l.starts_with(MARKER)).unwrap();
+    let mut record: Value =
+        serde_json::from_str(&line[MARKER.len()..line.len() - CLOSE.len()]).unwrap();
+    record["revision"] = Value::from(record["revision"].as_u64().unwrap() + 1);
+    record["hold"] = serde_json::json!({
+        "source": "manual",
+        "reason": reason,
+        "by": {"person": {"name": "Other Developer"}},
+        "at": "2026-11-03T12:00:00Z",
+    });
+    let next = format!(
+        "[instrukt record · nested-lists · rev {}]\n{MARKER}{record}{CLOSE}\n",
+        record["revision"]
+    );
+    project
+        .github
+        .edit_comment(REPOSITORY, comment["id"].as_u64().unwrap(), &next);
+}
 
 // spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
