@@ -585,3 +585,60 @@ fn a_linked_later_output_is_refused_before_anything_is_written() {
     assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), elsewhere_text);
     assert_eq!(published_commit(&env, "demo"), published);
 }
+
+// Unbound: UC-PUB8 tells the developer of the leftover in a run that
+// publishes; this run is refused, so it does not realize that scenario.
+#[cfg(unix)]
+#[test]
+fn a_refused_sync_still_reports_the_leftover_it_could_not_remove() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    sync(&env, &repo).success();
+    let locked = env.instrukt_home().join("docs/acme/policy");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    repo.commit("later");
+    sync(&env, &repo).success();
+    let leftover: Vec<PathBuf> = std::fs::read_dir(env.instrukt_home())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".sync-")
+        })
+        .collect();
+    assert_eq!(leftover.len(), 1);
+
+    let current = env
+        .instrukt_home()
+        .join("state/eval-fingerprint/current.yaml");
+    let elsewhere = env.path("elsewhere.yaml");
+    std::fs::rename(&current, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &current).unwrap();
+    repo.write("docs/global/acme/policy/again.md", &policy("Again", ""));
+    repo.commit("again");
+
+    let refused = sync(&env, &repo).failure();
+    let stdout = text(&refused.get_output().stdout, &[])
+        .replace(&leftover[0].display().to_string(), "[LEFTOVER]");
+    insta::assert_snapshot!(stdout, @"leftover [LEFTOVER] could not be removed; a later sync removes it");
+    let error: Vec<String> = without_tmp(&env, &refused.get_output().stderr, &[])
+        .lines()
+        .filter(|line| line.starts_with("instrukt:"))
+        .map(str::to_owned)
+        .collect();
+    insta::assert_snapshot!(error.join("\n"), @"instrukt: [TMP]/home/.instrukt/state/eval-fingerprint/current.yaml is a symbolic link or lies behind one; publication writes only inside its root");
+    assert!(leftover[0].exists());
+
+    for dir in walkdir::WalkDir::new(&leftover[0])
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_dir())
+    {
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}

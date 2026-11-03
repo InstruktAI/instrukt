@@ -173,7 +173,7 @@ impl Transaction {
         match std::fs::remove_dir_all(&path) {
             Ok(()) => None,
             Err(error) => {
-                tracing::debug!(event = "sync_trash_left", path = %path.display(), %error);
+                tracing::warn!(event = "sync_trash_left", path = %path.display(), %error);
                 Some(path)
             }
         }
@@ -365,7 +365,7 @@ pub(super) fn sweep(home_root: &Path) -> Result<Vec<PathBuf>, PublicationError> 
         }
         let path = entry.path();
         if let Err(error) = remove_any(&path) {
-            tracing::debug!(event = "sync_leftover_kept", path = %path.display(), %error);
+            tracing::warn!(event = "sync_leftover_kept", path = %path.display(), %error);
             kept.push(path);
         }
     }

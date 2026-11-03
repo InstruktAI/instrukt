@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
-pub use _sync::{Refusal, SyncOutcome, SyncReport, SyncRequest, sync};
+pub use _sync::{Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest, sync};
 
 use crate::config::ConfigError;
 use crate::docs::DocsError;

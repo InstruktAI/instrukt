@@ -1,8 +1,9 @@
 //! Publication command: `instrukt sync [--force]`.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use instrukt_core::publication::{self, Refusal, SyncOutcome, SyncReport, SyncRequest};
+use instrukt_core::publication::{self, Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest};
 
 use crate::context::Ctx;
 use crate::wiring::core_wiring;
@@ -18,17 +19,24 @@ pub struct SyncArgs {
 ///
 /// Prints one line naming the outcome, then one line per leftover copy of
 /// an earlier publication that could not be removed (a later sync removes
-/// it; it does not fail this one). A refusal exits non-zero: validation
-/// findings are printed one per line, then the refusal is reported on
-/// stderr.
+/// it; it does not fail this one). A refusal or a failure exits non-zero:
+/// validation findings are printed one per line, the leftovers likewise,
+/// then the refusal or failure is reported on stderr.
 pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let wiring = core_wiring(ctx);
-    let SyncReport { outcome, leftovers } = publication::sync(&SyncRequest {
+    let synced = publication::sync(&SyncRequest {
         home: &ctx.home,
         cwd: &ctx.cwd,
         force: args.force,
         wiring: &wiring,
-    })?;
+    });
+    let SyncReport { outcome, leftovers } = match synced {
+        Ok(report) => report,
+        Err(SyncError { error, leftovers }) => {
+            report_leftovers(ctx, &leftovers)?;
+            return Err((*error).into());
+        }
+    };
     let refusal = match outcome {
         SyncOutcome::Published { project, commit } => {
             ctx.out.line(&format!("published {project} at {commit}"))?;
@@ -52,14 +60,20 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             Some(format!("{project} at {commit} is not published: {refusal}"))
         }
     };
-    for leftover in &leftovers {
+    report_leftovers(ctx, &leftovers)?;
+    match refusal {
+        Some(message) => anyhow::bail!(message),
+        None => Ok(ExitCode::SUCCESS),
+    }
+}
+
+/// One line per leftover a sync could not remove.
+fn report_leftovers(ctx: &mut Ctx, leftovers: &[PathBuf]) -> anyhow::Result<()> {
+    for leftover in leftovers {
         ctx.out.line(&format!(
             "leftover {} could not be removed; a later sync removes it",
             leftover.display()
         ))?;
     }
-    match refusal {
-        Some(message) => anyhow::bail!(message),
-        None => Ok(ExitCode::SUCCESS),
-    }
+    Ok(())
 }
