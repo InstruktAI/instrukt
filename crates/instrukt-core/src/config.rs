@@ -14,6 +14,7 @@ mod _interpolate;
 mod _layer;
 mod _merge;
 mod _module;
+mod _render;
 mod _runtime;
 mod _schema;
 mod _validate;
@@ -29,6 +30,7 @@ pub use _layer::{
     patch, revision,
 };
 pub use _module::Module;
+pub use _render::render_yaml;
 pub use _runtime::{Env, RuntimeEntry};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind};
 pub use _validate::validate;

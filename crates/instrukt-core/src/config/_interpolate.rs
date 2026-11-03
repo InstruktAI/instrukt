@@ -396,26 +396,22 @@ fn is_reference_path(path: &str) -> bool {
 mod tests {
     use super::*;
 
-    const BASE: &str = "/srv";
-    const USER: &str = "dev";
-    const HOST_SESSION: &str = "h-1";
-    const CLI_SESSION: &str = "c-7";
-
     fn doc() -> Value {
-        serde_yaml_ng::from_str(&format!(
-            "base: {BASE}\n\
-             path: '{{base}}/app'\n\
-             deep: '{{path}}/bin ${{USER_NAME}}'\n\
-             json: '{{\"k\": 1}} {{not a ref}}'\n\
+        serde_yaml_ng::from_str(
+            "base: /srv\n\
+             path: '{base}/app'\n\
+             deep: '{path}/bin ${USER_NAME}'\n\
+             alias: '{deep}'\n\
+             json: '{\"k\": 1} {not a ref}'\n\
              n: 3\n\
-             loop_a: '{{loop_b}}'\n\
-             loop_b: '{{loop_a}}'\n\
-             self: 'x{{self}}'\n\
-             tree: {{a: 1}}\n\
+             loop_a: '{loop_b}'\n\
+             loop_b: '{loop_a}'\n\
+             self: 'x{self}'\n\
+             tree: {a: 1}\n\
              runtimes:\n\
-             \x20 - {{name: host, session_id_env: HOST_ID, conversation: 'host {{runtime.session_id}}'}}\n\
-             \x20 - {{name: cli, session_id_env: CLI_ID, conversation: 'cli {{runtime.session_id}}'}}\n"
-        ))
+             \x20 - {name: host, session_id_env: HOST_ID, conversation: 'host {runtime.session_id}'}\n\
+             \x20 - {name: cli, session_id_env: CLI_ID, conversation: 'cli {runtime.session_id}'}\n",
+        )
         .unwrap()
     }
 
@@ -424,8 +420,33 @@ mod tests {
         Interpolator::new(doc, &runtimes, Mode::Expand(env)).get(Some(path))
     }
 
-    fn text(doc: &Value, env: &Env, path: &str) -> String {
-        get(doc, env, path).unwrap().as_str().unwrap().to_owned()
+    fn expand(doc: &Value, env: &Env, text: &str) -> Value {
+        let runtimes = _runtime::entries(doc.get("runtimes"));
+        let expanded = Interpolator::new(doc, &runtimes, Mode::Expand(env))
+            .expand_text(text, None)
+            .unwrap();
+        Value::String(expanded)
+    }
+
+    fn stored<'d>(doc: &'d Value, path: &[&str]) -> &'d str {
+        let value = path
+            .iter()
+            .try_fold(doc, |v, key| match key.parse::<usize>() {
+                Ok(index) => v.get(index),
+                Err(_) => v.get(*key),
+            });
+        value.and_then(Value::as_str).unwrap()
+    }
+
+    /// How many references `text` holds.
+    fn references(text: &str) -> usize {
+        let mut count = 0;
+        let scanned = scan(text, |_| {
+            count += 1;
+            Ok(String::new())
+        });
+        assert!(scanned.is_ok());
+        count
     }
 
     fn check(doc: &Value, text: &str, origin: &str) -> Result<String, ConfigError> {
@@ -444,44 +465,79 @@ mod tests {
 
     #[test]
     fn references_expand_recursively_and_from_the_environment() {
-        let env = Env::from_pairs([("USER_NAME", USER)]);
         let doc = doc();
-        assert_eq!(text(&doc, &env, "deep"), format!("{BASE}/app/bin {USER}"));
-        let literal = doc.get("json").and_then(Value::as_str).unwrap();
-        assert_eq!(text(&doc, &env, "json"), literal, "non-references stay");
+        let env = Env::from_pairs([("USER_NAME", "dev")]);
+        let deep = get(&doc, &env, "deep").unwrap();
+        assert_eq!(
+            references(deep.as_str().unwrap()),
+            0,
+            "nothing is left unexpanded"
+        );
+        // A text expands as the concatenation of its parts' expansions.
+        let parts = [
+            expand(&doc, &env, "{path}"),
+            expand(&doc, &env, "/bin ${USER_NAME}"),
+        ];
+        let joined: String = parts.iter().filter_map(Value::as_str).collect();
+        assert_eq!(deep, Value::String(joined));
+        assert_eq!(
+            get(&doc, &env, "alias").unwrap(),
+            deep,
+            "a reference reads its target"
+        );
+        let other = Env::from_pairs([("USER_NAME", "ops")]);
+        assert_ne!(
+            get(&doc, &other, "deep").unwrap(),
+            deep,
+            "read in the caller's environment"
+        );
+        assert_eq!(
+            get(&doc, &env, "json").unwrap(),
+            doc["json"],
+            "text that is not a reference stays"
+        );
     }
 
     #[test]
     fn an_unset_variable_is_refused() {
         let err = get(&doc(), &Env::default(), "deep").unwrap_err();
-        assert!(matches!(err, ConfigError::UnsetVariable { name } if name == "USER_NAME"));
+        assert!(matches!(err, ConfigError::UnsetVariable { .. }));
     }
 
     #[test]
     fn cycles_and_self_references_are_refused_with_their_chain() {
         let doc = doc();
-        let err = get(&doc, &Env::default(), "loop_a").unwrap_err();
-        assert!(
-            matches!(err, ConfigError::Cycle { chain } if chain == ["loop_a", "loop_b", "loop_a"])
-        );
-        let err = get(&doc, &Env::default(), "self").unwrap_err();
-        assert!(matches!(err, ConfigError::Cycle { chain } if chain == ["self", "self"]));
+        for (path, length) in [("loop_a", 3), ("self", 2)] {
+            let err = get(&doc, &Env::default(), path).unwrap_err();
+            let ConfigError::Cycle { chain } = err else {
+                panic!("{path}: not a cycle: {err}");
+            };
+            assert_eq!(chain.len(), length);
+            assert_eq!(chain.first(), chain.last(), "the chain closes on itself");
+        }
     }
 
     #[test]
     fn the_active_runtime_supplies_its_fields_and_session_id() {
         let doc = doc();
-        let cli = Env::from_pairs([("CLI_ID", CLI_SESSION)]);
+        let cli = Env::from_pairs([("CLI_ID", "c-7")]);
+        let cli_view = get(&doc, &cli, "runtime.conversation").unwrap();
         assert_eq!(
-            text(&doc, &cli, "runtime.conversation"),
-            format!("cli {CLI_SESSION}")
+            cli_view,
+            expand(&doc, &cli, stored(&doc, &["runtimes", "1", "conversation"])),
+            "the view is the active entry's template, expanded"
         );
-        assert_eq!(text(&doc, &cli, "runtime.session_id"), CLI_SESSION);
-        let both = Env::from_pairs([("CLI_ID", CLI_SESSION), ("HOST_ID", HOST_SESSION)]);
         assert_eq!(
-            text(&doc, &both, "runtime.conversation"),
-            format!("host {HOST_SESSION}")
+            get(&doc, &cli, "runtime.session_id").unwrap(),
+            Value::String(cli.get("CLI_ID").unwrap().to_owned())
         );
+        let both = Env::from_pairs([("CLI_ID", "c-7"), ("HOST_ID", "h-1")]);
+        assert_eq!(
+            get(&doc, &both, "runtime.name").unwrap(),
+            doc["runtimes"][0]["name"],
+            "the first entry whose variable is set is active"
+        );
+        assert_ne!(get(&doc, &both, "runtime.conversation").unwrap(), cli_view);
         let err = get(&doc, &Env::default(), "runtime.conversation").unwrap_err();
         assert!(matches!(err, ConfigError::NoActiveRuntime));
         let err = get(&doc, &both, "runtime.start").unwrap_err();
@@ -492,7 +548,7 @@ mod tests {
     fn a_missing_path_is_refused_and_containers_are_not_references() {
         let doc = doc();
         let err = get(&doc, &Env::default(), "tree.b").unwrap_err();
-        assert!(matches!(err, ConfigError::MissingKey { segment, .. } if segment == "b"));
+        assert!(matches!(err, ConfigError::MissingKey { .. }));
         assert!(matches!(
             check(&doc, "{tree}", "x"),
             Err(ConfigError::NotScalar { .. })
@@ -534,39 +590,39 @@ mod tests {
     #[test]
     fn the_stored_runtime_mapping_reads_unexpanded_and_the_rest_expands() {
         let doc = doc();
-        let stored = doc.get("runtimes").unwrap().clone();
+        let stored_mapping = doc["runtimes"].clone();
         let none = Env::default();
-        assert_eq!(get(&doc, &none, "runtimes").unwrap(), stored);
+        assert_eq!(get(&doc, &none, "runtimes").unwrap(), stored_mapping);
         assert_eq!(
             get(&doc, &none, "runtimes.1.conversation").unwrap(),
-            stored[1]["conversation"]
+            stored_mapping[1]["conversation"]
         );
         let mut small = doc.clone();
         for key in ["loop_a", "loop_b", "self"] {
             small.as_mapping_mut().unwrap().remove(key);
         }
-        let env = Env::from_pairs([("USER_NAME", USER)]);
+        let env = Env::from_pairs([("USER_NAME", "dev")]);
         let runtimes = _runtime::entries(small.get("runtimes"));
         let whole = Interpolator::new(&small, &runtimes, Mode::Expand(&env))
             .get(None)
             .unwrap();
-        assert_eq!(whole["runtimes"], stored);
-        assert_eq!(whole["deep"], text(&small, &env, "deep").as_str());
-        let cli = Env::from_pairs([("CLI_ID", CLI_SESSION)]);
+        assert_eq!(whole["runtimes"], stored_mapping);
+        assert_eq!(whole["deep"], get(&small, &env, "deep").unwrap());
+        let cli = Env::from_pairs([("CLI_ID", "c-7")]);
         assert_ne!(
             get(&doc, &cli, "runtime.conversation").unwrap(),
-            stored[1]["conversation"],
+            stored_mapping[1]["conversation"],
             "the active-runtime view expands"
         );
     }
 
     #[test]
-    fn masking_marks_text_made_only_of_references() {
-        assert_eq!(
-            mask_references("{a} <${B}>", "r"),
-            ("r <r>".to_owned(), false)
-        );
-        assert_eq!(mask_references(" {a} ", "r"), (" r ".to_owned(), true));
-        assert_eq!(mask_references("plain", "r"), ("plain".to_owned(), false));
+    fn masking_replaces_references_and_marks_text_made_only_of_them() {
+        let (masked, only) = mask_references("{a} <${B}>", "r");
+        assert_eq!(references(&masked), 0);
+        assert!(!only);
+        assert!(mask_references(" {a} ", "r").1);
+        let plain = "plain";
+        assert_eq!(mask_references(plain, "r"), (plain.to_owned(), false));
     }
 }

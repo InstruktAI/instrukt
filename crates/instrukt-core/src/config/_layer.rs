@@ -403,7 +403,7 @@ pub(crate) fn normalize_slug(text: &str) -> String {
 }
 
 fn write(path: &Path, value: &Value) -> Result<Revision, ConfigError> {
-    let text = serde_yaml_ng::to_string(value).map_err(|source| ConfigError::Render {
+    let text = super::_render::render_yaml(value).map_err(|source| ConfigError::Render {
         path: path.to_path_buf(),
         source,
     })?;
