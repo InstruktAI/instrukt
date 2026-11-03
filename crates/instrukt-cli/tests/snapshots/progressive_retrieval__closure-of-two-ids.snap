@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stderr(&env, &two)"
 ---
-instrukt: cannot read acme/procedure/start acme/procedure/work as a closure: a closure takes exactly one procedure id
+instrukt: cannot read acme/procedure/start acme/procedure/work as a closure: a closure is read for exactly one procedure; 2 ids were given

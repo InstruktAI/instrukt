@@ -374,11 +374,14 @@ fn closure<'i>(
         ));
     }
     let ([entry], []) = (requested, third_party) else {
-        return Err(refuse("a closure takes exactly one procedure id".into()));
+        return Err(refuse(format!(
+            "a closure is read for exactly one procedure; {} ids were given",
+            requested.len() + third_party.len()
+        )));
     };
     if Taxonomy::from_dir(&entry.taxonomy) != Some(Taxonomy::Procedure) {
         return Err(refuse(format!(
-            "it is a {}, not a procedure",
+            "a closure is read for exactly one procedure; this is a {}",
             entry.taxonomy
         )));
     }
