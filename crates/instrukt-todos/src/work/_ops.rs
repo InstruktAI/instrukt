@@ -137,9 +137,6 @@ impl Work {
             Some(parent) => self.parent_preparation(project, parent)?,
             None => ParentPreparation::NotAsked,
         };
-        if let (ParentPreparation::Unavailable, Some(parent)) = (preparation, &request.group) {
-            tracing::warn!(event = "work_preparation_undetermined", todo = %parent, "{}", unavailable_preparation(parent));
-        }
         let mut s = Session::open(self, project)?;
         s.parent_preparation = preparation;
         if request.content.trim().is_empty() {
@@ -232,7 +229,6 @@ impl Work {
                 join_group(s, index, parent, &actor)?;
             }
             check_prerequisites(s, index)?;
-            transfer_documentation(s)?;
             Ok(index)
         })?;
         s.flush()?;
@@ -341,11 +337,7 @@ impl Work {
             // A relationship is judged against the current graph.
             s.pull_all()?;
         }
-        let mut warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
-        if let (ParentPreparation::Unavailable, Some(Some(parent))) = (preparation, &request.group)
-        {
-            warnings.push(unavailable_preparation(parent));
-        }
+        let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
         s.flush()?;
         Ok(Outcome {
             value: UpdateReport {
@@ -972,7 +964,6 @@ fn apply_update(
         }
         record.claim = None;
     }
-    transfer_documentation(s)?;
     Ok(warnings)
 }
 
@@ -1189,13 +1180,35 @@ fn join_group(
     }
     let p = s.enter_ref(parent)?;
     let now = s.now;
-    let prepared = s.parent_preparation == ParentPreparation::Determined(true);
+    let holder = &mut s.items[p].record;
+    let convertible = matches!(holder.status, TodoStatus::Active | TodoStatus::Iceboxed);
+    if convertible {
+        // Only work still before prepared becomes a holder; workflow says
+        // which, and a grouping it cannot judge is refused, naming why.
+        let cause = match &s.parent_preparation {
+            ParentPreparation::Determined(false) => None,
+            ParentPreparation::Determined(true) => Some("it has completed preparation".to_owned()),
+            ParentPreparation::Undetermined(cause) => Some(format!(
+                "workflow cannot determine whether it completed preparation: {cause}"
+            )),
+            ParentPreparation::NotAsked => Some(
+                "workflow was not asked whether it completed preparation: its record could not be read before the change"
+                    .to_owned(),
+            ),
+        };
+        if let Some(cause) = cause {
+            return Err(WorkError::refused(format!(
+                "`{}` cannot become a group: {cause}",
+                parent.slug
+            )));
+        }
+    }
     let holder = &mut s.items[p].record;
     match holder.status {
         TodoStatus::StructuralHolder => {}
-        TodoStatus::Active | TodoStatus::Iceboxed if !prepared => {
+        TodoStatus::Active | TodoStatus::Iceboxed => {
             // Its pending documentation moves to its first child once the
-            // whole change has validated (see `transfer_documentation`).
+            // whole change is checked and saved (see `Session::commit`).
             s.pending_transfer = Some((holder.slug.clone(), child.slug.clone()));
             let holder = &mut s.items[p].record;
             holder.status = TodoStatus::StructuralHolder;
@@ -1224,7 +1237,7 @@ fn join_group(
 /// child (`dependencies-and-holds`, "Structural holders"), the last step of
 /// a validated change: the files are rewritten in the working tree and
 /// listed for the caller to commit. A docs refusal refuses the conversion.
-fn transfer_documentation(s: &mut Session<'_>) -> Result<(), WorkError> {
+pub(super) fn transfer_documentation(s: &mut Session<'_>) -> Result<(), WorkError> {
     let Some((parent, child)) = s.pending_transfer.take() else {
         return Ok(());
     };
@@ -1292,7 +1305,9 @@ impl Work {
     ) -> Result<ParentPreparation, WorkError> {
         Ok(match self.preparation_of(project, parent)? {
             Some(prepared) => ParentPreparation::Determined(prepared),
-            None => ParentPreparation::Unavailable,
+            None => ParentPreparation::Undetermined(
+                "the project selects no published flavor with a prepare or work flow".to_owned(),
+            ),
         })
     }
 }
@@ -1335,23 +1350,16 @@ fn grounding_now(
     Ok(grounding)
 }
 
-/// The warning when workflow could not say whether a parent is prepared.
-fn unavailable_preparation(parent: &TodoSlug) -> String {
-    format!(
-        "workflow could not determine whether `{parent}` completed preparation (no published flavor with a prepare or work flow); grouping was not blocked"
-    )
-}
-
 /// What grouping knows of the parent's preparation, asked of workflow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ParentPreparation {
-    /// No grouping in this change.
+    /// No grouping in this change, or no parent record to ask about.
     NotAsked,
     /// Workflow's determination.
     Determined(bool),
-    /// Workflow could not determine it; grouping is not blocked on a
-    /// work-side guess.
-    Unavailable,
+    /// Workflow could not determine it, for the reason given: a conversion
+    /// is refused rather than decided on a work-side guess.
+    Undetermined(String),
 }
 
 /// The structural holders above `id`, nearest first.

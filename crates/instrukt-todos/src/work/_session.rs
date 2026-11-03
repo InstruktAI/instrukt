@@ -472,34 +472,51 @@ impl<'w> Session<'w> {
     }
 
     /// Runs `change` against the record set, then commits every record it
-    /// changed: a new revision, pending reflection, saved. A refused change
-    /// leaves every record as it was.
+    /// changed: a new revision, pending reflection, saved. A grouping's
+    /// documentation transfer (`pending_transfer`) is the last step, once
+    /// every check has passed and every record is saved. A refused or
+    /// failed change — a transfer included — leaves every record and the
+    /// documentation as they were.
     pub fn commit<T>(
         &mut self,
         what: &'static str,
         change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
     ) -> Result<T, WorkError> {
-        let before: Vec<TodoRecord> = self.items.iter().map(|it| it.record.clone()).collect();
+        let before: Vec<LocalItem> = self.items.clone();
         let value = match change(self) {
             Ok(value) => value,
             Err(err) => {
-                for (item, record) in self.items.iter_mut().zip(before) {
-                    item.record = record;
-                }
+                self.restore(before);
                 return Err(err);
             }
         };
+        let mut saved = Vec::new();
         for index in 0..self.items.len() {
             let changed = before
                 .get(index)
-                .is_none_or(|record| record != &self.items[index].record);
+                .is_none_or(|prior| prior.record != self.items[index].record);
             if !changed {
                 continue;
             }
             let item = &mut self.items[index];
             item.record.revision += 1;
             item.reflection.pending = true;
-            self.store.save(item)?;
+            if let Err(err) = self.store.save(item) {
+                self.unsave(&before, &saved);
+                self.restore(before);
+                return Err(err);
+            }
+            saved.push(index);
+        }
+        // Documentation moves only now: the transfer writes nothing when it
+        // refuses or fails, and the records it would orphan are put back.
+        if let Err(err) = super::_ops::transfer_documentation(self) {
+            self.unsave(&before, &saved);
+            self.restore(before);
+            return Err(err);
+        }
+        for &index in &saved {
+            let item = &self.items[index];
             tracing::info!(
                 event = "work_recorded",
                 change = what,
@@ -511,6 +528,36 @@ impl<'w> Session<'w> {
             );
         }
         Ok(value)
+    }
+
+    /// Puts the in-memory record set back as it was before a change, and
+    /// drops the change's pending documentation transfer.
+    fn restore(&mut self, before: Vec<LocalItem>) {
+        self.items = before;
+        self.pending_transfer = None;
+    }
+
+    /// Writes back the stored records a failed change already saved: each
+    /// one as it was, and a record the change created removed. A record
+    /// that cannot be put back is reported; the change's own failure is
+    /// what the caller is told.
+    fn unsave(&self, before: &[LocalItem], saved: &[usize]) {
+        for &index in saved {
+            let undone = match before.get(index) {
+                Some(prior) => self.store.save(prior),
+                None => self.store.delete(&self.items[index].record.id),
+            };
+            if let Err(err) = undone {
+                tracing::error!(
+                    event = "work_rollback_failed",
+                    project = %self.items[index].record.project,
+                    todo = %self.items[index].record.slug,
+                    id = %self.items[index].record.id,
+                    error = %err,
+                    "a record of a failed change could not be put back"
+                );
+            }
+        }
     }
 
     /// Flushes pending reflection of every local item under the lock.
