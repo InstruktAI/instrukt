@@ -144,8 +144,7 @@ fn valid_tree(repo: &Repo) {
             "---\ndescription: How to use the tool.\n---\n\n# Tool usage\n\n## Sources\n\n\
              - https://tool.example/docs\n- [Guide](https://tool.example/guide)\n- /tool/docs\n",
         )
-        .write("docs/global/acme/_drafts/notes.md", "no frontmatter at all\n")
-        .write("docs/global/acme/workflow/templates/step.md", "A template, not a snippet.\n");
+        .write("docs/global/acme/_drafts/notes.md", "no frontmatter at all\n");
 }
 
 struct Run {
@@ -286,6 +285,8 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             "@~/.instrukt/docs/acme/bundle.md\n@docs/local/design/shape.md\n\
              @~/.instrukt/docs/acme/principle/care.md\n",
         )
+        // Workflow flavor
+        .write("docs/global/acme/workflow/actions.yaml", "roles: not-a-list\n")
         // Third-party
         .write(
             "docs/third-party/tool/broken.md",

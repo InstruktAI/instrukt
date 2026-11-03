@@ -23,6 +23,7 @@ docs/global/acme/procedure/both.md: frontmatter-activation-conflict
 docs/global/acme/procedure/both.md: frontmatter-subscriptions-without-role
 docs/global/acme/procedure/both.md: frontmatter-parameters-without-role
 docs/global/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
+docs/global/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
 docs/global/loose.md: identity-missing-domain: loose
 docs/local/adr/0001-choice.md: frontmatter-adr-date-invalid
 docs/local/adr/0001-choice.md: frontmatter-adr-number-invalid
