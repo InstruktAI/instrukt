@@ -200,6 +200,19 @@ impl Tracked {
         String::from_utf8(output.stdout.clone()).unwrap()
     }
 
+    /// Runs `instrukt todo <args>` inside the fake runtime's session `id`,
+    /// as that session's agent; it must succeed.
+    pub fn todo_in_session<I, S>(&mut self, id: &str, args: I) -> String
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.env.set_env("RT_SESSION", id);
+        let out = self.todo(args);
+        self.env.remove_env("RT_SESSION");
+        out
+    }
+
     /// A wake-up, as the OS scheduler gives it, from the user's home.
     pub fn tick(&self) -> Assert {
         let run = self.env.run(self.env.home(), ["tick"]);

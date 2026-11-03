@@ -8,8 +8,10 @@
 //! `session-continuity` requires. Every wait is bounded.
 
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt as _;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 /// How a command ended.
@@ -93,10 +95,14 @@ impl<'a> Invocation<'a> {
         self
     }
 
-    /// Runs the command, waiting at most `timeout`; a command still running
-    /// then is stopped and reported.
+    /// Runs the command in a process group of its own. The whole
+    /// invocation — writing its input, reading its output and waiting for
+    /// it — finishes within `timeout`; otherwise the process group is
+    /// killed (descendants still holding its pipes included) and the
+    /// timeout reported.
     pub fn run(&self, timeout: Duration) -> Result<Finished, ProcessError> {
         let started = Instant::now();
+        let deadline = started + timeout;
         let mut command = Command::new(&self.program);
         command
             .args(&self.args)
@@ -107,7 +113,8 @@ impl<'a> Invocation<'a> {
                 Stdio::null()
             })
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .process_group(0);
         if let Some(cwd) = self.cwd {
             command.current_dir(cwd);
         }
@@ -115,16 +122,40 @@ impl<'a> Invocation<'a> {
             program: self.program.clone(),
             source,
         })?;
-        if let (Some(input), Some(mut stdin)) = (self.input, child.stdin.take()) {
-            stdin.write_all(input).map_err(|source| self.io(source))?;
-        }
+        let writer = match (self.input, child.stdin.take()) {
+            (Some(input), Some(stdin)) => Some(feed(stdin, input.to_vec())),
+            _ => None,
+        };
         let stdout = drain(child.stdout.take());
         let stderr = drain(child.stderr.take());
-        let status = self.wait(&mut child, timeout)?;
+        let status = match self.wait(&mut child, deadline) {
+            Ok(status) => status,
+            Err(err) => {
+                self.kill_group(&mut child);
+                return Err(err);
+            }
+        };
+        let outcome = (|| {
+            if let Some(writer) = writer {
+                receive(&writer, deadline)
+                    .ok_or_else(|| self.timeout(timeout))?
+                    .map_err(|source| self.io(source))?;
+            }
+            let out = receive(&stdout, deadline).ok_or_else(|| self.timeout(timeout))?;
+            let err = receive(&stderr, deadline).ok_or_else(|| self.timeout(timeout))?;
+            Ok((out, err))
+        })();
+        let (out, err) = match outcome {
+            Ok(pair) => pair,
+            Err(error) => {
+                self.kill_group(&mut child);
+                return Err(error);
+            }
+        };
         let finished = Finished {
             success: status.success(),
-            stdout: collect(stdout),
-            stderr: collect(stderr),
+            stdout: String::from_utf8_lossy(&out).into_owned(),
+            stderr: String::from_utf8_lossy(&err).into_owned(),
         };
         tracing::debug!(
             event = "process_finished",
@@ -138,28 +169,55 @@ impl<'a> Invocation<'a> {
     fn wait(
         &self,
         child: &mut Child,
-        timeout: Duration,
+        deadline: Instant,
     ) -> Result<std::process::ExitStatus, ProcessError> {
-        let started = Instant::now();
         let mut pause = Duration::from_millis(2);
         loop {
             if let Some(status) = child.try_wait().map_err(|source| self.io(source))? {
                 return Ok(status);
             }
-            if started.elapsed() >= timeout {
-                if let Err(err) = child.kill() {
-                    tracing::warn!(event = "process_kill_failed", program = %self.program, error = %err);
-                }
-                if let Err(err) = child.wait() {
-                    tracing::warn!(event = "process_reap_failed", program = %self.program, error = %err);
-                }
+            let now = Instant::now();
+            if now >= deadline {
                 return Err(ProcessError::Timeout {
                     program: self.program.clone(),
-                    timeout,
+                    timeout: deadline.saturating_duration_since(now),
                 });
             }
-            std::thread::sleep(pause.min(timeout.saturating_sub(started.elapsed())));
+            std::thread::sleep(pause.min(deadline - now));
             pause = (pause * 2).min(Duration::from_millis(50));
+        }
+    }
+
+    /// Kills the command's process group, then reaps the command.
+    fn kill_group(&self, child: &mut Child) {
+        let group = format!("-{}", child.id());
+        match Command::new("kill")
+            .args(["-KILL", "--", &group])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::debug!(event = "process_group_kill_refused", program = %self.program, status = %status);
+            }
+            Err(err) => {
+                tracing::warn!(event = "process_group_kill_failed", program = %self.program, error = %err);
+            }
+        }
+        if let Err(err) = child.kill() {
+            tracing::debug!(event = "process_kill_failed", program = %self.program, error = %err);
+        }
+        if let Err(err) = child.wait() {
+            tracing::warn!(event = "process_reap_failed", program = %self.program, error = %err);
+        }
+    }
+
+    fn timeout(&self, timeout: Duration) -> ProcessError {
+        ProcessError::Timeout {
+            program: self.program.clone(),
+            timeout,
         }
     }
 
@@ -171,27 +229,45 @@ impl<'a> Invocation<'a> {
     }
 }
 
-type Drain = Option<std::thread::JoinHandle<Vec<u8>>>;
-
-/// Reads a pipe to its end on its own thread, so a chatty child cannot
-/// block on a full pipe while it is waited for.
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Drain {
-    pipe.map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Err(err) = pipe.read_to_end(&mut bytes) {
-                tracing::debug!(event = "process_pipe_read_failed", error = %err);
-            }
-            bytes
-        })
-    })
+/// Writes `input` to the command on a thread of its own; a command that
+/// stops reading (a closed pipe) is not a failure of the write.
+fn feed(mut stdin: ChildStdin, input: Vec<u8>) -> Receiver<std::io::Result<()>> {
+    let (send, receive) = mpsc::channel();
+    std::thread::spawn(move || {
+        let written = match stdin.write_all(&input) {
+            Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            other => other,
+        };
+        drop(stdin);
+        if send.send(written).is_err() {
+            tracing::debug!(event = "process_input_unclaimed");
+        }
+    });
+    receive
 }
 
-fn collect(drain: Drain) -> String {
-    let bytes = drain
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default();
-    String::from_utf8_lossy(&bytes).into_owned()
+/// Reads a pipe to its end on a thread of its own.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<Vec<u8>> {
+    let (send, receive) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe
+            && let Err(err) = pipe.read_to_end(&mut bytes)
+        {
+            tracing::debug!(event = "process_pipe_read_failed", error = %err);
+        }
+        if send.send(bytes).is_err() {
+            tracing::debug!(event = "process_output_unclaimed");
+        }
+    });
+    receive
+}
+
+/// What `receiver` delivers before `deadline`; `None` once it has passed.
+fn receive<T>(receiver: &Receiver<T>, deadline: Instant) -> Option<T> {
+    receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()
 }
 
 #[cfg(test)]
@@ -209,11 +285,54 @@ mod tests {
         assert_eq!(parts, [hostile, "two", ""]);
     }
 
+    fn alive(pid: &str) -> bool {
+        Command::new("kill")
+            .args(["-0", pid])
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
     #[test]
-    fn a_command_running_past_its_bound_is_stopped() {
-        let err = Invocation::shell("sleep 5", &[])
-            .run(Duration::from_millis(100))
+    fn a_command_that_never_ends_is_stopped_at_its_bound() {
+        let err = Invocation::shell("exec tail -f /dev/null", &[])
+            .run(Duration::from_millis(200))
             .unwrap_err();
         assert!(matches!(err, ProcessError::Timeout { .. }));
+    }
+
+    #[test]
+    fn input_the_command_never_reads_does_not_outlast_the_bound() {
+        let input = vec![b'x'; 4 * 1024 * 1024];
+        let err = Invocation::shell("exec tail -f /dev/null", &[])
+            .input(&input)
+            .run(Duration::from_millis(200))
+            .unwrap_err();
+        assert!(matches!(err, ProcessError::Timeout { .. }));
+    }
+
+    #[test]
+    fn a_descendant_holding_the_output_is_killed_with_its_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let err = Invocation::shell(
+            &format!(
+                "tail -f /dev/null & echo $! > '{}'; exit 0",
+                pidfile.display()
+            ),
+            &[],
+        )
+        .run(Duration::from_millis(300))
+        .unwrap_err();
+        assert!(matches!(err, ProcessError::Timeout { .. }));
+        let pid = std::fs::read_to_string(&pidfile).unwrap();
+        let pid = pid.trim();
+        // A killed process may linger until reaped by init; wait for it,
+        // bounded.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!alive(pid), "the descendant {pid} survived");
     }
 }

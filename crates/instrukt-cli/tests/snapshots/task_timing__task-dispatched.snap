@@ -6,3 +6,5 @@ Run `instrukt docs get acme/procedure/run-task --closure` and execute that proce
 
 slug: weekly-status
 $ARGUMENTS: weekly-status
+
+occurrence: 2030-01-06T09:00:00Z
