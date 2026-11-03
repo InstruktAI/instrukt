@@ -106,25 +106,58 @@ pub struct SyncReport {
     pub leftovers: Vec<PathBuf>,
 }
 
+/// A sync that could not run to its end, with the leftovers it found and
+/// could not remove: they are reported on failure as on success.
+#[derive(Debug, thiserror::Error)]
+#[error("{error}")]
+pub struct SyncError {
+    #[source]
+    pub error: Box<PublicationError>,
+    /// As [`SyncReport::leftovers`].
+    pub leftovers: Vec<PathBuf>,
+}
+
+impl From<PublicationError> for SyncError {
+    fn from(error: PublicationError) -> Self {
+        Self {
+            error: Box::new(error),
+            leftovers: Vec::new(),
+        }
+    }
+}
+
 /// Publishes the project `request.cwd` stands in from the committed state
 /// of its canonical main, under the docs lock. A refused or failed sync
 /// leaves the previous publication in place and records no commit. Every
 /// sync, the no-op included, first removes the leftovers earlier syncs
-/// could not.
-pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, PublicationError> {
+/// could not, and reports those it still cannot whatever its outcome.
+pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let started = Instant::now();
     let project = _source::locate(request.cwd)?;
-    let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)?;
+    let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)
+        .map_err(PublicationError::from)?;
     let mut leftovers = sweep(request.home.root())?;
-    let (branch, commit) = _source::canonical_main(&project.primary)?;
-    let previous = PublishedRecord::load(request.home, &project.slug)?;
-    let outcome = if !request.force && previous.is_some_and(|r| r.commit == commit) {
-        SyncOutcome::Unchanged {
-            project: project.slug.clone(),
-            commit: commit.clone(),
+    let attempt = (|| {
+        let (branch, commit) = _source::canonical_main(&project.primary)?;
+        let previous = PublishedRecord::load(request.home, &project.slug)?;
+        let outcome = if !request.force && previous.is_some_and(|r| r.commit == commit) {
+            SyncOutcome::Unchanged {
+                project: project.slug.clone(),
+                commit: commit.clone(),
+            }
+        } else {
+            publish(request, &project, &commit, &mut leftovers)?
+        };
+        Ok::<_, PublicationError>((branch, commit, outcome))
+    })();
+    let (branch, commit, outcome) = match attempt {
+        Ok(done) => done,
+        Err(error) => {
+            return Err(SyncError {
+                error: Box::new(error),
+                leftovers,
+            });
         }
-    } else {
-        publish(request, &project, &commit, &mut leftovers)?
     };
     let label = match &outcome {
         SyncOutcome::Published { .. } => "published",
