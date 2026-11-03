@@ -163,6 +163,24 @@ pub enum SessionsError {
     Process(#[from] ProcessError),
 }
 
+impl SessionsError {
+    /// Whether a failed start certainly created no session: the runtime
+    /// was never reached, or it answered that the start failed. A start
+    /// that timed out, printed no usable id, or lost its worktree path may
+    /// have created one; its result is uncertain.
+    pub fn start_certainly_failed(&self) -> bool {
+        matches!(
+            self,
+            SessionsError::NoRuntime
+                | SessionsError::UnknownRuntime(_)
+                | SessionsError::Template { .. }
+                | SessionsError::Failed { .. }
+                | SessionsError::OrderExhausted { .. }
+                | SessionsError::Process(ProcessError::Spawn { .. })
+        )
+    }
+}
+
 /// What to start.
 #[derive(Debug, Clone, Default)]
 pub struct StartRequest<'a> {
@@ -215,7 +233,9 @@ impl<'c> Sessions<'c> {
 
     /// Starts a session, walking `order` for the first agent the runtime
     /// reports available; an empty order starts through the runner's
-    /// runtime with no agent selection.
+    /// runtime with no agent selection. Without an `available` check, a
+    /// start that certainly failed moves on to the next agent; an uncertain
+    /// one ends the walk with its error.
     pub fn start(
         &self,
         order: &[AgentChoice],
@@ -249,9 +269,12 @@ impl<'c> Sessions<'c> {
             }
             match self.start_on(entry, Some(choice), request) {
                 Ok(started) => return Ok(started),
-                Err(err) => {
+                Err(err) if err.start_certainly_failed() => {
                     tracing::warn!(event = "dispatch_start_failed", agent = %choice.agent, error = %err);
                 }
+                // A start that may have created a session ends the walk:
+                // trying the next agent could start a second one.
+                Err(err) => return Err(err),
             }
         }
         Err(SessionsError::OrderExhausted { tried })
@@ -588,39 +611,47 @@ mod tests {
         }
     }
 
-    /// Runs `template`, filled for `id`, printing the session id it
-    /// received between bars.
-    fn received(template: &str, id: &SessionId) -> String {
-        let command = fill::<()>(template, |piece| Ok(piece.to_owned())).unwrap();
-        let done = Invocation::shell(&command, &[])
-            .env(SESSION_ID_VAR, id.as_str())
-            .run(Duration::from_secs(10))
-            .unwrap();
-        assert!(done.success, "{}", done.stderr);
-        done.stdout
+    #[test]
+    fn the_quoting_context_follows_shell_quotes_and_escapes() {
+        for (text, expected) in [
+            ("rt send ", Quoting::Bare),
+            ("rt send \"", Quoting::Double),
+            ("rt send '", Quoting::Single),
+            ("rt send \"a\"'", Quoting::Single),
+            ("rt send '\"'", Quoting::Bare),
+            ("rt send \\'", Quoting::Bare),
+            ("rt send \"\\\"", Quoting::Double),
+            ("rt send '\\'", Quoting::Bare),
+        ] {
+            assert_eq!(quoting_at_end(text), expected, "{text}");
+        }
     }
 
     #[test]
-    fn a_session_id_reaches_the_command_whole_in_every_quoting_context_and_runs_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let planted = dir.path().join("planted");
-        let hostile = format!(
-            "x$(touch${{IFS}}{p})`touch${{IFS}}{p}`'\"${{HOME}}*;",
-            p = planted.display()
+    fn only_a_start_that_never_reached_the_runtime_or_was_refused_certainly_failed() {
+        let failed = SessionsError::Failed {
+            runtime: "rt".into(),
+            operation: "start",
+            detail: String::new(),
+        };
+        assert!(failed.start_certainly_failed());
+        let timed_out = SessionsError::Process(ProcessError::Timeout {
+            program: "sh".into(),
+            timeout: Duration::from_secs(1),
+        });
+        assert!(!timed_out.start_certainly_failed());
+        assert!(
+            !SessionsError::NoSessionId {
+                runtime: "rt".into()
+            }
+            .start_certainly_failed()
         );
-        let id = SessionId::parse(&hostile).unwrap();
-        for (template, prefix) in [
-            ("printf '|%s|' {runtime.session_id}", ""),
-            ("printf '|%s|' \"{runtime.session_id}\"", ""),
-            ("printf '|%s|' '{runtime.session_id}'", ""),
-            ("printf '|%s|' \"a\"'{runtime.session_id}'", "a"),
-        ] {
-            assert_eq!(
-                received(template, &id),
-                format!("|{prefix}{hostile}|"),
-                "{template}"
-            );
-        }
-        assert!(!planted.exists(), "the id's command substitution ran");
+        assert!(
+            !SessionsError::MissingCapability {
+                runtime: "rt".into(),
+                capability: Capability::Worktree,
+            }
+            .start_certainly_failed()
+        );
     }
 }

@@ -49,10 +49,22 @@ pub struct DispatchContext<'a> {
 /// What dispatch did with one todo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dispatched {
-    Started { todo: TodoSlug },
-    ClaimedElsewhere { todo: TodoSlug },
-    ClaimPending { todo: TodoSlug },
-    Exhausted { todo: TodoSlug },
+    Started {
+        todo: TodoSlug,
+    },
+    ClaimedElsewhere {
+        todo: TodoSlug,
+    },
+    ClaimPending {
+        todo: TodoSlug,
+    },
+    Exhausted {
+        todo: TodoSlug,
+    },
+    /// The start's result is unknown; the todo is held.
+    StartUncertain {
+        todo: TodoSlug,
+    },
 }
 
 /// The kinds `runner.autostart` picks up automatically in `config`.
@@ -242,9 +254,23 @@ fn dispatch_one(
             anomaly::notify(config, cx.env, &format!("{}/{todo}", project.slug), None);
             return Some(Dispatched::Exhausted { todo: todo.clone() });
         }
-        Err(err) => {
+        Err(err) if err.start_certainly_failed() => {
             tracing::warn!(event = "dispatch_start_failed", project = %project.slug, todo = %todo, error = %err);
             return None;
+        }
+        Err(err) => {
+            // The runtime may have created a session the runner cannot
+            // name: hold the todo so no second session starts, and report
+            // it; the developer releases the hold once settled.
+            tracing::warn!(event = "dispatch_start_uncertain", project = %project.slug, todo = %todo, error = %err);
+            let cause = HoldCause::Anomaly {
+                reason: format!("a session start's result is unknown: {err}"),
+            };
+            if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
+                tracing::warn!(event = "dispatch_uncertain_hold_failed", project = %project.slug, todo = %todo, error = %err);
+            }
+            anomaly::notify(config, cx.env, &format!("{}/{todo}", project.slug), None);
+            return Some(Dispatched::StartUncertain { todo: todo.clone() });
         }
     };
     let binding = SessionBinding {

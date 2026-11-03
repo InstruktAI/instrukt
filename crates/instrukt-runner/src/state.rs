@@ -92,6 +92,11 @@ impl RunnerState {
         self.dir.join("executions.json")
     }
 
+    /// The lock over the standing-agent records.
+    pub(crate) fn standing_lock(&self) -> PathBuf {
+        self.dir.join("standing.lock")
+    }
+
     /// Standing-agent starts begun and not yet bound.
     pub(crate) fn standing_starts(&self) -> PathBuf {
         self.dir.join("standing-starts.json")
