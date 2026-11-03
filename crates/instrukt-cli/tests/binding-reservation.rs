@@ -122,3 +122,17 @@ fn a_binding_naming_no_use_case_is_refused_as_unknown_before_any_claim_is_checke
     unknown: local/projects/demo/spec/feature/things/thing UC-TH9 names no use case
     ");
 }
+
+// spec: local/projects/instrukt/spec/feature/specs/binding-reservation UC-SR1
+#[test]
+fn a_marker_around_only_an_inheriting_scenario_does_not_reserve_its_use_case() {
+    let env = TestEnv::new();
+    let body = "#### UC-TH1: a goal\n\n```gherkin\n<!-- planned:other-work -->\n\
+                Scenario: the goal\n  Given a thing\n  When it is used\n  Then it works\n\
+                <!-- /planned:other-work -->\n```\n\n";
+    let repo = project(&env, &spec("", body));
+    insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH1"]), @r"
+    exit: 0
+    clear: local/projects/demo/spec/feature/things/thing UC-TH1
+    ");
+}

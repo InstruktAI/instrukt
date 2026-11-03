@@ -290,7 +290,7 @@ fn a_single_unnamed_scenario_takes_its_headings_id_and_is_bound_under_it() {
 
 // spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
-fn a_second_unnamed_scenario_under_one_heading_is_anonymous() {
+fn unnamed_scenarios_that_are_not_their_headings_only_one_are_anonymous() {
     let env = TestEnv::new();
     let repo = project(&env);
     repo.write(
@@ -303,15 +303,41 @@ fn a_second_unnamed_scenario_under_one_heading_is_anonymous() {
     insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
     exit: 0
     spec files with scenarios: 1
-    scenarios: 2
+    scenarios: 3
     bindable use cases: 1
-    anonymous scenarios: 1
+    anonymous scenarios: 2
     bound: 0
     unbound: 1
     multi-bound: 0
     orphans: 0
+    anonymous: local/projects/demo/spec/feature/things/thing Scenario: the second goal
     anonymous: local/projects/demo/spec/feature/things/thing Scenario: another goal
     unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+#[test]
+fn an_unnamed_scenario_beside_a_named_one_is_anonymous() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    repo.write(
+        SPEC_PATH,
+        &spec(&scenarios_under("UC-TH2", &["UC-TH3 named", "unnamed"])),
+    );
+    insta::assert_snapshot!(coverage(&env, &repo, &[]), @r"
+    exit: 0
+    spec files with scenarios: 1
+    scenarios: 3
+    bindable use cases: 2
+    anonymous scenarios: 1
+    bound: 0
+    unbound: 2
+    multi-bound: 0
+    orphans: 0
+    anonymous: local/projects/demo/spec/feature/things/thing Scenario: unnamed
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
