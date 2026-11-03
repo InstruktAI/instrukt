@@ -181,3 +181,41 @@ fn a_change_is_handed_off_only_after_current_approval_deferrals_and_matching_fin
         .replace(&root, "<project>");
     insta::assert_snapshot!("delivery-cycle", redact(&text));
 }
+
+// spec: local/projects/instrukt/spec/feature/workflow/delivery-cycle UC-DC1
+#[test]
+fn an_approval_across_a_merge_of_unpublished_main_is_not_relied_on() {
+    let crew = Crew::new();
+    prepared(&crew);
+    let next = crew.next("work", SLUG);
+    let worktree = dispatch_builder(&crew, &command_of(&next));
+    commit(&crew, &worktree, "depth.txt", "track depth");
+    crew.todo_in(&worktree, ["stamp", SLUG, "--build-started"]);
+    crew.todo_in(&worktree, ["stamp", SLUG, "--build-complete"]);
+    crew.write(SLUG, artifact_names::REVIEW_FINDINGS, "No findings.");
+    crew.todo_in(
+        &worktree,
+        [
+            "stamp",
+            SLUG,
+            "--verdict",
+            "approve",
+            "--phase",
+            "build_review",
+        ],
+    );
+
+    // Main moves only locally and this computer holds no published main
+    // to compare with: the merged commit is not upstream evidence.
+    commit(&crew, crew.root(), "NEWS.md", "local news");
+    crew.project.env.git(
+        crew.root(),
+        ["update-ref", "-d", "refs/remotes/origin/main"],
+    );
+    crew.project
+        .env
+        .git(&worktree, ["merge", "--quiet", "--no-edit", "main"]);
+    let after = crew.next("work", SLUG);
+
+    insta::assert_snapshot!("unpublished-upstream", redact(&after));
+}

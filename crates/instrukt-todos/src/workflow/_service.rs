@@ -30,7 +30,7 @@ use crate::evidence::{TodoEvidence, TodoStatus, WorkEvidence};
 use super::_derive::{Derivation, Responsible, Subject};
 use super::_facts::{FactError, Facts};
 use super::_flavor::{Flavor, FlavorError};
-use super::_lane::select_lane;
+use super::_lane::derive_lane;
 use super::_observe::{ObservationError, observe};
 use super::_provider::{Approvers, ProviderInput, derive_facts, standings};
 use super::_render::{ConfigLookup, ConfigLookupError};
@@ -282,20 +282,13 @@ impl Workflow {
 
     /// The facts for `evidence` from the record and the repository.
     fn facts(&self, reading: &Reading, evidence: &TodoEvidence) -> Result<Facts, WorkflowError> {
-        let prerequisites = standings(evidence, |slug| {
-            self.evidence.evidence(&reading.project, slug)
-        })?;
-        let observed = observe(&reading.project.root, evidence)?;
-        let approvers = Approvers {
-            prd: reading.config.approver(ConfigGate::Prd)?,
-            task: reading.config.approver(ConfigGate::Task)?,
-        };
-        Ok(derive_facts(&ProviderInput {
-            evidence,
-            prerequisites: &prerequisites,
-            approvers,
-            observed: &observed,
-        })?)
+        let mut others: Vec<TodoEvidence> = Vec::new();
+        for slug in related_todos(evidence) {
+            if let Some(other) = self.evidence.evidence(&reading.project, &slug)? {
+                others.push(other);
+            }
+        }
+        facts_with(&self.home, reading, evidence, &others)
     }
 
     fn evaluate(
@@ -305,22 +298,7 @@ impl Workflow {
         evidence: &TodoEvidence,
         facts: Facts,
     ) -> Result<Derivation, WorkflowError> {
-        let subject = Subject {
-            project: reading.project.slug.clone(),
-            slug: evidence.slug.clone(),
-            facts,
-        };
-        let lookup = ConfigPaths {
-            config: &reading.config,
-            env: &self.env,
-        };
-        reading
-            .flavor
-            .evaluate(flow.as_str(), &subject, &lookup)
-            .map_err(|err| WorkflowError::Evaluation {
-                todo: evidence.slug.clone(),
-                message: err.to_string(),
-            })
+        evaluate_with(&self.env, reading, flow, evidence, facts)
     }
 
     /// The lane `evidence`'s todo is owed, with the derivation of that
@@ -335,16 +313,13 @@ impl Workflow {
             return Ok(None);
         }
         let facts = self.facts(reading, evidence)?;
-        let work = self.evaluate(reading, Flow::Work, evidence, facts.clone())?;
-        let prepare = self.evaluate(reading, Flow::Prepare, evidence, facts)?;
-        let Some(prepare_role) = reading.flavor.orchestrator(Flow::Prepare.as_str()) else {
+        let Some((lane, work, prepare)) = lane_with(&self.env, reading, evidence, facts, index)?
+        else {
             return Err(WorkflowError::Evaluation {
                 todo: evidence.slug.clone(),
                 message: "the flavor defines no `prepare` flow".to_owned(),
             });
         };
-        let role_of = |procedure: &SnippetId| role_in(index, procedure);
-        let lane = select_lane(evidence.kind, &work, &prepare, prepare_role, &role_of);
         Ok(Some(match lane {
             Lane::Prepare => (lane, prepare),
             Lane::Work | Lane::TaskRun => (lane, work),
@@ -451,6 +426,150 @@ impl WorkflowAssignments for Workflow {
         );
         Ok(assignment)
     }
+}
+
+/// The todos whose evidence a derivation for `evidence` reads besides its
+/// own: its prerequisites, and each todo its artifacts' current grounding
+/// recorded a dependency on; each once, in that order.
+pub fn related_todos(evidence: &TodoEvidence) -> Vec<TodoSlug> {
+    let mut out: Vec<TodoSlug> = Vec::new();
+    let prerequisites =
+        evidence
+            .prerequisites
+            .iter()
+            .filter_map(|prerequisite| match prerequisite {
+                crate::evidence::Prerequisite::Todo(slug) => Some(slug),
+                crate::evidence::Prerequisite::EmptyHolder(_) => None,
+            });
+    let grounded = evidence.artifacts.iter().flat_map(|artifact| {
+        artifact
+            .versions
+            .last()
+            .into_iter()
+            .flat_map(|version| version.grounding.dependencies.iter().map(|d| &d.todo))
+    });
+    for slug in prerequisites.chain(grounded) {
+        if !out.contains(slug) {
+            out.push(slug.clone());
+        }
+    }
+    out
+}
+
+/// Whether `evidence`'s todo has completed preparation, as the current
+/// derivation of the flavor its project selects says: preparation is
+/// complete when the todo's lane is no longer preparation (the work lane,
+/// or for a task its run). `project_root` is the project's primary
+/// worktree; `others` is the evidence of the todos [`related_todos`] names
+/// that the record has.
+///
+/// `Ok(None)` when no answer can be derived: the project selects no
+/// published flavor, or the flavor defines no `prepare` or `work` flow. Reads the
+/// home, configuration and repository and records nothing, so work can
+/// ask before it opens its write session.
+pub fn preparation_complete(
+    home: &Home,
+    project_root: &Path,
+    evidence: &TodoEvidence,
+    others: &[TodoEvidence],
+) -> Result<Option<bool>, WorkflowError> {
+    let config = Configuration::load(home, Some(project_root))?;
+    let Some(slug) = config.project()? else {
+        return Ok(None);
+    };
+    let dir = published_workflow(home, &config)?;
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let reading = Reading {
+        flavor: Flavor::load(&dir)?,
+        config,
+        project: ProjectRef {
+            slug,
+            root: project_root.to_path_buf(),
+        },
+    };
+    let facts = facts_with(home, &reading, evidence, others)?;
+    let index = GlobalIndex::load(home)?;
+    let env = Env::default();
+    Ok(lane_with(&env, &reading, evidence, facts, index.as_ref())?
+        .map(|(lane, _, _)| lane != Lane::Prepare))
+}
+
+/// The facts for `evidence` from the record, `others` (the related todos'
+/// evidence) and the repository.
+fn facts_with(
+    home: &Home,
+    reading: &Reading,
+    evidence: &TodoEvidence,
+    others: &[TodoEvidence],
+) -> Result<Facts, WorkflowError> {
+    let prerequisites = standings(evidence, |slug| {
+        Ok::<_, WorkflowError>(others.iter().find(|other| &other.slug == slug).cloned())
+    })?;
+    let observed = observe(home, &reading.project.root, evidence, others)?;
+    let approvers = Approvers {
+        prd: reading.config.approver(ConfigGate::Prd)?,
+        task: reading.config.approver(ConfigGate::Task)?,
+    };
+    Ok(derive_facts(&ProviderInput {
+        evidence,
+        prerequisites: &prerequisites,
+        approvers,
+        observed: &observed,
+    })?)
+}
+
+fn evaluate_with(
+    env: &Env,
+    reading: &Reading,
+    flow: Flow,
+    evidence: &TodoEvidence,
+    facts: Facts,
+) -> Result<Derivation, WorkflowError> {
+    let subject = Subject {
+        project: reading.project.slug.clone(),
+        slug: evidence.slug.clone(),
+        facts,
+    };
+    let lookup = ConfigPaths {
+        config: &reading.config,
+        env,
+    };
+    reading
+        .flavor
+        .evaluate(flow.as_str(), &subject, &lookup)
+        .map_err(|err| WorkflowError::Evaluation {
+            todo: evidence.slug.clone(),
+            message: err.to_string(),
+        })
+}
+
+/// The lane for `facts`, with the work and prepare derivations; `None`
+/// when the flavor defines no `prepare` flow.
+fn lane_with(
+    env: &Env,
+    reading: &Reading,
+    evidence: &TodoEvidence,
+    facts: Facts,
+    index: Option<&GlobalIndex>,
+) -> Result<Option<(Lane, Derivation, Derivation)>, WorkflowError> {
+    let subject = Subject {
+        project: reading.project.slug.clone(),
+        slug: evidence.slug.clone(),
+        facts,
+    };
+    let lookup = ConfigPaths {
+        config: &reading.config,
+        env,
+    };
+    let role_of = |procedure: &SnippetId| role_in(index, procedure);
+    derive_lane(&reading.flavor, evidence.kind, &subject, &lookup, &role_of).map_err(|err| {
+        WorkflowError::Evaluation {
+            todo: evidence.slug.clone(),
+            message: err.to_string(),
+        }
+    })
 }
 
 /// The rendered obligation the runner receives; a command, brief or
@@ -590,4 +709,28 @@ pub fn todos_enabled(home: &Home, cwd: &Path) -> Result<bool, WorkflowError> {
         root.as_deref(),
         Module::Todos,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+    use instrukt_runner::interfaces::TodoKind;
+
+    use super::super::_testing::todo;
+    use super::*;
+
+    #[test]
+    fn without_a_published_flavor_preparation_completion_has_no_answer() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(home_dir.path().to_path_buf());
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("instrukt.yaml"),
+            format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\n"),
+        )
+        .unwrap();
+        let evidence = todo(TodoKind::Change).build();
+        let answer = preparation_complete(&home, project.path(), &evidence, &[]).unwrap();
+        assert_eq!(answer, None);
+    }
 }

@@ -70,13 +70,34 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
     );
     steps.push(crew.next("prepare", slug));
 
+    // The plan declares the code it is grounded on.
     crew.write(
         slug,
         artifact_names::IMPLEMENTATION_PLAN,
-        "1. Track depth in the parser.",
+        "1. Track depth in the parser.\n\n```referenced-paths\nREADME.md\n```\n",
     );
     crew.write(slug, artifact_names::PLAN_REVIEW_FINDINGS, "No findings.");
     crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    steps.push(crew.next("prepare", slug));
+
+    // A committed change to that code reaches the canonical branch: release
+    // is owed again only after the drift is analyzed.
+    let readme = crew.root().join("README.md");
+    std::fs::write(&readme, "# demo\n\nLists nest.\n").unwrap();
+    crew.project.repo.commit("document nesting");
+    crew.project
+        .env
+        .git(crew.root(), ["push", "--quiet", "origin", "main"]);
+    steps.push(crew.next("prepare", slug));
+    crew.stamp(
+        slug,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "the README only documents nesting",
+        ],
+    );
     steps.push(crew.next("prepare", slug));
 
     // The developer refines the intent: the PRD and plan derived from the
