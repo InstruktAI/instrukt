@@ -126,12 +126,23 @@ fn runner_runtime(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
 /// `agents.order` names only agents the runtime mapping can start: the
 /// entries that carry `agent:`. Without a mapping no agent can be started,
 /// so every name is a finding.
+///
+/// The order carries one thinking mode for the whole list, with no
+/// default: `agents.thinking_mode` is required whenever `agents.order` is
+/// set.
 fn agent_order(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
-    let Some(order) = value
-        .get("agents")
-        .and_then(|a| a.get("order"))
-        .and_then(Value::as_sequence)
-    else {
+    let agents = value.get("agents");
+    let Some(order) = agents.and_then(|a| a.get("order")) else {
+        return;
+    };
+    if agents.and_then(|a| a.get("thinking_mode")).is_none() {
+        out.push(KeyFinding::new(
+            "agents.thinking_mode",
+            FindingKind::Missing,
+            "required whenever agents.order is set",
+        ));
+    }
+    let Some(order) = order.as_sequence() else {
         return;
     };
     let entries = _runtime::entries(effective.get("runtimes"));
@@ -216,11 +227,24 @@ mod tests {
             judged(&judge(&global, LayerKind::Global, None)),
             [("agents.order.1", FindingKind::AgentNotStartable)]
         );
-        let unmapped = yaml("schema_version: 1\nagents: {order: [claude]}\n");
+        let unmapped = yaml("schema_version: 1\nagents: {order: [claude], thinking_mode: fast}\n");
         assert_eq!(
             judged(&judge(&unmapped, LayerKind::Global, None)),
             [("agents.order.0", FindingKind::AgentNotStartable)]
         );
+    }
+
+    #[test]
+    fn an_order_without_a_thinking_mode_is_a_finding() {
+        let global = yaml(&format!(
+            "schema_version: 1\n{RUNTIMES}agents: {{order: [claude]}}\n"
+        ));
+        assert_eq!(
+            judged(&judge(&global, LayerKind::Global, None)),
+            [("agents.thinking_mode", FindingKind::Missing)]
+        );
+        let no_order = yaml("schema_version: 1\nagents: {claude: {git_author: 'C <c@x>'}}\n");
+        assert_eq!(judge(&no_order, LayerKind::Global, None), []);
     }
 
     #[test]

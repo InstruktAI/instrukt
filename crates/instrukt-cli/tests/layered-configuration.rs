@@ -101,6 +101,8 @@ runtimes:
 agents:
   order: [project-agent]
   thinking_mode: slow
+actions:
+  report: report {project} to {runtimes.0.name}
 "#,
     );
     author.commit("feat: configuration");
@@ -112,15 +114,14 @@ agents:
     insta::assert_snapshot!("cloned-project-findings", stdout(&env, &validated));
 
     let read = |args: &[&str]| stdout(&env, &env.run(clone.path(), args).success());
-    // The runtime templates name `{runtime.session_id}`, which only a
-    // session inside a runtime can expand; their identities read anywhere.
-    insta::assert_snapshot!(read(&["config", "get", "runtimes.0.name"]), @"machine-host");
-    insta::assert_snapshot!(read(&["config", "get", "runtimes.1.name"]), @"machine-agent");
-    insta::assert_snapshot!("machine-agents-yaml", read(&["config", "get", "agents"]));
+    // Outside any runtime session: the stored mapping reads as stored,
+    // every template unexpanded; the rest of the configuration expands.
+    insta::assert_snapshot!("machine-runtimes", read(&["config", "get", "runtimes"]));
     insta::assert_snapshot!(
-        "machine-agents-json",
-        read(&["config", "get", "--json", "agents"])
+        "machine-runtime-entry-json",
+        read(&["config", "get", "--json", "runtimes.0"])
     );
+    insta::assert_snapshot!("whole-configuration", read(&["config", "get"]));
     let missing = env
         .run(clone.path(), ["config", "get", "runtimes.2"])
         .failure();
