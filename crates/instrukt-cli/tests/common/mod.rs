@@ -32,8 +32,8 @@ use assert_cmd::assert::Assert;
 use tempfile::TempDir;
 
 /// The git identity every test's git configuration carries.
-pub const DEVELOPER_NAME: &str = "Test Developer";
-pub const DEVELOPER_EMAIL: &str = "developer@example.test";
+const DEVELOPER_NAME: &str = "Test Developer";
+const DEVELOPER_EMAIL: &str = "developer@example.test";
 
 /// A temporary machine: a user home, a place for repositories, and the
 /// environment every subprocess of the test runs with.

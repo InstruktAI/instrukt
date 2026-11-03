@@ -6,7 +6,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{DEVELOPER_EMAIL, DEVELOPER_NAME, LiveGuard, TestEnv};
+use common::{LiveGuard, TestEnv};
 
 const COMMANDS: [&str; 15] = [
     "config",
@@ -63,7 +63,7 @@ fn git_children_see_only_the_injected_environment() {
         .lines()
         .filter_map(|line| line.split_once('='))
         .collect();
-    assert_eq!(seen.get(INJECTED), Some(&SENTINEL));
+    insta::assert_snapshot!(seen.get(INJECTED).copied().unwrap_or_default(), @"s-1");
     assert_eq!(seen.get("HOME").map(std::path::Path::new), Some(env.home()));
     assert!(!seen.contains_key(AMBIENT));
 }
@@ -87,7 +87,7 @@ fn instrukt_children_see_only_the_injected_environment() {
         .run(repo.path(), ["config", "get", "actions.injected"])
         .success();
     let value = String::from_utf8_lossy(&injected.get_output().stdout).into_owned();
-    assert_eq!(value.trim_end(), SENTINEL);
+    insta::assert_snapshot!(value, @"s-1");
     env.run(repo.path(), ["config", "get", "actions.ambient"])
         .failure();
 }
@@ -99,8 +99,10 @@ fn commits_carry_the_isolated_git_identity() {
     repo.write("README.md", "demo\n");
     let sha = repo.commit("feat: start");
     assert_eq!(sha.len(), 40);
-    assert_eq!(repo.git(["log", "-1", "--format=%an"]), DEVELOPER_NAME);
-    assert_eq!(repo.git(["log", "-1", "--format=%ae"]), DEVELOPER_EMAIL);
+    insta::assert_snapshot!(
+        repo.git(["log", "-1", "--format=%an <%ae>"]),
+        @"Test Developer <developer@example.test>"
+    );
 }
 
 #[test]
