@@ -79,6 +79,29 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
     crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
     steps.push(crew.next("prepare", slug));
 
+    // The developer refines the intent: the PRD and plan derived from the
+    // earlier input are drift evidence, analyzed before release.
+    crew.write(
+        slug,
+        artifact_names::INPUT,
+        "Keep the depth of nested lists, including in block quotes.",
+    );
+    steps.push(crew.next("prepare", slug));
+
+    // The analysis judges both cosmetic: the same evidence is settled.
+    for artifact in [artifact_names::PRD, artifact_names::IMPLEMENTATION_PLAN] {
+        crew.stamp(
+            slug,
+            &[
+                "--drift-reviewed",
+                artifact,
+                "cosmetic",
+                "block quotes are lists too",
+            ],
+        );
+    }
+    steps.push(crew.next("prepare", slug));
+
     // Rewriting the approved PRD unbinds its review and approval: release
     // is no longer owed.
     crew.write(

@@ -21,7 +21,7 @@ use crate::support::{Project, REPOSITORY, stdout};
 
 /// The flavor's procedures: path below `procedure/`, and the role each
 /// declares.
-const PROCEDURES: [(&str, &str); 10] = [
+const PROCEDURES: [(&str, &str); 11] = [
     ("prepare-lead", "prepare-lead"),
     ("work-lead", "work-lead"),
     ("intake", "intaker"),
@@ -32,10 +32,11 @@ const PROCEDURES: [(&str, &str); 10] = [
     ("review-build", "build-reviewer"),
     ("deferrals", "deferrer"),
     ("finalize", "finalizer"),
+    ("drift-analyze", "drift-analyzer"),
 ];
 
 const ACTIONS: &str = "\
-roles: [prepare-lead, work-lead, intaker, prd-reviewer, planner, plan-reviewer, builder, build-reviewer, deferrer, finalizer]
+roles: [prepare-lead, work-lead, intaker, prd-reviewer, planner, plan-reviewer, builder, build-reviewer, deferrer, finalizer, drift-analyzer]
 draft-prd:
   command: instrukt docs get crew/procedure/intake
   template: templates/draft-prd.md
@@ -57,6 +58,9 @@ review-plan:
 revise-plan:
   command: instrukt docs get crew/procedure/plan
   template: templates/revise-plan.md
+analyze-drift:
+  command: instrukt sessions run --procedure crew/procedure/drift-analyze --args {slug} --todo {slug} --brief -
+  template: templates/analyze-drift.md
 release-prepared:
   command: instrukt todo update {slug} --unclaim
   template: templates/release-prepared.md
@@ -119,7 +123,7 @@ fn prepare_flow() -> String {
         "flow: prepare
 orchestrator: prepare-lead
 initial: start
-states: [start, prd_drafting, prd_review, prd_revision, prd_approval, plan_drafting, plan_review, plan_revision, prepared]
+states: [start, prd_drafting, prd_review, prd_revision, prd_approval, plan_drafting, plan_review, plan_revision, drift_analysis, prepared]
 transitions:
 - from: start
   to: prd_drafting
@@ -156,6 +160,14 @@ transitions:
   when:
     all:
 {needs_work_plan}  action: revise-plan
+- from: plan_review
+  to: drift_analysis
+  when:
+    all:
+{approved_plan}    - any:
+      - equals: [drift.prd, pending]
+      - equals: [drift.implementation_plan, pending]
+  action: analyze-drift
 - from: plan_review
   to: prepared
   when:
@@ -242,7 +254,7 @@ transitions:
 }
 
 /// Each action's instructions: what is owed, naming the evidence it binds.
-const TEMPLATES: [(&str, &str); 16] = [
+const TEMPLATES: [(&str, &str); 17] = [
     ("draft-prd", "Draft the PRD of {slug} from its input."),
     (
         "review-prd",
@@ -266,6 +278,10 @@ const TEMPLATES: [(&str, &str); 16] = [
         "Revise plan {implementation_plan.digest} of {slug} against its findings.",
     ),
     ("release-prepared", "{slug} is prepared: release the claim."),
+    (
+        "analyze-drift",
+        "Judge the drift of {slug}: PRD {drift.prd}, plan {drift.implementation_plan}.",
+    ),
     (
         "await-prepare",
         "{slug} is not prepared; return it to preparation.",

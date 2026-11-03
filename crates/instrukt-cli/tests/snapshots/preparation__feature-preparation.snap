@@ -78,7 +78,31 @@ todo: nested-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#8)
+transition: plan_review -> prepared (#9)
+action: release-prepared
+responsible: prepare-lead (orchestrator step)
+command: instrukt todo update nested-lists --unclaim
+effects: none
+instructions:
+nested-lists is prepared: release the claim.
+=====
+todo: nested-lists (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt sessions run --procedure crew/procedure/drift-analyze --args nested-lists --todo nested-lists --brief -
+effects: none
+instructions:
+Judge the drift of nested-lists: PRD pending, plan pending.
+=====
+todo: nested-lists (demo)
+flow: prepare
+claim: held by this session
+state: prepared
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update nested-lists --unclaim
