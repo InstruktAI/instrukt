@@ -1,33 +1,36 @@
 //! The configuration context: `instrukt.yaml` in a global and a project
 //! layer (`docs/local/spec/domain/configuration.md`).
+//!
+//! One capability: answer, validate, migrate and safely change layered
+//! configuration. Readers take a [`Configuration`] (the effective
+//! configuration, or the global layer alone) and read keys by dotted path
+//! with interpolation, or through typed accessors. Writers address one
+//! [`Layer`]: [`init`], [`migrate`], [`patch`] against a [`revision`], and
+//! [`validate`].
+
+mod _effective;
+mod _error;
+mod _interpolate;
+mod _layer;
+mod _merge;
+mod _runtime;
+mod _schema;
+mod _validate;
 
 use std::path::Path;
 
+pub use _effective::{ApprovalGate, Approver, Configuration, Module, Notify, WatchedRef};
+pub use _error::{ConfigError, Finding, Findings};
+pub use _layer::{
+    CONFIG_FILE_NAME, InitOutcome, Layer, MigrationOutcome, Revision, init, migrate, parse_patch,
+    patch, revision,
+};
+pub use _runtime::{Env, RuntimeEntry};
+pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind};
+pub use _validate::validate;
+
 use crate::home::Home;
-use crate::ids::{IdError, ProjectSlug};
-
-/// The file name of both configuration layers.
-pub const CONFIG_FILE_NAME: &str = "instrukt.yaml";
-
-/// A configuration document could not be read.
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("cannot read {path}: {source}")]
-    Read {
-        path: std::path::PathBuf,
-        source: std::io::Error,
-    },
-    #[error("{path} is not valid YAML: {source}")]
-    Parse {
-        path: std::path::PathBuf,
-        source: serde_yaml_ng::Error,
-    },
-    #[error("{path}: `project` {source}")]
-    Slug {
-        path: std::path::PathBuf,
-        source: IdError,
-    },
-}
+use crate::ids::ProjectSlug;
 
 /// The project slug the repository rooted at `repo_root` declares in its
 /// project layer; `None` when it has no project layer or declares none.
@@ -35,40 +38,19 @@ pub enum ConfigError {
 /// Docs, publication, repository and specs read the slug through this
 /// signature.
 pub fn project_slug(repo_root: &Path) -> Result<Option<ProjectSlug>, ConfigError> {
+    let layer = Layer::Project(repo_root.to_path_buf());
     let path = repo_root.join(CONFIG_FILE_NAME);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(ConfigError::Read { path, source }),
+    let Some(value) = _layer::read(&path)?.map(|doc| doc.value) else {
+        return Ok(None);
     };
-    let doc: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?;
-    match doc.get("project").and_then(serde_yaml_ng::Value::as_str) {
-        Some(raw) => ProjectSlug::parse(raw)
-            .map(Some)
-            .map_err(|source| ConfigError::Slug { path, source }),
-        None => Ok(None),
-    }
-}
-
-/// A switchable module. Core has no switch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Module {
-    Blueprint,
-    Todos,
-    Events,
-}
-
-impl Module {
-    /// The key below `modules` that switches it.
-    pub fn key(self) -> &'static str {
-        match self {
-            Module::Blueprint => "blueprint",
-            Module::Todos => "todos",
-            Module::Events => "events",
+    _layer::require_usable(&layer, &path, &value)?;
+    match value.get("project") {
+        None | Some(serde_yaml_ng::Value::Null) => Ok(None),
+        Some(raw) => {
+            let text = raw.as_str().unwrap_or_default();
+            ProjectSlug::parse(text)
+                .map(Some)
+                .map_err(|source| ConfigError::Slug { path, source })
         }
     }
 }
@@ -84,34 +66,5 @@ pub fn module_enabled(
     repo_root: Option<&Path>,
     module: Module,
 ) -> Result<bool, ConfigError> {
-    let project = match repo_root {
-        Some(root) => read_switch(&root.join(CONFIG_FILE_NAME), module)?,
-        None => None,
-    };
-    match project {
-        Some(on) => Ok(on),
-        None => Ok(read_switch(&home.global_config(), module)?.unwrap_or(false)),
-    }
-}
-
-fn read_switch(path: &Path, module: Module) -> Result<Option<bool>, ConfigError> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
-            return Err(ConfigError::Read {
-                path: path.to_path_buf(),
-                source,
-            });
-        }
-    };
-    let doc: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&text).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    Ok(doc
-        .get("modules")
-        .and_then(|modules| modules.get(module.key()))
-        .and_then(serde_yaml_ng::Value::as_bool))
+    Configuration::load(home, repo_root)?.module_enabled(module)
 }
