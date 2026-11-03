@@ -564,6 +564,7 @@ dependencies = [
  "instrukt-core",
  "instrukt-runner",
  "instrukt-todos",
+ "jiff",
  "predicates",
  "serde",
  "serde_json",
@@ -612,6 +613,7 @@ dependencies = [
 name = "instrukt-todos"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "indexmap",
  "instrukt-core",
  "instrukt-runner",
@@ -620,6 +622,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2",
  "tempfile",
  "thiserror",
  "tracing",

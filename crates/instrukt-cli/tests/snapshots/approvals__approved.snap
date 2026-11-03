@@ -1,0 +1,25 @@
+---
+source: crates/instrukt-cli/tests/approvals.rs
+expression: "redact(&format!(\"{approved}---\\n{shown}\"))"
+---
+stamped nested-lists: prd approved by a human — <digest 1>
+reflection: reflected to GitHub
+---
+nested-lists · feature · active
+identity: <id 1>
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (2 versions)
+    <digest 1> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+stamps:
+  <time> prd approved by a human — <digest 1> — by session thread-host:thread-7

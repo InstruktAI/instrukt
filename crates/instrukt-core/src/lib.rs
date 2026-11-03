@@ -12,6 +12,7 @@ pub mod home;
 pub mod ids;
 pub mod index;
 pub mod interfaces;
+pub mod machine;
 pub mod publication;
 pub mod repository;
 pub mod specs;
