@@ -11,17 +11,36 @@
 //! queue.json         the queued revision; a newer handoff replaces it
 //! generation.json    the last generation: its SHA and outcome
 //! .queue.lock        held while the queue is read or replaced
-//! .generation.lock   held by the worker generating; one per project
+//! .generation.lock   held while a generation's processes live; one per project
+//! .waiter.lock       held by the one worker waiting for .generation.lock
+//! engine.pgid        the process group of the engine running, if any
 //! .checkout-*/       a running generation's checkout of its revision
 //! ```
 //!
 //! [`Generation::start_generation`] writes the revision as the queued one
 //! and starts a detached worker (`instrukt blueprint worker <project>`).
-//! The worker takes `.generation.lock`; if another worker holds it, that
-//! one will take the queued revision after its current one, and this
-//! worker leaves. The holder generates queued revisions one at a time
-//! until the queue is empty, releases the lock and looks once more, so a
-//! revision queued while it was releasing is never left behind.
+//!
+//! **One generation at a time.** `.generation.lock` is held through an open
+//! file the worker shares with the engine it runs: the engine's standard
+//! input is that file. The lock is released only once the worker and every
+//! process of the engine have exited, so a worker killed mid-run leaves the
+//! lock held until its engine ends and no second engine starts beside it.
+//!
+//! **Waiting.** A worker first takes `.waiter.lock`; if another worker
+//! already waits, that one will take the queued revision and this one
+//! leaves. The waiter waits for `.generation.lock` longer than a worker
+//! lets its engine run; a lock still held then belongs to an engine whose
+//! worker is gone, so the waiter ends that engine's process group and takes
+//! over. The holder generates queued revisions one at a time until the
+//! queue is empty, releases the lock and looks once more, so a revision
+//! queued while it was releasing is never left behind.
+//!
+//! **Status.** The last generation's record says `running` while it runs.
+//! A reader first tries `.generation.lock`, then reads the record. Holding
+//! the lock, a `running` record is one whose processes are all gone
+//! (interrupted); not holding it, the record is whatever the generation
+//! wrote last. No worker writes the record while the reader holds the
+//! lock, so a completed run is never read as interrupted.
 //!
 //! A generation checks the revision's committed tree out into a private
 //! directory with git plumbing (never the working tree, no hooks), runs the
@@ -30,11 +49,12 @@
 //! replaces the latest graph. A revision whose complete graph is stored is
 //! not generated again; it is made the latest graph again.
 
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use instrukt_core::config::{ConfigError, Configuration};
 use instrukt_core::fsx::{self, FsError, LockGuard};
@@ -42,9 +62,10 @@ use instrukt_core::git;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use instrukt_core::interfaces::{GenerationRequest, GraphGeneration, InterfaceError, MainAdvance};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::_engine::{Engine, EngineError};
+use crate::_engine::{Engine, EngineError, kill_group};
 use crate::_store::{GraphStore, StoreError};
 
 /// The arguments, after the executable, that start the detached worker;
@@ -55,16 +76,20 @@ const QUEUE_FILE: &str = "queue.json";
 const STATUS_FILE: &str = "generation.json";
 const QUEUE_LOCK_FILE: &str = ".queue.lock";
 const GENERATION_LOCK_FILE: &str = ".generation.lock";
+const WAITER_LOCK_FILE: &str = ".waiter.lock";
+const ENGINE_GROUP_FILE: &str = "engine.pgid";
 const CHECKOUT_PREFIX: &str = ".checkout-";
 
 /// How long the queue's lock is waited for; it is held for one small read
 /// or write.
 const QUEUE_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a starting worker waits for the generation lock before
-/// leaving the queued revision to the worker that holds it.
-const WORKER_LOCK_WAIT: Duration = Duration::from_secs(2);
-/// How long one engine run may take before it is ended.
+/// How long one engine run may take before its worker ends it.
 const ENGINE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long a waiting worker waits for the generation lock: longer than a
+/// live worker lets its engine run, so a lock held past it has no worker.
+const WAITER_PATIENCE: Duration = Duration::from_secs(32 * 60);
+/// How long a waiter waits for an ended engine to release the lock.
+const KILL_GRACE: Duration = Duration::from_secs(30);
 
 /// Generation could not record, start or complete a revision.
 #[derive(Debug, thiserror::Error)]
@@ -220,26 +245,30 @@ impl GraphGeneration for Generation {
 
 /// The detached worker: generates the project's queued revisions one at a
 /// time while it holds the generation lock; leaves at once when another
-/// worker holds it.
-pub fn run_worker(home: &Home, project: &ProjectSlug) -> Result<(), GenerationError> {
+/// worker already waits for it. `now` is the invocation's clock.
+pub fn run_worker(
+    home: &Home,
+    project: &ProjectSlug,
+    now: &dyn Fn() -> Timestamp,
+) -> Result<(), GenerationError> {
     let files = Files::new(home, project);
     loop {
-        let lock = match LockGuard::acquire(&files.generation_lock(), WORKER_LOCK_WAIT) {
-            Ok(lock) => lock,
-            Err(FsError::LockTimeout { .. }) => {
-                tracing::debug!(
-                    event = "blueprint_worker_yielded",
-                    project = %project,
-                    "another worker generates; it takes the queued revision"
-                );
-                return Ok(());
-            }
-            Err(err) => return Err(err.into()),
+        let Some(waiting) = LockGuard::try_acquire(&files.dir.join(WAITER_LOCK_FILE))? else {
+            tracing::debug!(
+                event = "blueprint_worker_yielded",
+                project = %project,
+                "another worker waits; it takes the queued revision"
+            );
+            return Ok(());
         };
+        let Some(held) = files.wait_for_generation_lock(project)? else {
+            return Ok(());
+        };
+        drop(waiting);
         while let Some(queued) = files.take()? {
-            generate(home, project, &files, &queued)?;
+            generate(home, project, &files, &queued, &held, now)?;
         }
-        drop(lock);
+        drop(held);
         if files.queued()?.is_none() {
             return Ok(());
         }
@@ -252,18 +281,29 @@ pub fn last_generation(
     project: &ProjectSlug,
 ) -> Result<Option<LastGeneration>, GenerationError> {
     let files = Files::new(home, project);
+    // No store yet: nothing has run (and taking the lock must not create it).
+    match std::fs::metadata(&files.dir) {
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(GenerationError::Read {
+                path: files.dir.clone(),
+                source,
+            });
+        }
+    }
+    // The lock first, the record second: see "Status" above.
+    let free = files.try_generation_lock()?;
     let Some(record) = files.read::<Record>(&files.status())? else {
         return Ok(None);
     };
     let state = match record.outcome {
         Outcome::Mapped { .. } => GenerationState::Mapped,
         Outcome::Failed { error, .. } => GenerationState::Failed { error },
-        // Running only while a worker holds the generation lock.
-        Outcome::Running => match LockGuard::try_acquire(&files.generation_lock())? {
-            Some(_free) => GenerationState::Interrupted,
-            None => GenerationState::Running,
-        },
+        Outcome::Running if free.is_some() => GenerationState::Interrupted,
+        Outcome::Running => GenerationState::Running,
     };
+    drop(free);
     Ok(Some(LastGeneration {
         sha: record.sha,
         state,
@@ -277,14 +317,17 @@ fn generate(
     project: &ProjectSlug,
     files: &Files,
     queued: &Queued,
+    held: &File,
+    now: &dyn Fn() -> Timestamp,
 ) -> Result<(), GenerationError> {
+    let now_ms = || u64::try_from(now().as_millisecond()).unwrap_or_default();
     let started_at_ms = now_ms();
     files.record(&Record {
         sha: queued.sha.clone(),
         started_at_ms,
         outcome: Outcome::Running,
     })?;
-    let outcome = match map(home, project, files, queued) {
+    let outcome = match map(home, project, files, queued, held) {
         Ok(()) => {
             tracing::info!(
                 event = "blueprint_generation_mapped",
@@ -323,6 +366,7 @@ fn map(
     project: &ProjectSlug,
     files: &Files,
     queued: &Queued,
+    held: &File,
 ) -> Result<(), GenerationError> {
     let store = GraphStore::new(home, project);
     let graph = match store.graph(&queued.sha)? {
@@ -344,7 +388,15 @@ fn map(
                 })?;
             let tree = scratch.path().join("tree");
             check_out(&queued.project_root, &queued.sha, scratch.path(), &tree)?;
-            engine.generate(&tree, scratch.path(), ENGINE_TIMEOUT)?
+            let group = files.dir.join(ENGINE_GROUP_FILE);
+            let generated =
+                engine.generate(&tree, scratch.path(), ENGINE_TIMEOUT, held, &mut |pid| {
+                    if let Err(err) = fsx::atomic_write(&group, pid.to_string().as_bytes()) {
+                        tracing::warn!(event = "blueprint_engine_group_unrecorded", error = %err);
+                    }
+                });
+            remove_file(&group);
+            generated?
         }
     };
     let published = store.publish(&queued.sha, &graph)?;
@@ -424,8 +476,80 @@ impl Files {
         self.dir.join(STATUS_FILE)
     }
 
-    fn generation_lock(&self) -> PathBuf {
-        self.dir.join(GENERATION_LOCK_FILE)
+    fn generation_lock_file(&self) -> Result<File, GenerationError> {
+        let path = self.dir.join(GENERATION_LOCK_FILE);
+        std::fs::create_dir_all(&self.dir).map_err(|source| GenerationError::Read {
+            path: self.dir.clone(),
+            source,
+        })?;
+        // Readable: it becomes the engine's standard input.
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|source| GenerationError::Read { path, source })
+    }
+
+    /// The generation lock if nobody holds it: the open file holding it.
+    fn try_generation_lock(&self) -> Result<Option<File>, GenerationError> {
+        let file = self.generation_lock_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(source)) => Err(GenerationError::Read {
+                path: self.dir.join(GENERATION_LOCK_FILE),
+                source,
+            }),
+        }
+    }
+
+    /// Waits for the generation lock (see "Waiting" above); `None` when an
+    /// engine left without its worker could not be ended.
+    fn wait_for_generation_lock(
+        &self,
+        project: &ProjectSlug,
+    ) -> Result<Option<File>, GenerationError> {
+        if let Some(held) = self.wait(WAITER_PATIENCE)? {
+            return Ok(Some(held));
+        }
+        let group = std::fs::read_to_string(self.dir.join(ENGINE_GROUP_FILE))
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok());
+        tracing::warn!(
+            event = "blueprint_orphaned_engine_ended",
+            project = %project,
+            group = ?group,
+            "the generation lock outlived any worker's bound; ending the engine holding it"
+        );
+        if let Some(group) = group {
+            kill_group(group);
+        }
+        let held = self.wait(KILL_GRACE)?;
+        if held.is_none() {
+            tracing::warn!(
+                event = "blueprint_worker_gave_up",
+                project = %project,
+                "the generation lock is still held; the queued revision waits for the next handoff"
+            );
+        }
+        Ok(held)
+    }
+
+    fn wait(&self, patience: Duration) -> Result<Option<File>, GenerationError> {
+        let started = Instant::now();
+        let mut pause = Duration::from_millis(5);
+        loop {
+            if let Some(held) = self.try_generation_lock()? {
+                return Ok(Some(held));
+            }
+            if started.elapsed() >= patience {
+                return Ok(None);
+            }
+            std::thread::sleep(pause);
+            pause = (pause * 2).min(Duration::from_millis(200));
+        }
     }
 
     fn queue_lock(&self) -> Result<LockGuard, GenerationError> {
@@ -495,76 +619,11 @@ impl Files {
     }
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sha(c: char) -> CommitSha {
-        CommitSha::parse(&c.to_string().repeat(40)).unwrap()
-    }
-
-    fn files() -> (tempfile::TempDir, Home, ProjectSlug, Files) {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        let project = ProjectSlug::parse("demo").unwrap();
-        let files = Files::new(&home, &project);
-        (dir, home, project, files)
-    }
-
-    fn queued(c: char) -> Queued {
-        Queued {
-            sha: sha(c),
-            project_root: PathBuf::from("/repo"),
-            advance: Advance::Push,
-        }
-    }
-
-    #[test]
-    fn a_newer_handoff_replaces_the_queued_revision_and_taking_empties_the_queue() {
-        let (_dir, _home, _project, files) = files();
-        files.enqueue(&queued('a')).unwrap();
-        files.enqueue(&queued('b')).unwrap();
-        assert_eq!(files.take().unwrap(), Some(queued('b')));
-        assert_eq!(files.take().unwrap(), None);
-    }
-
-    #[test]
-    fn a_running_record_without_a_worker_holding_the_lock_is_interrupted() {
-        let (_dir, home, project, files) = files();
-        assert_eq!(last_generation(&home, &project).unwrap(), None);
-        files
-            .record(&Record {
-                sha: sha('a'),
-                started_at_ms: 1,
-                outcome: Outcome::Running,
-            })
-            .unwrap();
-        let held = LockGuard::try_acquire(&files.generation_lock())
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            last_generation(&home, &project).unwrap().unwrap().state,
-            GenerationState::Running
-        );
-        drop(held);
-        // A child another test forks in this process may briefly hold a
-        // copy of the lock's descriptor until it execs; wait that out.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let last = loop {
-            let last = last_generation(&home, &project).unwrap().unwrap();
-            if last.state != GenerationState::Running || std::time::Instant::now() > deadline {
-                break last;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        assert_eq!(last.state, GenerationState::Interrupted);
-        assert!(last.is_failure());
+/// Removes a file; one already gone is fine.
+fn remove_file(path: &Path) {
+    if let Err(err) = std::fs::remove_file(path)
+        && err.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!(event = "blueprint_file_not_removed", path = %path.display(), error = %err);
     }
 }

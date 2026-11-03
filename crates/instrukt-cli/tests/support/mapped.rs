@@ -103,9 +103,12 @@ pub fn engine(env: &TestEnv) -> PathBuf {
     )
 }
 
-/// A gated engine and the directory controlling it. It marks each start
-/// (`started-<rev>`), fails when another run is in progress, waits until
-/// the test opens the gate ([`Gate::open`]), then prints `map.json`.
+/// A gated engine and the directory controlling it. For each run it marks
+/// its start (`started-<rev>`) and the instrukt worker that started it
+/// (`worker-<rev>`, its process id), fails when another run is in progress,
+/// waits until the test opens the gate ([`Gate::open`]) — or ends without
+/// output when the test aborts it ([`Gate::abort`]) — then prints
+/// `map.json` and marks its end (`finished-<rev>`).
 pub struct Gate {
     dir: PathBuf,
     pub engine: PathBuf,
@@ -120,14 +123,24 @@ impl Gate {
             env,
             "gated-engine",
             &format!(
-                "touch \"{control}/started-$(cat \"$1/rev\")\"\n\
+                "rev=\"$(cat \"$1/rev\")\"\n\
+                 p=$PPID\n\
+                 while [ \"$p\" -gt 1 ]; do\n\
+                 \x20 case \"$(ps -o comm= -p \"$p\")\" in\n\
+                 \x20   *instrukt*) echo \"$p\" > \"{control}/worker-$rev\"; break ;;\n\
+                 \x20 esac\n\
+                 \x20 p=$(ps -o ppid= -p \"$p\" | tr -d ' ')\n\
+                 done\n\
+                 touch \"{control}/started-$rev\"\n\
                  mkdir \"{control}/running\" || exit 70\n\
                  trap 'rmdir \"{control}/running\"' EXIT\n\
                  i=0\n\
                  while [ ! -e \"{control}/open\" ]; do\n\
+                 \x20 [ ! -e \"{control}/abort\" ] || exit 9\n\
                  \x20 i=$((i + 1)); [ \"$i\" -lt 6000 ] || exit 71; sleep 0.01\n\
                  done\n\
-                 cat \"$1/map.json\"\n"
+                 cat \"$1/map.json\"\n\
+                 touch \"{control}/finished-$rev\"\n"
             ),
         );
         Self { dir, engine }
@@ -145,8 +158,40 @@ impl Gate {
         });
     }
 
+    /// Waits until the engine run for `rev` printed its map.
+    pub fn wait_finished(&self, rev: &str) {
+        wait_until(&format!("the engine to finish for {rev}"), || {
+            self.dir.join(format!("finished-{rev}")).exists()
+        });
+    }
+
+    /// Kills the instrukt worker that started the engine for `rev`, as an
+    /// interruption would; its engine keeps running.
+    pub fn kill_worker(&self, rev: &str) {
+        let marker = self.dir.join(format!("worker-{rev}"));
+        wait_until(&format!("the worker of {rev} to be known"), || {
+            std::fs::read_to_string(&marker).is_ok_and(|pid| !pid.trim().is_empty())
+        });
+        let pid = std::fs::read_to_string(&marker).unwrap();
+        let killed = std::process::Command::new("kill")
+            .args(["-s", "KILL", pid.trim()])
+            .status()
+            .unwrap();
+        assert!(killed.success(), "the worker was killed");
+    }
+
     pub fn open(&self) {
         std::fs::write(self.dir.join("open"), b"").unwrap();
+    }
+
+    /// Closes the gate again for the runs that start from now on.
+    pub fn close(&self) {
+        std::fs::remove_file(self.dir.join("open")).unwrap();
+    }
+
+    /// Makes a waiting run end without output.
+    pub fn abort(&self) {
+        std::fs::write(self.dir.join("abort"), b"").unwrap();
     }
 }
 
