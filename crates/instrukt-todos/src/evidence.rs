@@ -104,23 +104,30 @@ impl std::fmt::Display for ArtifactName {
     }
 }
 
-/// Artifact names the fact table reads (`<name>.digest`), plus the intent
-/// record `input` and the build lane's `deferrals`.
+/// Artifact names the fact table reads, plus the intent record `input` and
+/// the build lane's `deferrals`. They are the names the sdlc procedures
+/// write and read (`instrukt todo artifacts write {slug} <name>`),
+/// hyphenated; fact names keep underscores (`implementation_plan.digest`),
+/// and the workflow's fact provider maps between them.
 pub mod artifact_names {
     pub const INPUT: &str = "input";
     pub const PRD: &str = "prd";
     pub const ARCHITECTURE: &str = "architecture";
     pub const DIAGNOSIS: &str = "diagnosis";
-    pub const IMPLEMENTATION_PLAN: &str = "implementation_plan";
-    pub const TASK_PLAN: &str = "task_plan";
-    pub const PRD_REVIEW_FINDINGS: &str = "prd_review_findings";
-    pub const ARCHITECTURE_REVIEW_FINDINGS: &str = "architecture_review_findings";
-    pub const PLAN_REVIEW_FINDINGS: &str = "plan_review_findings";
-    pub const QUALITY_CHECKLIST: &str = "quality_checklist";
+    pub const IMPLEMENTATION_PLAN: &str = "implementation-plan";
+    pub const TASK_PLAN: &str = "task-plan";
+    pub const PRD_REVIEW_FINDINGS: &str = "prd-review-findings";
+    pub const ARCHITECTURE_REVIEW_FINDINGS: &str = "architecture-review-findings";
+    pub const PLAN_REVIEW_FINDINGS: &str = "plan-review-findings";
+    pub const QUALITY_CHECKLIST: &str = "quality-checklist";
     pub const DEFERRALS: &str = "deferrals";
     /// The build review's complete report, which a build-review verdict
     /// binds (`stamps`, "Stamp forms").
-    pub const REVIEW_FINDINGS: &str = "review_findings";
+    pub const REVIEW_FINDINGS: &str = "review-findings";
+    /// Investigation notes the plan draft reads (`lifecycle/prepare/plan-draft`).
+    pub const INVESTIGATION: &str = "investigation";
+    /// The breadcrumb artifact (`todo-creation-discipline`).
+    pub const LOG: &str = "log";
 }
 
 /// A content digest of one artifact version. Its text form is work's to

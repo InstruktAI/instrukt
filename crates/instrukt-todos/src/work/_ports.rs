@@ -12,8 +12,8 @@ use instrukt_runner::interfaces::{
 use jiff::Timestamp;
 
 use super::_error::WorkError;
-use super::_model::{Binding, Claim, TodoRecord};
-use super::_session::{GitHubRead, PendingReason, ReflectionStatus, Session};
+use super::_model::{Binding, Claim, TodoId, TodoRecord};
+use super::_session::{GitHubRead, PendingReason, PullFor, ReflectionStatus, Session};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
@@ -32,6 +32,23 @@ impl Pickup for Work {
     ) -> Result<Vec<PickupCandidate>, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
         s.pull_all()?;
+        let machine = s.machine()?;
+        // The runner's own claims on this computer still awaiting
+        // reflection are offered again, so the claim is reflected and the
+        // todo dispatched once GitHub answers (ruling D).
+        let pending_here: Vec<TodoId> = s
+            .items
+            .iter()
+            .filter(|it| {
+                it.reflection.pending
+                    && it
+                        .record
+                        .claim
+                        .as_ref()
+                        .is_some_and(|c| c.machine == machine && c.session.is_none())
+            })
+            .map(|it| it.record.id.clone())
+            .collect();
         let mut records: Vec<TodoRecord> = s
             .items
             .iter()
@@ -46,7 +63,7 @@ impl Pickup for Work {
         records.retain(|r| {
             r.status == TodoStatus::Active
                 && r.hold.is_none()
-                && r.claim.is_none()
+                && (r.claim.is_none() || pending_here.contains(&r.id))
                 && kinds.contains(&r.kind)
         });
         records.sort_by_key(|r| r.created);
@@ -65,6 +82,7 @@ impl Pickup for Work {
         Ok(ordered
             .into_iter()
             .map(|record| PickupCandidate {
+                claimed_here: pending_here.contains(&record.id),
                 timing: timing(&record),
                 agent: record.agent.clone(),
                 kind: record.kind,
@@ -110,8 +128,12 @@ impl Claims for Work {
             if !s.items[index].reflection.pending {
                 return Ok(ClaimOutcome::AlreadyHeld);
             }
+            // A claim recorded while GitHub was unreachable: reflect it now.
             s.flush()?;
-            return Ok(claim_outcome(s.status(index)));
+            return Ok(match claim_outcome(s.status(index)) {
+                ClaimOutcome::Claimed => ClaimOutcome::AlreadyHeld,
+                other => other,
+            });
         }
         if record.status != TodoStatus::Active {
             return Err(WorkError::refused(format!(
@@ -147,13 +169,20 @@ impl Claims for Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
         let machine = s.machine()?;
-        let Some(claim) = &s.items[index].record.claim else {
+        let record = &s.items[index].record;
+        let Some(claim) = &record.claim else {
             return Ok(());
         };
+        // The holders `work-dispatch` names: on the claiming computer, the
+        // runner for its own claim, or the session that claimed or is bound
+        // to the todo (as `todo update --unclaim`).
         let holds = claim.machine == machine
             && match claimant {
                 Claimant::Runner => claim.session.is_none(),
-                Claimant::Session(session) => claim.session.as_ref() == Some(session),
+                Claimant::Session(session) => {
+                    claim.session.as_ref() == Some(session)
+                        || record.bindings.iter().any(|b| &b.session == session)
+                }
             };
         if !holds {
             return Err(WorkError::refused(format!(
@@ -355,7 +384,7 @@ impl WorkEvidence for Work {
         let mut s = Session::open(self, project)?;
         let record = match s.find(todo, true) {
             Some(index) => {
-                s.pull_through(index)?;
+                s.pull_through(index, PullFor::Read)?;
                 s.items[index].record.clone()
             }
             None => match s.remote_item(todo)? {

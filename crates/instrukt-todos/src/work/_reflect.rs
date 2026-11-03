@@ -23,12 +23,30 @@ pub(crate) enum Pulled {
     Adopted,
     /// A newer remote revision met pending local changes.
     Conflicted,
+    /// A newer remote revision, left unread because a change is about to be
+    /// recorded against the older one (`UC-GR3`: refresh first).
+    Newer,
 }
 
-/// Pulls the item's record from GitHub with a conditional request. A newer
-/// revision is adopted when nothing local is pending, and marks the item
-/// conflicted otherwise.
-pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubError> {
+/// Whether a pull may bring a newer remote revision into the local record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PullFor {
+    /// A read: a newer revision enters the local record.
+    Read,
+    /// A change: a newer revision means the change was made against a
+    /// todo the caller has not read; it is refused until refreshed.
+    Change,
+}
+
+/// Pulls the item's record from GitHub with a conditional request. For a
+/// read, a newer revision is adopted when nothing local is pending; for a
+/// change it is reported as [`Pulled::Newer`] and nothing is adopted.
+/// Pending local changes meeting a newer revision mark the item conflicted.
+pub(crate) fn pull(
+    gh: &GitHub,
+    item: &mut LocalItem,
+    purpose: PullFor,
+) -> Result<Pulled, GitHubError> {
     let (Some(issue), Some(comment)) = (item.reflection.issue, item.reflection.record_comment)
     else {
         return Ok(Pulled::Current);
@@ -81,6 +99,9 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
     if item.reflection.pending {
         item.reflection.conflicted = true;
         return Ok(Pulled::Conflicted);
+    }
+    if purpose == PullFor::Change {
+        return Ok(Pulled::Newer);
     }
     let record = with_contents(gh, issue.number, remote, &item.record)?;
     item.record = record;

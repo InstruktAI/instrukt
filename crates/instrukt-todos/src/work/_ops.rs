@@ -19,7 +19,7 @@ use super::_model::{
     Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoId, TodoRecord, TodoRef, Version,
     digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, ReflectionStatus, Session};
+use super::_session::{GitHubRead, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
@@ -224,7 +224,7 @@ impl Work {
     pub fn show(&self, project: &ProjectRef, slug: &TodoSlug) -> Result<TodoView, WorkError> {
         let mut s = Session::open(self, project)?;
         if let Some(index) = s.find(slug, true) {
-            match s.pull_through(index) {
+            match s.pull_through(index, PullFor::Read) {
                 Ok(()) | Err(WorkError::Conflicted { .. }) => {}
                 Err(err) => return Err(err),
             }
@@ -424,7 +424,7 @@ impl Work {
                 "a live todo is named `{slug}`; restoring would make the name ambiguous — rename one first"
             )));
         }
-        s.pull_through(index)?;
+        s.pull_through(index, PullFor::Change)?;
         s.commit("reactivated", |s| {
             let record = &mut s.items[index].record;
             let from = record

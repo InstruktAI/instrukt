@@ -69,7 +69,7 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         "artifacts",
         "write",
         "nested-lists",
-        "implementation_plan",
+        "implementation-plan",
         "1. Track depth in the parser.\n2. Render it.",
     ]);
     repo.git(["checkout", "--quiet", "-b", "nested-lists"]);
@@ -83,7 +83,7 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         "artifacts",
         "write",
         "nested-lists",
-        "review_findings",
+        "review-findings",
         "No findings.",
     ]);
     project.ok([

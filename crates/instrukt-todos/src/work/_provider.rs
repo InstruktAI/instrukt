@@ -18,13 +18,17 @@ const GH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The GitHub repository (`owner/repo`) of the project rooted at `root`:
 /// `github.repository`, or the repository of the remote its default
 /// branch tracks when that remote is on `api_url`'s host.
-pub(crate) fn repository(config: &Configuration, root: &Path) -> Result<String, WorkError> {
+pub(crate) fn repository(
+    config: &Configuration,
+    api_url: &str,
+    root: &Path,
+) -> Result<String, WorkError> {
     if let Some(configured) = config.github_repository()? {
         return owner_repo(configured).ok_or_else(|| WorkError::NoRepository {
             reason: format!("`github.repository: {configured}` is not `<owner>/<repo>`"),
         });
     }
-    let host = api_host(config.github_api_url()?);
+    let host = api_host(api_url);
     let branch = default_branch(root)?;
     let remote =
         git_value(root, &["config", &format!("branch.{branch}.remote")])?.ok_or_else(|| {
