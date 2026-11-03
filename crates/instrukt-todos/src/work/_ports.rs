@@ -413,7 +413,7 @@ impl WorkEvidence for Work {
                 s.pull_through(index, PullFor::Read)?;
                 s.items[index].record.clone()
             }
-            None => match s.remote_matching(|r| &r.id == id)? {
+            None => match s.remote_matching(&format!("todo {id}"), |r| &r.id == id)? {
                 Some(item) => item.record,
                 None => return Ok(None),
             },

@@ -162,6 +162,44 @@ fn work_withdrawn_on_another_computer_is_restored_there_under_its_identity() {
 
 // spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
 #[test]
+fn a_name_two_withdrawn_todos_carried_restores_neither_until_one_is_addressed() {
+    let project = Project::new();
+    let here = identity(&project.create(
+        "nested-lists",
+        "feature",
+        "Keep the depth of nested lists when parsing Markdown.",
+    ));
+    project.ok(["remove", "nested-lists"]);
+    // Another computer files and withdraws different work under the name.
+    let elsewhere = project.other_computer();
+    let there = identity(&elsewhere.ok([
+        "create",
+        "nested-lists",
+        "Keep the depth of nested tables.",
+        "--kind",
+        "feature",
+        "--approved",
+    ]));
+    elsewhere.ok(["remove", "nested-lists"]);
+
+    let ambiguous = project.todo(["reactivate", "nested-lists"]).failure();
+    let address = format!("nested-lists@{}", &there[..8]);
+    let restored = project.ok(["reactivate", &address]);
+    let shown = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "restore-names-each-candidate",
+        redact(&format!(
+            "{}---\n{restored}---\n{shown}",
+            String::from_utf8_lossy(&ambiguous.get_output().stderr)
+        ))
+        .replace(&here[..8], "<here>")
+        .replace(&there[..8], "<there>")
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
+#[test]
 fn withdrawn_work_is_restored_with_its_intent_and_evidence_under_its_identity() {
     let project = Project::new();
     project.create(

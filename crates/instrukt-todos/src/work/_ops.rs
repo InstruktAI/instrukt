@@ -452,32 +452,37 @@ impl Work {
             .filter(|(_, it)| wanted(&it.record))
             .map(|(i, _)| i)
             .collect();
-        let index = match removed.as_slice() {
-            [index] => *index,
-            [] => match s.remote_matching(wanted)? {
-                // Withdrawn on another computer, still inside its window.
-                Some(item) => s.adopt(item)?,
-                None => {
-                    return Err(match s.github_read() {
-                        GitHubRead::Read => WorkError::refused(format!(
-                            "no withdrawn todo `{key}` within its recovery window"
-                        )),
-                        GitHubRead::NotRead(reason) => WorkError::refused(format!(
-                            "no withdrawn todo `{key}` on this computer, and GitHub cannot be read to look further: {}",
-                            super::_session::describe(&reason)
-                        )),
-                    });
+        // Withdrawn here and withdrawn on another computer (still inside
+        // its window) are candidates alike: one is restored, several are
+        // refused naming each.
+        // A full identity found here names one todo for good.
+        let exact = matches!(removed.as_slice(), [i] if s.items[*i].record.id.as_str() == key);
+        let what = format!("withdrawn todo `{key}`");
+        let mut remote = if exact {
+            Vec::new()
+        } else {
+            s.remote_candidates(&what, wanted)?
+        };
+        let index = match (removed.as_slice(), remote.len()) {
+            ([index], 0) => *index,
+            ([], 1) => match remote.pop() {
+                Some((record, issue)) => {
+                    let item = s.localize_found(record, issue)?;
+                    s.adopt(item)?
                 }
+                None => return Err(no_withdrawn(key)),
             },
-            many => {
-                let ids: Vec<String> = many
+            ([], 0) => return Err(no_withdrawn(key)),
+            (local, _) => {
+                let records: Vec<TodoRecord> = local
                     .iter()
-                    .map(|i| s.items[*i].record.id.to_string())
+                    .map(|i| s.items[*i].record.clone())
+                    .chain(remote.into_iter().map(|(record, _)| record))
                     .collect();
-                return Err(WorkError::refused(format!(
-                    "`{key}` names several withdrawn todos; restore one by identity: {}",
-                    ids.join(", ")
-                )));
+                return Err(super::_session::several(
+                    &format!("`{key}`"),
+                    records.iter(),
+                ));
             }
         };
         let slug = s.items[index].record.slug.clone();
@@ -1509,6 +1514,12 @@ fn role_of(record: &TodoRecord, actor: &Actor) -> Option<instrukt_core::ids::Rol
         .iter()
         .find(|b| &b.session == session)
         .map(|b| b.role.clone())
+}
+
+fn no_withdrawn(key: &str) -> WorkError {
+    WorkError::refused(format!(
+        "no withdrawn todo `{key}` within its recovery window"
+    ))
 }
 
 fn unknown(s: &Session<'_>, slug: &TodoSlug) -> WorkError {
