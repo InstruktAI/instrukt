@@ -136,11 +136,11 @@ pub struct PickupCandidate {
     /// procedure's `dispatch` order and global `agents.order`
     /// (`work-dispatch`, "Agent selection and intent checks").
     pub agent: Option<AgentPreference>,
-    /// The runner's own claim on this computer already holds the todo,
-    /// pending reflection (GitHub was unreachable when it was recorded).
-    /// Claiming it again reflects the pending claim: `record_claim`
-    /// answers `AlreadyHeld` once reflected, `NotReflected` while GitHub
-    /// still cannot be reached (ruling D).
+    /// The runner's own claim on this computer already holds the todo and
+    /// no session is bound to it yet: either pending reflection (GitHub was
+    /// unreachable when it was recorded) or reflected since by another
+    /// command. Claiming it again answers `AlreadyHeld` once reflected,
+    /// `NotReflected` while GitHub still cannot be reached (ruling D).
     pub claimed_here: bool,
 }
 

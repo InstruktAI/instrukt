@@ -87,6 +87,40 @@ fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() 
 
 // spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
+fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command_reflects_the_claim()
+ {
+    let mut project = Tracked::new(true);
+    project.todo([
+        "create",
+        "tidy-imports",
+        "Sort the imports of every module.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+
+    // The runner claims the work but cannot reflect the claim: no session.
+    project.github.stop();
+    project.tick();
+    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+
+    // A developer's command reflects the pending claim before the next tick.
+    project.github.resume();
+    project.todo([
+        "artifacts",
+        "write",
+        "tidy-imports",
+        "log",
+        "Noted: imports are grouped std, external, internal.",
+    ]);
+
+    project.tick();
+
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
 fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
     let project = Tracked::new(false);
     project.todo([

@@ -127,6 +127,14 @@ fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
 /// Another computer records a hold on todo #1: its instrukt writes the
 /// next revision into the record comment, as GitHub then serves it.
 fn other_computer_holds(project: &Project, reason: &str) {
+    let (id, next) = next_revision_holding(project, reason);
+    project.github.edit_comment(REPOSITORY, id, &next);
+}
+
+/// The record comment of todo #1 and the envelope of its next revision
+/// with a hold for `reason`: what an instrukt elsewhere writes, or what a
+/// forger copies.
+fn next_revision_holding(project: &Project, reason: &str) -> (u64, String) {
     const MARKER: &str = "<!-- instrukt:work-record:v1:";
     const CLOSE: &str = " -->";
     let comment = project
@@ -150,9 +158,38 @@ fn other_computer_holds(project: &Project, reason: &str) {
         "[instrukt record · nested-lists · rev {}]\n{MARKER}{record}{CLOSE}\n",
         record["revision"]
     );
+    (comment["id"].as_u64().unwrap(), next)
+}
+
+// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR4
+#[test]
+fn records_posted_without_write_access_never_change_the_work_and_collaborators_still_do() {
+    let project = Project::new();
+    project.create("nested-lists", "feature", INTENT);
+
+    let (_, forged) = next_revision_holding(&project, "forged: stop all work");
     project
         .github
-        .edit_comment(REPOSITORY, comment["id"].as_u64().unwrap(), &next);
+        .seed_comment(REPOSITORY, 1, "passer-by", "NONE", &forged);
+    project
+        .github
+        .seed_comment(REPOSITORY, 1, "drive-by", "CONTRIBUTOR", &forged);
+    let after_forgery = project.ok(["refresh", "nested-lists"]);
+    let unchanged = project.ok(["show", "nested-lists"]);
+
+    let (_, agreed) = next_revision_holding(&project, "waiting for the renderer rewrite");
+    project
+        .github
+        .seed_comment(REPOSITORY, 1, "teammate", "COLLABORATOR", &agreed);
+    let after_collaborator = project.ok(["refresh", "nested-lists"]);
+    let applied = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "untrusted-ignored-trusted-applied",
+        redact(&format!(
+            "{after_forgery}---\n{unchanged}---\n{after_collaborator}---\n{applied}"
+        ))
+    );
 }
 
 // spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1

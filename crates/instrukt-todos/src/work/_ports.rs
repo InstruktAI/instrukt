@@ -34,14 +34,15 @@ impl Pickup for Work {
         let mut s = Session::open(self, project)?;
         s.pull_all()?;
         let machine = s.machine()?;
-        // The runner's own claims on this computer still awaiting
-        // reflection are offered again, so the claim is reflected and the
-        // todo dispatched once GitHub answers (ruling D).
+        // The runner's own claims on this computer that no session took up
+        // yet are offered again (ruling D): one still awaiting reflection is
+        // reflected on the next claim, and one another command already
+        // reflected is dispatched rather than stranded.
         let pending_here: Vec<TodoId> = s
             .items
             .iter()
             .filter(|it| {
-                it.reflection.pending
+                it.record.bindings.is_empty()
                     && it
                         .record
                         .claim
