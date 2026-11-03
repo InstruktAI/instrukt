@@ -76,7 +76,7 @@ Then a valid configuration at the current schema with the current defaults exist
 And machine configuration needs no project identity
 And project configuration names the project by the primary worktree's folder normalized to a slug
 But when that normalization yields an empty project identity
-Then initialization is refused and the developer is directed to patch the project identity
+Then initialization is refused and the developer is directed to `instrukt init --slug <slug>`
 But when configuration already exists at the current schema
 Then it is kept as it was
 But when existing configuration has an older schema

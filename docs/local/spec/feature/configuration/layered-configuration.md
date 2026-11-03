@@ -25,7 +25,7 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
 | `runtimes` (runtime mapping) | global only | configuration (selection); readers of each entry |
-| `agents.order` (ordered agent preferences with thinking mode) | global only | dispatch |
+| `agents.order`, `agents.thinking_mode` (ordered agent preferences and their thinking mode) | global only | dispatch |
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
@@ -51,9 +51,13 @@ hooks.
 
 ### Agent preferences and availability
 
-The global `agents.order` supplies a non-empty ordered agent preference list
-and a thinking mode (`fast`, `med` or `slow`). A procedure's `dispatch`
-overrides the defaults where it differs. Agent names validate against the
+The global layer supplies a non-empty ordered agent preference list,
+`agents.order: [<agent>, …]`, and one thinking mode for the whole list,
+`agents.thinking_mode` (`fast`, `med` or `slow`) — the same shape as a
+procedure's `dispatch` (`agent: [<agent>, …]`, `thinking_mode`). Precedence,
+first to last: a task's own preference (`--agent <name> [--thinking …]`, one
+agent with its own mode), then the procedure's `dispatch`, then
+`agents.order` with `agents.thinking_mode`. Agent names validate against the
 agents the configured runtime mapping can start, rather than a fixed set or
 the shorter set of agents receiving deployed instructions.
 
@@ -140,10 +144,11 @@ And the commands that read it work as before
 | `blueprint.engine` | shipped adapter selector or command string | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
 
-Actions are command strings or declarations of a command and whether it takes
-files. For a file-taking action, procedures append file paths as arguments
-to the command read with `config get actions.<name>`; no action-runner command
-is introduced.
+An action is a command string, which takes no files, or a declaration
+`{command: <string>, takes_files: true}`; `takes_files` defaults to `false`.
+For a file-taking action, procedures append file paths as arguments to the
+command read with `config get actions.<name>`; no action-runner command is
+introduced.
 
 
 ## Known caveats

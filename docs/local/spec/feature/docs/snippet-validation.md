@@ -49,8 +49,11 @@ wires its todos implementation. With todos off, no role-membership lookup runs.
 
 Validation checks procedure `dispatch` names against the configured runtime
 mapping’s startable agents. Configuration supplies that set; docs owns the
-frontmatter finding. `requires` is checked against effective module switches
-(project over global), not the global layer in isolation.
+frontmatter finding. `requires` is not snippet frontmatter: it is the project
+layer's configuration key naming the modules the flavor needs. `docs validate`
+and `sync` report a configuration finding when it names a module that is off
+under the effective switches (project over global), not the global layer in
+isolation.
 
 ### Reporting
 
