@@ -166,14 +166,13 @@ mod tests {
 
     #[test]
     fn tokens_bind_in_order_and_the_rest_entry_takes_the_remainder_verbatim() {
-        let params = [param("slug", true, false), param("note", false, true)];
-        let bound = bind_arguments(&id(), &params, "  demo  keep  this   spacing ").unwrap();
-        assert_eq!(
-            pairs(&bound),
-            [("slug", "demo"), ("note", "keep  this   spacing")]
-        );
-        let only = bind_arguments(&id(), &params, "demo").unwrap();
-        assert_eq!(pairs(&only), [("slug", "demo")]);
+        let (slug, note) = ("slug", "note");
+        let params = [param(slug, true, false), param(note, false, true)];
+        let (first, rest) = ("demo", "keep  this   spacing");
+        let bound = bind_arguments(&id(), &params, &format!("  {first}  {rest} ")).unwrap();
+        assert_eq!(pairs(&bound), [(slug, first), (note, rest)]);
+        let only = bind_arguments(&id(), &params, first).unwrap();
+        assert_eq!(pairs(&only), [(slug, first)]);
     }
 
     #[test]

@@ -13,7 +13,8 @@ pub(crate) const REQUIRED_FIELDS: [&str; 6] = [
     "alive",
     "conversation",
 ];
-pub(crate) const OPTIONAL_FIELDS: [&str; 5] = ["notify", "link", "end", "available", "agent"];
+pub(crate) const OPTIONAL_FIELDS: [&str; 6] =
+    ["notify", "link", "end", "available", "agent", "model"];
 
 /// The derived field `runtime.session_id`.
 pub(crate) const SESSION_ID: &str = "session_id";

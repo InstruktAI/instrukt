@@ -13,6 +13,7 @@ mod common;
 mod mapped;
 
 use instrukt_blueprint::GenerationState;
+use instrukt_core::fsx::LockGuard;
 use mapped::{
     Gate, answer, engine, last_generation, machine, machine_without_graphify, map, project, push,
     revision, sha, store, wait_generated, wait_until,
@@ -143,5 +144,114 @@ fn without_the_shipped_engine_installed_the_status_says_what_to_install() {
     insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
     no blueprint graph of this project yet
     last generation: <one> failed: the graph engine `graphify` is not installed; install Graphify (the `graphifyy` package), e.g. `uv tool install graphifyy` or `pipx install graphifyy`
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+#[test]
+fn a_mapping_that_finished_but_is_not_yet_recorded_reads_as_running_then_mapped() {
+    let env = machine();
+    let gate = Gate::new(&env);
+    gate.open();
+    let repo = project(&env, Some(&gate.engine));
+    let one = revision(&repo, "one", Some(&first_map()));
+    // The store's publication lock, held here, stops the worker after its
+    // engine has finished and before it records the outcome.
+    let publication = LockGuard::acquire(
+        &store(&env).dir().join(".lock"),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    push(&env, &repo);
+    gate.wait_finished("one");
+
+    let names = [(one.as_str(), "one")];
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
+    no blueprint graph of this project yet
+    last generation: <one> is running
+    ");
+
+    // From here the worker records the outcome and exits; every reading
+    // across that is the running generation or the mapped one, never an
+    // interrupted one.
+    drop(publication);
+    let mut seen = Vec::new();
+    wait_until("the generation to be recorded", || {
+        let state = last_generation(&env).unwrap().state;
+        let done = state != GenerationState::Running;
+        seen.push(state);
+        done
+    });
+    assert_eq!(seen.last(), Some(&GenerationState::Mapped));
+    assert!(
+        seen.iter()
+            .all(|state| matches!(state, GenerationState::Running | GenerationState::Mapped)),
+        "{seen:?}"
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+#[test]
+fn an_interrupted_mapping_is_reported_and_answers_stay_on_the_last_complete_map() {
+    let env = machine();
+    let gate = Gate::new(&env);
+    gate.open();
+    let repo = project(&env, Some(&gate.engine));
+    let one = revision(&repo, "one", Some(&first_map()));
+    push(&env, &repo);
+    assert_eq!(wait_generated(&env, &one).state, GenerationState::Mapped);
+
+    gate.close();
+    let two = revision(&repo, "two", Some(&second_map()));
+    push(&env, &repo);
+    gate.wait_started("two");
+    gate.kill_worker("two");
+    gate.abort();
+    assert_eq!(
+        wait_generated(&env, &two).state,
+        GenerationState::Interrupted
+    );
+
+    let names = [(one.as_str(), "one"), (two.as_str(), "two")];
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
+    blueprint graph of <one>
+    last generation: <two> was interrupted
+    ");
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "affected", "src/a.rs"], &names), @r"
+    blueprint graph of <one>
+    dependents of 1 changed file:
+      src/b.rs b::call
+    the newer generation of <two> was interrupted; this answer is from <one>
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+#[test]
+fn an_engine_left_running_by_an_interrupted_worker_is_never_joined_by_a_second() {
+    let env = machine();
+    let gate = Gate::new(&env);
+    let repo = project(&env, Some(&gate.engine));
+    let one = revision(&repo, "one", Some(&first_map()));
+    push(&env, &repo);
+    gate.wait_started("one");
+    gate.kill_worker("one");
+
+    // The next revision waits for the engine its interrupted worker left:
+    // the gated engine fails any run started while another is running.
+    let two = revision(&repo, "two", Some(&second_map()));
+    push(&env, &repo);
+    let names = [(one.as_str(), "one"), (two.as_str(), "two")];
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
+    no blueprint graph of this project yet
+    last generation: <one> is running
+    ");
+
+    gate.open();
+    assert_eq!(wait_generated(&env, &two).state, GenerationState::Mapped);
+    insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "affected", "src/a.rs"], &names), @r"
+    blueprint graph of <two>
+    dependents of 1 changed file:
+      src/b.rs b::call
+      src/c.rs c::main
     ");
 }

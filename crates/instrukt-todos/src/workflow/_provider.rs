@@ -835,6 +835,7 @@ mod tests {
             by,
             target: digest(target),
             carried_from: None,
+            reasoning: None,
         }
     }
 

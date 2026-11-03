@@ -20,6 +20,8 @@ mod _diff;
 mod _envelope;
 mod _error;
 mod _github;
+mod _grounding;
+mod _inbound;
 mod _model;
 mod _ops;
 mod _ports;
@@ -39,7 +41,8 @@ pub use _diff::DiffLine;
 pub use _error::WorkError;
 pub use _github::GitHubError;
 pub use _model::{
-    Artifact, Binding, Claim, Delivery, ReleasedHold, Removal, TodoId, TodoRecord, TodoRef, Version,
+    AddressError, Artifact, Binding, Claim, Delivery, ReleasedHold, Removal, TodoAddress, TodoId,
+    TodoRecord, TodoRef, Version,
 };
 pub use _ops::{
     CreateRequest, ListEntry, Listing, Outcome, PrerequisiteView, Selection, TodoView,

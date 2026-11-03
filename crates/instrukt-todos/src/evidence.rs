@@ -10,9 +10,9 @@
 //! engine's typed facts. The types carry recorded evidence only — no
 //! currency, drift or readiness judgment, which are workflow's.
 //!
-//! Ownership for wave 3: the work builder owns this file and implements the
-//! trait; the workflow builder reads it. Changes are additive and
-//! announced, so the fact provider never meets a renamed field.
+//! The work context owns this contract and implements it; the workflow
+//! context consumes it. It changes only additively, so the fact provider
+//! never meets a renamed or removed field.
 
 use std::path::PathBuf;
 
@@ -158,6 +158,17 @@ impl ContentDigest {
         Self(digest.into())
     }
 
+    /// The digest of `content` as work records it (`sha256:<hex>` of its
+    /// UTF-8 bytes): artifact versions, and the snippets grounding
+    /// evidence names, so a reader digests current content the same way.
+    pub fn of(content: &str) -> Self {
+        use sha2::{Digest as _, Sha256};
+        Self(format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(content.as_bytes()))
+        ))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -188,6 +199,57 @@ pub struct ArtifactVersion {
     /// it was written (see [`upstream_of`]); empty for an artifact with no
     /// upstream, and for versions written before provenance was recorded.
     pub derived_from: Vec<Upstream>,
+    /// Its place in the todo's record order: one counter per todo,
+    /// incremented by every artifact version and every stamp, so the order
+    /// is total whatever the timestamps.
+    pub sequence: u64,
+    /// The grounding recorded when it was written (`artifact-currency`,
+    /// "Drift evidence").
+    pub grounding: Grounding,
+}
+
+/// What an artifact version was grounded on when it was written: the
+/// canonical branch's head, the code paths and snippets its content
+/// declares, and, derived, the snippets the todo owns and its
+/// prerequisites' artifacts. Snippet digests are [`ContentDigest::of`] the
+/// snippet file's text, read from the project's working tree, or from the
+/// published home copy for a snippet the project does not hold.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grounding {
+    /// The canonical branch's head commit; `None` with no head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<CommitSha>,
+    /// The paths and directory prefixes of the content's fenced
+    /// `referenced-paths` blocks, as declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_paths: Vec<String>,
+    /// The snippets the content's `@` references name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_snippets: Vec<SnippetDigest>,
+    /// The snippets the todo owns: those it delivers or holds pending
+    /// material for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owned_snippets: Vec<SnippetDigest>,
+    /// Each prerequisite's artifacts of the kinds this artifact derives
+    /// from ([`upstream_of`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<DependencyDigest>,
+}
+
+/// A snippet and its digest then; `None` when it did not resolve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnippetDigest {
+    pub id: instrukt_core::ids::SnippetId,
+    pub digest: Option<ContentDigest>,
+}
+
+/// A prerequisite todo's artifact and its current digest then; `None` when
+/// the prerequisite had no such artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DependencyDigest {
+    pub todo: TodoSlug,
+    pub artifact: ArtifactName,
+    pub digest: Option<ContentDigest>,
 }
 
 /// The artifacts an artifact is derived from (`artifact-currency`,
@@ -241,6 +303,29 @@ pub struct StampRecord {
     pub role: Option<RoleName>,
     /// The audit-only `--human-involved` declaration, where given.
     pub human_involved: Option<bool>,
+    /// Its place in the todo's record order (see
+    /// [`ArtifactVersion::sequence`]).
+    #[serde(default)]
+    pub sequence: u64,
+    /// What `model` says: absent outside a session, unknown when the
+    /// session's runtime could not report it, reported otherwise.
+    #[serde(default)]
+    pub model_provenance: ModelProvenance,
+}
+
+/// Where a stamp's model identity stands (`stamps`, "Evidence and
+/// attribution"): no identity is guessed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelProvenance {
+    /// The actor acted outside an agent session: no model.
+    #[default]
+    OutsideSession,
+    /// An agent session whose runtime has no `model` template, or whose
+    /// template failed: the model is explicitly unknown.
+    Unknown,
+    /// The session's runtime reported the model and version.
+    Reported,
 }
 
 /// A preparation review phase (`--phase prd_review|architecture_review|plan_review`).
@@ -328,6 +413,9 @@ pub enum StampFact {
         by: ApprovedBy,
         target: ContentDigest,
         carried_from: Option<ContentDigest>,
+        /// A peer approval's reasoning.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
     },
     /// `--intent-checked`: the `input` version checked and the
     /// conversation it was authored in.
@@ -379,6 +467,14 @@ pub enum StampFact {
         occurrence: Timestamp,
         result: TaskResult,
         reason: Option<String>,
+    },
+    /// An approver's `/instrukt request-changes <prd|task> <reason>` on the
+    /// todo's issue (`github-record`, "Writer and convergence"): the gate's
+    /// evidence then, when it had any, and the reason.
+    ChangesRequested {
+        gate: ApprovalGate,
+        target: Option<ContentDigest>,
+        reason: String,
     },
 }
 

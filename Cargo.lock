@@ -543,6 +543,7 @@ name = "instrukt-blueprint"
 version = "0.1.0"
 dependencies = [
  "instrukt-core",
+ "jiff",
  "proptest",
  "serde",
  "serde_json",

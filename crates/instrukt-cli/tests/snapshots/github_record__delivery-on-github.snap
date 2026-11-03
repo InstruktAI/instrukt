@@ -12,9 +12,15 @@ labels: instrukt, kind:feature, status:delivered
 
 Keep the depth of nested lists when parsing Markdown.
 
-comment: [instrukt record · nested-lists · rev 7]
-comment: - <time> build_started by Test Developer
-comment: - <time> build_verdict by Test Developer
+comment: [instrukt record · nested-lists · rev 1 on rev 0]
+comment: [instrukt record · nested-lists · rev 2 on rev 1]
+comment: [instrukt record · nested-lists · rev 3 on rev 2]
+comment: [instrukt record · nested-lists · rev 4 on rev 3]
+comment: [instrukt record · nested-lists · rev 5 on rev 4]
+comment: [instrukt record · nested-lists · rev 6 on rev 5]
+comment: [instrukt record · nested-lists · rev 7 on rev 6]
+decision - <time> build_started by Test Developer
+decision - <time> build_verdict by Test Developer
 artifact input (generic)
   v1: Keep the depth of nested lists when parsing Markdown.
 artifact prd (generic)

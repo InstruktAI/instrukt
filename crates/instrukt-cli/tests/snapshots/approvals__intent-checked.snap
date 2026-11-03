@@ -19,4 +19,4 @@ artifacts:
   input (1 version)
     <digest 1> by session agent-cli:author-1 at <time>
 stamps:
-  <time> intent checked — input <digest 1> against conversation agent-cli:author-1 — by session agent-cli:checker-2
+  #2 <time> intent checked — input <digest 1> against conversation agent-cli:author-1 — by session agent-cli:checker-2, model unknown

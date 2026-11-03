@@ -23,12 +23,13 @@ use std::path::Path;
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use instrukt_core::index::{GlobalIndex, IndexEntry, IndexScope};
+use serde::{Deserialize, Serialize};
 
 use crate::agents::{agent_order, global_order};
 use crate::event_log::{FileEventLog, LoggedEvent};
 use crate::events::Event;
 use crate::launch;
-use crate::sessions::{Observation, SessionState, Sessions, StartRequest};
+use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
 use crate::state::{self, RunnerState, StateError};
 
 /// Whether a subscription pattern selects the event `name`: an exact name,
@@ -65,6 +66,16 @@ pub enum Delivery {
     Waiting(SessionRef),
     /// The session could not be observed; retried next tick.
     Unobservable(SessionRef),
+    /// An earlier start's result was never recorded; it is not repeated.
+    StartUncertain,
+}
+
+/// A standing-agent start begun and not yet bound.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StartAttempt {
+    /// The uncertain start was reported as an anomaly.
+    #[serde(default)]
+    reported: bool,
 }
 
 /// A delivery could not be completed.
@@ -78,6 +89,79 @@ pub enum StandingError {
     Launch(#[from] launch::LaunchError),
     #[error(transparent)]
     Sessions(#[from] crate::sessions::SessionsError),
+}
+
+/// A standing agent's start could not be resolved.
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveStartError {
+    #[error("`{0}` is not `<procedure>@<project>`")]
+    Consumer(String),
+    #[error("{0} has no start awaiting resolution")]
+    NothingUncertain(String),
+    #[error("{session} belongs to no runtime of the runtime mapping")]
+    UnknownRuntime { session: SessionRef },
+    #[error(transparent)]
+    State(#[from] StateError),
+}
+
+/// How an uncertain start is resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartResolution {
+    /// The runtime did create this session: bind it.
+    Session(SessionRef),
+    /// No session was created: allow a fresh start.
+    None,
+}
+
+/// The command line that resolves `consumer`'s uncertain start, as its
+/// anomaly names it.
+pub fn resolve_start_command(consumer: &str) -> String {
+    format!("instrukt sessions resolve-start {consumer} --session <runtime:id> | --none")
+}
+
+/// Resolves the uncertain start of the standing agent `consumer`
+/// (`<procedure>@<project>`): binds the session the runtime created, or
+/// clears the attempt so the next tick starts afresh. Pending events stay
+/// pending; the next tick delivers them to the resolved agent.
+pub fn resolve_start(
+    state: &RunnerState,
+    config: &Configuration,
+    consumer: &str,
+    resolution: &StartResolution,
+) -> Result<(), ResolveStartError> {
+    let well_formed = consumer
+        .rsplit_once('@')
+        .is_some_and(|(procedure, project)| {
+            instrukt_core::ids::SnippetId::parse(procedure).is_ok()
+                && ProjectSlug::parse(project).is_ok()
+        });
+    if !well_formed {
+        return Err(ResolveStartError::Consumer(consumer.to_owned()));
+    }
+    let mut starts: BTreeMap<String, StartAttempt> =
+        state::read_json(&state.standing_starts())?.unwrap_or_default();
+    if !starts.contains_key(consumer) {
+        return Err(ResolveStartError::NothingUncertain(consumer.to_owned()));
+    }
+    if let StartResolution::Session(session) = resolution {
+        if !config
+            .runtimes()
+            .iter()
+            .any(|entry| entry.name == session.runtime.as_str())
+        {
+            return Err(ResolveStartError::UnknownRuntime {
+                session: session.clone(),
+            });
+        }
+        let mut bindings: BTreeMap<String, SessionRef> =
+            state::read_json(&state.standing())?.unwrap_or_default();
+        bindings.insert(consumer.to_owned(), session.clone());
+        state::write_json(&state.standing(), &bindings)?;
+    }
+    starts.remove(consumer);
+    state::write_json(&state.standing_starts(), &starts)?;
+    tracing::info!(event = "standing_start_resolved", consumer, resolution = ?resolution);
+    Ok(())
 }
 
 /// Delivers `project`'s pending events to `procedure`.
@@ -134,6 +218,23 @@ pub fn deliver(
     let prepared = launch::prepare(procedure, None, Some(&text))?;
     let (global, thinking) = global_order(config);
     let order = agent_order(None, prepared.dispatch.as_ref(), &global, thinking);
+    // The start is recorded before the runtime is asked: a start whose
+    // result was never recorded (the tick died in between) may have created
+    // a session, so it is never repeated; it is reported once instead.
+    let mut starts: BTreeMap<String, StartAttempt> =
+        state::read_json(&state.standing_starts())?.unwrap_or_default();
+    if let Some(attempt) = starts.get_mut(&consumer) {
+        if !attempt.reported {
+            attempt.reported = true;
+            state::write_json(&state.standing_starts(), &starts)?;
+            let door = resolve_start_command(&consumer);
+            tracing::warn!(event = "standing_start_uncertain", consumer, resolve = %door);
+            crate::anomaly::notify(config, env, &door, None);
+        }
+        return Ok(Delivery::StartUncertain);
+    }
+    starts.insert(consumer.clone(), StartAttempt { reported: false });
+    state::write_json(&state.standing_starts(), &starts)?;
     let started = sessions.start(
         &order,
         &StartRequest {
@@ -141,9 +242,27 @@ pub fn deliver(
             worktree: None,
             cwd: Some(root),
         },
-    )?;
+    );
+    let started = match started {
+        Ok(started) => started,
+        Err(err) => {
+            // Only the runtime's own answer that no session started is
+            // certain; a start that timed out or printed no id may have
+            // created one, so its attempt stays recorded.
+            if matches!(
+                err,
+                SessionsError::Failed { .. } | SessionsError::OrderExhausted { .. }
+            ) {
+                starts.remove(&consumer);
+                state::write_json(&state.standing_starts(), &starts)?;
+            }
+            return Err(err.into());
+        }
+    };
     bindings.insert(consumer.clone(), started.session.clone());
     state::write_json(&state.standing(), &bindings)?;
+    starts.remove(&consumer);
+    state::write_json(&state.standing_starts(), &starts)?;
     log.acknowledge(&consumer, last)?;
     tracing::info!(event = "standing_agent_started", consumer, session = %started.session, through = last);
     Ok(Delivery::Started(started.session))

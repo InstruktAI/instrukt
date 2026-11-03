@@ -38,7 +38,8 @@ non-SDLC work: no build, review, finalize or repository commit.
 ## Steps
 
 1. **Stamp the start, then read the evidence.** Record
-   `instrukt todo stamp {slug} --task-firing-started` for this occurrence.
+   `instrukt todo stamp {slug} --task-firing-started --occurrence <occurrence>`
+   for this occurrence, with the `occurrence:` value from the opening message.
    Preserve any failure to record it; no failed stamp is completion evidence.
    Read the task record and `log` for prior outcomes and continuity. A completed
    occurrence is not repeated. A resumed session or a fresh execution does not
@@ -66,7 +67,7 @@ non-SDLC work: no build, review, finalize or repository commit.
 6. **Keep the log lean.** Roll older entries of your own into a summary when
    useful. Never roll up, rewrite, reorder or remove recorded firing lines.
 7. **Record the firing outcome.** Run
-   `instrukt todo stamp <slug> --task-outcome success|error [--reason <text>]`
+   `instrukt todo stamp <slug> --task-outcome success|error --occurrence <occurrence> [--reason <text>]`
    to write the outcome stamp on the task record,
    bound to this execution: `success` when the authorized intent is achieved,
    `error` with its reason when it is blocked. Success delivers a one-shot task;

@@ -11,15 +11,22 @@ use instrukt_core::machine::{self, MachineId};
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::{SignedDuration, Timestamp};
 
+use super::_envelope::status_name as status_word;
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
-use super::_model::{TodoId, TodoRecord, TodoRef};
+use super::_inbound;
+use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
 pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
 use super::_store::{self, IssueRef, LocalItem, Store};
 use super::Work;
-use crate::evidence::{Actor, TodoStatus};
+use crate::evidence::{
+    Actor, ApprovalGate, ApprovedBy, ModelIdentity, ModelProvenance, StampFact, StampRecord,
+    TodoStatus, artifact_names,
+};
 use instrukt_core::github;
+use instrukt_core::publication::EvalFingerprint;
+use instrukt_runner::sessions::Sessions;
 
 /// The fixed recovery window of withdrawn work.
 const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
@@ -63,6 +70,13 @@ enum Remote {
         down: Option<GitHubError>,
     },
     Unavailable(PendingReason),
+}
+
+/// Where [`Session::locate`] found an entry.
+pub(crate) enum Located {
+    Local(usize),
+    /// Reflected work of another computer, read and not stored.
+    Remote(Box<LocalItem>),
 }
 
 pub(crate) struct Session<'w> {
@@ -140,6 +154,22 @@ impl<'w> Session<'w> {
         })
     }
 
+    /// The model a stamp by `actor` records: for a session, what its
+    /// runtime's `model` template reports, else explicitly unknown;
+    /// outside a session, none.
+    pub fn model_of(&self, actor: &Actor) -> (Option<ModelIdentity>, ModelProvenance) {
+        let Actor::Session(session) = actor else {
+            return (None, ModelProvenance::OutsideSession);
+        };
+        match Sessions::new(&self.config, self.work.env()).model(session) {
+            Some((model, version)) => (
+                Some(ModelIdentity { model, version }),
+                ModelProvenance::Reported,
+            ),
+            None => (None, ModelProvenance::Unknown),
+        }
+    }
+
     /// Who acts: the caller's session, or outside one the person git names.
     /// No identity is guessed.
     pub fn actor(&self) -> Result<Actor, WorkError> {
@@ -187,12 +217,10 @@ impl<'w> Session<'w> {
     pub fn enter(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
         let index = match self.find(slug, false) {
             Some(index) => index,
-            None => self
-                .localize_slug(slug)?
-                .ok_or_else(|| WorkError::UnknownTodo {
-                    project: self.project.slug.clone(),
-                    todo: slug.clone(),
-                })?,
+            None => match self.localize_slug(slug)? {
+                Some(index) => index,
+                None => return Err(self.absent(slug)),
+            },
         };
         self.pull_through(index, PullFor::Change)?;
         Ok(index)
@@ -257,6 +285,9 @@ impl<'w> Session<'w> {
         if self.items[index] != before {
             self.store.save(&self.items[index])?;
         }
+        if !self.items[index].reflection.conflicted && !newer {
+            self.answer_commands(index)?;
+        }
         if self.items[index].reflection.conflicted || newer {
             if newer {
                 tracing::debug!(
@@ -271,6 +302,148 @@ impl<'w> Session<'w> {
             });
         }
         Ok(())
+    }
+
+    /// Answers the approvers' `/instrukt` commands the last pull found on
+    /// item `index`'s issue (`github-record`, "Writer and convergence"). An
+    /// approval applies only when its digest prefix matches the gate's
+    /// current evidence, attributed to the approver's GitHub login; a
+    /// change request is recorded with its reason. A command from anyone not
+    /// in `github.approvers` with write access changes nothing. Every
+    /// command is answered on the issue, once.
+    fn answer_commands(&mut self, index: usize) -> Result<(), WorkError> {
+        let commands = std::mem::take(&mut self.items[index].reflection.inbound);
+        let Some(issue) = self.items[index].reflection.issue else {
+            return Ok(());
+        };
+        let approvers: Vec<String> = self
+            .config
+            .github_approvers()?
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        for comment in commands {
+            let Some(id) = comment["id"].as_u64() else {
+                continue;
+            };
+            let login = comment["user"]["login"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let answer = if !(approvers.contains(&login) && _reflect::has_write_access(&comment)) {
+                format!(
+                    "@{login}: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed."
+                )
+            } else {
+                match _inbound::parse(comment["body"].as_str().unwrap_or_default()) {
+                    Err(why) => format!("@{login}: {why}; nothing changed."),
+                    Ok(command) => self.apply_command(index, &login, command)?,
+                }
+            };
+            self.items[index].reflection.commands_seen.push(id);
+            self.store.save(&self.items[index])?;
+            let result = match &self.remote {
+                Remote::Client { gh, down: None } => Some(_reflect::reply(gh, issue, &answer)),
+                _ => None,
+            };
+            if let Some(Err(err)) = result {
+                self.note(err);
+            }
+        }
+        Ok(())
+    }
+
+    /// Records an approver's command; returns the answer for the issue.
+    fn apply_command(
+        &mut self,
+        index: usize,
+        login: &str,
+        command: _inbound::Command,
+    ) -> Result<String, WorkError> {
+        let record = &self.items[index].record;
+        if record.status != TodoStatus::Active {
+            return Ok(format!(
+                "@{login}: `{}` is not active work; nothing changed.",
+                record.slug
+            ));
+        }
+        let gate = match &command {
+            _inbound::Command::Approve { gate, .. }
+            | _inbound::Command::RequestChanges { gate, .. } => *gate,
+        };
+        let gate_name = match gate {
+            ApprovalGate::Prd => "prd",
+            ApprovalGate::Task => "task",
+        };
+        let evidence = match gate {
+            ApprovalGate::Prd => record.current_digest(artifact_names::PRD).cloned(),
+            ApprovalGate::Task => record.current_digest(artifact_names::TASK_PLAN).cloned(),
+        };
+        let (fact, answer) = match command {
+            _inbound::Command::Approve { prefix, .. } => {
+                let Some(current) = evidence else {
+                    return Ok(format!(
+                        "@{login}: there is no {gate_name} evidence to approve; nothing changed."
+                    ));
+                };
+                if !_inbound::digest_hex(&current).starts_with(&prefix) {
+                    return Ok(format!(
+                        "@{login}: the {gate_name} evidence changed since `{prefix}`; review it and approve the current one again: `/instrukt approve {gate_name} {}`. Nothing changed.",
+                        _inbound::shown(&current)
+                    ));
+                }
+                (
+                    StampFact::Approval {
+                        gate,
+                        by: ApprovedBy::Human,
+                        target: current.clone(),
+                        carried_from: None,
+                        reasoning: None,
+                    },
+                    format!(
+                        "@{login}: recorded your approval of {gate_name} `{}`.",
+                        _inbound::shown(&current)
+                    ),
+                )
+            }
+            _inbound::Command::RequestChanges { reason, .. } => (
+                StampFact::ChangesRequested {
+                    gate,
+                    target: evidence,
+                    reason,
+                },
+                format!("@{login}: recorded your change request on {gate_name}."),
+            ),
+        };
+        let now = self.now;
+        let actor = Actor::GitHub {
+            login: login.to_owned(),
+        };
+        let fingerprint = EvalFingerprint::current(self.work.home())?.map(|f| f.fingerprint);
+        self.commit("inbound command", |s| {
+            let record = &mut s.items[index].record;
+            let sequence = record.next_sequence();
+            record.stamps.push(StampRecord {
+                fact,
+                at: now,
+                actor,
+                model: None,
+                eval_fingerprint: fingerprint,
+                role: None,
+                human_involved: None,
+                sequence,
+                model_provenance: ModelProvenance::OutsideSession,
+            });
+            Ok(())
+        })?;
+        tracing::info!(
+            event = "work_inbound_command",
+            project = %self.project.slug,
+            todo = %self.items[index].record.slug,
+            login,
+            "an approver's command was recorded"
+        );
+        Ok(answer)
     }
 
     /// Pulls every local item, without refusing conflicted ones.
@@ -368,7 +541,10 @@ impl<'w> Session<'w> {
         if reflection.conflicted {
             return ReflectionStatus::Conflicted;
         }
-        if !reflection.pending {
+        // Outstanding pull-request creation, reviews or closing are
+        // reflection still owed.
+        let pull_owed = _reflect::pull_request_owed(&self.items[index]);
+        if !reflection.pending && !pull_owed {
             return ReflectionStatus::Reflected;
         }
         ReflectionStatus::Pending(match &self.remote {
@@ -376,11 +552,17 @@ impl<'w> Session<'w> {
             Remote::Client {
                 down: Some(err), ..
             } => reason_of(err),
-            Remote::Client { down: None, .. } => PendingReason::Failed(
+            Remote::Client { down: None, .. } if reflection.pending => PendingReason::Failed(
                 reflection
                     .failure
                     .clone()
                     .unwrap_or_else(|| "not yet reflected".to_owned()),
+            ),
+            Remote::Client { down: None, .. } => PendingReason::Failed(
+                reflection
+                    .pull_outstanding
+                    .clone()
+                    .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
             ),
         })
     }
@@ -443,6 +625,109 @@ impl<'w> Session<'w> {
 
     /// A record of reflected work read directly from GitHub, with its
     /// artifact contents, stored nowhere.
+    /// The entry `address` names: a plain slug means the live item (local,
+    /// else reflected); `<slug>@<prefix>` the exact entry, retained ones
+    /// included. A plain slug with only retained entries is refused naming
+    /// their addresses; a lookup GitHub could not answer is reported as
+    /// undetermined, never as "no todo".
+    pub fn locate(&mut self, address: &TodoAddress) -> Result<Located, WorkError> {
+        let slug = &address.slug;
+        if address.identity.is_none() {
+            if let Some(index) = self.find(slug, false) {
+                return Ok(Located::Local(index));
+            }
+            if let Some(item) = self.remote_matching(|r| &r.slug == slug && r.is_live())? {
+                return Ok(Located::Remote(Box::new(item)));
+            }
+            let retained: Vec<String> = self
+                .items
+                .iter()
+                .map(|it| &it.record)
+                .filter(|r| &r.slug == slug)
+                .map(|r| format!("`{}` ({})", TodoAddress::exact(r), status_word(r.status)))
+                .collect();
+            if retained.is_empty() {
+                return Err(self.absent(slug));
+            }
+            return Err(WorkError::refused(format!(
+                "no live todo is named `{slug}`; address a retained entry exactly: {}",
+                retained.join(", ")
+            )));
+        }
+        let local: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| address.names(&it.record))
+            .map(|(i, _)| i)
+            .collect();
+        match local.as_slice() {
+            [index] => return Ok(Located::Local(*index)),
+            [] => {}
+            many => {
+                let ids: Vec<String> = many
+                    .iter()
+                    .map(|i| self.items[*i].record.id.to_string())
+                    .collect();
+                return Err(WorkError::refused(format!(
+                    "`{address}` names several entries; give more of the identity: {}",
+                    ids.join(", ")
+                )));
+            }
+        }
+        match self.remote_matching(|r| address.names(r))? {
+            Some(item) => Ok(Located::Remote(Box::new(item))),
+            None => Err(self.absent(slug)),
+        }
+    }
+
+    /// The error for a todo neither this computer nor GitHub has: unknown
+    /// when GitHub answered, undetermined (with the cause) when it could
+    /// not.
+    pub fn absent(&self, slug: &TodoSlug) -> WorkError {
+        match self.github_read() {
+            GitHubRead::Read => WorkError::UnknownTodo {
+                project: self.project.slug.clone(),
+                todo: slug.clone(),
+            },
+            GitHubRead::NotRead(reason) => WorkError::refused(format!(
+                "`{slug}` is not on this computer, and whether it exists cannot be determined: {}",
+                describe(&reason)
+            )),
+        }
+    }
+
+    /// The newest reflected record `wanted` accepts, read with its
+    /// verified contents and stored nowhere; `None` when GitHub holds none.
+    pub fn remote_matching(
+        &mut self,
+        wanted: impl Fn(&TodoRecord) -> bool,
+    ) -> Result<Option<LocalItem>, WorkError> {
+        let Some(records) = self.remote_all() else {
+            return Ok(None);
+        };
+        let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
+        let found = records
+            .into_iter()
+            .filter(|(record, _)| wanted(record) && !local.contains(&record.id))
+            .max_by_key(|(record, _)| (record.is_live(), record.created));
+        let Some((record, issue)) = found else {
+            return Ok(None);
+        };
+        let result = match &self.remote {
+            Remote::Client { gh, down: None } => _reflect::localize(gh, record, issue),
+            _ => return Ok(None),
+        };
+        result.map(Some).map_err(|err| self.github_failure(err))
+    }
+
+    /// Makes a reflected record found by [`Session::locate`] a local item.
+    pub fn adopt(&mut self, item: LocalItem) -> Result<usize, WorkError> {
+        self.store.save(&item)?;
+        self.items.push(item);
+        Ok(self.items.len() - 1)
+    }
+
     pub fn remote_item(&mut self, slug: &TodoSlug) -> Result<Option<LocalItem>, WorkError> {
         let found = match self.remote_all() {
             Some(records) => records

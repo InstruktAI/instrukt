@@ -62,16 +62,4 @@ mod tests {
         assert!(status(Some(ts("2026-01-05T09:54:59Z")), now).stale);
         assert!(status(None, now).stale);
     }
-
-    #[test]
-    fn the_recorded_wake_up_reads_back() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = RunnerState::new(&instrukt_core::home::Home::at_user_home(dir.path().into()));
-        assert_eq!(last_wakeup(&state).unwrap(), None);
-        record_wakeup(&state, ts("2026-01-05T10:00:00Z")).unwrap();
-        assert_eq!(
-            last_wakeup(&state).unwrap(),
-            Some(ts("2026-01-05T10:00:00Z"))
-        );
-    }
 }

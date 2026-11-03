@@ -109,6 +109,21 @@ pub fn visible_references(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `@` references visible in `text` (as [`visible_references`] finds
+/// them), each read for a repository declaring `project` whose readers'
+/// home directory is `user_home`: what each names, in the forms validation
+/// accepts.
+pub fn references(
+    text: &str,
+    project: Option<&crate::ids::ProjectSlug>,
+    user_home: &std::path::Path,
+) -> Vec<Reference> {
+    visible_references(text)
+        .iter()
+        .map(|raw| _refs::parse(raw, project, user_home))
+        .collect()
+}
+
 use crate::config::ConfigError;
 use crate::fsx::FsError;
 use crate::git::GitError;

@@ -52,7 +52,12 @@ fn refused_unchanged(project: &Project, slug: &str, change: &[&str]) -> String {
         after, before,
         "the refused change left the record as it was"
     );
-    String::from_utf8_lossy(&refusal.get_output().stderr).into_owned()
+    // What the developer is told; diagnostics carry the real time.
+    String::from_utf8_lossy(&refusal.get_output().stderr)
+        .lines()
+        .filter(|line| line.starts_with("instrukt: "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // spec: local/projects/instrukt/spec/feature/work/dependencies-and-holds UC-DH1
@@ -110,6 +115,49 @@ fn grouping_a_todo_under_its_own_prerequisite_is_refused_naming_the_cycle() {
     let refused = refused_unchanged(&project, "nested-lists", &["--group", "list-depth"]);
 
     insta::assert_snapshot!("grouping-cycle", refused);
+}
+
+// spec: local/projects/instrukt/spec/feature/work/dependencies-and-holds UC-DH1
+#[test]
+fn a_prerequisite_that_waits_through_a_group_on_its_own_child_is_refused_naming_the_cycle() {
+    let project = Project::new();
+    project.create(
+        "list-depth",
+        "feature",
+        "Lists keep their depth everywhere.",
+    );
+    project.create(
+        "nested-lists",
+        "change",
+        "Keep the depth of nested lists when parsing Markdown.",
+    );
+    project.create("renderer", "change", "Render lists at their depth.");
+    project.ok(["update", "nested-lists", "--group", "list-depth"]);
+    project.ok(["update", "nested-lists", "--after", "renderer"]);
+
+    // The group waits on its child, which waits on the renderer.
+    let refused = refused_unchanged(&project, "renderer", &["--after", "list-depth"]);
+
+    insta::assert_snapshot!("cycle-through-a-group", refused);
+}
+
+// spec: local/projects/instrukt/spec/feature/work/dependencies-and-holds UC-DH1
+#[test]
+fn a_cycle_through_a_prerequisite_changed_on_another_computer_is_refused() {
+    let project = Project::new();
+    project.create("parser-depth", "change", "Track list depth in the parser.");
+    project.create(
+        "nested-lists",
+        "feature",
+        "Keep the depth of nested lists when parsing Markdown.",
+    );
+    project
+        .other_computer()
+        .ok(["update", "parser-depth", "--after", "nested-lists"]);
+
+    let refused = refused_unchanged(&project, "nested-lists", &["--after", "parser-depth"]);
+
+    insta::assert_snapshot!("cycle-through-a-remote-change", refused);
 }
 
 // spec: local/projects/instrukt/spec/feature/work/dependencies-and-holds UC-DH2

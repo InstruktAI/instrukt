@@ -178,15 +178,23 @@ impl<'a> CiClient<'a> {
             self.api_url, self.repository
         );
         let mut interval = None;
-        let status_body = self.get(&format!("{base}/status"), &mut validators, &mut interval)?;
-        let checks_body = self.get(
-            &format!("{base}/check-runs"),
-            &mut validators,
-            &mut interval,
-        )?;
+        let bodies = self
+            .get(&format!("{base}/status"), &mut validators, &mut interval)
+            .and_then(|status| {
+                self.get(
+                    &format!("{base}/check-runs"),
+                    &mut validators,
+                    &mut interval,
+                )
+                .map(|checks| (status, checks))
+            });
+        // A source's poll interval binds whether or not its answer was
+        // usable: an error carrying `X-Poll-Interval` still defers the
+        // next request.
         validators.not_before =
             interval.and_then(|secs: i64| now.checked_add(SignedDuration::from_secs(secs)).ok());
         state::write_json(&path, &validators)?;
+        let (status_body, checks_body) = bodies?;
         let status: CombinedStatus = parse(&format!("{base}/status"), &status_body)?;
         let checks: CheckRuns = parse(&format!("{base}/check-runs"), &checks_body)?;
         Ok(CiRead::State(classify(&status, &checks)))
@@ -359,5 +367,52 @@ mod tests {
         );
         assert_eq!(CiState::Red.completed(), Some(CiResult::Failure));
         assert_eq!(CiState::Pending.completed(), None);
+    }
+
+    /// A server answering every request with 503 and a poll interval,
+    /// counting the requests it received.
+    fn unavailable_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = std::sync::Arc::clone(&count);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                    line.clear();
+                }
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nX-Poll-Interval: 3600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        (url, count)
+    }
+
+    #[test]
+    fn a_failed_answer_still_defers_the_next_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = RunnerState::new(&instrukt_core::home::Home::at_user_home(dir.path().into()));
+        let project = ProjectSlug::parse("demo").unwrap();
+        let (url, requests) = unavailable_server();
+        let client = CiClient::new(&url, "acme/demo", None, &state, &project);
+        let commit = CommitSha::parse(&"a".repeat(40)).unwrap();
+        let now: Timestamp = "2030-01-06T09:00:00Z".parse().unwrap();
+
+        assert!(matches!(
+            client.read(&commit, now),
+            Err(CiError::Status { status: 503, .. })
+        ));
+        let later = now.checked_add(SignedDuration::from_secs(60)).unwrap();
+        assert!(matches!(
+            client.read(&commit, later),
+            Ok(CiRead::Deferred(_))
+        ));
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/anomaly-notification.rs
+expression: "project.rt.sent(\"s1\", 1)"
+---
+instrukt: the work this session was started for has no recorded completion. Finish it and record its evidence, or record why it cannot be completed.

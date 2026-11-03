@@ -102,3 +102,80 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
         rt.sent("s1", 1).replace(&second, "<revision>")
     );
 }
+
+// spec: local/projects/instrukt/spec/feature/runner/event-activation UC-EA1
+#[test]
+fn a_runner_killed_while_starting_the_standing_agent_waits_for_the_developer_to_resolve_it() {
+    let env = TestEnv::new();
+    let rt = FakeRuntime::new(&env, "rt", false);
+    global_layer(&env, "events: true", &[&rt]);
+    let (bare, upstream_work) = upstream(&env);
+    let fork = project(
+        &env,
+        "fork",
+        &[],
+        &[
+            ("instrukt.yaml", FORK_LAYER.to_owned()),
+            (
+                "docs/global/fork/procedure/upstream-watch.md",
+                snippet(
+                    "procedure",
+                    "Upstream Watch",
+                    "Report upstream changes and offer a reconciliation that keeps local changes.",
+                    "role: upstream-watcher\nsubscriptions:\n  - runner.upstream_changed\n",
+                    &[],
+                    "Report the upstream change and offer reconciliation.\n",
+                ),
+            ),
+        ],
+    );
+    fork.git(["remote", "add", "upstream", bare.to_str().unwrap()]);
+    sync(&env, &fork);
+    let cwd = env.path("");
+    tick(&env, &cwd);
+
+    // The runtime creates the agent's session, and the runner dies before
+    // it learns the id.
+    push_upstream_change(&upstream_work, "one.md");
+    rt.kill_runner_on_next_start();
+    let killed = env.run(&cwd, ["tick"]);
+    assert!(!killed.get_output().status.success());
+    assert_eq!(rt.calls().len(), 1, "{:?}", rt.calls());
+
+    // The next wake-ups do not repeat the start; the uncertain start is
+    // reported once.
+    tick(&env, &cwd);
+    tick(&env, &cwd);
+    assert_eq!(rt.calls().len(), 1, "{:?}", rt.calls());
+    insta::assert_snapshot!(
+        rt.notifications().join("\n"),
+        @"instrukt sessions resolve-start fork/procedure/upstream-watch@fork --session <runtime:id> | --none"
+    );
+
+    // The developer finds the session the runtime did create and binds it;
+    // once its run ended, the next wake-up hands it the waiting change.
+    let resolved = env
+        .run(
+            &cwd,
+            [
+                "sessions",
+                "resolve-start",
+                "fork/procedure/upstream-watch@fork",
+                "--session",
+                "rt:s1",
+            ],
+        )
+        .success();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&resolved.get_output().stdout),
+        @"fork/procedure/upstream-watch@fork is bound to rt:s1"
+    );
+    rt.set_status("s1", "ended ok");
+    tick(&env, &cwd);
+    assert_eq!(rt.calls().len(), 2, "{:?}", rt.calls());
+    assert_eq!(
+        rt.sent_count("s1"),
+        1,
+        "the waiting change reached the bound session"
+    );
+}

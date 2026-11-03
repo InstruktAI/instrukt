@@ -340,6 +340,38 @@ impl<'c> Sessions<'c> {
         })
     }
 
+    /// The model and version `session` runs, from its runtime's optional
+    /// `model` template called with the session id, which prints `<model>
+    /// <version>` (`stamps`, "Evidence and attribution"). `None` when the
+    /// runtime has no template, or the template fails or prints anything
+    /// else: the model is then unknown, never guessed.
+    pub fn model(&self, session: &SessionRef) -> Option<(String, String)> {
+        let entry = self.entry(session).ok()?;
+        let template = entry.field("model")?;
+        let done = match self
+            .invocation(entry, template, Some(&session.id), &[])
+            .and_then(|invocation| invocation.run(self.timeout).map_err(SessionsError::from))
+        {
+            Ok(done) => done,
+            Err(err) => {
+                tracing::warn!(event = "session_model_unknown", session = %session, error = %err, "the runtime's `model` template could not run");
+                return None;
+            }
+        };
+        if !done.success {
+            tracing::warn!(event = "session_model_unknown", session = %session, stderr = %done.stderr.trim(), "the runtime's `model` template failed");
+            return None;
+        }
+        let mut words = done.stdout.split_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some(model), Some(version), None) => Some((model.to_owned(), version.to_owned())),
+            _ => {
+                tracing::warn!(event = "session_model_unknown", session = %session, "the runtime's `model` template did not print `<model> <version>`");
+                None
+            }
+        }
+    }
+
     /// Reads `session`'s conversation as the runtime prints it.
     pub fn conversation(&self, session: &SessionRef) -> Result<String, SessionsError> {
         let entry = self.entry(session)?;
@@ -444,15 +476,19 @@ impl<'c> Sessions<'c> {
         session: Option<&SessionId>,
         operands: &[&str],
     ) -> Result<Invocation<'static>, SessionsError> {
-        let command = fill(template, session, |piece| {
+        let expand = |piece: &str| {
             self.config
                 .expand(piece, self.env)
                 .map_err(|source| SessionsError::Template {
                     runtime: entry.name.clone(),
                     source,
                 })
-        })?;
-        Ok(Invocation::shell(&command, operands))
+        };
+        let Some(session) = session else {
+            return Ok(Invocation::shell(&expand(template)?, operands));
+        };
+        let command = fill(template, expand)?;
+        Ok(Invocation::shell(&command, operands).env(SESSION_ID_VAR, session.as_str()))
     }
 
     fn session_ref(&self, entry: &RuntimeEntry, id: &str) -> Result<SessionRef, SessionsError> {
@@ -479,23 +515,58 @@ fn failed(entry: &RuntimeEntry, operation: &'static str, stderr: &str) -> Sessio
     }
 }
 
-/// `template` with each `{runtime.session_id}` replaced by `session`,
-/// shell-quoted, and every other piece passed through `expand`. Without a
-/// session the placeholder is left for `expand` to resolve.
+/// The environment variable that carries the addressed session's id to
+/// the command; the command text only ever refers to it.
+pub(crate) const SESSION_ID_VAR: &str = "INSTRUKT_SESSION_ID";
+
+/// `template` with every piece but `{runtime.session_id}` passed through
+/// `expand`, and each placeholder replaced by a reference to
+/// [`SESSION_ID_VAR`] that reads as the whole id in the shell quoting
+/// context where it stands: `"$VAR"` bare, `${VAR}` inside double quotes,
+/// and `'"$VAR"'` inside single quotes. The id's characters never become
+/// command text, so no content of an id can run.
 pub(crate) fn fill<E>(
     template: &str,
-    session: Option<&SessionId>,
     mut expand: impl FnMut(&str) -> Result<String, E>,
 ) -> Result<String, E> {
-    let Some(session) = session else {
-        return expand(template);
-    };
-    let quoted = shell_quote(session.as_str());
-    let pieces: Vec<String> = template
-        .split(SESSION_PLACEHOLDER)
-        .map(&mut expand)
-        .collect::<Result<_, _>>()?;
-    Ok(pieces.join(&quoted))
+    let mut command = String::new();
+    for (index, piece) in template.split(SESSION_PLACEHOLDER).enumerate() {
+        if index > 0 {
+            let reference = match quoting_at_end(&command) {
+                Quoting::Bare => format!("\"${SESSION_ID_VAR}\""),
+                Quoting::Double => format!("${{{SESSION_ID_VAR}}}"),
+                Quoting::Single => format!("'\"${SESSION_ID_VAR}\"'"),
+            };
+            command.push_str(&reference);
+        }
+        command.push_str(&expand(piece)?);
+    }
+    Ok(command)
+}
+
+/// The shell quoting context at the end of `text`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Quoting {
+    Bare,
+    Single,
+    Double,
+}
+
+fn quoting_at_end(text: &str) -> Quoting {
+    let mut state = Quoting::Bare;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (state, c) {
+            (Quoting::Bare, '\\') | (Quoting::Double, '\\') => {
+                chars.next();
+            }
+            (Quoting::Bare, '\'') => state = Quoting::Single,
+            (Quoting::Bare, '"') => state = Quoting::Double,
+            (Quoting::Single, '\'') | (Quoting::Double, '"') => state = Quoting::Bare,
+            _ => {}
+        }
+    }
+    state
 }
 
 /// `value` as one single-quoted shell word.
@@ -517,20 +588,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_session_id_is_quoted_and_never_expanded() {
-        let id = SessionId::parse("x'{a}${B}").unwrap();
-        let expanded = fill::<()>(
-            "rt send {runtime.session_id} --to {runtime.session_id}",
-            Some(&id),
-            |piece| Ok(piece.to_uppercase()),
-        )
-        .unwrap();
-        let quoted = shell_quote(id.as_str());
-        assert_eq!(expanded, format!("RT SEND {quoted} --TO {quoted}"));
-        let out = Invocation::shell(&format!("printf '%s' {quoted}"), &[])
+    /// Runs `template`, filled for `id`, printing the session id it
+    /// received between bars.
+    fn received(template: &str, id: &SessionId) -> String {
+        let command = fill::<()>(template, |piece| Ok(piece.to_owned())).unwrap();
+        let done = Invocation::shell(&command, &[])
+            .env(SESSION_ID_VAR, id.as_str())
             .run(Duration::from_secs(10))
             .unwrap();
-        assert_eq!(out.stdout, id.as_str());
+        assert!(done.success, "{}", done.stderr);
+        done.stdout
+    }
+
+    #[test]
+    fn a_session_id_reaches_the_command_whole_in_every_quoting_context_and_runs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let planted = dir.path().join("planted");
+        let hostile = format!(
+            "x$(touch${{IFS}}{p})`touch${{IFS}}{p}`'\"${{HOME}}*;",
+            p = planted.display()
+        );
+        let id = SessionId::parse(&hostile).unwrap();
+        for (template, prefix) in [
+            ("printf '|%s|' {runtime.session_id}", ""),
+            ("printf '|%s|' \"{runtime.session_id}\"", ""),
+            ("printf '|%s|' '{runtime.session_id}'", ""),
+            ("printf '|%s|' \"a\"'{runtime.session_id}'", "a"),
+        ] {
+            assert_eq!(
+                received(template, &id),
+                format!("|{prefix}{hostile}|"),
+                "{template}"
+            );
+        }
+        assert!(!planted.exists(), "the id's command substitution ran");
     }
 }
