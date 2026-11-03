@@ -56,22 +56,7 @@ impl LockGuard {
     /// [`FsError::LockTimeout`]. Creates the lock file and its parent
     /// directories when missing.
     pub fn acquire(path: &Path, timeout: Duration) -> Result<Self, FsError> {
-        let started = Instant::now();
-        let mut pause = Duration::from_millis(5);
-        loop {
-            if let Some(guard) = Self::try_acquire(path)? {
-                return Ok(guard);
-            }
-            let waited = started.elapsed();
-            if waited >= timeout {
-                return Err(FsError::LockTimeout {
-                    path: path.to_path_buf(),
-                    waited,
-                });
-            }
-            std::thread::sleep(pause.min(timeout - waited));
-            pause = (pause * 2).min(Duration::from_millis(200));
-        }
+        wait_for(path, timeout, || Self::try_acquire(path))
     }
 
     /// Takes the exclusive lock on `path` if nobody holds it; `Ok(None)`
@@ -93,6 +78,72 @@ impl LockGuard {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// A shared advisory lock on a lock file, held until dropped. Any number
+/// of shared guards coexist; none coexists with a [`LockGuard`] on the same
+/// file.
+#[derive(Debug)]
+pub struct SharedLockGuard {
+    // Held only for its lock; the OS releases it when the file closes.
+    _file: File,
+    path: PathBuf,
+}
+
+impl SharedLockGuard {
+    /// Takes a shared lock on `path`, waiting at most `timeout` for an
+    /// exclusive holder to release it; still held then is a
+    /// [`FsError::LockTimeout`]. Creates the lock file and its parent
+    /// directories when missing.
+    pub fn acquire(path: &Path, timeout: Duration) -> Result<Self, FsError> {
+        wait_for(path, timeout, || Self::try_acquire(path))
+    }
+
+    /// Takes a shared lock on `path` unless an exclusive guard holds it;
+    /// `Ok(None)` when one does.
+    pub fn try_acquire(path: &Path) -> Result<Option<Self>, FsError> {
+        let file = open_lock_file(path)?;
+        match file.try_lock_shared() {
+            Ok(()) => Ok(Some(Self {
+                _file: file,
+                path: path.to_path_buf(),
+            })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(source)) => Err(FsError::Lock {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Retries `attempt` with backoff until it yields a guard or `timeout`
+/// has passed.
+fn wait_for<G>(
+    path: &Path,
+    timeout: Duration,
+    attempt: impl Fn() -> Result<Option<G>, FsError>,
+) -> Result<G, FsError> {
+    let started = Instant::now();
+    let mut pause = Duration::from_millis(5);
+    loop {
+        if let Some(guard) = attempt()? {
+            return Ok(guard);
+        }
+        let waited = started.elapsed();
+        if waited >= timeout {
+            return Err(FsError::LockTimeout {
+                path: path.to_path_buf(),
+                waited,
+            });
+        }
+        std::thread::sleep(pause.min(timeout - waited));
+        pause = (pause * 2).min(Duration::from_millis(200));
     }
 }
 
@@ -144,5 +195,25 @@ mod tests {
         // A child forked by another thread may hold a copy of the lock's
         // descriptor until it execs, so freeing is observed with a bound.
         assert!(LockGuard::acquire(&lock, Duration::from_secs(5)).is_ok());
+    }
+
+    #[test]
+    fn shared_locks_coexist_and_exclude_the_exclusive_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("store/.prune.lock");
+        let first = SharedLockGuard::acquire(&lock, Duration::from_secs(1)).unwrap();
+        let second = SharedLockGuard::try_acquire(&lock).unwrap();
+        assert!(second.is_some());
+        assert!(LockGuard::try_acquire(&lock).unwrap().is_none());
+        drop(first);
+        drop(second);
+        let held = LockGuard::acquire(&lock, Duration::from_secs(5)).unwrap();
+        let refused = SharedLockGuard::acquire(&lock, Duration::from_millis(50));
+        assert!(
+            matches!(refused, Err(FsError::LockTimeout { .. })),
+            "{refused:?}"
+        );
+        drop(held);
+        assert!(SharedLockGuard::acquire(&lock, Duration::from_secs(5)).is_ok());
     }
 }
