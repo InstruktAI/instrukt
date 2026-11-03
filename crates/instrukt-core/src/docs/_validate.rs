@@ -809,6 +809,17 @@ fn home_procedure_states(corpus: &Corpus) -> Result<Vec<ProcedureState>, DocsErr
         let Ok(domain_name) = DomainName::parse(&name) else {
             continue;
         };
+        // The published tree holds files beside its domains (the index).
+        let is_dir = domain
+            .file_type()
+            .map_err(|source| DocsError::Read {
+                path: domain.path(),
+                source,
+            })?
+            .is_dir();
+        if !is_dir {
+            continue;
+        }
         if corpus.published_domains().contains(&domain_name) {
             continue;
         }
