@@ -59,6 +59,11 @@ pub(crate) struct ReflectionState {
     /// The issue's item on the project board, once added.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_item: Option<String>,
+    /// The board (`<owner>/<number>`) that `board_item` belongs to: an item
+    /// id means nothing on another board. A membership recorded without
+    /// it is owed again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
     /// The `Record status` the board item was last set to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_status: Option<String>,

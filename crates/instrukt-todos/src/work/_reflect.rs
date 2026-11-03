@@ -289,17 +289,28 @@ pub(crate) fn flush(
         reflect_pull_request(gh, item, issue, base)?;
     }
     if let (Some(board), Some(issue)) = (board, item.reflection.issue)
-        && board_owed(item)
+        && board_owed(item, board)
     {
         reflect_board(gh, board, item, issue)?;
     }
     Ok(())
 }
 
-/// Whether the board item is missing or shows another status.
-pub(crate) fn board_owed(item: &LocalItem) -> bool {
-    item.reflection.board_item.is_none()
+/// Whether the item is not on `board` or shows another status there.
+pub(crate) fn board_owed(item: &LocalItem, board: &BoardRef) -> bool {
+    board_item_on(item, board).is_none()
         || item.reflection.board_status.as_deref() != Some(_envelope::record_status(&item.record))
+}
+
+/// The item's board item id when its recorded membership is of `board`.
+fn board_item_on<'i>(item: &'i LocalItem, board: &BoardRef) -> Option<&'i str> {
+    let on = item.reflection.board.as_deref() == Some(board_key(board).as_str());
+    item.reflection.board_item.as_deref().filter(|_| on)
+}
+
+/// A board's identity as membership records it: `<owner>/<number>`.
+fn board_key(board: &BoardRef) -> String {
+    format!("{}/{}", board.owner, board.number)
 }
 
 /// Puts the issue on the board with the record's status. A failure is kept
@@ -312,8 +323,10 @@ fn reflect_board(
     issue: IssueRef,
 ) -> Result<(), GitHubError> {
     let status = _envelope::record_status(&item.record);
+    // Membership of another board is no membership of this one.
+    let member = board_item_on(item, board).map(str::to_owned);
     let attempt = (|| {
-        let content = match item.reflection.board_item {
+        let content = match member {
             Some(_) => String::new(),
             None => gh.read(&format!("/issues/{}", issue.number))?["node_id"]
                 .as_str()
@@ -323,17 +336,12 @@ fn reflect_board(
                     message: "an issue without a node id".to_owned(),
                 })?,
         };
-        super::_board::reflect(
-            gh,
-            board,
-            item.reflection.board_item.as_deref(),
-            &content,
-            status,
-        )
+        super::_board::reflect(gh, board, member.as_deref(), &content, status)
     })();
     match attempt {
         Ok(board_item) => {
             item.reflection.board_item = Some(board_item);
+            item.reflection.board = Some(board_key(board));
             item.reflection.board_status = Some(status.to_owned());
             item.reflection.board_failure = None;
             Ok(())
@@ -906,5 +914,29 @@ mod tests {
         let second = record(4, "depth");
         let comments = [comment(10, 0, &first), comment(11, 1, &second)];
         assert_eq!(committed(&comments, &first.id).unwrap().comment, 11);
+    }
+
+    #[test]
+    fn membership_of_one_board_is_none_of_another() {
+        let a = BoardRef {
+            owner: "acme".into(),
+            number: 7,
+        };
+        let b = BoardRef {
+            owner: "acme".into(),
+            number: 8,
+        };
+        let mut item = LocalItem {
+            record: record(1, "depth"),
+            reflection: Default::default(),
+        };
+        item.reflection.board_item = Some("PVTI_a".into());
+        item.reflection.board_status = Some(_envelope::record_status(&item.record).into());
+        // Recorded before membership carried its board: owed again.
+        assert!(board_owed(&item, &a));
+        item.reflection.board = Some(board_key(&a));
+        assert!(!board_owed(&item, &a));
+        assert_eq!(board_item_on(&item, &b), None);
+        assert!(board_owed(&item, &b));
     }
 }

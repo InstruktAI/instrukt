@@ -579,9 +579,10 @@ impl<'w> Session<'w> {
         for index in 0..self.items.len() {
             let owed = self.items[index].reflection.pending
                 || _reflect::pull_request_owed(&self.items[index])
-                || (board.is_some()
-                    && self.items[index].reflection.issue.is_some()
-                    && _reflect::board_owed(&self.items[index]));
+                || board.as_ref().is_some_and(|board| {
+                    self.items[index].reflection.issue.is_some()
+                        && _reflect::board_owed(&self.items[index], board)
+                });
             if !owed || self.items[index].reflection.conflicted {
                 continue;
             }
