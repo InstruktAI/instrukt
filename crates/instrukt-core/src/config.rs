@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use crate::home::Home;
 use crate::ids::{IdError, ProjectSlug};
 
 /// The file name of both configuration layers.
@@ -51,4 +52,66 @@ pub fn project_slug(repo_root: &Path) -> Result<Option<ProjectSlug>, ConfigError
             .map_err(|source| ConfigError::Slug { path, source }),
         None => Ok(None),
     }
+}
+
+/// A switchable module. Core has no switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Module {
+    Blueprint,
+    Todos,
+    Events,
+}
+
+impl Module {
+    /// The key below `modules` that switches it.
+    pub fn key(self) -> &'static str {
+        match self {
+            Module::Blueprint => "blueprint",
+            Module::Todos => "todos",
+            Module::Events => "events",
+        }
+    }
+}
+
+/// Whether `module` is switched on in the effective configuration: the
+/// project layer of `repo_root` (when given) over the global layer of
+/// `home`; off when neither sets it.
+///
+/// Commands of optional modules and the CLI's wiring read switches through
+/// this signature.
+pub fn module_enabled(
+    home: &Home,
+    repo_root: Option<&Path>,
+    module: Module,
+) -> Result<bool, ConfigError> {
+    let project = match repo_root {
+        Some(root) => read_switch(&root.join(CONFIG_FILE_NAME), module)?,
+        None => None,
+    };
+    match project {
+        Some(on) => Ok(on),
+        None => Ok(read_switch(&home.global_config(), module)?.unwrap_or(false)),
+    }
+}
+
+fn read_switch(path: &Path, module: Module) -> Result<Option<bool>, ConfigError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let doc: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(doc
+        .get("modules")
+        .and_then(|modules| modules.get(module.key()))
+        .and_then(serde_yaml_ng::Value::as_bool))
 }
