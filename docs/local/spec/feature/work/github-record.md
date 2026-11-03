@@ -178,6 +178,18 @@ the remote record before creating duplicate evidence.
   And records posted by people with write access are still applied
 ```
 
+#### UC-GR5: A developer follows their work on a project board
+
+```gherkin
+  Given a developer's project reflects its todos to GitHub
+  And the developer has chosen a project board for that work
+  When their todos are reflected
+  Then each todo appears on that board with its current record status
+  And the board's own columns and fields are left as they were
+  When the developer chooses a different board
+  Then their work appears on the new board with its current record status
+```
+
 ## Known caveats
 
 - instrukt does not create the board project, its views or its readme; the
