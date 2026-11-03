@@ -102,6 +102,24 @@ impl Version {
         &self.markers.slugs
     }
 
+    /// The well-formed pending blocks of `body()` that name a well-formed
+    /// todo slug, in order: the todo and the body lines (0-based indices of
+    /// `body().split_inclusive('\n')`) from the opening marker to the
+    /// closing one.
+    pub fn pending_blocks(&self) -> Vec<PendingBlock> {
+        self.markers
+            .blocks
+            .iter()
+            .filter_map(|block| {
+                let slug = TodoSlug::parse(&block.slug).ok()?;
+                Some(PendingBlock {
+                    slug,
+                    lines: block.open..=block.close,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn markers(&self) -> &Scan {
         &self.markers
     }
@@ -133,6 +151,16 @@ pub(super) fn required_reads_section(lines: &[_text::Line<'_>]) -> Option<std::o
         .find(|h| h.level <= 2)
         .map_or(lines.len(), |h| h.line);
     Some(from + 1..to)
+}
+
+/// One in-body pending block (`planned:<slug>` or `planned-change:<slug>`)
+/// of a version's body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingBlock {
+    /// The todo the block's markers name.
+    pub slug: TodoSlug,
+    /// The body lines from the opening marker to the closing marker.
+    pub lines: std::ops::RangeInclusive<usize>,
 }
 
 /// A companion `<stem>.<slug>.md` beside a live snippet.
