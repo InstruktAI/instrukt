@@ -72,6 +72,7 @@ which are lost if the home is deleted.
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/work/` | the local work record (pull-through of GitHub) | GitHub |
+| `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 
 A project carries `instrukt.yaml` (the project layer), `docs/global/` (what it
 publishes), `docs/local/` (its own docs), `AGENTS.master.md`, and instrukt's

@@ -77,7 +77,7 @@ authorization and derived workflow state.
   blueprint;
   conversations and native session execution, supplied by the runtime.
 - **Published contracts:** `instrukt run`, `instrukt tick`, `instrukt sessions
-  run|send|alive|conversation|link|end`, `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>]`
+  run|send|alive|conversation|link|end`, `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
   (procedure required except setup-only `run --worktree <name> --brief <file|->`;
   the runtime creates/reattaches it and the binding records its path as `worktree.path`), `instrukt sessions link --remove <a> <b>`, `instrukt ticks status`, and the wake-up
   registration performed by `instrukt install`; the five-state session

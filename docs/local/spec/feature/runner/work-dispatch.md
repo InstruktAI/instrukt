@@ -35,7 +35,16 @@ whose effective configuration (project over global) enables `todos` or
 `events`, without a separate registry.
 Before starting a session for a todo, the runner records a claim on the item
 and reflects it to GitHub; a revision conflict means another computer claimed
-it first, and this runner leaves the item. After the claim,
+it first, and this runner leaves the item. When GitHub cannot be reached, the
+claim stays local and pending and no session starts; the next tick reflects
+it, then dispatches, or drops the claim on a conflict.
+
+A claim is held by a computer, identified by the id created once in
+`~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
+deleting it orphans this computer's live claims until they are released. On
+that computer the holder is a session bound to the todo, or the session that
+claimed it through `instrukt todo prepare|work`; any other caller is refused as
+"claimed elsewhere". After the claim,
 `instrukt todo update <slug> --unclaim` releases it; ending the lane session is a
 separate `instrukt sessions end <id>` operation. Every tick also pulls GitHub changes
 for local items with conditional requests, and flushes pending work-record
@@ -66,7 +75,9 @@ Dispatch walks the task's optional agent/model preference first, then the proced
 including the chosen thinking mode, and takes the first agent the configured
 runtime reports available. Runtime entries may declare an `available` check
 template. Without a check, a failed start causes the next agent to be tried.
-Exhausting the order is an anomaly.
+Exhausting the order is an anomaly: the runner releases its own claim through
+work's command contract and sends the anomaly through `runner.notify`; it sets
+no hold.
 
 The runner on the computer holding the conversation dispatches its intent
 check, where that conversation is readable; it is not copied to the remote

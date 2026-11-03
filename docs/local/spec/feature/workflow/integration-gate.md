@@ -42,6 +42,15 @@ source’s `X-Poll-Interval` header, and emits
 the candidate commit and check outcome. Promotion applies to
 exactly the verified commit; a different commit does not inherit that result.
 
+A candidate's CI result is read from the commit's combined status and its
+check runs:
+
+- **Green:** the combined status is `success`, or there are no statuses, and
+  every check run has completed as `success`, `neutral` or `skipped`; at least
+  one status or check run exists.
+- **Red:** any status or check run has failed.
+- **Pending:** anything is still running, or nothing has reported yet.
+
 | Observed result | Integrator obligation |
 | --- | --- |
 | Required CI checks are green for the candidate | Fast-forward the canonical branch to that exact commit and push it. |
@@ -66,6 +75,11 @@ the enabled code-graph capability; this context neither generates a graph nor
 uses graph freshness as an integration check.
 
 ### Project without CI
+
+Whether a project has CI is decided from the canonical branch's head commit,
+never from a candidate: a canonical head carrying no status and no check run
+means the project has no CI. A just-pushed candidate with nothing reported yet
+is pending, not evidence of a project without CI.
 
 For a project without CI the integrator runs the project's configured test
 action in the integration worktree against the candidate. Success supplies

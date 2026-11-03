@@ -17,7 +17,11 @@ occurrences; the operating system supplies a generic wake-up.
 
 A task is a prepared one-off or recurring instruction, routed through the
 prepare flow as a task. Once authorized and due, the runner dispatches the
-`run-task` procedure under the todo pickup policy. A task does not introduce a
+procedure that declares the `task-runner` role in the selected flavor (the
+sdlc flavor's `run-task`), found as it finds the lane orchestrators, under the
+todo pickup policy. A claim covers one occurrence's run: it is released when
+that run's completion or failure is recorded, and the next occurrence claims
+afresh. A task does not introduce a
 workflow engine of its own. The work context owns task
 records, artifacts and stamps; workflow owns preparation and authorization; this feature owns time
 eligibility and missed-run decisions.

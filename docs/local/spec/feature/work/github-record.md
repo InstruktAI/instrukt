@@ -78,6 +78,17 @@ owned by `local/projects/instrukt/spec/feature/work/stamps`.
 
 ### Writer and convergence
 
+**Repository.** Reflection writes to the GitHub repository derived from the
+URL of the remote the default branch tracks (the default branch is the
+remote's `HEAD`, then `init.defaultBranch`, then `main`). The project-layer key
+`github.repository: owner/repo` overrides it; when the remote is not a GitHub
+repository of `github.api_url`'s host and the key is absent, todo commands
+refuse and name that key.
+
+**Credentials.** The token is read, in order, from `GITHUB_TOKEN`, `GH_TOKEN`
+and `gh auth token`, and is never stored. With none, reflection reports
+"pending: no credentials" and the local record continues.
+
 A per-computer writer lock serializes reflection; no separate writer process
 runs. Every command that writes the record and every runner tick flushes
 pending reflection under that lock. Writes check the item's known

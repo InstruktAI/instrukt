@@ -68,13 +68,13 @@ redraft-plan-seeded:
   command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
   template: templates/redraft-plan-seeded.md
 review-prd:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-prd --args {slug} --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-prd --args {slug} --todo {slug} --brief -
   template: templates/review-prd.md
 review-architecture:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-architecture --args {slug} --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-architecture --args {slug} --todo {slug} --brief -
   template: templates/review-architecture.md
 review-plan:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-plan --args {slug} --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-plan --args {slug} --todo {slug} --brief -
   template: templates/review-plan.md
 await-prd-approval:
   command: instrukt docs get sdlc/procedure/lifecycle/prepare/overview --closure
@@ -86,10 +86,10 @@ examine-diagnosis:
   command: instrukt docs get sdlc/procedure/lifecycle/prepare/diagnose --closure
   template: templates/examine-diagnosis.md
 analyze-drift:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/drift-analyze --args {slug} --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/drift-analyze --args {slug} --todo {slug} --brief -
   template: templates/analyze-drift.md
 review-claim-commits:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-commits --args '{claim_commits.unreviewed}' --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-commits --args '{claim_commits.unreviewed}' --todo {slug} --brief -
   template: templates/review-claim-commits.md
 release-prepared:
   command: instrukt todo update {slug} --unclaim
@@ -122,28 +122,28 @@ cleanup-delivered:
   command: instrukt todo show {slug}
   template: templates/cleanup-delivered.md
 dispatch-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/dispatch-build.md
 reconcile-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/reconcile-build.md
 review-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-build --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-build --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/review-build.md
 review-evidence-undetermined:
   command: instrukt todo show {slug}
   template: templates/review-evidence-undetermined.md
 relay-findings:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/relay-findings.md
 process-deferrals:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/deferrals --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/deferrals --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/process-deferrals.md
 dispatch-finalize:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/dispatch-finalize.md
 restamp-finalize:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --brief -
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/restamp-finalize.md
 hand-off-integration:
   command: instrukt todo show {slug}

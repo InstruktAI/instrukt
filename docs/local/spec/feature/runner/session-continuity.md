@@ -17,7 +17,7 @@ stay in the machine's runtime mapping.
 
 | Command | Contract |
 | --- | --- |
-| `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>]` | Start a session through the runtime mapping and obtain its runtime-native id. |
+| `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]` | Start a session through the runtime mapping and obtain its runtime-native id. With `--todo`, record the session as that todo's binding for the started procedure's `role`; without it, nothing is bound. |
 | `instrukt sessions send <id> <text>` | Send work to an identified session through that mapping. |
 | `instrukt sessions alive <id>` | Observe whether the recorded session remains available for reuse and its status. |
 | `instrukt sessions link <a> <b>` | Link sessions when the runtime entry declares a `link` template; otherwise report that the runtime lacks the capability. |
@@ -92,7 +92,10 @@ exposed from that assignment’s build-role binding as
 `worktree.path`; Git effects run there. After creation and upstream synchronization, make the opening commit
 and run the project’s `prepare` action when
 declared, before implementation.
-A mapping without worktree support reports the capability gap.
+A mapping without worktree support reports the capability gap. A setup-only
+run starts no procedure and binds nothing; the worktree path reaches a binding
+through the session started into the build procedure with `--worktree` and
+`--todo`.
 
 The todo's session bindings are its assignment child set (`sessions.bound`).
 Release with `instrukt todo update <slug> --unclaim`, confirm `claim.held` is

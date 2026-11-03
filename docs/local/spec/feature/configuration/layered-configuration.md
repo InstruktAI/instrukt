@@ -40,6 +40,7 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `actions` (name → the project's own command) | project only | the flavor's procedures |
 | `board` (the work board on or off) | project only | the `todos` module |
 | `github.approvers` (GitHub logins) | project only | work |
+| `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`) | project only | workflow |
