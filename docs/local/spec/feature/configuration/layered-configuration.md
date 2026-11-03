@@ -38,7 +38,7 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `publishes` (domains with their trigger line) | project only | publication |
 | `requires` (modules the flavor needs) | project only | publication |
 | `actions` (name → the project's own command) | project only | the flavor's procedures |
-| `board` (the work board on or off) | project only | the `todos` module |
+| `board` (`false`, or the GitHub project `<owner>/<number>` todos are reflected to) | project only | the `todos` module |
 | `github.approvers` (GitHub logins) | project only | work |
 | `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
@@ -162,7 +162,7 @@ And the configuration is unchanged
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
-| `board` | boolean | `false` (todos are always issues; the board is opt-in). |
+| `board` | `false` or `<owner>/<number>`; `true` is a finding asking for the project reference | `false` (todos are always issues; the board is opt-in). |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runtimes`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
 

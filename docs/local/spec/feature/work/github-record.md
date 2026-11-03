@@ -43,9 +43,14 @@ short prefix of the current evidence digest. Delivery closes it as completed and
 names the delivery evidence; removal closes it as withdrawn; restoration
 reopens it.
 
-A project board is optional. When enabled it reflects the same record;
-changing a board position does not establish a workflow fact. Failure of an
-optional board reflection does not block the issue or the local record.
+A project board is optional. When `board` names a GitHub project
+(`<owner>/<number>`), instrukt adds each reflected todo's issue to that project
+and sets a single-select field named `Record status` that instrukt owns (never
+the built-in `Status`) to the record's status: active, iceboxed, held, delivered
+or withdrawn. It creates the field when absent and adds missing options; it
+never removes or renames options and never touches other fields. Changing a
+board position does not establish a workflow fact. Board reflection is retried
+on its own and never blocks the issue or the local record.
 
 Repository implementation has a linked pull request during its build and
 review path. It carries the reviewed commits and recorded verdicts. If the
@@ -175,6 +180,8 @@ the remote record before creating duplicate evidence.
 
 ## Known caveats
 
+- instrukt does not create the board project, its views or its readme; the
+  predecessor's board setup is out of scope.
 - Records written by the predecessor's GitHub store are not read; the envelope
   format is new and carries no compatibility with it.
 - A GitHub App bot posts with association `NONE`, so a record it wrote would be

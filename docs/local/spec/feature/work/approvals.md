@@ -78,10 +78,12 @@ the source attribution above even when an agent records the decision.
 
 Approval commands are `instrukt todo stamp <slug> --prd-approved --by human|peer
 [--session <runtime:id>]` and `instrukt todo stamp <slug> --task-approved
---by human|peer [--session <runtime:id>]`. Session statements retain the
+--by human|peer [--session <runtime:id>]`. A peer approval states its reason
+with `--reason <text>`, the CLI's one justification flag; it requires the peer
+session and is refused without either. Session statements retain the
 observed source session; GitHub approvals arrive by pull with GitHub attribution.
 Carry retains the earlier attribution and evidence under the current independent
-reviewer's conclusion; it introduces no separate command form.
+reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
 
 ### Use cases
 
