@@ -71,6 +71,7 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
     match kind {
         LayerKind::Project => required_modules(value, &effective, &mut found),
         LayerKind::Global => {
+            runtime_names(value, &mut found);
             runner_runtime(value, &effective, &mut found);
             agent_order(value, &effective, &mut found);
         }
@@ -99,6 +100,26 @@ fn required_modules(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>)
                 &join("requires", &i.to_string()),
                 FindingKind::ModuleSwitchedOff,
                 format!("requires module `{}`, which is switched off", module.key()),
+            ));
+        }
+    }
+}
+
+/// A runtime name can head a session reference `{runtime}:{id}`, so it
+/// carries no `:` (nor whitespace or control characters).
+fn runtime_names(value: &Value, out: &mut Vec<KeyFinding>) {
+    let Some(entries) = value.get("runtimes").and_then(Value::as_sequence) else {
+        return;
+    };
+    for (i, entry) in entries.iter().enumerate() {
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Err(err) = crate::ids::RuntimeName::parse(name) {
+            out.push(KeyFinding::new(
+                &format!("runtimes.{i}.name"),
+                FindingKind::InvalidValue,
+                err.to_string(),
             ));
         }
     }
@@ -259,6 +280,19 @@ mod tests {
                 ("requires.1", FindingKind::ModuleSwitchedOff),
                 ("requires.2", FindingKind::ModuleSwitchedOff),
             ]
+        );
+    }
+
+    #[test]
+    fn a_runtime_name_that_cannot_head_a_session_reference_is_a_finding() {
+        let global = yaml(
+            "schema_version: 1\nruntimes:\n\
+             \x20 - {name: 'thread:host', session_id_env: A, start: s, send: s, alive: s, conversation: c}\n\
+             \x20 - {name: plain, session_id_env: B, start: s, send: s, alive: s, conversation: c}\n",
+        );
+        assert_eq!(
+            judged(&judge(&global, LayerKind::Global, None)),
+            [("runtimes.0.name", FindingKind::InvalidValue)]
         );
     }
 
