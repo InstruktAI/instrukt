@@ -13,10 +13,26 @@ description: Asks a command that fails.
 ---
 # Fragile — Procedure
 
-## Steps
+## Goal
 
 Before.
 
 > instrukt: read-time command `echo partial; exit 3` failed: exit status 3
 
 After.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

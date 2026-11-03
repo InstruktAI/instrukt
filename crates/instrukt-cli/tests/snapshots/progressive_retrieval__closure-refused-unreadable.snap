@@ -1,5 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stderr(&env, &unreadable)"
+expression: "stderr(&env, &refused)"
 ---
 instrukt: cannot read acme/procedure/broken as a closure: its required read `~/.instrukt/docs/acme/spec/absent.md` names no published snippet

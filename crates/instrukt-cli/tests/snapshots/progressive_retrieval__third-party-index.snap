@@ -6,7 +6,9 @@ expression: "stdout(&env, &with_third_party)"
 # Filter with --domains <acme|beta>, --areas <principle|concept|policy|procedure|design|spec|adr>, --baseline-only, --third-party, --target <slug>, --project <slug>
 
 acme/principle/care: Why care matters.
+acme/concept/terms: The words used.
 acme/policy/rules: The rules of the work.
+acme/procedure/start: Starts a session.
 acme/procedure/work: How the work is done.
 local/projects/demo/design/y: How y is built.
 beta/spec/thing: What a thing is.

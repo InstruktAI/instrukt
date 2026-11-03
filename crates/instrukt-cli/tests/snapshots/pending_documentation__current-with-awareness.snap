@@ -18,9 +18,11 @@ description: A live contract with pending additions.
 The current text.
 
 
+- field: current
+
 ## Canonical fields
 
-- field: current
+Text.
 
 # NOTE: This snippet has pending changes owned by: build-it, other-work. The text above is the current contract.
 # Read a todo's view of it: instrukt docs get acme/spec/live --target <slug>
@@ -37,6 +39,22 @@ description: A live policy with a next version.
 ## Rules
 
 The current rules.
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
 
 # NOTE: This snippet has pending changes owned by: build-it. The text above is the current contract.
 # Read a todo's view of it: instrukt docs get acme/policy/reworked --target <slug>

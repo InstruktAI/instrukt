@@ -1,0 +1,35 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &start)"
+---
+# instrukt docs get: acme/procedure/start
+# Required reads (not loaded) that must have been read at least once: acme/policy/rules, acme/concept/terms, acme/principle/care, [TMP]/home/.instrukt/docs/acme/bundle.md
+
+---
+id: acme/procedure/start
+type: procedure
+domain: acme
+scope: global
+description: Starts a session.
+---
+# Start — Procedure
+
+## Goal
+
+Start.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.
