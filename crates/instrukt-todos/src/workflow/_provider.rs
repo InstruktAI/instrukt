@@ -847,6 +847,7 @@ mod tests {
             class: DriftClass::Substantive,
             reason: "scope moved".into(),
             examined: digest("evidence"),
+            grounding: Default::default(),
         }
     }
 
@@ -1058,6 +1059,7 @@ mod tests {
                 class: DriftClass::Cosmetic,
                 reason: "wording".into(),
                 examined: digest("evidence"),
+                grounding: Default::default(),
             })
             .build();
         let facts = facts_of(&evidence, &Observations::default());
@@ -1430,6 +1432,7 @@ mod tests {
             class: DriftClass::Cosmetic,
             reason: "wording".into(),
             examined: digest("evidence"),
+            grounding: Default::default(),
         }
     }
 

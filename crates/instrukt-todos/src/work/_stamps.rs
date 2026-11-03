@@ -16,7 +16,7 @@ use super::_error::WorkError;
 use super::_model::TodoRecord;
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, ContentDigest, DriftClass,
-    PreparationReview, ReviewVerdict, StampFact, TaskResult, artifact_names,
+    Grounding, PreparationReview, ReviewVerdict, StampFact, TaskResult, artifact_names,
 };
 
 /// One admitted stamp form, as `instrukt todo stamp <slug>` takes it.
@@ -306,6 +306,8 @@ pub(crate) fn resolve(
             class: *class,
             reason: required(reason, "the drift reason")?,
             examined: current(record, artifact.as_str())?,
+            // Captured by the caller, which reads the project's grounding.
+            grounding: Grounding::default(),
         }),
         StampRequest::BuildStarted => {
             let plan = current(record, plan_artifact(record.kind))?;

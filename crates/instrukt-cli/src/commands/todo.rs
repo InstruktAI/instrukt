@@ -1178,6 +1178,7 @@ fn fact(fact: &StampFact) -> String {
             class,
             reason,
             examined,
+            ..
         } => format!(
             "drift in {artifact} reviewed as {}: {reason} — examined {examined}",
             match class {

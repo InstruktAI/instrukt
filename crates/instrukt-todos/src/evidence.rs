@@ -448,6 +448,11 @@ pub enum StampFact {
         class: DriftClass,
         reason: String,
         examined: ContentDigest,
+        /// The grounding current when the judgment was made: canonical head,
+        /// referenced and owned snippet digests, dependency digests. Older
+        /// stamps without it read as no grounding recorded.
+        #[serde(default)]
+        grounding: Grounding,
     },
     /// `--build-started`: the original base and approved plan digest.
     BuildStarted {

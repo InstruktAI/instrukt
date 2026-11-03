@@ -592,8 +592,24 @@ impl Work {
             None => s.actor()?,
         };
         let (model, model_provenance) = s.model_of(&actor);
+        let mut fact = resolved.fact;
+        if let StampFact::DriftReviewed {
+            artifact,
+            grounding,
+            ..
+        } = &mut fact
+        {
+            // The judgment holds only while what it assessed is unchanged:
+            // record the grounding current now.
+            let content = record
+                .artifact(artifact.as_str())
+                .and_then(|a| a.versions.last())
+                .and_then(|v| v.content.clone())
+                .unwrap_or_default();
+            *grounding = grounding_now(&mut s, index, artifact.as_str(), &content)?;
+        }
         let stamp = StampRecord {
-            fact: resolved.fact,
+            fact,
             at: s.now,
             role: role_of(&record, &actor),
             actor: actor.clone(),
@@ -711,27 +727,7 @@ impl Work {
                 digest: record.current_digest(upstream).cloned(),
             })
             .collect();
-        let after = record.after.clone();
-        let mut grounding = super::_grounding::ground(
-            self.home(),
-            &project.root,
-            &project.slug,
-            &s.base,
-            slug,
-            content,
-        )?;
-        for prerequisite in &after {
-            let found = s.record_by_id(&prerequisite.id);
-            for upstream in upstream_of(name) {
-                grounding.dependencies.push(DependencyDigest {
-                    todo: prerequisite.slug.clone(),
-                    artifact: ArtifactName::new(*upstream),
-                    digest: found
-                        .as_ref()
-                        .and_then(|r| r.current_digest(upstream).cloned()),
-                });
-            }
-        }
+        let grounding = grounding_now(&mut s, index, name, content)?;
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
@@ -1299,6 +1295,43 @@ impl Work {
             None => ParentPreparation::Unavailable,
         })
     }
+}
+
+/// The grounding of artifact `name` of item `index` with `content`, as it
+/// stands now (`artifact-currency`, "Drift evidence"): canonical head,
+/// declared paths and snippets, owned snippets, and each prerequisite's
+/// artifacts of the kinds `name` derives from.
+fn grounding_now(
+    s: &mut Session<'_>,
+    index: usize,
+    name: &str,
+    content: &str,
+) -> Result<crate::evidence::Grounding, WorkError> {
+    let (slug, after) = {
+        let record = &s.items[index].record;
+        (record.slug.clone(), record.after.clone())
+    };
+    let mut grounding = super::_grounding::ground(
+        s.home(),
+        &s.project.root,
+        &s.project.slug,
+        &s.base,
+        &slug,
+        content,
+    )?;
+    for prerequisite in &after {
+        let found = s.record_by_id(&prerequisite.id);
+        for upstream in upstream_of(name) {
+            grounding.dependencies.push(DependencyDigest {
+                todo: prerequisite.slug.clone(),
+                artifact: ArtifactName::new(*upstream),
+                digest: found
+                    .as_ref()
+                    .and_then(|r| r.current_digest(upstream).cloned()),
+            });
+        }
+    }
+    Ok(grounding)
 }
 
 /// The warning when workflow could not say whether a parent is prepared.

@@ -149,6 +149,10 @@ impl<'w> Session<'w> {
         Ok(session)
     }
 
+    pub fn home(&self) -> &instrukt_core::home::Home {
+        self.work.home()
+    }
+
     pub fn machine(&self) -> Result<MachineId, WorkError> {
         Ok(machine::machine_id(self.work.home())?)
     }
