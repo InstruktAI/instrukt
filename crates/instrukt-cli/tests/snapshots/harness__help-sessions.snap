@@ -7,13 +7,15 @@ The sessions facade over the configured runtime
 Usage: instrukt sessions <COMMAND>
 
 Commands:
-  run           Start a session through the runtime mapping; prints its id
-  send          Send text to a session; prints its id
-  alive         Print a session's status: running, needs-input, ended ok, ended failed or gone
-  conversation  Print a session's conversation
-  link          Link two sessions of one runtime, or remove their link
-  end           End a session
-  help          Print this message or the help of the given subcommand(s)
+  run            Start a session through the runtime mapping; prints its id
+  send           Send text to a session; prints its id
+  alive          Print a session's status: running, needs-input, ended ok, ended failed or gone
+  conversation   Print a session's conversation
+  link           Link two sessions of one runtime, or remove their link
+  end            End a session
+  resolve-start  Resolve a standing agent's start whose result never arrived: bind the session the
+                 runtime did create, or declare that none was
+  help           Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

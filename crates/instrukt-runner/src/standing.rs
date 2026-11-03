@@ -91,6 +91,79 @@ pub enum StandingError {
     Sessions(#[from] crate::sessions::SessionsError),
 }
 
+/// A standing agent's start could not be resolved.
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveStartError {
+    #[error("`{0}` is not `<procedure>@<project>`")]
+    Consumer(String),
+    #[error("{0} has no start awaiting resolution")]
+    NothingUncertain(String),
+    #[error("{session} belongs to no runtime of the runtime mapping")]
+    UnknownRuntime { session: SessionRef },
+    #[error(transparent)]
+    State(#[from] StateError),
+}
+
+/// How an uncertain start is resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartResolution {
+    /// The runtime did create this session: bind it.
+    Session(SessionRef),
+    /// No session was created: allow a fresh start.
+    None,
+}
+
+/// The command line that resolves `consumer`'s uncertain start, as its
+/// anomaly names it.
+pub fn resolve_start_command(consumer: &str) -> String {
+    format!("instrukt sessions resolve-start {consumer} --session <runtime:id> | --none")
+}
+
+/// Resolves the uncertain start of the standing agent `consumer`
+/// (`<procedure>@<project>`): binds the session the runtime created, or
+/// clears the attempt so the next tick starts afresh. Pending events stay
+/// pending; the next tick delivers them to the resolved agent.
+pub fn resolve_start(
+    state: &RunnerState,
+    config: &Configuration,
+    consumer: &str,
+    resolution: &StartResolution,
+) -> Result<(), ResolveStartError> {
+    let well_formed = consumer
+        .rsplit_once('@')
+        .is_some_and(|(procedure, project)| {
+            instrukt_core::ids::SnippetId::parse(procedure).is_ok()
+                && ProjectSlug::parse(project).is_ok()
+        });
+    if !well_formed {
+        return Err(ResolveStartError::Consumer(consumer.to_owned()));
+    }
+    let mut starts: BTreeMap<String, StartAttempt> =
+        state::read_json(&state.standing_starts())?.unwrap_or_default();
+    if !starts.contains_key(consumer) {
+        return Err(ResolveStartError::NothingUncertain(consumer.to_owned()));
+    }
+    if let StartResolution::Session(session) = resolution {
+        if !config
+            .runtimes()
+            .iter()
+            .any(|entry| entry.name == session.runtime.as_str())
+        {
+            return Err(ResolveStartError::UnknownRuntime {
+                session: session.clone(),
+            });
+        }
+        let mut bindings: BTreeMap<String, SessionRef> =
+            state::read_json(&state.standing())?.unwrap_or_default();
+        bindings.insert(consumer.to_owned(), session.clone());
+        state::write_json(&state.standing(), &bindings)?;
+    }
+    starts.remove(consumer);
+    state::write_json(&state.standing_starts(), &starts)?;
+    tracing::info!(event = "standing_start_resolved", consumer, resolution = ?resolution);
+    Ok(())
+}
+
 /// Delivers `project`'s pending events to `procedure`.
 pub fn deliver(
     state: &RunnerState,
@@ -154,8 +227,9 @@ pub fn deliver(
         if !attempt.reported {
             attempt.reported = true;
             state::write_json(&state.standing_starts(), &starts)?;
-            tracing::warn!(event = "standing_start_uncertain", consumer);
-            crate::anomaly::notify(config, env, &consumer, None);
+            let door = resolve_start_command(&consumer);
+            tracing::warn!(event = "standing_start_uncertain", consumer, resolve = %door);
+            crate::anomaly::notify(config, env, &door, None);
         }
         return Ok(Delivery::StartUncertain);
     }

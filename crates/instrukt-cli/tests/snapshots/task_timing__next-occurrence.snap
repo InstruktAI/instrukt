@@ -1,10 +1,10 @@
 ---
 source: crates/instrukt-cli/tests/task-timing.rs
-expression: "project.rt.opening(\"s3\")"
+expression: "project.rt.opening(\"s2\")"
 ---
 Run `instrukt docs get acme/procedure/run-task --closure` and execute that procedure.
 
 slug: quarter-hourly-sync
 $ARGUMENTS: quarter-hourly-sync
 
-occurrence: 2030-01-06T09:30:00Z
+occurrence: 2030-01-06T09:15:00Z
