@@ -237,18 +237,23 @@ pub(super) struct RawRef {
     pub target: String,
     /// Index into the body's lines.
     pub line: usize,
+    /// The byte range of the reference, its `@` included, in the body.
+    pub span: Range<usize>,
 }
 
 /// The target of a line holding only a reference: `@x`, or a list item
-/// `- @x` (`*`, `+` too).
-fn reference_line(line: &str) -> Option<&str> {
+/// `- @x` (`*`, `+` too), with the byte offset of its `@` in the line.
+fn reference_line(line: &str) -> Option<(usize, &str)> {
     let trimmed = line.trim();
     let item = ["- ", "* ", "+ ", "-\t", "*\t", "+\t"]
         .iter()
         .find_map(|bullet| trimmed.strip_prefix(bullet))
         .map_or(trimmed, str::trim_start);
     let target = item.strip_prefix('@')?;
-    (!target.is_empty() && !target.contains(char::is_whitespace)).then_some(target)
+    // `item` is a suffix of `trimmed`, which starts where `line`'s leading
+    // whitespace ends.
+    let at = (line.len() - line.trim_start().len()) + (trimmed.len() - item.len());
+    (!target.is_empty() && !target.contains(char::is_whitespace)).then_some((at, target))
 }
 
 fn is_word(ch: char) -> bool {
@@ -261,8 +266,8 @@ fn is_path_char(ch: char) -> bool {
 
 /// The `@<path>.md` tokens of a line of prose: an `@` not preceded by a
 /// word character, `@` or a backtick, followed by path characters up to the
-/// last `.md` that ends a word.
-fn reference_tokens(line: &str) -> Vec<String> {
+/// last `.md` that ends a word; each with the byte offset of its `@`.
+fn reference_tokens(line: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut previous: Option<char> = None;
     for (at, ch) in line.char_indices() {
@@ -284,7 +289,7 @@ fn reference_tokens(line: &str) -> Vec<String> {
             .filter(|end| *end > 3)
             .last();
         if let Some(end) = token {
-            out.push(run[..end].to_owned());
+            out.push((at, run[..end].to_owned()));
         }
     }
     out
@@ -308,12 +313,16 @@ pub(super) fn references(lines: &[Line<'_>]) -> Vec<RawRef> {
         }
         let masked = blanked(&code_masked, &blank);
         let targets = match reference_line(&masked) {
-            Some(target) => vec![target.to_owned()],
+            Some((at, target)) => vec![(at, target.to_owned())],
             None => reference_tokens(&masked),
         };
-        out.extend(targets.into_iter().map(|target| RawRef {
-            target,
-            line: index,
+        out.extend(targets.into_iter().map(|(at, target)| {
+            let start = line.span.start + at;
+            RawRef {
+                span: start..start + 1 + target.len(),
+                target,
+                line: index,
+            }
         }));
     }
     out
@@ -431,6 +440,15 @@ mod tests {
             .map(|r| r.line)
             .collect();
         assert_eq!(found, [0, 1]);
+    }
+
+    #[test]
+    fn a_reference_span_covers_its_at_sign_and_target() {
+        let body = "x\n  - @~/.instrukt/docs/a/policy/b.md\nsee `c` @docs/local/spec/x.md now\n";
+        for r in references(&lines(body)) {
+            assert_eq!(body[r.span.clone()], format!("@{}", r.target));
+        }
+        assert_eq!(references(&lines(body)).len(), 2);
     }
 
     #[test]
