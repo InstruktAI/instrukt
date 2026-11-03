@@ -37,8 +37,7 @@ changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
 - Every successful sync records the commit it published beside the project's
   checkout path under `~/.instrukt/state/publication/`. The runner consumes
   this existing state (`local/projects/instrukt/spec/domain/runner`).
-- Unless `--force` is supplied, when canonical main equals the published commit, sync changes nothing in
-  the home or the project and exits zero.
+- Unless `--force` is supplied, when canonical main equals the published commit, sync changes nothing in the home or the project, except removing leftovers a previous sync reported, and exits zero.
 - A sync that is refused or fails records no commit, so the next trigger
   tries again.
 - Concurrent syncs never interleave: every write to the home's publication

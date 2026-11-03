@@ -25,8 +25,10 @@ the structural graph, or the decision of who may author a use case.
    identity is its spec's identity plus its id.
 
 **Use-case id**
-:  The `UC-` token on a use case's definition line: a per-spec area code plus a
-   number. Assigned once, never renumbered, never reused.
+:  The `UC-` token on a use case's definition line, recognized as `UC-`, then a
+   letter or digit, then letters, digits or hyphens. By authoring convention it
+   is a per-spec area code plus a number. Assigned once, never renumbered, never
+   reused.
 
 **Definition line**
 :  The line that defines a use case: an ATX heading (levels 2–6) or a Gherkin
@@ -35,8 +37,8 @@ the structural graph, or the decision of who may author a use case.
 **Anonymous scenario**
 :  Gherkin with no use-case id: a heading section whose heading carries no id
    and whose body has a `When` line inside a fenced Gherkin block, or a
-   `Scenario:` line carrying no id that is not its use-case heading's single
-   scenario (which inherits that heading's id). Prose is never Gherkin. Not
+   `Scenario:` line carrying no id that is not the only `Scenario:` under its
+   use-case heading, named or not (the only one inherits that heading's id). Prose is never Gherkin. Not
    bindable; the id-assignment backlog.
 
 **Retired use case**
