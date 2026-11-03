@@ -1,9 +1,5 @@
 ---
 eval: true
-id: sdlc/policy/event-log-discipline
-type: policy
-domain: sdlc
-scope: global
 description: Keep immutable event history readable across code evolution while cursor-driven
   delivery drains safely.
 ---
