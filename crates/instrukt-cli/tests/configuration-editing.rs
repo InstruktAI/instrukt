@@ -305,3 +305,31 @@ fn existing_configuration_of_a_newer_schema_is_refused() {
     insta::assert_snapshot!("newer-schema", stderr(&env, &refused));
     assert_eq!(repo.read("instrukt.yaml"), layer);
 }
+
+// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+#[test]
+fn a_patched_on_or_off_setting_is_written_as_a_string_every_yaml_reader_keeps() {
+    let env = TestEnv::new();
+    let outside = env.path("");
+    env.run(&outside, ["config", "init", "--global"]).success();
+    let out = env
+        .run(&outside, ["config", "get", "--global", "--revision"])
+        .success();
+    let read = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+
+    env.run(
+        &outside,
+        [
+            "config",
+            "patch",
+            "--global",
+            "--revision",
+            read.trim(),
+            "--yaml",
+            "ticks: 'off'",
+        ],
+    )
+    .success();
+    let written = std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap();
+    insta::assert_snapshot!("patched-global-layer", written);
+}
