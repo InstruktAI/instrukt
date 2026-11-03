@@ -1,12 +1,23 @@
 ---
 source: crates/instrukt-cli/tests/github-record.rs
-expression: "redact(&format!(\"{limited}---\\n{still_limited}---\\n{accepted}\"))"
----
-created nested-lists (feature) with identity <id 1>
-reflection: pending: GitHub rate limited until <time>
+expression: "redact(&format!(\"{limited}---\\n{still_limited}---\\n{accepted}---\\n{}\",\nretained_artifacts(&project)))"
 ---
 wrote prd of nested-lists: <digest 1>
 reflection: pending: GitHub rate limited until <time>
 ---
 wrote prd of nested-lists: <digest 2>
+reflection: pending: GitHub rate limited until <time>
+---
+wrote log of nested-lists: <digest 3>
 reflection: reflected to GitHub
+---
+input
+  v1: Keep the depth of nested lists when parsing Markdown.
+  current: Keep the depth of nested lists when parsing Markdown.
+prd
+  v1: Lists keep their depth through parse and render.
+  v2: Lists keep their depth, and numbering restarts per level.
+  current: Lists keep their depth, and numbering restarts per level.
+log
+  v1: Started.
+  current: Started.

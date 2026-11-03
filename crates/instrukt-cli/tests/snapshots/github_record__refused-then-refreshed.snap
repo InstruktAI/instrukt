@@ -19,7 +19,7 @@ intent:
 reflection: reflected to GitHub
 issue: #1
 claim: not held
-hold: waiting for the renderer rewrite (manual, by Other Developer, <time>)
+hold: waiting for the renderer rewrite (manual, by Test Developer, <time>)
 artifacts:
   input (1 version)
     <digest 2> by Test Developer at <time>

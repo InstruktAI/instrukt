@@ -11,7 +11,7 @@ use super::_model::{TodoId, TodoRecord};
 use crate::evidence::{Actor, TodoStatus, artifact_names};
 
 /// The marker of the hidden record line.
-const RECORD_MARKER: &str = "<!-- instrukt:work-record:v1:";
+const RECORD_MARKER: &str = "<!-- instrukt:work-record:v2:";
 /// The marker naming a todo's identity in its issue body.
 const ISSUE_MARKER: &str = "<!-- instrukt:todo:";
 const COMMENT_CLOSE: &str = " -->";
@@ -108,11 +108,26 @@ pub(crate) fn issue_identity(body: &str) -> Option<TodoId> {
     })
 }
 
-/// The record comment of `record` (contents stripped).
-pub(crate) fn record_comment(record: &TodoRecord) -> Result<String, serde_json::Error> {
-    let payload = serde_json::to_string(&record.without_contents())?;
+/// One revision as GitHub carries it: the committed record, and the
+/// revision it was built on. Revisions are appended, never edited; the
+/// committed record is the chain of trusted envelopes each built on the
+/// one before it (see `_reflect::committed`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Envelope {
+    /// The revision this one replaces; 0 for the first.
+    pub base: u64,
+    pub record: TodoRecord,
+}
+
+/// The record comment of `record`, built on revision `base` (contents
+/// stripped: artifact content is published as native artifacts).
+pub(crate) fn record_comment(record: &TodoRecord, base: u64) -> Result<String, serde_json::Error> {
+    let payload = serde_json::to_string(&Envelope {
+        base,
+        record: record.without_contents(),
+    })?;
     let mut text = format!(
-        "[instrukt record · {} · rev {}]\n",
+        "[instrukt record · {} · rev {} on rev {base}]\n",
         record.slug, record.revision
     );
     for stamp in &record.stamps {
@@ -135,14 +150,21 @@ pub(crate) fn record_comment(record: &TodoRecord) -> Result<String, serde_json::
     Ok(text)
 }
 
-/// The record a comment carries: `None` when it is no record comment,
-/// `Some(Err)` when its record line does not parse.
-pub(crate) fn parse_record_comment(body: &str) -> Option<Result<TodoRecord, serde_json::Error>> {
+/// The envelope a comment carries: `None` when it is no record comment,
+/// `Some(Err)` when its record line does not parse. Content an envelope
+/// supplies is dropped: evidence content comes only from verified
+/// artifact versions.
+pub(crate) fn parse_record_comment(body: &str) -> Option<Result<Envelope, serde_json::Error>> {
     let line = body
         .lines()
         .find(|line| line.starts_with(RECORD_MARKER) && line.ends_with(COMMENT_CLOSE))?;
     let payload = &line[RECORD_MARKER.len()..line.len() - COMMENT_CLOSE.len()];
-    Some(serde_json::from_str(payload))
+    Some(
+        serde_json::from_str::<Envelope>(payload).map(|envelope| Envelope {
+            record: envelope.record.without_contents(),
+            ..envelope
+        }),
+    )
 }
 
 /// Keeps JSON inside an HTML comment: `<`, `>` and `&` as JSON escapes.
@@ -216,10 +238,32 @@ mod tests {
     #[test]
     fn a_record_comment_round_trips_even_with_markup_in_its_text() {
         let record = record();
-        let body = record_comment(&record).unwrap();
+        let body = record_comment(&record, 2).unwrap();
         let parsed = parse_record_comment(&body).unwrap().unwrap();
-        assert_eq!(parsed, record);
+        assert_eq!(parsed, Envelope { base: 2, record });
         assert!(parse_record_comment("a plain comment").is_none());
+    }
+
+    #[test]
+    fn content_an_envelope_supplies_is_never_read_as_evidence() {
+        let mut record = record();
+        let forged = crate::work::_model::Version {
+            digest: crate::work::_model::digest_of("real"),
+            writer: Actor::Person { name: "x".into() },
+            created: "2026-11-03T10:00:00Z".parse().unwrap(),
+            derived_from: Vec::new(),
+            remote: Some(1),
+            content: Some("forged".into()),
+        };
+        record.artifacts.push(crate::work::_model::Artifact {
+            name: crate::evidence::ArtifactName::new("prd"),
+            address: Some(1),
+            versions: vec![forged],
+        });
+        let payload = serde_json::to_string(&Envelope { base: 0, record }).unwrap();
+        let body = format!("{RECORD_MARKER}{payload}{COMMENT_CLOSE}");
+        let parsed = parse_record_comment(&body).unwrap().unwrap();
+        assert_eq!(parsed.record.artifacts[0].versions[0].content, None);
     }
 
     #[test]

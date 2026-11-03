@@ -368,7 +368,10 @@ impl<'w> Session<'w> {
         if reflection.conflicted {
             return ReflectionStatus::Conflicted;
         }
-        if !reflection.pending {
+        // Outstanding pull-request creation, reviews or closing are
+        // reflection still owed.
+        let pull_owed = _reflect::pull_request_owed(&self.items[index]);
+        if !reflection.pending && !pull_owed {
             return ReflectionStatus::Reflected;
         }
         ReflectionStatus::Pending(match &self.remote {
@@ -376,11 +379,17 @@ impl<'w> Session<'w> {
             Remote::Client {
                 down: Some(err), ..
             } => reason_of(err),
-            Remote::Client { down: None, .. } => PendingReason::Failed(
+            Remote::Client { down: None, .. } if reflection.pending => PendingReason::Failed(
                 reflection
                     .failure
                     .clone()
                     .unwrap_or_else(|| "not yet reflected".to_owned()),
+            ),
+            Remote::Client { down: None, .. } => PendingReason::Failed(
+                reflection
+                    .pull_outstanding
+                    .clone()
+                    .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
             ),
         })
     }

@@ -1,16 +1,25 @@
 //! Reflection of local items to GitHub and pull-through from it
-//! (`github-record`): conditional pulls, revision-checked writes,
-//! retries that reconcile against what GitHub already holds, and direct
-//! reads of work that is not a local item.
+//! (`github-record`): conditional pulls, revision chains that make a lost
+//! race visible, retries that recognize writes that already landed, and
+//! direct reads of work that is not a local item.
+//!
+//! **The revision chain.** GitHub's REST API honours no `If-Match`, so a
+//! record is never edited in place. Each revision is appended as a new
+//! comment carrying the revision it was built on (its `base`). The
+//! committed record is the chain of trusted envelopes, in comment order,
+//! each built on the head before it: of two writers building on the same
+//! revision, the first comment wins and the second is no successor.
+//! After appending, a writer reads the chain again; if its comment is not
+//! the head it lost the race and the item is marked conflicted, so two
+//! writers never both report success.
 
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 
-use super::_envelope::{self, TODO_LABEL};
+use super::_envelope::{self, Envelope, TODO_LABEL};
 use super::_github::{Fetched, GitHub, GitHubError};
-use super::_model::{TodoRecord, digest_of};
+use super::_model::{TodoId, TodoRecord, digest_of};
 use super::_store::{IssueRef, LocalItem, ReflectionState};
 use crate::evidence::{StampFact, TodoStatus};
 
@@ -38,63 +47,98 @@ pub(crate) enum PullFor {
     Change,
 }
 
-/// Pulls the item's record from GitHub with a conditional request. For a
-/// read, a newer revision is adopted when nothing local is pending; for a
+/// The committed record on an issue: the head of its revision chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Committed {
+    pub comment: u64,
+    pub record: TodoRecord,
+}
+
+/// The head of the revision chain of todo `id` among `comments`: trusted
+/// envelopes in comment order, each accepted only when built on the head
+/// before it.
+pub(crate) fn committed(comments: &[Value], id: &TodoId) -> Option<Committed> {
+    let mut ordered: Vec<(u64, Envelope)> = comments
+        .iter()
+        .filter_map(|comment| {
+            let number = comment["id"].as_u64()?;
+            match trusted_envelope(comment)? {
+                Ok(envelope) if &envelope.record.id == id => Some((number, envelope)),
+                _ => None,
+            }
+        })
+        .collect();
+    ordered.sort_by_key(|(number, _)| *number);
+    let mut head: Option<Committed> = None;
+    for (comment, envelope) in ordered {
+        let successor = match &head {
+            None => true,
+            Some(current) => {
+                envelope.base == current.record.revision
+                    && envelope.record.revision > current.record.revision
+            }
+        };
+        if successor {
+            head = Some(Committed {
+                comment,
+                record: envelope.record,
+            });
+        }
+    }
+    head
+}
+
+/// Whether two records hold the same committed state: a revision that
+/// already landed is recognized by its content, not by having seen the
+/// answer to the request that wrote it.
+fn same_record(a: &TodoRecord, b: &TodoRecord) -> bool {
+    a.without_contents() == b.without_contents()
+}
+
+/// Pulls the item's record from GitHub: a conditional read of its issue
+/// (a new revision comment moves it), then the head of its revision chain.
+/// For a read, a newer head is adopted when nothing local is pending; for a
 /// change it is reported as [`Pulled::Newer`] and nothing is adopted.
-/// Pending local changes meeting a newer revision mark the item conflicted.
+/// Pending local changes meeting a newer head mark the item conflicted.
 pub(crate) fn pull(
     gh: &GitHub,
     item: &mut LocalItem,
     purpose: PullFor,
 ) -> Result<Pulled, GitHubError> {
-    let (Some(issue), Some(comment)) = (item.reflection.issue, item.reflection.record_comment)
-    else {
+    let Some(issue) = item.reflection.issue else {
         return Ok(Pulled::Current);
     };
-    let fetched = match gh.get(
-        &format!("/issues/comments/{comment}"),
+    let etag = match gh.get(
+        &format!("/issues/{}", issue.number),
         item.reflection.etag.as_deref(),
     ) {
-        Ok(fetched) => fetched,
+        Ok(Fetched::NotModified) => return Ok(Pulled::Current),
+        Ok(Fetched::Fresh { etag, .. }) => etag,
         Err(GitHubError::NotFound { .. }) => {
-            // The record comment is gone; the next flush writes it again.
-            item.reflection.record_comment = None;
-            item.reflection.etag = None;
-            item.reflection.pending = true;
+            // The issue is gone; the next flush reflects the item again.
+            item.reflection = ReflectionState {
+                pending: true,
+                ..ReflectionState::default()
+            };
             return Ok(Pulled::Current);
         }
         Err(err) => return Err(err),
     };
-    let Fetched::Fresh { body, etag } = fetched else {
+    let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+    let Some(head) = committed(&comments, &item.record.id) else {
+        item.reflection.etag = etag;
         return Ok(Pulled::Current);
     };
-    let text = body["body"].as_str().unwrap_or_default();
-    let seen = body_digest(text);
-    if item.reflection.remote_body.as_deref() == Some(seen.as_str()) {
+    if Some(head.comment) == item.reflection.record_comment {
         item.reflection.etag = etag;
         return Ok(Pulled::Current);
     }
-    let Some(parsed) = trusted_record(&body) else {
-        if _envelope::parse_record_comment(text).is_some() {
-            // An envelope by an author without write access: never applied.
-            return Ok(Pulled::Current);
-        }
-        return Err(GitHubError::Decode {
-            path: format!("/issues/comments/{comment}"),
-            message: "the record comment carries no readable record".to_owned(),
-        });
-    };
-    let Ok(remote) = parsed else {
-        return Err(GitHubError::Decode {
-            path: format!("/issues/comments/{comment}"),
-            message: "the record comment carries no readable record".to_owned(),
-        });
-    };
-    if remote.id != item.record.id {
-        return Err(GitHubError::Decode {
-            path: format!("/issues/comments/{comment}"),
-            message: "the record comment names another todo".to_owned(),
-        });
+    if same_record(&head.record, &item.record) {
+        // This computer's own write, whose answer never arrived.
+        item.reflection.record_comment = Some(head.comment);
+        item.reflection.remote_revision = Some(head.record.revision);
+        item.reflection.etag = etag;
+        return Ok(Pulled::Current);
     }
     if item.reflection.pending {
         item.reflection.conflicted = true;
@@ -103,11 +147,11 @@ pub(crate) fn pull(
     if purpose == PullFor::Change {
         return Ok(Pulled::Newer);
     }
-    let record = with_contents(gh, issue.number, remote, &item.record)?;
+    let record = with_contents(gh, issue.number, head.record, &item.record)?;
     item.record = record;
-    item.reflection.etag = etag;
-    item.reflection.remote_body = Some(seen);
+    item.reflection.record_comment = Some(head.comment);
     item.reflection.remote_revision = Some(item.record.revision);
+    item.reflection.etag = etag;
     item.reflection.conflicted = false;
     Ok(Pulled::Adopted)
 }
@@ -126,60 +170,78 @@ pub(crate) fn refresh(gh: &GitHub, item: &mut LocalItem) -> Result<(), GitHubErr
             }
         },
     };
-    let Some((comment, text)) = find_record_comment(gh, issue.number, &item.record)? else {
+    let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+    let Some(head) = committed(&comments, &item.record.id) else {
         item.reflection.issue = Some(issue);
         item.reflection.conflicted = false;
         return Ok(());
     };
-    let Some(Ok(remote)) = _envelope::parse_record_comment(&text) else {
-        return Err(GitHubError::Decode {
-            path: format!("/issues/comments/{comment}"),
-            message: "the record comment carries no readable record".to_owned(),
-        });
-    };
-    let record = with_contents(gh, issue.number, remote, &item.record)?;
+    let record = with_contents(gh, issue.number, head.record, &item.record)?;
     let kept = std::mem::take(&mut item.reflection);
     item.record = record;
     item.reflection = ReflectionState {
         issue: Some(issue),
-        record_comment: Some(comment),
-        etag: None,
+        record_comment: Some(head.comment),
         remote_revision: Some(item.record.revision),
-        remote_body: Some(body_digest(&text)),
-        pending: false,
-        conflicted: false,
         pull: kept.pull,
         pull_closed: kept.pull_closed,
         reviews_reflected: kept.reviews_reflected,
-        failure: None,
+        commands_seen: kept.commands_seen,
+        ..ReflectionState::default()
     };
     Ok(())
 }
 
 /// Writes the item's pending changes to GitHub: its issue, any artifact
-/// versions not yet uploaded, then the record revision referencing them,
-/// then the issue's visible fields and the linked pull request. A newer
-/// remote revision marks the item conflicted and writes nothing more.
+/// versions not yet uploaded, then the next revision comment built on the
+/// head this computer knows, verified by reading the chain back; then the
+/// issue's visible fields and the linked pull request. A head this
+/// computer has not seen, or a lost race, marks the item conflicted.
 pub(crate) fn flush(gh: &GitHub, item: &mut LocalItem, base: &str) -> Result<(), GitHubError> {
     if item.reflection.conflicted {
         return Ok(());
     }
     if item.reflection.pending {
         let issue = ensure_issue(gh, item)?;
-        if !remote_is_ours(gh, item, issue)? {
-            item.reflection.conflicted = true;
-            tracing::warn!(
-                event = "work_reflection_conflict",
-                todo = %item.record.slug,
-                issue = issue.number,
-                "a newer remote revision met a pending local change"
-            );
-            return Ok(());
+        let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+        let head = committed(&comments, &item.record.id);
+        if let Some(head) = &head
+            && Some(head.comment) != item.reflection.record_comment
+        {
+            if same_record(&head.record, &item.record) {
+                // A revision this computer wrote landed though its answer
+                // was lost.
+                item.reflection.record_comment = Some(head.comment);
+                item.reflection.remote_revision = Some(head.record.revision);
+            } else {
+                conflict(
+                    item,
+                    issue,
+                    "a newer remote revision met a pending local change",
+                );
+                return Ok(());
+            }
         }
-        upload_artifacts(gh, item, issue)?;
-        write_record(gh, item, issue)?;
+        let landed =
+            head.is_some() && item.reflection.remote_revision == Some(item.record.revision);
+        if !landed {
+            upload_artifacts(gh, item, issue)?;
+            let posted = write_revision(gh, item, issue)?;
+            let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+            match committed(&comments, &item.record.id) {
+                Some(head) if head.comment == posted => {
+                    item.reflection.record_comment = Some(posted);
+                    item.reflection.remote_revision = Some(item.record.revision);
+                }
+                _ => {
+                    conflict(item, issue, "another computer committed a revision first");
+                    return Ok(());
+                }
+            }
+        }
         let fields = _envelope::issue(&item.record);
         gh.patch(&format!("/issues/{}", issue.number), &fields.update_json())?;
+        item.reflection.etag = None;
         item.reflection.pending = false;
         item.reflection.failure = None;
         tracing::debug!(
@@ -198,8 +260,20 @@ pub(crate) fn flush(gh: &GitHub, item: &mut LocalItem, base: &str) -> Result<(),
     Ok(())
 }
 
+fn conflict(item: &mut LocalItem, issue: IssueRef, why: &'static str) {
+    item.reflection.conflicted = true;
+    tracing::warn!(
+        event = "work_reflection_conflict",
+        todo = %item.record.slug,
+        issue = issue.number,
+        reason = why,
+        "the local change is not reflected; the item is conflicted"
+    );
+}
+
 /// Whether the linked pull request still owes creation, a review or its
-/// closing.
+/// closing (`github-record`: "If the branch is not available on GitHub,
+/// creation remains pending").
 pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
     let record = &item.record;
     if !_envelope::is_repository_work(record.kind)
@@ -209,8 +283,7 @@ pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
         return false;
     }
     match item.reflection.pull {
-        // A delivered todo whose branch never reached GitHub opens none.
-        None => record.delivery.is_none(),
+        None => true,
         Some(_) => {
             build_verdicts(record).len() > item.reflection.reviews_reflected
                 || (record.delivery.is_some() && !item.reflection.pull_closed)
@@ -218,9 +291,9 @@ pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
     }
 }
 
-/// Every reflected todo of the repository, read directly (issues and
-/// their record comments), oldest first. `open_only` limits the read to
-/// addressable work.
+/// Every reflected todo of the repository, read directly (issues and the
+/// heads of their revision chains), oldest first. `open_only` limits the
+/// read to addressable work.
 pub(crate) fn remote_records(
     gh: &GitHub,
     open_only: bool,
@@ -240,16 +313,9 @@ pub(crate) fn remote_records(
             continue;
         };
         let comments = gh.list(&format!("/issues/{number}/comments"))?;
-        let record = comments
-            .iter()
-            .rev()
-            .find_map(|comment| match trusted_record(comment) {
-                Some(Ok(record)) if record.id == id => Some(record),
-                _ => None,
-            });
-        if let Some(record) = record {
+        if let Some(head) = committed(&comments, &id) {
             records.push((
-                record,
+                head.record,
                 IssueRef {
                     number,
                     id: rest_id,
@@ -261,29 +327,29 @@ pub(crate) fn remote_records(
 }
 
 /// A remote record as a new local item, with the artifact contents GitHub
-/// still serves.
+/// still serves and verifies.
 pub(crate) fn localize(
     gh: &GitHub,
     record: TodoRecord,
     issue: IssueRef,
 ) -> Result<LocalItem, GitHubError> {
-    let Some((comment, text)) = find_record_comment(gh, issue.number, &record)? else {
+    let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+    let Some(head) = committed(&comments, &record.id) else {
         return Err(GitHubError::Decode {
             path: format!("/issues/{}/comments", issue.number),
-            message: "the issue carries no record comment".to_owned(),
+            message: "the issue carries no committed record".to_owned(),
         });
     };
     let empty = TodoRecord {
         artifacts: Vec::new(),
-        ..record.clone()
+        ..head.record.clone()
     };
-    let record = with_contents(gh, issue.number, record, &empty)?;
+    let record = with_contents(gh, issue.number, head.record, &empty)?;
     Ok(LocalItem {
         reflection: ReflectionState {
             issue: Some(issue),
-            record_comment: Some(comment),
+            record_comment: Some(head.comment),
             remote_revision: Some(record.revision),
-            remote_body: Some(body_digest(&text)),
             ..ReflectionState::default()
         },
         record,
@@ -327,93 +393,48 @@ fn issue_ref(value: &Value, path: &str) -> Result<IssueRef, GitHubError> {
     }
 }
 
-/// The comment carrying `record`'s envelope on issue `number`, newest
-/// first, with its body.
-fn find_record_comment(
-    gh: &GitHub,
-    number: u64,
-    record: &TodoRecord,
-) -> Result<Option<(u64, String)>, GitHubError> {
-    let comments = gh.list(&format!("/issues/{number}/comments"))?;
-    Ok(comments
-        .iter()
-        .rev()
-        .find_map(|comment| match trusted_record(comment) {
-            Some(Ok(found)) if found.id == record.id => Some((
-                comment["id"].as_u64()?,
-                comment["body"].as_str()?.to_owned(),
-            )),
-            _ => None,
-        }))
+/// `author_association` values of authors who can write to the
+/// repository: only their envelopes and commands count.
+pub(crate) const TRUSTED_ASSOCIATIONS: [&str; 3] = ["OWNER", "MEMBER", "COLLABORATOR"];
+
+/// Whether the comment's author can write to the repository.
+pub(crate) fn has_write_access(comment: &Value) -> bool {
+    TRUSTED_ASSOCIATIONS.contains(&comment["author_association"].as_str().unwrap_or_default())
 }
 
-/// `author_association` values of authors who can write to the
-/// repository: only their record envelopes are records.
-const TRUSTED_ASSOCIATIONS: [&str; 3] = ["OWNER", "MEMBER", "COLLABORATOR"];
-
-/// The record envelope a comment carries, when its author can write to the
+/// The envelope a comment carries, when its author can write to the
 /// repository. An envelope by anyone else (anyone can comment on a public
 /// repository) is reported and never applied.
-fn trusted_record(comment: &Value) -> Option<Result<TodoRecord, serde_json::Error>> {
+fn trusted_envelope(comment: &Value) -> Option<Result<Envelope, serde_json::Error>> {
     let parsed = _envelope::parse_record_comment(comment["body"].as_str()?)?;
-    let association = comment["author_association"].as_str().unwrap_or_default();
-    if TRUSTED_ASSOCIATIONS.contains(&association) {
+    if has_write_access(comment) {
         return Some(parsed);
     }
     tracing::warn!(
         event = "work_untrusted_record_skipped",
         comment = comment["id"].as_u64().unwrap_or_default(),
         author = comment["user"]["login"].as_str().unwrap_or_default(),
-        association,
+        association = comment["author_association"].as_str().unwrap_or_default(),
         "a record envelope by an author without write access is ignored"
     );
     None
 }
 
-/// Whether GitHub's record comment is the one this computer last wrote or
-/// read, so replacing it overwrites nothing newer.
-fn remote_is_ours(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Result<bool, GitHubError> {
-    if item.reflection.record_comment.is_none() {
-        let Some((comment, text)) = find_record_comment(gh, issue.number, &item.record)? else {
-            return Ok(true);
-        };
-        // A record this computer wrote without learning the answer: ours
-        // unless it is ahead of the local record.
-        item.reflection.record_comment = Some(comment);
-        let ahead = matches!(
-            _envelope::parse_record_comment(&text),
-            Some(Ok(remote)) if remote.revision > item.record.revision
-        );
-        if !ahead {
-            item.reflection.remote_body = Some(body_digest(&text));
-        }
-        return Ok(!ahead);
-    }
-    let Some(comment) = item.reflection.record_comment else {
-        return Ok(true);
-    };
-    match gh.get(
-        &format!("/issues/comments/{comment}"),
-        item.reflection.etag.as_deref(),
-    ) {
-        Ok(Fetched::NotModified) => Ok(true),
-        Ok(Fetched::Fresh { body, etag }) => {
-            let seen = body_digest(body["body"].as_str().unwrap_or_default());
-            if item.reflection.remote_body.as_deref() == Some(seen.as_str()) {
-                item.reflection.etag = etag;
-                Ok(true)
-            } else {
-                // Only a trusted envelope is a newer revision.
-                Ok(trusted_record(&body).is_none())
-            }
-        }
-        Err(GitHubError::NotFound { .. }) => {
-            item.reflection.record_comment = None;
-            item.reflection.etag = None;
-            Ok(true)
-        }
-        Err(err) => Err(err),
-    }
+/// Appends the item's revision, built on the confirmed remote revision;
+/// returns the new comment's id.
+fn write_revision(gh: &GitHub, item: &LocalItem, issue: IssueRef) -> Result<u64, GitHubError> {
+    let base = item.reflection.remote_revision.unwrap_or(0);
+    let body =
+        _envelope::record_comment(&item.record, base).map_err(|err| GitHubError::Decode {
+            path: "record".to_owned(),
+            message: err.to_string(),
+        })?;
+    let path = format!("/issues/{}/comments", issue.number);
+    let created = gh.post(&path, &json!({ "body": body }))?;
+    created["id"].as_u64().ok_or(GitHubError::Decode {
+        path,
+        message: "a created comment without an id".to_owned(),
+    })
 }
 
 /// Uploads every artifact version not yet on GitHub, then learns the
@@ -529,27 +550,6 @@ fn remote_versions(
     Ok(versions)
 }
 
-fn write_record(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Result<(), GitHubError> {
-    let body = _envelope::record_comment(&item.record).map_err(|err| GitHubError::Decode {
-        path: "record".to_owned(),
-        message: err.to_string(),
-    })?;
-    let payload = json!({ "body": body });
-    match item.reflection.record_comment {
-        Some(comment) => {
-            gh.patch(&format!("/issues/comments/{comment}"), &payload)?;
-        }
-        None => {
-            let created = gh.post(&format!("/issues/{}/comments", issue.number), &payload)?;
-            item.reflection.record_comment = created["id"].as_u64();
-        }
-    }
-    item.reflection.etag = None;
-    item.reflection.remote_body = Some(body_digest(&body));
-    item.reflection.remote_revision = Some(item.record.revision);
-    Ok(())
-}
-
 fn reflect_pull_request(
     gh: &GitHub,
     item: &mut LocalItem,
@@ -568,8 +568,12 @@ fn reflect_pull_request(
         } else {
             match gh.read(&format!("/branches/{}", encode(&branch))) {
                 Ok(_) => {}
-                // Not on GitHub yet: creation stays pending.
-                Err(GitHubError::NotFound { .. }) => return Ok(()),
+                Err(GitHubError::NotFound { .. }) => {
+                    item.reflection.pull_outstanding = Some(format!(
+                        "the pull request waits for branch `{branch}` on GitHub"
+                    ));
+                    return Ok(());
+                }
                 Err(err) => return Err(err),
             }
             let created = gh.post(
@@ -583,7 +587,15 @@ fn reflect_pull_request(
             );
             match created {
                 Ok(pull) => item.reflection.pull = pull["number"].as_u64(),
-                Err(GitHubError::Status { status: 422, .. }) => return Ok(()),
+                Err(GitHubError::Status {
+                    status: 422,
+                    message,
+                    ..
+                }) => {
+                    item.reflection.pull_outstanding =
+                        Some(format!("GitHub refused the pull request: {message}"));
+                    return Ok(());
+                }
                 Err(err) => return Err(err),
             }
         }
@@ -591,6 +603,7 @@ fn reflect_pull_request(
     let Some(pull) = item.reflection.pull else {
         return Ok(());
     };
+    item.reflection.pull_outstanding = Some(format!("pull request #{pull} is not up to date"));
     let verdicts = build_verdicts(&item.record);
     for (verdict, commit, report) in verdicts.iter().skip(item.reflection.reviews_reflected) {
         gh.post(
@@ -612,6 +625,7 @@ fn reflect_pull_request(
         )?;
         item.reflection.pull_closed = true;
     }
+    item.reflection.pull_outstanding = None;
     Ok(())
 }
 
@@ -649,20 +663,24 @@ fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String)> {
         .collect()
 }
 
-/// `remote` with the artifact contents `local` holds for the same digests,
-/// and the rest read from GitHub's artifact versions and verified against
-/// their recorded digests. A version GitHub no longer serves, or serves
-/// with other content, stays without content.
+/// `remote` (without content) with every version's content verified
+/// against its recorded digest: from `local` where this computer holds
+/// content with that digest, otherwise from GitHub's artifact versions. A
+/// version GitHub no longer serves, or serves with other content, stays
+/// without content: unverified content is never evidence.
 fn with_contents(
     gh: &GitHub,
     number: u64,
-    mut remote: TodoRecord,
+    remote: TodoRecord,
     local: &TodoRecord,
 ) -> Result<TodoRecord, GitHubError> {
+    let mut remote = remote.without_contents();
     let mut known: BTreeMap<String, String> = BTreeMap::new();
     for artifact in &local.artifacts {
         for version in &artifact.versions {
-            if let Some(content) = &version.content {
+            if let Some(content) = &version.content
+                && digest_of(content) == version.digest
+            {
                 known.insert(version.digest.as_str().to_owned(), content.clone());
             }
         }
@@ -731,6 +749,69 @@ fn encode(text: &str) -> String {
     out
 }
 
-fn body_digest(text: &str) -> String {
-    hex::encode(Sha256::digest(text.as_bytes()))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::Actor;
+    use instrukt_core::ids::{ProjectSlug, TodoSlug};
+    use instrukt_runner::interfaces::{CatchUp, TodoKind};
+
+    fn record(revision: u64, slug: &str) -> TodoRecord {
+        TodoRecord {
+            schema: 1,
+            id: TodoId::parse(&"cd".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse(slug).unwrap(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: jiff::Timestamp::UNIX_EPOCH,
+            created_by: Actor::Person { name: "dev".into() },
+            human_involved: None,
+            revision,
+            artifacts: Vec::new(),
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: CatchUp::Once,
+            agent: None,
+            branch: None,
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    fn comment(id: u64, base: u64, record: &TodoRecord) -> Value {
+        json!({
+            "id": id,
+            "body": _envelope::record_comment(record, base).unwrap(),
+            "author_association": "COLLABORATOR",
+        })
+    }
+
+    #[test]
+    fn of_two_revisions_built_on_the_same_head_the_first_is_committed() {
+        let first = record(1, "depth");
+        let mine = record(2, "mine");
+        let theirs = record(2, "theirs");
+        let comments = [
+            comment(10, 0, &first),
+            comment(11, 1, &theirs),
+            comment(12, 1, &mine),
+        ];
+        let head = committed(&comments, &first.id).unwrap();
+        assert_eq!((head.comment, head.record), (11, theirs));
+    }
+
+    #[test]
+    fn a_revision_built_on_the_head_extends_the_chain() {
+        let first = record(1, "depth");
+        let second = record(4, "depth");
+        let comments = [comment(10, 0, &first), comment(11, 1, &second)];
+        assert_eq!(committed(&comments, &first.id).unwrap().comment, 11);
+    }
 }

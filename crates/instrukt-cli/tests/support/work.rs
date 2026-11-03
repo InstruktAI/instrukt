@@ -35,40 +35,17 @@ impl Project {
     /// A project on a machine whose runtime mapping hosts agent sessions
     /// identified by `session_env`.
     pub fn with_runtime(session_env: Option<&str>) -> Self {
-        let mut env = TestEnv::new();
         let github = FakeGitHub::start();
         github.add_repo(REPOSITORY);
-        let mut global = format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {}\n",
-            github.url()
-        );
-        if let Some(variable) = session_env {
-            global.push_str(&format!(
-                "runtimes:
-  - name: agent-cli
-    agent: claude
-    session_id_env: {variable}
-    start: agent-cli start
-    send: agent-cli send {{runtime.session_id}}
-    alive: agent-cli alive {{runtime.session_id}}
-    conversation: agent-cli show {{runtime.session_id}}
-"
-            ));
-        }
-        let path = env.instrukt_home().join("instrukt.yaml");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, global).unwrap();
-        env.set_env("GITHUB_TOKEN", "test-token");
-        let repo = env.git_repo("demo");
-        repo.write(
-            "instrukt.yaml",
-            &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\n"
-            ),
-        );
-        repo.write("README.md", "# demo\n");
-        repo.commit("the developer's project");
+        let (env, repo) = machine(&github.url(), session_env);
         Self { env, github, repo }
+    }
+
+    /// Another computer of the same developer team: its own home and
+    /// checkout of the project, reflecting to the same GitHub.
+    pub fn other_computer(&self) -> Computer {
+        let (env, repo) = machine(&self.github.url(), None);
+        Computer { env, repo }
     }
 
     /// Runs `instrukt todo <args>` in the repository.
@@ -77,11 +54,7 @@ impl Project {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.env
-            .instrukt(self.repo.path())
-            .arg("todo")
-            .args(args)
-            .assert()
+        todo(&self.env, &self.repo, args)
     }
 
     /// Runs a todo command that must succeed; returns its stdout.
@@ -97,6 +70,74 @@ impl Project {
     pub fn create(&self, slug: &str, kind: &str, intent: &str) -> String {
         self.ok(["create", slug, intent, "--kind", kind, "--approved"])
     }
+}
+
+/// A second computer working on the same project.
+pub struct Computer {
+    pub env: TestEnv,
+    pub repo: Repo,
+}
+
+impl Computer {
+    pub fn todo<I, S>(&self, args: I) -> Assert
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        todo(&self.env, &self.repo, args)
+    }
+
+    pub fn ok<I, S>(&self, args: I) -> String
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        stdout(&self.todo(args).success())
+    }
+}
+
+fn todo<I, S>(env: &TestEnv, repo: &Repo, args: I) -> Assert
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    env.instrukt(repo.path()).arg("todo").args(args).assert()
+}
+
+/// A computer: a temporary home whose global layer points at the GitHub
+/// API `api_url` (with `session_env` naming an agent runtime's session
+/// variable, if given), a token, and the project's checkout.
+fn machine(api_url: &str, session_env: Option<&str>) -> (TestEnv, Repo) {
+    let mut env = TestEnv::new();
+    let mut global =
+        format!("schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {api_url}\n");
+    if let Some(variable) = session_env {
+        global.push_str(&format!(
+            "runtimes:
+  - name: agent-cli
+    agent: claude
+    session_id_env: {variable}
+    start: agent-cli start
+    send: agent-cli send {{runtime.session_id}}
+    alive: agent-cli alive {{runtime.session_id}}
+    conversation: agent-cli show {{runtime.session_id}}
+"
+        ));
+    }
+    let path = env.instrukt_home().join("instrukt.yaml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, global).unwrap();
+    env.set_env("GITHUB_TOKEN", "test-token");
+    let repo = env.git_repo("demo");
+    repo.write(
+            "instrukt.yaml",
+            &format!(
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\n"
+            ),
+        );
+    repo.write("README.md", "# demo\n");
+    repo.commit("the developer's project");
+    (env, repo)
 }
 
 pub fn stdout(assert: &Assert) -> String {

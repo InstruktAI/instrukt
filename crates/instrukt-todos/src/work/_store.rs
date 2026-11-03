@@ -41,18 +41,24 @@ pub(crate) struct ReflectionState {
     /// The issue's number and REST id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<IssueRef>,
-    /// The comment carrying the record envelope.
+    /// The comment carrying the committed revision this computer last
+    /// wrote or read: the head of the issue's revision chain then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_comment: Option<u64>,
-    /// The `ETag` of the record comment's last read, for conditional pulls.
+    /// The issue's `ETag` at the last read, for conditional pulls: a new
+    /// revision comment moves it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
     /// The confirmed remote revision: the record revision GitHub holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_revision: Option<u64>,
-    /// The digest of the record comment body last written or read.
+    /// Why the linked pull request's creation, reviews or closing are still
+    /// outstanding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_body: Option<String>,
+    pub pull_outstanding: Option<String>,
+    /// Comment ids of inbound `/instrukt` commands already answered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands_seen: Vec<u64>,
     /// Local changes not yet reflected.
     #[serde(default)]
     pub pending: bool,
