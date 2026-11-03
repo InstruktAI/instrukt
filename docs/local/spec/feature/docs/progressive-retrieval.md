@@ -73,6 +73,8 @@ own-repository restriction does not restrict these indexed local-file reads.
 ### Closure
 
 `--closure` takes exactly one id, a delivered procedure, and no `--target`.
+A closure request naming several ids, or an id that is not a procedure, is
+refused with an error saying a closure is read for exactly one procedure.
 It renders the procedure, every transitive required read once, and every
 domain bundle those reads name, listing the included ids in its header. For a
 procedure carrying root frontmatter (`role`, `subscriptions`,
@@ -144,6 +146,8 @@ When it reads that procedure as a closure
 Then it receives the procedure, each of its transitive required reads once, and the domain baselines they name, in one read
 But when one of those required reads is still pending or cannot be read
 Then the read is refused and names the required read that blocked it
+But when it asks for a closure of several items at once, or of something that is not a procedure
+Then the read is refused and says a closure is read for exactly one procedure
 ```
 
 #### UC-DR3: An agent reads instructions that carry values from its own session
