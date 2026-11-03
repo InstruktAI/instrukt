@@ -885,9 +885,11 @@ fn behind_warning(home: &Home, caller: &Caller) -> Result<Option<String>, DocsEr
     let Some(record) = PublishedRecord::load(home, project)? else {
         return Ok(None);
     };
+    let branch = git::default_branch(root, "origin")?;
+    let reference = format!("refs/heads/{branch}");
     let main = git::run(
         root,
-        ["for-each-ref", "--format=%(objectname)", "refs/heads/main"],
+        ["for-each-ref", "--format=%(objectname)", reference.as_str()],
     )?;
     if main.is_empty() || main == record.commit.as_str() {
         return Ok(None);

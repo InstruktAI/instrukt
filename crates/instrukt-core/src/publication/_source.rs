@@ -67,34 +67,10 @@ fn primary_worktree(worktree: &Path) -> Result<PathBuf, PublicationError> {
 }
 
 /// The default branch and the commit it stands at in the primary worktree.
-/// The branch is the remote's default (`origin/HEAD`); without one, git's
-/// configured default (`init.defaultBranch`); without that, the branch the
-/// primary worktree has checked out.
+/// The branch is `git::default_branch` through `origin`, the one rule for
+/// "main" every context shares.
 pub(super) fn canonical_main(primary: &Path) -> Result<(String, CommitSha), PublicationError> {
-    let remote_head = git::run(
-        primary,
-        [
-            "for-each-ref",
-            "--format=%(symref)",
-            "refs/remotes/origin/HEAD",
-        ],
-    )?;
-    let branch = match remote_head.trim().strip_prefix("refs/remotes/origin/") {
-        Some(branch) if !branch.is_empty() => branch.to_owned(),
-        _ => {
-            let configured = git::run(
-                primary,
-                ["config", "--default", "", "--get", "init.defaultBranch"],
-            )?;
-            if configured.trim().is_empty() {
-                git::run(primary, ["branch", "--show-current"])?
-                    .trim()
-                    .to_owned()
-            } else {
-                configured.trim().to_owned()
-            }
-        }
-    };
+    let branch = git::default_branch(primary, "origin")?;
     if branch.is_empty() {
         return Err(PublicationError::NoDefaultBranch {
             dir: primary.to_path_buf(),

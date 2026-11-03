@@ -61,19 +61,9 @@ pub(crate) fn hooks_dir(root: &Path) -> Result<HooksDir, RepositoryError> {
     })
 }
 
-/// The default branch of `remote`: the branch its remote-tracking `HEAD`
-/// names, else `init.defaultBranch`, else `main`.
+/// The default branch of `remote` (`git::default_branch`).
 pub(crate) fn default_branch(root: &Path, remote: &str) -> Result<String, RepositoryError> {
-    let remote_head = format!("refs/remotes/{remote}/HEAD");
-    let target = git::run(
-        root,
-        ["for-each-ref", "--format=%(symref)", remote_head.as_str()],
-    )?;
-    let prefix = format!("refs/remotes/{remote}/");
-    if let Some(branch) = target.trim().strip_prefix(&prefix) {
-        return Ok(branch.to_owned());
-    }
-    Ok(config(root, "init.defaultBranch")?.unwrap_or_else(|| "main".to_owned()))
+    Ok(git::default_branch(root, remote)?)
 }
 
 /// The branch checked out in `root`; `None` when `HEAD` is detached.

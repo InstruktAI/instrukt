@@ -174,6 +174,39 @@ pub fn strip_repository_env(command: &mut Command) -> &mut Command {
     command
 }
 
+/// The default branch when neither the remote nor git's configuration names
+/// one.
+pub const FALLBACK_DEFAULT_BRANCH: &str = "main";
+
+/// A repository's default branch as seen through `remote`: the branch the
+/// remote-tracking `refs/remotes/<remote>/HEAD` names, else the configured
+/// `init.defaultBranch`, else `main`. This is the one rule every context
+/// uses for "main" (publication's canonical main, docs' behind-main
+/// warning, repository's hook routing); never the checked-out branch.
+pub fn default_branch(dir: &Path, remote: &str) -> Result<String, GitError> {
+    let remote_head = format!("refs/remotes/{remote}/HEAD");
+    let target = run(
+        dir,
+        ["for-each-ref", "--format=%(symref)", remote_head.as_str()],
+    )?;
+    let prefix = format!("refs/remotes/{remote}/");
+    if let Some(branch) = target.trim().strip_prefix(prefix.as_str())
+        && !branch.is_empty()
+    {
+        return Ok(branch.to_owned());
+    }
+    let configured = run(
+        dir,
+        ["config", "--default", "", "--get", "init.defaultBranch"],
+    )?;
+    let configured = configured.trim();
+    Ok(if configured.is_empty() {
+        FALLBACK_DEFAULT_BRANCH.to_owned()
+    } else {
+        configured.to_owned()
+    })
+}
+
 fn failed(dir: &Path, args: String, output: &Output) -> GitError {
     GitError::Failed {
         dir: dir.to_path_buf(),
@@ -238,6 +271,63 @@ mod tests {
             ["merge-base", "--is-ancestor", "no-such-rev", "HEAD"],
         );
         assert!(matches!(err, Err(GitError::Failed { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn the_default_branch_follows_the_remote_then_configuration_then_the_fallback() {
+        let dir = repo();
+        let path = dir.path();
+        run(path, ["config", "--unset-all", "init.defaultBranch"]).ok();
+        let unconfigured = run(
+            path,
+            ["config", "--default", "", "--get", "init.defaultBranch"],
+        )
+        .unwrap();
+        if unconfigured.is_empty() {
+            assert_eq!(
+                default_branch(path, "origin").unwrap(),
+                FALLBACK_DEFAULT_BRANCH
+            );
+        }
+        run(path, ["config", "init.defaultBranch", "trunk"]).unwrap();
+        let configured = run(path, ["config", "--get", "init.defaultBranch"]).unwrap();
+        assert_eq!(default_branch(path, "origin").unwrap(), configured);
+
+        run(
+            path,
+            [
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.test",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "x",
+            ],
+        )
+        .unwrap();
+        let head = run(path, ["rev-parse", "HEAD"]).unwrap();
+        run(path, ["update-ref", "refs/remotes/origin/release", &head]).unwrap();
+        run(
+            path,
+            [
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/release",
+            ],
+        )
+        .unwrap();
+        let symref = run(
+            path,
+            ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        )
+        .unwrap();
+        assert_eq!(
+            Some(default_branch(path, "origin").unwrap().as_str()),
+            symref.strip_prefix("origin/")
+        );
     }
 
     #[test]
