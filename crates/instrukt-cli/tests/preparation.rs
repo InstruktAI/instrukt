@@ -100,6 +100,25 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
     );
     steps.push(crew.next("prepare", slug));
 
+    // That judgment settled the evidence it assessed, not later code:
+    // another change to the README owes drift analysis again.
+    std::fs::write(&readme, "# demo\n\nLists nest, and quotes too.\n").unwrap();
+    crew.project.repo.commit("document quoted nesting");
+    crew.project
+        .env
+        .git(crew.root(), ["push", "--quiet", "origin", "main"]);
+    steps.push(crew.next("prepare", slug));
+    crew.stamp(
+        slug,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "the README still only documents nesting",
+        ],
+    );
+    steps.push(crew.next("prepare", slug));
+
     // The developer refines the intent: the PRD and plan derived from the
     // earlier input are drift evidence, analyzed before release.
     crew.write(
