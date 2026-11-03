@@ -107,6 +107,17 @@ publication readable and records no commit. Compilation that cannot resolve a
 required read, or leaves an `@` reference unexpanded, fails the sync and
 names the file and the reference.
 
+A path the project's repository controls (a compiled output's location, or a
+directory publication writes into) that is a symbolic link refuses the sync
+before anything is written; the link's target, the previous publication and
+the published commit are untouched. Files in the user's own agent-CLI
+directories are written through the user's links, because the repository
+cannot create those.
+
+Once the new publication is in place and its commit recorded, failing to
+remove the replaced publication's leftover copy does not fail the sync: the
+sync reports the leftover path and succeeds, and a later sync removes it.
+
 Listing and reading the published corpus and index belong to
 `local/projects/instrukt/spec/feature/docs/progressive-retrieval`.
 
@@ -168,14 +179,40 @@ And the previously published documentation and index are unchanged
 And the next publication of the project tries that commit again
 ```
 
-#### UC-PUB6: A failing command in compiled instructions stops publication
+#### UC-PUB6: Compilation that cannot complete stops publication
 
 ```gherkin
-Given a developer's project whose compiled agent instructions run a command when they are published
-And that command fails
-When publication runs for the project
+Given a developer's project whose documentation is published
+When its compiled agent instructions run a command at publication and that command fails
+And publication runs for the project
 Then publication fails and names the file and the command
 And the previously published documentation is unchanged
+When its documentation passes validation but a compiled bundle would keep an unresolved reference
+And publication runs for the project
+Then publication fails and names the bundle and the reference
+And the previously published documentation is unchanged
+```
+
+#### UC-PUB7: A committed link cannot make publication write outside the project
+
+```gherkin
+Given a developer's project whose documentation is published
+When a commit replaces a location publication writes with a link to a file elsewhere
+And publication runs for the project
+Then publication is refused and names that location
+And the file the link points to is unchanged
+And the previously published documentation is unchanged
+```
+
+#### UC-PUB8: A leftover that cannot be removed does not undo a publication
+
+```gherkin
+Given a developer's project with new documentation committed to main
+And the copy it replaces cannot be removed
+When publication runs for the project
+Then the new documentation is published and the developer is told which leftover remains
+When the leftover can be removed again and publication runs
+Then the leftover is gone
 ```
 
 ## Known caveats
