@@ -40,6 +40,10 @@ Shared guidance.
 computed-at-publish
 ```
 
+Written as ``@docs/local/policy/house.md`` it is quoted.
+
+<!-- @docs/local/policy/house.md stays a comment -->
+
 ---
 
 ## Project baseline index — load via `instrukt docs get <id>` when relevant

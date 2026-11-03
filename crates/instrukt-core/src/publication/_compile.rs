@@ -140,6 +140,7 @@ impl<'a> Compiler<'a> {
             text = format!("{}{SEPARATOR}{listed}\n", text.trim_end());
         }
         let text = finish(&text);
+        self_contained(&file, &text)?;
         self.compiling.remove(domain);
         self.bundles.insert(domain.clone(), text.clone());
         Ok(text)
@@ -579,10 +580,10 @@ fn finish(text: &str) -> String {
     }
 }
 
-/// Refuses a compiled text that still carries an `@<path>.md` reference
-/// outside code: an agent CLI would try to load it.
+/// Refuses a compiled text that still carries an `@` reference the docs
+/// model sees: an agent CLI would try to load it.
 fn self_contained(file: &str, text: &str) -> Result<(), PublicationError> {
-    match unexpanded_reference(text) {
+    match docs::visible_references(text).into_iter().next() {
         Some(reference) => Err(compile_error(
             file,
             &format!("the compiled text still references `@{reference}`"),
@@ -591,65 +592,9 @@ fn self_contained(file: &str, text: &str) -> Result<(), PublicationError> {
     }
 }
 
-/// The first `@<path>.md` token outside fenced blocks and inline code that
-/// starts a word.
-fn unexpanded_reference(text: &str) -> Option<String> {
-    let mut fence: Option<String> = None;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        let marker: String = trimmed
-            .chars()
-            .take_while(|c| *c == '`' || *c == '~')
-            .collect();
-        if marker.len() >= 3
-            && (marker.chars().all(|c| c == '`') || marker.chars().all(|c| c == '~'))
-        {
-            match &fence {
-                Some(open) if marker.starts_with(open.as_str()) => fence = None,
-                Some(_) => {}
-                None => fence = Some(marker),
-            }
-            continue;
-        }
-        if fence.is_some() {
-            continue;
-        }
-        let mut in_code = false;
-        let mut previous = ' ';
-        for (at, c) in line.char_indices() {
-            if c == '`' {
-                in_code = !in_code;
-            } else if c == '@' && !in_code && previous.is_whitespace() {
-                let token: String = line[at + 1..]
-                    .chars()
-                    .take_while(|c| !c.is_whitespace() && *c != '`' && *c != ')')
-                    .collect();
-                let token = token.trim_end_matches(['.', ',', ';', ':']);
-                if token.ends_with(".md") && token.len() > 3 {
-                    return Some(token.to_owned());
-                }
-            }
-            previous = c;
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_reference_outside_code_is_found_and_code_is_ignored() {
-        let path = "docs/local/x.md";
-        assert_eq!(
-            unexpanded_reference(&format!("Read @{path} first.\n")),
-            Some(path.to_owned())
-        );
-        assert_eq!(unexpanded_reference(&format!("`@{path}`\n")), None);
-        assert_eq!(unexpanded_reference(&format!("```\n@{path}\n```\n")), None);
-        assert_eq!(unexpanded_reference("mail me@example.md\n"), None);
-    }
 
     #[test]
     fn finishing_drops_lock_sentinels_and_collapses_blank_runs() {

@@ -98,6 +98,17 @@ pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
 pub use _text::Directive;
 pub use _validate::{ValidationRequest, validate};
 
+/// The `@` references visible in `text`, each without its `@`, as the
+/// docs model recognizes them: outside fenced code, inline code and HTML
+/// comments, a line holding only a reference or an `@<path>.md` token in
+/// prose. Publication refuses a compiled text that still has one.
+pub fn visible_references(text: &str) -> Vec<String> {
+    _text::references(&_text::lines(text))
+        .into_iter()
+        .map(|reference| reference.target)
+        .collect()
+}
+
 use crate::config::ConfigError;
 use crate::fsx::FsError;
 use crate::git::GitError;

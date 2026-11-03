@@ -49,6 +49,8 @@ fn layer(slug: &str, domains: &[&str]) -> String {
 #[test]
 fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
     let env = TestEnv::new();
+    // Codex is installed: it reads the project override file.
+    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
     let repo = env.git_repo("demo");
     repo.write("instrukt.yaml", &layer("demo", &[]))
         .write(
@@ -56,7 +58,9 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
              ## Required reads\n\n@docs/local/policy/house.md\n@docs/local/policy/future.md\n\n\
              ## Notes\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-             <!-- @exec: printf '%s' computed-at-publish -->\n",
+             <!-- @exec: printf '%s' computed-at-publish -->\n\n\
+             Written as ``@docs/local/policy/house.md`` it is quoted.\n\n\
+             <!-- @docs/local/policy/house.md stays a comment -->\n",
         )
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n")
         .write("docs/global/snippets/shared.md", "Shared guidance.\n")
@@ -87,6 +91,8 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
 
     insta::assert_snapshot!("root_agents_md", repo.read("AGENTS.md"));
     insta::assert_snapshot!("nested_agents_md", repo.read("tools/AGENTS.md"));
+    assert_eq!(repo.read("AGENTS.override.md"), repo.read("AGENTS.md"));
+    assert!(!repo.path().join("tools/AGENTS.override.md").exists());
 }
 
 /// The general owner: a global master inlining the general bundle, one
@@ -137,6 +143,7 @@ fn keeps_every_member(before: &Value, after: &Value) -> bool {
 }
 
 // spec: local/projects/instrukt/spec/feature/publication/agent-entrypoints UC-AE2
+#[cfg(unix)]
 #[test]
 fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_settings() {
     let env = TestEnv::new();
@@ -150,20 +157,28 @@ fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_setti
         "context": {"includeDirectories": ["/"]},
         "general": {"checkpointing": {"enabled": true}}
     });
-    for (dir, settings) in [
-        (".claude", Some(&claude_settings)),
-        (".codex", None),
-        (".gemini/antigravity-cli", Some(&gemini_settings)),
-    ] {
-        std::fs::create_dir_all(home.join(dir)).unwrap();
-        if let Some(settings) = settings {
-            std::fs::write(
-                home.join(dir).join("settings.json"),
-                serde_json::to_vec_pretty(settings).unwrap(),
-            )
-            .unwrap();
-        }
-    }
+    // A dotfiles user: `~/.claude` links to a directory kept elsewhere, and
+    // the Gemini settings file links to a file kept elsewhere.
+    let dotfiles = env.path("dotfiles");
+    std::fs::create_dir_all(dotfiles.join("claude")).unwrap();
+    std::fs::write(
+        dotfiles.join("claude/settings.json"),
+        serde_json::to_vec_pretty(&claude_settings).unwrap(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(dotfiles.join("claude"), home.join(".claude")).unwrap();
+    std::fs::write(
+        dotfiles.join("gemini-settings.json"),
+        serde_json::to_vec_pretty(&gemini_settings).unwrap(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).unwrap();
+    std::os::unix::fs::symlink(
+        dotfiles.join("gemini-settings.json"),
+        home.join(".gemini/antigravity-cli/settings.json"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
     let other = env.git_repo("engineering");
     other
         .write("instrukt.yaml", &layer("engineering", &["sdlc"]))
@@ -188,8 +203,21 @@ fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_setti
         !home.join(".dsh").exists(),
         "an agent CLI not installed is skipped"
     );
-    let claude_after = read(".claude/settings.json");
-    let gemini_after = read(".gemini/antigravity-cli/settings.json");
+    let is_link = |path: &std::path::Path| {
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    };
+    assert!(
+        is_link(&home.join(".claude")),
+        "the user's link stays a link"
+    );
+    assert!(is_link(&home.join(".gemini/antigravity-cli/settings.json")));
+    let in_dotfiles = |rel: &str| std::fs::read_to_string(dotfiles.join(rel)).unwrap();
+    assert_eq!(in_dotfiles("claude/CLAUDE.md"), read(".claude/CLAUDE.md"));
+    let claude_after = in_dotfiles("claude/settings.json");
+    let gemini_after = in_dotfiles("gemini-settings.json");
     insta::assert_snapshot!("claude_settings", claude_after);
     insta::assert_snapshot!("gemini_settings", gemini_after);
     assert!(keeps_every_member(

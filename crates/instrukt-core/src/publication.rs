@@ -28,7 +28,7 @@ pub use _sync::{Refusal, SyncOutcome, SyncRequest, sync};
 
 use crate::config::ConfigError;
 use crate::docs::DocsError;
-use crate::fsx::{FsError, atomic_write};
+use crate::fsx::FsError;
 use crate::git::GitError;
 use crate::home::Home;
 use crate::ids::{CommitSha, ProjectSlug};
@@ -67,6 +67,11 @@ pub enum PublicationError {
         path.display()
     )]
     Unconfined { path: PathBuf },
+    #[error(
+        "{} is a symbolic link that leads nowhere; publication changes nothing through it",
+        path.display()
+    )]
+    DanglingLink { path: PathBuf },
     #[error("domain `{domain}` is reserved for the home's own published tree")]
     ReservedDomain { domain: String },
     #[error("{} cannot take the entrypoint-loading key: {reason}", path.display())]
@@ -172,40 +177,9 @@ impl PublishedRecord {
         records.sort_by(|a, b| a.project.cmp(&b.project));
         Ok(records)
     }
-
-    /// Writes the record atomically. Callers hold the docs lock.
-    pub fn save(&self, home: &Home) -> Result<(), PublicationStateError> {
-        let text = serde_yaml_ng::to_string(self).map_err(PublicationStateError::Render)?;
-        atomic_write(&record_path(home, &self.project), text.as_bytes())?;
-        Ok(())
-    }
 }
 
 fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
     home.publication_state_dir()
         .join(format!("{}.yaml", project.as_str()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn records_read_back_per_project_and_all_together() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        let project = ProjectSlug::parse("demo").unwrap();
-        assert_eq!(PublishedRecord::load(&home, &project).unwrap(), None);
-        let record = PublishedRecord {
-            project: project.clone(),
-            commit: CommitSha::parse(&"a".repeat(40)).unwrap(),
-            checkout: PathBuf::from("/work/demo"),
-        };
-        record.save(&home).unwrap();
-        assert_eq!(
-            PublishedRecord::load(&home, &project).unwrap(),
-            Some(record.clone())
-        );
-        assert_eq!(PublishedRecord::load_all(&home).unwrap(), vec![record]);
-    }
 }
