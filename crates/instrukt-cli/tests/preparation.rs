@@ -206,3 +206,54 @@ fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_anal
 
     insta::assert_snapshot!("unresolved-grounding", redact(&steps.join("=====\n")));
 }
+
+// spec: local/projects/instrukt/spec/feature/workflow/preparation UC-PR1
+#[test]
+fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
+    let crew = Crew::new();
+    crew.project
+        .create("parse-lists", "feature", "Parse nested lists.");
+    crew.write(
+        "parse-lists",
+        artifact_names::PRD,
+        "Lists parse with depth.",
+    );
+    let slug = "render-lists";
+    crew.project
+        .create(slug, "change", "Render nested lists with their depth.");
+    crew.todo(["prepare", slug]);
+    crew.write(
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "1. Indent by depth.",
+    );
+    crew.write(slug, artifact_names::PLAN_REVIEW_FINDINGS, "No findings.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    let mut steps = vec![crew.next("prepare", slug)];
+
+    // The change comes to depend on `parse-lists`; drift analysis assesses
+    // the plan against that prerequisite's PRD.
+    crew.todo(["update", slug, "--after", "parse-lists"]);
+    crew.stamp(
+        slug,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "rendering follows the parsed depth as planned",
+        ],
+    );
+    steps.push(crew.next("prepare", slug));
+
+    // The edge is dropped, then the PRD the judgment assessed changes: the
+    // judgment no longer settles the plan.
+    crew.todo(["update", slug, "--after", ""]);
+    crew.write(
+        "parse-lists",
+        artifact_names::PRD,
+        "Lists parse with depth; quotes reset it.",
+    );
+    steps.push(crew.next("prepare", slug));
+
+    insta::assert_snapshot!("judged-dependency", redact(&steps.join("=====\n")));
+}

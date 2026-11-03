@@ -61,6 +61,9 @@ revise-plan:
 analyze-drift:
   command: instrukt sessions run --procedure crew/procedure/drift-analyze --args {slug} --todo {slug} --brief -
   template: templates/analyze-drift.md
+analyze-plan-drift:
+  command: instrukt sessions run --procedure crew/procedure/drift-analyze --args {slug} --todo {slug} --brief -
+  template: templates/analyze-plan-drift.md
 release-prepared:
   command: instrukt todo update {slug} --unclaim
   template: templates/release-prepared.md
@@ -167,10 +170,17 @@ transitions:
   to: drift_analysis
   when:
     all:
-{approved_plan}    - any:
+{approved_plan}    - equals: [kind, feature]
+    - any:
       - equals: [drift.prd, pending]
       - equals: [drift.implementation_plan, pending]
   action: analyze-drift
+- from: plan_review
+  to: drift_analysis
+  when:
+    all:
+{approved_plan}    - equals: [drift.implementation_plan, pending]
+  action: analyze-plan-drift
 - from: plan_review
   to: prepared
   when:
@@ -261,7 +271,11 @@ transitions:
 }
 
 /// Each action's instructions: what is owed, naming the evidence it binds.
-const TEMPLATES: [(&str, &str); 18] = [
+const TEMPLATES: [(&str, &str); 19] = [
+    (
+        "analyze-plan-drift",
+        "Judge the drift of {slug}: plan {drift.implementation_plan}.",
+    ),
     (
         "review-evidence-undetermined",
         "The review of {slug} on {build_review.target_digest} is {build_review.binding}: establish what changed before relying on it.",

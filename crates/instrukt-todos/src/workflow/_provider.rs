@@ -599,15 +599,22 @@ fn drift(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Res
             || version.grounding != crate::evidence::Grounding::default();
         let class = match judged {
             Some((DriftClass::Substantive, _)) => Some(member::SUBSTANTIVE),
+            // A cosmetic judgment settles what it assessed: evidence it
+            // recorded that has changed since needs a new assessment,
+            // whether or not the version's own grounding shows drift.
+            Some((DriftClass::Cosmetic, _))
+                if observed
+                    .judged_grounding
+                    .get(name)
+                    .is_some_and(|change| change.changed()) =>
+            {
+                Some(member::PENDING)
+            }
             Some((DriftClass::Cosmetic, at)) if drifted => {
                 let upstream_changed = upstream_of(name)
                     .iter()
                     .any(|upstream| ledger.rewritten_after(upstream, at));
-                let assessed_changed = observed
-                    .judged_grounding
-                    .get(name)
-                    .is_some_and(|change| change.changed());
-                Some(if upstream_changed || assessed_changed {
+                Some(if upstream_changed {
                     member::PENDING
                 } else {
                     member::COSMETIC
@@ -775,8 +782,10 @@ fn lane_resources(
 /// related todos' current evidence: whether a prerequisite artifact's
 /// digest changed, and whether a dependency is unresolved. Dependencies
 /// are matched by durable identity, never by slug, which a later todo may
-/// reuse; a record without an identity, or an identity no todo has, is
-/// unresolved: incomplete provenance.
+/// reuse. A record without an identity is unresolved: incomplete
+/// provenance, which a judgment that assessed it still settles. A recorded
+/// identity no todo has any more is unresolved and a change: the evidence
+/// it named is gone, so even an earlier judgment needs a new assessment.
 pub(crate) fn dependency_change(
     recorded: &[crate::evidence::DependencyDigest],
     others: &[TodoEvidence],
@@ -784,12 +793,13 @@ pub(crate) fn dependency_change(
     let mut changed = false;
     let mut unresolved = false;
     for dependency in recorded {
-        let Some(todo) = dependency
-            .id
-            .as_ref()
-            .and_then(|id| others.iter().find(|other| &other.id == id))
-        else {
+        let Some(id) = &dependency.id else {
             unresolved = true;
+            continue;
+        };
+        let Some(todo) = others.iter().find(|other| &other.id == id) else {
+            unresolved = true;
+            changed = true;
             continue;
         };
         let current = todo
@@ -1972,7 +1982,7 @@ mod tests {
         let others = [prerequisite('2', "prd-1")];
         assert_eq!(
             dependency_change(&on_prerequisite(Some('1')), &others),
-            (false, true)
+            (true, true)
         );
     }
 
@@ -1982,6 +1992,27 @@ mod tests {
         assert_eq!(
             dependency_change(&on_prerequisite(None), &others),
             (false, true)
+        );
+    }
+
+    #[test]
+    fn a_cosmetic_judgment_is_unsettled_by_a_change_to_a_former_prerequisite() {
+        // The judgment assessed prerequisite `parse-lists` (identity `1`) at
+        // PRD `prd-1`; the edge is gone since, and that PRD was rewritten.
+        let (changed, unresolved) =
+            dependency_change(&on_prerequisite(Some('1')), &[prerequisite('1', "prd-2")]);
+        let (evidence, mut observed) = judged_plan(GroundingChange {
+            dependencies: changed,
+            unresolved,
+            ..GroundingChange::default()
+        });
+        // The plan itself was written before the edge: its own grounding
+        // shows nothing.
+        observed.grounding.clear();
+        let facts = facts_of(&evidence, &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
         );
     }
 }
