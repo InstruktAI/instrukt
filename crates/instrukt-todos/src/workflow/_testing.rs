@@ -58,3 +58,114 @@ pub(crate) fn no_config(_: &str) -> Result<Option<String>, ConfigLookupError> {
 pub(crate) fn session_config(path: &str) -> Result<Option<String>, ConfigLookupError> {
     Ok((path == "runtime.session_id").then(|| "sess-1".to_owned()))
 }
+
+/// Builds a todo's evidence in record order: each artifact version and
+/// stamp is made one second after the previous one.
+pub(crate) struct EvidenceBuilder {
+    evidence: crate::evidence::TodoEvidence,
+    tick: i64,
+}
+
+/// The evidence of a fresh active todo `add-login` of `kind` in `demo`.
+pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuilder {
+    EvidenceBuilder {
+        evidence: crate::evidence::TodoEvidence {
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("add-login").unwrap(),
+            kind,
+            status: crate::evidence::TodoStatus::Active,
+            artifacts: Vec::new(),
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            prerequisites: Vec::new(),
+            delivery: None,
+            timing: None,
+            agent: None,
+        },
+        tick: 0,
+    }
+}
+
+pub(crate) fn session(id: &str) -> instrukt_core::ids::SessionRef {
+    instrukt_core::ids::SessionRef::parse(&format!("cli:{id}")).unwrap()
+}
+
+pub(crate) fn digest(value: &str) -> crate::evidence::ContentDigest {
+    crate::evidence::ContentDigest::new(value)
+}
+
+impl EvidenceBuilder {
+    fn next(&mut self) -> jiff::Timestamp {
+        self.tick += 1;
+        jiff::Timestamp::from_second(1_800_000_000 + self.tick).unwrap()
+    }
+
+    /// Saves a new version of artifact `name` with digest `value`.
+    pub(crate) fn artifact(mut self, name: &str, value: &str) -> Self {
+        use crate::evidence::{Actor, ArtifactHistory, ArtifactName, ArtifactVersion};
+        let version = ArtifactVersion {
+            digest: digest(value),
+            writer: Actor::Session(session("writer")),
+            created: self.next(),
+        };
+        match self
+            .evidence
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.name.as_str() == name)
+        {
+            Some(artifact) => artifact.versions.push(version),
+            None => self.evidence.artifacts.push(ArtifactHistory {
+                name: ArtifactName::new(name),
+                versions: vec![version],
+            }),
+        }
+        self
+    }
+
+    /// Records stamp `fact`.
+    pub(crate) fn stamp(mut self, fact: crate::evidence::StampFact) -> Self {
+        let at = self.next();
+        self.evidence.stamps.push(crate::evidence::StampRecord {
+            fact,
+            at,
+            actor: crate::evidence::Actor::Session(session("stamper")),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+        });
+        self
+    }
+
+    pub(crate) fn claimed(mut self) -> Self {
+        self.evidence.claim = Some(crate::evidence::ClaimRecord {
+            session: Some(session("orchestrator")),
+            at: jiff::Timestamp::from_second(1_800_000_000).unwrap(),
+        });
+        self
+    }
+
+    /// Binds session `id` for `role`, retaining `worktree` when given.
+    pub(crate) fn bound(mut self, role: &str, id: &str, worktree: Option<&str>) -> Self {
+        self.evidence.bindings.push(crate::evidence::RoleBinding {
+            role: instrukt_core::ids::RoleName::parse(role).unwrap(),
+            binding: instrukt_runner::interfaces::SessionBinding {
+                session: session(id),
+                worktree: worktree.map(PathBuf::from),
+            },
+        });
+        self
+    }
+
+    pub(crate) fn status(mut self, status: crate::evidence::TodoStatus) -> Self {
+        self.evidence.status = status;
+        self
+    }
+
+    pub(crate) fn build(self) -> crate::evidence::TodoEvidence {
+        self.evidence
+    }
+}

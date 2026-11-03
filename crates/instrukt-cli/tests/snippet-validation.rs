@@ -402,3 +402,66 @@ fn local_snippets_in_a_repository_without_a_project_have_no_identity() {
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("undeclared_project", run.out);
 }
+
+/// A project `flows` that publishes domain `crew`, whose workflow flavor
+/// declares the roles `lead`, `reviewer` and `checker`.
+fn publish_crew_flavor(env: &TestEnv) {
+    let flows = env.git_repo("flows");
+    flows
+        .write(
+            "instrukt.yaml",
+            "schema_version: 1\nproject: flows\npublishes:\n  - slug: crew\n    trigger: When the crew works.\n",
+        )
+        .write(
+            "docs/global/crew/workflow/actions.yaml",
+            "roles: [lead, reviewer, checker]\n\
+             review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n",
+        )
+        .write("docs/global/crew/workflow/templates/review.md", "Review {slug}.\n")
+        .write(
+            "docs/global/crew/workflow/work.yaml",
+            "flow: work\norchestrator: lead\ninitial: start\nstates: [start, reviewing]\n\
+             transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
+        )
+        .write(
+            "docs/global/crew/procedure/lead.md",
+            &snippet("procedure", "role: lead\nactivation_trigger: When work is led.\n", ""),
+        )
+        .write(
+            "docs/global/crew/procedure/review.md",
+            &snippet("procedure", "role: reviewer\nactivation_trigger: When work is reviewed.\n", ""),
+        );
+    flows.commit("publish the crew flavor");
+    env.run(flows.path(), ["sync"]).success();
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+#[test]
+fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_reported() {
+    let env = TestEnv::new();
+    publish_crew_flavor(&env);
+    let repo = env.git_repo("demo");
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 1\nproject: demo\nmodules: {todos: true}\nworkflow: {domain: crew}\n",
+    )
+    .write(
+        "docs/local/procedure/check.md",
+        &snippet(
+            "procedure",
+            "role: checker\nactivation_trigger: When checking.\n",
+            "",
+        ),
+    )
+    .write(
+        "docs/local/procedure/haunt.md",
+        &snippet(
+            "procedure",
+            "role: haunter\nactivation_trigger: At night.\n",
+            "",
+        ),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("undeclared_flavor_role", run.out);
+}
