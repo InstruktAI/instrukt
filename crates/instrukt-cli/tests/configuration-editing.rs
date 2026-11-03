@@ -65,7 +65,7 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
         &env,
         &repo,
         &before,
-        "board: true\nactions:\n  test: make test {runtime.session_id}\n",
+        "board: acme/7\nactions:\n  test: make test {runtime.session_id}\n",
     )
     .success();
     assert!(
@@ -78,7 +78,7 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
     let changed = layer(&repo);
     assert_eq!(changed["project"], untouched["project"]);
     assert_eq!(changed["schema_version"], untouched["schema_version"]);
-    assert_eq!(changed["board"], Value::Bool(true));
+    assert_eq!(changed["board"], Value::String("acme/7".into()));
     let stored: Value = serde_yaml_ng::from_str("make test {runtime.session_id}").unwrap();
     assert_eq!(
         changed["actions"]["test"], stored,
@@ -117,7 +117,7 @@ fn a_patch_from_a_stale_revision_is_refused_and_writes_nothing() {
     let env = TestEnv::new();
     let repo = initialized(&env, "demo");
     let read = revision(&env, repo.path());
-    patch(&env, &repo, &read, "board: true").success();
+    patch(&env, &repo, &read, "board: acme/7").success();
     let content = repo.read("instrukt.yaml");
 
     let refused = patch(&env, &repo, &read, "board: false").failure();
@@ -233,7 +233,7 @@ fn a_project_without_configuration_is_named_after_its_folder() {
                 "--revision",
                 "r",
                 "--yaml",
-                "board: true",
+                "board: acme/7",
             ],
         )
         .failure();
@@ -285,7 +285,7 @@ fn an_empty_project_identity_is_refused() {
 fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
     let repo = env.git_repo("demo");
-    let layer = "# my notes\nschema_version: 1\nproject: chosen\nboard: true\n";
+    let layer = "# my notes\nschema_version: 1\nproject: chosen\nboard: acme/7\n";
     repo.write("instrukt.yaml", layer);
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(repo.read("instrukt.yaml"), layer);

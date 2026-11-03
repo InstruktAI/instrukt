@@ -220,9 +220,6 @@ struct StampArgs {
     /// Approval of the current task plan, with `--by` (or `--carry-from`).
     #[arg(long)]
     task_approved: bool,
-    /// A peer approval's reasoning (required with `--by peer`).
-    #[arg(long, value_name = "TEXT")]
-    reasoning: Option<String>,
     /// Carry the approval stamp with this number (`todo show` numbers
     /// stamps) to the current evidence.
     #[arg(long, value_name = "STAMP", conflicts_with = "by")]
@@ -239,7 +236,8 @@ struct StampArgs {
     /// Return the work to preparation, with `--reason`.
     #[arg(long, requires = "reason")]
     kickback: bool,
-    /// The reason a kickback, unresolved diagnosis or failed outcome records.
+    /// The reason a kickback, unresolved diagnosis, failed outcome or peer
+    /// approval records.
     #[arg(long)]
     reason: Option<String>,
     /// Architecture is skipped for this reason.
@@ -667,15 +665,13 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
             gate,
             by,
             session: args.session.clone(),
-            reasoning: args.reasoning.clone(),
+            reasoning: args.reason.clone(),
         });
     }
-    if (args.reasoning.is_some() || args.carry_from.is_some() || args.by.is_some())
+    if (args.carry_from.is_some() || args.by.is_some())
         && !(args.prd_approved || args.task_approved)
     {
-        bail!(
-            "`--by`, `--reasoning` and `--carry-from` go with `--prd-approved` or `--task-approved`"
-        );
+        bail!("`--by` and `--carry-from` go with `--prd-approved` or `--task-approved`");
     }
     if args.intent_checked {
         forms.push(StampRequest::IntentChecked);
@@ -815,6 +811,10 @@ fn admission(slug: &TodoSlug) -> String {
 
 /// The reflection line every change prints.
 fn reflection<T>(ctx: &mut Ctx, outcome: &Outcome<T>) -> anyhow::Result<ExitCode> {
+    for path in &outcome.docs_changed {
+        ctx.out
+            .line(&format!("documentation to commit: {}", path.display()))?;
+    }
     ctx.out.line(&format!(
         "reflection: {}",
         reflection_word(&outcome.reflection)
@@ -986,6 +986,15 @@ fn render_view(view: &TodoView) -> String {
     }
     if let Some(removal) = &record.removal {
         out.push(format!("withdrawn: {}", time(removal.at)));
+        if let Some(branch) = &removal.branch {
+            out.push(format!(
+                "  released branch {} at {}",
+                branch.name, branch.head
+            ));
+        }
+        for worktree in &removal.worktrees {
+            out.push(format!("  released worktree {}", worktree.display()));
+        }
     }
     if !record.bindings.is_empty() {
         out.push("sessions:".to_owned());
@@ -1138,7 +1147,7 @@ fn fact(fact: &StampFact) -> String {
                 .unwrap_or_default(),
             reasoning
                 .as_ref()
-                .map(|r| format!(" — reasoning: {r}"))
+                .map(|r| format!(" — reason: {r}"))
                 .unwrap_or_default()
         ),
         StampFact::IntentChecked {
@@ -1169,6 +1178,7 @@ fn fact(fact: &StampFact) -> String {
             class,
             reason,
             examined,
+            ..
         } => format!(
             "drift in {artifact} reviewed as {}: {reason} — examined {examined}",
             match class {

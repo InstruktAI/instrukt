@@ -4,5 +4,5 @@ expression: "stderr(&env, &refused)"
 ---
 instrukt: refused; nothing was written:
 [TMP]/demo/instrukt.yaml: runtimes: not permitted in the project layer (global layer only)
-[TMP]/demo/instrukt.yaml: board: expected true or false
+[TMP]/demo/instrukt.yaml: board: expected `false` or a GitHub project `<owner>/<number>`
 [TMP]/demo/instrukt.yaml: actions.echo.takes_files: expected true or false

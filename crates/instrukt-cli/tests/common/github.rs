@@ -533,6 +533,8 @@ struct State {
     requests: Vec<RecordedRequest>,
     canned: VecDeque<Canned>,
     poll_interval: Option<u64>,
+    /// GitHub projects (Projects v2), served through `/graphql`.
+    projects: Vec<Project>,
 }
 
 impl State {
@@ -546,6 +548,7 @@ impl State {
             requests: Vec::new(),
             canned: VecDeque::new(),
             poll_interval: None,
+            projects: Vec::new(),
         }
     }
 
@@ -1191,6 +1194,10 @@ fn paginate(base: &str, path: &str, query: &str, items: Vec<Value>) -> Reply {
 }
 
 fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -> Reply {
+    if method == "POST" && path == "/graphql" {
+        let input: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        return graphql(state, &input);
+    }
     let segments: Vec<String> = path
         .trim_start_matches('/')
         .split('/')
@@ -1869,4 +1876,291 @@ fn pull_route(
 /// The number of the issue whose REST `id` is `id`.
 fn number_of(repo: &Repo, id: u64) -> Option<u64> {
     repo.issues.values().find(|i| i.id == id).map(|i| i.number)
+}
+
+// ---------------------------------------------------------------------
+// Projects (v2) over GraphQL: exactly the documents the work record sends
+// ---------------------------------------------------------------------
+
+/// A GitHub project of an owner.
+struct Project {
+    id: String,
+    owner: String,
+    number: u64,
+    fields: Vec<ProjectField>,
+    items: Vec<ProjectItem>,
+}
+
+/// A single-select field (other field types are seeded as fields without
+/// options and are never served as single-select).
+struct ProjectField {
+    id: String,
+    name: String,
+    single_select: bool,
+    options: Vec<FieldOption>,
+}
+
+struct FieldOption {
+    id: String,
+    name: String,
+    color: String,
+    description: String,
+}
+
+struct ProjectItem {
+    id: String,
+    /// The node id of the issue the item shows.
+    content: String,
+    /// Field id → option id.
+    values: BTreeMap<String, String>,
+}
+
+impl FieldOption {
+    fn json(&self) -> Value {
+        json!({"id": self.id, "name": self.name, "color": self.color, "description": self.description})
+    }
+}
+
+impl ProjectField {
+    fn json(&self) -> Value {
+        if self.single_select {
+            json!({"id": self.id, "name": self.name, "options": self.options.iter().map(FieldOption::json).collect::<Vec<_>>()})
+        } else {
+            // Not a single-select field: the inline fragment selects nothing.
+            json!({})
+        }
+    }
+}
+
+impl FakeGitHub {
+    /// Adds the project `<owner>/<number>`.
+    pub fn add_project(&self, owner: &str, number: u64) -> &Self {
+        let mut state = self.lock();
+        let id = format!("PVT_{}", state.next_id());
+        state.projects.push(Project {
+            id,
+            owner: owner.to_owned(),
+            number,
+            fields: Vec::new(),
+            items: Vec::new(),
+        });
+        self
+    }
+
+    /// Adds a field to project `<owner>/<number>`: a single-select field
+    /// with `options`, or, with `None`, a field of another type.
+    pub fn add_project_field(
+        &self,
+        owner: &str,
+        number: u64,
+        name: &str,
+        options: Option<&[&str]>,
+    ) {
+        let mut state = self.lock();
+        let field_id = format!("PVTF_{}", state.next_id());
+        let mut made = Vec::new();
+        for option in options.unwrap_or_default() {
+            made.push(FieldOption {
+                id: format!("OPT_{}", state.next_id()),
+                name: (*option).to_owned(),
+                color: "BLUE".into(),
+                description: String::new(),
+            });
+        }
+        let project = state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap();
+        project.fields.push(ProjectField {
+            id: field_id,
+            name: name.to_owned(),
+            single_select: options.is_some(),
+            options: made,
+        });
+    }
+
+    /// A project's fields, each with its option names, in order.
+    pub fn project_fields(&self, owner: &str, number: u64) -> Vec<(String, Vec<String>)> {
+        let state = self.lock();
+        let project = state
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap();
+        project
+            .fields
+            .iter()
+            .map(|f| {
+                (
+                    f.name.clone(),
+                    f.options.iter().map(|o| o.name.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// A project's items: the issue node id each shows, and each set field
+    /// as (field name, option name).
+    pub fn project_items(&self, owner: &str, number: u64) -> Vec<(String, Vec<(String, String)>)> {
+        let state = self.lock();
+        let project = state
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap();
+        project
+            .items
+            .iter()
+            .map(|item| {
+                let values = item
+                    .values
+                    .iter()
+                    .filter_map(|(field, option)| {
+                        let field = project.fields.iter().find(|f| &f.id == field)?;
+                        let option = field.options.iter().find(|o| &o.id == option)?;
+                        Some((field.name.clone(), option.name.clone()))
+                    })
+                    .collect();
+                (item.content.clone(), values)
+            })
+            .collect()
+    }
+}
+
+fn graphql_error(message: &str) -> Reply {
+    Reply::ok(json!({"data": null, "errors": [{"message": message}]}))
+}
+
+fn field_payload(field: &ProjectField) -> Value {
+    field.json()
+}
+
+/// Serves the GraphQL documents the work record sends; any other document
+/// is an error.
+fn graphql(state: &mut State, input: &Value) -> Reply {
+    let query = input["query"].as_str().unwrap_or_default();
+    let vars = &input["variables"];
+    if query.contains("repositoryOwner") {
+        let owner = vars["owner"].as_str().unwrap_or_default();
+        let number = vars["number"].as_u64().unwrap_or_default();
+        let project = state
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .map(|p| {
+                json!({"id": p.id, "fields": {"nodes": p.fields.iter().map(ProjectField::json).collect::<Vec<_>>()}})
+            });
+        return Reply::ok(json!({"data": {"repositoryOwner": {"projectV2": project}}}));
+    }
+    if query.contains("createProjectV2Field") {
+        let field_id = format!("PVTF_{}", state.next_id());
+        let mut options = Vec::new();
+        for option in vars["options"].as_array().cloned().unwrap_or_default() {
+            options.push(FieldOption {
+                id: format!("OPT_{}", state.next_id()),
+                name: option["name"].as_str().unwrap_or_default().to_owned(),
+                color: option["color"].as_str().unwrap_or("GRAY").to_owned(),
+                description: option["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            });
+        }
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| vars["project"] == p.id.as_str())
+        else {
+            return graphql_error("no such project");
+        };
+        project.fields.push(ProjectField {
+            id: field_id,
+            name: vars["name"].as_str().unwrap_or_default().to_owned(),
+            single_select: true,
+            options,
+        });
+        let payload = project.fields.last().map(field_payload).unwrap_or_default();
+        return Reply::ok(json!({"data": {"createProjectV2Field": {"projectV2Field": payload}}}));
+    }
+    if query.contains("updateProjectV2Field(") {
+        let inputs = vars["options"].as_array().cloned().unwrap_or_default();
+        let mut fresh = Vec::new();
+        for _ in &inputs {
+            fresh.push(format!("OPT_{}", state.next_id()));
+        }
+        let field = state
+            .projects
+            .iter_mut()
+            .flat_map(|p| p.fields.iter_mut())
+            .find(|f| vars["field"] == f.id.as_str());
+        let Some(field) = field else {
+            return graphql_error("no such field");
+        };
+        // GitHub replaces the option set; an option sent with its id keeps
+        // it.
+        field.options = inputs
+            .iter()
+            .zip(fresh)
+            .map(|(option, fresh)| FieldOption {
+                id: option["id"].as_str().map_or(fresh, str::to_owned),
+                name: option["name"].as_str().unwrap_or_default().to_owned(),
+                color: option["color"].as_str().unwrap_or("GRAY").to_owned(),
+                description: option["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            })
+            .collect();
+        let payload = field_payload(field);
+        return Reply::ok(json!({"data": {"updateProjectV2Field": {"projectV2Field": payload}}}));
+    }
+    if query.contains("addProjectV2ItemById") {
+        let item_id = format!("PVTI_{}", state.next_id());
+        let content = vars["content"].as_str().unwrap_or_default().to_owned();
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| vars["project"] == p.id.as_str())
+        else {
+            return graphql_error("no such project");
+        };
+        let id = match project.items.iter().find(|i| i.content == content) {
+            Some(existing) => existing.id.clone(),
+            None => {
+                project.items.push(ProjectItem {
+                    id: item_id.clone(),
+                    content,
+                    values: BTreeMap::new(),
+                });
+                item_id
+            }
+        };
+        return Reply::ok(json!({"data": {"addProjectV2ItemById": {"item": {"id": id}}}}));
+    }
+    if query.contains("updateProjectV2ItemFieldValue") {
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| vars["project"] == p.id.as_str())
+        else {
+            return graphql_error("no such project");
+        };
+        let Some(item) = project
+            .items
+            .iter_mut()
+            .find(|i| vars["item"] == i.id.as_str())
+        else {
+            return graphql_error("no such item");
+        };
+        item.values.insert(
+            vars["field"].as_str().unwrap_or_default().to_owned(),
+            vars["option"].as_str().unwrap_or_default().to_owned(),
+        );
+        let id = item.id.clone();
+        return Reply::ok(
+            json!({"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": id}}}}),
+        );
+    }
+    graphql_error("the fake GitHub does not serve this document")
 }

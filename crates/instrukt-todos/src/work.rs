@@ -16,6 +16,7 @@
 //! ([`crate::evidence::WorkEvidence`]) and core ([`WorkExistence`] for
 //! `TodoExistence`).
 
+mod _board;
 mod _diff;
 mod _envelope;
 mod _error;

@@ -23,8 +23,8 @@ use super::_session::{GitHubRead, Located, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
-    Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, PreparationReview,
-    ReviewVerdict, StampFact, StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
+    Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, StampFact, StampRecord,
+    TodoStatus, Upstream, artifact_names, upstream_of,
 };
 
 /// `instrukt todo create`.
@@ -76,6 +76,10 @@ pub enum Selection {
 pub struct Outcome<T> {
     pub value: T,
     pub reflection: ReflectionStatus,
+    /// Documentation files the change rewrote in the working tree (a
+    /// group parent's pending documentation moving to its first child),
+    /// repository-relative, for the caller to commit.
+    pub docs_changed: Vec<std::path::PathBuf>,
 }
 
 /// What `instrukt todo update` changed, with the warnings it raised.
@@ -129,7 +133,15 @@ impl Work {
         project: &ProjectRef,
         request: CreateRequest,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
+        let preparation = match &request.group {
+            Some(parent) => self.parent_preparation(project, parent)?,
+            None => ParentPreparation::NotAsked,
+        };
+        if let (ParentPreparation::Unavailable, Some(parent)) = (preparation, &request.group) {
+            tracing::warn!(event = "work_preparation_undetermined", todo = %parent, "{}", unavailable_preparation(parent));
+        }
         let mut s = Session::open(self, project)?;
+        s.parent_preparation = preparation;
         if request.content.trim().is_empty() {
             return Err(WorkError::refused(
                 "a todo records substantive intent; the content is empty",
@@ -220,12 +232,14 @@ impl Work {
                 join_group(s, index, parent, &actor)?;
             }
             check_prerequisites(s, index)?;
+            transfer_documentation(s)?;
             Ok(index)
         })?;
         s.flush()?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -315,14 +329,23 @@ impl Work {
         slug: &TodoSlug,
         request: UpdateRequest,
     ) -> Result<Outcome<UpdateReport>, WorkError> {
+        let preparation = match &request.group {
+            Some(Some(parent)) => self.parent_preparation(project, parent)?,
+            _ => ParentPreparation::NotAsked,
+        };
         let mut s = Session::open(self, project)?;
+        s.parent_preparation = preparation;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
         if request.after.is_some() || request.group.is_some() {
             // A relationship is judged against the current graph.
             s.pull_all()?;
         }
-        let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
+        let mut warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
+        if let (ParentPreparation::Unavailable, Some(Some(parent))) = (preparation, &request.group)
+        {
+            warnings.push(unavailable_preparation(parent));
+        }
         s.flush()?;
         Ok(Outcome {
             value: UpdateReport {
@@ -330,6 +353,7 @@ impl Work {
                 warnings,
             },
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -345,6 +369,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -411,6 +436,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -482,6 +508,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -525,6 +552,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -564,8 +592,24 @@ impl Work {
             None => s.actor()?,
         };
         let (model, model_provenance) = s.model_of(&actor);
+        let mut fact = resolved.fact;
+        if let StampFact::DriftReviewed {
+            artifact,
+            grounding,
+            ..
+        } = &mut fact
+        {
+            // The judgment holds only while what it assessed is unchanged:
+            // record the grounding current now.
+            let content = record
+                .artifact(artifact.as_str())
+                .and_then(|a| a.versions.last())
+                .and_then(|v| v.content.clone())
+                .unwrap_or_default();
+            *grounding = grounding_now(&mut s, index, artifact.as_str(), &content)?;
+        }
         let stamp = StampRecord {
-            fact: resolved.fact,
+            fact,
             at: s.now,
             role: role_of(&record, &actor),
             actor: actor.clone(),
@@ -602,6 +646,7 @@ impl Work {
             return Ok(Outcome {
                 value: stamp,
                 reflection: s.status(index),
+                docs_changed: std::mem::take(&mut s.docs_changed),
             });
         }
         let now = s.now;
@@ -645,6 +690,7 @@ impl Work {
                 .cloned()
                 .ok_or_else(|| WorkError::refused("the stamp was not recorded"))?,
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -681,27 +727,7 @@ impl Work {
                 digest: record.current_digest(upstream).cloned(),
             })
             .collect();
-        let after = record.after.clone();
-        let mut grounding = super::_grounding::ground(
-            self.home(),
-            &project.root,
-            &project.slug,
-            &s.base,
-            slug,
-            content,
-        )?;
-        for prerequisite in &after {
-            let found = s.record_by_id(&prerequisite.id);
-            for upstream in upstream_of(name) {
-                grounding.dependencies.push(DependencyDigest {
-                    todo: prerequisite.slug.clone(),
-                    artifact: ArtifactName::new(*upstream),
-                    digest: found
-                        .as_ref()
-                        .and_then(|r| r.current_digest(upstream).cloned()),
-                });
-            }
-        }
+        let grounding = grounding_now(&mut s, index, name, content)?;
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
@@ -740,6 +766,7 @@ impl Work {
         Ok(Outcome {
             value: written,
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 
@@ -808,6 +835,7 @@ impl Work {
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
+            docs_changed: std::mem::take(&mut s.docs_changed),
         })
     }
 }
@@ -944,6 +972,7 @@ fn apply_update(
         }
         record.claim = None;
     }
+    transfer_documentation(s)?;
     Ok(warnings)
 }
 
@@ -965,21 +994,75 @@ fn release_resources(
     WorkError,
 > {
     let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
-    let worktrees: Vec<std::path::PathBuf> = listed
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .map(std::path::PathBuf::from)
-        .collect();
-    let main = worktrees.first().cloned();
-    let mut released = Vec::new();
-    for binding in &record.bindings {
-        let Some(path) = &binding.worktree else {
-            continue;
-        };
-        let owned = worktrees.iter().any(|w| w == path) && main.as_ref() != Some(path);
-        if !owned || released.contains(path) {
-            continue;
+    // Each worktree with the branch it has checked out.
+    let mut checked_out: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
+    for line in listed.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            checked_out.push((std::path::PathBuf::from(path), None));
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/")
+            && let Some(last) = checked_out.last_mut()
+        {
+            last.1 = Some(branch.to_owned());
         }
+    }
+    let main = checked_out.first().map(|(path, _)| path.clone());
+    // The todo's working copies: worktrees its sessions returned, and any
+    // other worktree with its work branch checked out.
+    let mut owned: Vec<std::path::PathBuf> = Vec::new();
+    for (path, branch) in &checked_out {
+        let bound = record
+            .bindings
+            .iter()
+            .any(|b| b.worktree.as_ref() == Some(path));
+        let on_branch = branch.is_some() && branch.as_ref() == record.branch.as_ref();
+        if (bound || on_branch) && main.as_ref() != Some(path) && !owned.contains(path) {
+            owned.push(path.clone());
+        }
+    }
+    // Check everything before releasing anything: work that would be lost
+    // refuses the withdrawal and names where it is.
+    for path in &owned {
+        let changes = git::run(path, ["status", "--porcelain"])?;
+        if !changes.trim().is_empty() {
+            return Err(WorkError::refused(format!(
+                "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
+                path.display()
+            )));
+        }
+    }
+    let workspace = root.join("workspace").join(record.slug.as_str());
+    let workspace_present = match std::fs::symlink_metadata(&workspace) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(WorkError::Symlink { path: workspace });
+        }
+        Ok(meta) if meta.is_dir() => true,
+        Ok(_) => false,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(source) => {
+            return Err(WorkError::Io {
+                path: workspace,
+                source,
+            });
+        }
+    };
+    if workspace_present {
+        let mut entries = std::fs::read_dir(&workspace).map_err(|source| WorkError::Io {
+            path: workspace.clone(),
+            source,
+        })?;
+        if entries.next().is_some() {
+            return Err(WorkError::refused(format!(
+                "the workspace {} still holds files; keep or remove them, then withdraw again",
+                workspace.display()
+            )));
+        }
+        std::fs::remove_dir(&workspace).map_err(|source| WorkError::Io {
+            path: workspace.clone(),
+            source,
+        })?;
+    }
+    let mut released = Vec::new();
+    for path in &owned {
         let target = path.to_string_lossy().into_owned();
         match git::run(root, ["worktree", "remove", target.as_str()]) {
             Ok(_) => released.push(path.clone()),
@@ -1106,10 +1189,15 @@ fn join_group(
     }
     let p = s.enter_ref(parent)?;
     let now = s.now;
+    let prepared = s.parent_preparation == ParentPreparation::Determined(true);
     let holder = &mut s.items[p].record;
     match holder.status {
         TodoStatus::StructuralHolder => {}
-        TodoStatus::Active | TodoStatus::Iceboxed if !prepared(holder) => {
+        TodoStatus::Active | TodoStatus::Iceboxed if !prepared => {
+            // Its pending documentation moves to its first child once the
+            // whole change has validated (see `transfer_documentation`).
+            s.pending_transfer = Some((holder.slug.clone(), child.slug.clone()));
+            let holder = &mut s.items[p].record;
             holder.status = TodoStatus::StructuralHolder;
             holder.claim = None;
             if let Some(hold) = holder.hold.take() {
@@ -1127,27 +1215,142 @@ fn join_group(
             )));
         }
     }
-    let reference = holder.reference();
+    let reference = s.items[p].record.reference();
     s.items[index].record.group = Some(reference);
     Ok(())
 }
 
-/// Whether preparation completed: an approved plan review or task
-/// approval is recorded.
-fn prepared(record: &TodoRecord) -> bool {
-    record.stamps.iter().any(|s| {
-        matches!(
-            s.fact,
-            StampFact::PreparationVerdict {
-                phase: PreparationReview::PlanReview,
-                verdict: ReviewVerdict::Approve,
-                ..
-            } | StampFact::Approval {
-                gate: crate::evidence::ApprovalGate::Task,
-                ..
+/// Moves a new structural holder's pending documentation to its first
+/// child (`dependencies-and-holds`, "Structural holders"), the last step of
+/// a validated change: the files are rewritten in the working tree and
+/// listed for the caller to commit. A docs refusal refuses the conversion.
+fn transfer_documentation(s: &mut Session<'_>) -> Result<(), WorkError> {
+    let Some((parent, child)) = s.pending_transfer.take() else {
+        return Ok(());
+    };
+    match instrukt_core::docs::transfer_pending(&s.project.root, &parent, &child) {
+        Ok(outcome) => {
+            s.docs_changed.extend(outcome.written);
+            s.docs_changed.extend(
+                outcome
+                    .renamed
+                    .into_iter()
+                    .flat_map(|(from, to)| [from, to]),
+            );
+            Ok(())
+        }
+        Err(instrukt_core::docs::DocsError::TransferRefused { path, reason }) => {
+            Err(WorkError::refused(format!(
+                "`{parent}` cannot become a group: its pending documentation cannot move to `{child}` ({}: {reason})",
+                path.display()
+            )))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+impl Work {
+    /// Whether `parent` has completed preparation, as workflow determines
+    /// it (`dependencies-and-holds`, "Structural holders": only work still
+    /// before prepared becomes a holder; workflow owns that determination).
+    /// `None` when workflow cannot say (no published flavor with a
+    /// `prepare` or `work` flow). Asked before the write session opens:
+    /// workflow reads the evidence through work.
+    fn preparation_of(
+        &self,
+        project: &ProjectRef,
+        parent: &TodoSlug,
+    ) -> Result<Option<bool>, WorkError> {
+        let read = |slug: &TodoSlug| {
+            crate::evidence::WorkEvidence::evidence(self, project, slug)
+                .map_err(|err| WorkError::refused(err.to_string()))
+        };
+        let Some(evidence) = read(parent)? else {
+            return Ok(None);
+        };
+        let mut others = Vec::new();
+        for slug in crate::workflow::related_todos(&evidence) {
+            if let Some(other) = read(&slug)? {
+                others.push(other);
             }
-        )
-    })
+        }
+        crate::workflow::preparation_complete(self.home(), &project.root, &evidence, &others)
+            .map_err(|err| {
+                WorkError::refused(format!(
+                    "workflow cannot tell whether `{parent}` completed preparation: {err}"
+                ))
+            })
+    }
+}
+
+impl Work {
+    /// [`Work::preparation_of`] as grouping uses it.
+    fn parent_preparation(
+        &self,
+        project: &ProjectRef,
+        parent: &TodoSlug,
+    ) -> Result<ParentPreparation, WorkError> {
+        Ok(match self.preparation_of(project, parent)? {
+            Some(prepared) => ParentPreparation::Determined(prepared),
+            None => ParentPreparation::Unavailable,
+        })
+    }
+}
+
+/// The grounding of artifact `name` of item `index` with `content`, as it
+/// stands now (`artifact-currency`, "Drift evidence"): canonical head,
+/// declared paths and snippets, owned snippets, and each prerequisite's
+/// artifacts of the kinds `name` derives from.
+fn grounding_now(
+    s: &mut Session<'_>,
+    index: usize,
+    name: &str,
+    content: &str,
+) -> Result<crate::evidence::Grounding, WorkError> {
+    let (slug, after) = {
+        let record = &s.items[index].record;
+        (record.slug.clone(), record.after.clone())
+    };
+    let mut grounding = super::_grounding::ground(
+        s.home(),
+        &s.project.root,
+        &s.project.slug,
+        &s.base,
+        &slug,
+        content,
+    )?;
+    for prerequisite in &after {
+        let found = s.record_by_id(&prerequisite.id);
+        for upstream in upstream_of(name) {
+            grounding.dependencies.push(DependencyDigest {
+                todo: prerequisite.slug.clone(),
+                artifact: ArtifactName::new(*upstream),
+                digest: found
+                    .as_ref()
+                    .and_then(|r| r.current_digest(upstream).cloned()),
+            });
+        }
+    }
+    Ok(grounding)
+}
+
+/// The warning when workflow could not say whether a parent is prepared.
+fn unavailable_preparation(parent: &TodoSlug) -> String {
+    format!(
+        "workflow could not determine whether `{parent}` completed preparation (no published flavor with a prepare or work flow); grouping was not blocked"
+    )
+}
+
+/// What grouping knows of the parent's preparation, asked of workflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParentPreparation {
+    /// No grouping in this change.
+    NotAsked,
+    /// Workflow's determination.
+    Determined(bool),
+    /// Workflow could not determine it; grouping is not blocked on a
+    /// work-side guess.
+    Unavailable,
 }
 
 /// The structural holders above `id`, nearest first.

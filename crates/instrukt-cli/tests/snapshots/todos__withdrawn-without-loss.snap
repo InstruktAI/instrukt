@@ -1,0 +1,31 @@
+---
+source: crates/instrukt-cli/tests/todos.rs
+expression: "redact(&format!(\"{}---\\n{}---\\n{withdrawn}---\\n{shown}\",\nString::from_utf8_lossy(&uncommitted.get_output().stderr),\nString::from_utf8_lossy(&busy.get_output().stderr),)).replace(base.trim_end_matches('/'),\n\"[TMP]\")"
+---
+instrukt: the worktree [TMP]/demo-nested-lists holds uncommitted changes; commit or discard them, then withdraw again
+---
+instrukt: the workspace [TMP]/demo/workspace/nested-lists still holds files; keep or remove them, then withdraw again
+---
+withdrew nested-lists (<id 1>); recoverable until <time> with `instrukt todo reactivate <id 1>`
+reflection: reflected to GitHub
+---
+nested-lists · change · withdrawn
+identity: <id 1>
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep nested list depth.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+withdrawn: <time>
+  released branch nested-lists at <commit 1>
+  released worktree [TMP]/demo-nested-lists
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  implementation-plan (1 version)
+    <digest 2> by Test Developer at <time>
+stamps:
+  #3 <time> build started — base <commit 2>, plan <digest 2> — by Test Developer

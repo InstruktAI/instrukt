@@ -13,6 +13,110 @@ mod support;
 
 use support::{Project, redact, stdout};
 
+/// The identity a `create` reported (its last word).
+fn identity(created: &str) -> String {
+    created
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .last()
+        .unwrap()
+        .to_owned()
+}
+
+// spec: local/projects/instrukt/spec/feature/work/todos UC-TD4
+#[test]
+fn a_reused_name_gives_the_new_work_and_earlier_work_is_reached_by_its_address() {
+    let project = Project::new();
+    let head = project.repo.head();
+    project.create("parser-depth", "change", "Track list depth in the parser.");
+    project.ok(["deliver", "parser-depth", "--commit", &head]);
+    project.create("parser-depth", "change", "Track table depth in the parser.");
+    let lexer = identity(&project.create("lexer-depth", "change", "Count depth in the lexer."));
+    project.ok(["deliver", "lexer-depth", "--commit", &head]);
+
+    let reused = project.ok(["show", "parser-depth"]);
+    let refused = project.todo(["show", "lexer-depth"]).failure();
+    let address = format!("lexer-depth@{}", &lexer[..8]);
+    let earlier = project.ok(["show", &address]);
+
+    insta::assert_snapshot!(
+        "reused-name",
+        redact(&format!(
+            "{reused}---\n{}---\n{earlier}",
+            String::from_utf8_lossy(&refused.get_output().stderr)
+        ))
+        .replace(&lexer[..8], "<prefix>")
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/work/todos UC-TD5
+#[test]
+fn withdrawal_releases_the_working_copy_and_branch_and_refuses_while_work_would_be_lost() {
+    let project = Project::new();
+    let id = identity(&project.create("nested-lists", "change", "Keep nested list depth."));
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "implementation-plan",
+        "1. Track depth in the parser.",
+    ]);
+    let copy = project.env.path("demo-nested-lists");
+    project.repo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "nested-lists",
+        copy.to_str().unwrap(),
+    ]);
+    std::fs::write(copy.join("parser.rs"), "fn parse() {}\n").unwrap();
+    project.env.git(&copy, ["add", "--all"]);
+    project
+        .env
+        .git(&copy, ["commit", "--quiet", "-m", "Track list depth"]);
+    project
+        .env
+        .instrukt(&copy)
+        .args(["todo", "stamp", "nested-lists", "--build-started"])
+        .assert()
+        .success();
+
+    std::fs::write(copy.join("draft.rs"), "// unfinished\n").unwrap();
+    let uncommitted = project.todo(["remove", "nested-lists"]).failure();
+    std::fs::remove_file(copy.join("draft.rs")).unwrap();
+    let workspace = project.repo.path().join("workspace/nested-lists");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("report.md"), "results\n").unwrap();
+    let busy = project.todo(["remove", "nested-lists"]).failure();
+    std::fs::remove_file(workspace.join("report.md")).unwrap();
+
+    let withdrawn = project.ok(["remove", "nested-lists"]);
+    let shown = project.ok(["show", &format!("nested-lists@{}", &id[..8])]);
+
+    let base = project.env.path("").display().to_string();
+    insta::assert_snapshot!(
+        "withdrawn-without-loss",
+        redact(&format!(
+            "{}---\n{}---\n{withdrawn}---\n{shown}",
+            String::from_utf8_lossy(&uncommitted.get_output().stderr),
+            String::from_utf8_lossy(&busy.get_output().stderr),
+        ))
+        .replace(base.trim_end_matches('/'), "[TMP]")
+    );
+    assert!(!copy.exists(), "the working copy is released");
+    assert!(!workspace.exists(), "the empty workspace is removed");
+    assert!(
+        project
+            .repo
+            .git(["branch", "--list", "nested-lists"])
+            .is_empty(),
+        "the branch is released"
+    );
+}
+
 // spec: local/projects/instrukt/spec/feature/work/todos UC-TD1
 #[test]
 fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity() {

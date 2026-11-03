@@ -22,7 +22,8 @@ mod _validate;
 use std::path::Path;
 
 pub use _effective::{
-    ApprovalGate, Approver, Configuration, Notify, PublishedDomain, ThinkingMode, WatchedRef,
+    ApprovalGate, Approver, BoardRef, Configuration, Notify, PublishedDomain, ThinkingMode,
+    WatchedRef,
 };
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _layer::{

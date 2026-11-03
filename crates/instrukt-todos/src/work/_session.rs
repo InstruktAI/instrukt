@@ -94,6 +94,13 @@ pub(crate) struct Session<'w> {
     pub base: String,
     /// Local items whose recovery window expired when the session opened.
     pub purged: Vec<TodoSlug>,
+    /// Documentation files this command rewrote in the working tree.
+    pub docs_changed: Vec<std::path::PathBuf>,
+    /// A group parent's pending documentation owed to its first child.
+    pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
+    /// What workflow said of a group parent's preparation, asked before
+    /// the session opened.
+    pub parent_preparation: super::_ops::ParentPreparation,
 }
 
 impl<'w> Session<'w> {
@@ -134,9 +141,16 @@ impl<'w> Session<'w> {
             now,
             base,
             purged: Vec::new(),
+            docs_changed: Vec::new(),
+            pending_transfer: None,
+            parent_preparation: super::_ops::ParentPreparation::NotAsked,
         };
         session.purge()?;
         Ok(session)
+    }
+
+    pub fn home(&self) -> &instrukt_core::home::Home {
+        self.work.home()
     }
 
     pub fn machine(&self) -> Result<MachineId, WorkError> {
@@ -501,17 +515,32 @@ impl<'w> Session<'w> {
 
     /// Flushes pending reflection of every local item under the lock.
     pub fn flush(&mut self) -> Result<(), WorkError> {
+        // The optional board; a board setting naming no project is reported
+        // and never blocks the issue or the record.
+        let board = match self.config.board() {
+            Ok(board) => board,
+            Err(err) => {
+                tracing::warn!(event = "work_board_unconfigured", error = %err, "board reflection skipped");
+                None
+            }
+        };
         for index in 0..self.items.len() {
             let owed = self.items[index].reflection.pending
-                || _reflect::pull_request_owed(&self.items[index]);
+                || _reflect::pull_request_owed(&self.items[index])
+                || (board.is_some()
+                    && self.items[index].reflection.issue.is_some()
+                    && _reflect::board_owed(&self.items[index]));
             if !owed || self.items[index].reflection.conflicted {
                 continue;
             }
             let before = self.items[index].clone();
             let result = match &self.remote {
-                Remote::Client { gh, down: None } => {
-                    Some(_reflect::flush(gh, &mut self.items[index], &self.base))
-                }
+                Remote::Client { gh, down: None } => Some(_reflect::flush(
+                    gh,
+                    &mut self.items[index],
+                    &self.base,
+                    board.as_ref(),
+                )),
                 _ => None,
             };
             if let Some(Err(err)) = result {

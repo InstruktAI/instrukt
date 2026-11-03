@@ -17,6 +17,8 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+use instrukt_core::config::BoardRef;
+
 use super::_envelope::{self, Envelope, TODO_LABEL};
 use super::_github::{Fetched, GitHub, GitHubError};
 use super::_model::{TodoId, TodoRecord, digest_of};
@@ -221,7 +223,12 @@ pub(crate) fn refresh(gh: &GitHub, item: &mut LocalItem) -> Result<(), GitHubErr
 /// head this computer knows, verified by reading the chain back; then the
 /// issue's visible fields and the linked pull request. A head this
 /// computer has not seen, or a lost race, marks the item conflicted.
-pub(crate) fn flush(gh: &GitHub, item: &mut LocalItem, base: &str) -> Result<(), GitHubError> {
+pub(crate) fn flush(
+    gh: &GitHub,
+    item: &mut LocalItem,
+    base: &str,
+    board: Option<&BoardRef>,
+) -> Result<(), GitHubError> {
     if item.reflection.conflicted {
         return Ok(());
     }
@@ -281,7 +288,68 @@ pub(crate) fn flush(gh: &GitHub, item: &mut LocalItem, base: &str) -> Result<(),
     {
         reflect_pull_request(gh, item, issue, base)?;
     }
+    if let (Some(board), Some(issue)) = (board, item.reflection.issue)
+        && board_owed(item)
+    {
+        reflect_board(gh, board, item, issue)?;
+    }
     Ok(())
+}
+
+/// Whether the board item is missing or shows another status.
+pub(crate) fn board_owed(item: &LocalItem) -> bool {
+    item.reflection.board_item.is_none()
+        || item.reflection.board_status.as_deref() != Some(_envelope::record_status(&item.record))
+}
+
+/// Puts the issue on the board with the record's status. A failure is kept
+/// for the next attempt and never blocks the issue or the record; only a
+/// GitHub that stopped answering ends the command's reflection.
+fn reflect_board(
+    gh: &GitHub,
+    board: &BoardRef,
+    item: &mut LocalItem,
+    issue: IssueRef,
+) -> Result<(), GitHubError> {
+    let status = _envelope::record_status(&item.record);
+    let attempt = (|| {
+        let content = match item.reflection.board_item {
+            Some(_) => String::new(),
+            None => gh.read(&format!("/issues/{}", issue.number))?["node_id"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| GitHubError::Decode {
+                    path: format!("/issues/{}", issue.number),
+                    message: "an issue without a node id".to_owned(),
+                })?,
+        };
+        super::_board::reflect(
+            gh,
+            board,
+            item.reflection.board_item.as_deref(),
+            &content,
+            status,
+        )
+    })();
+    match attempt {
+        Ok(board_item) => {
+            item.reflection.board_item = Some(board_item);
+            item.reflection.board_status = Some(status.to_owned());
+            item.reflection.board_failure = None;
+            Ok(())
+        }
+        Err(err) if err.is_reach() => Err(err),
+        Err(err) => {
+            tracing::warn!(
+                event = "work_board_pending",
+                todo = %item.record.slug,
+                error = %err,
+                "board reflection failed; it is retried on its own"
+            );
+            item.reflection.board_failure = Some(err.to_string());
+            Ok(())
+        }
+    }
 }
 
 fn conflict(item: &mut LocalItem, issue: IssueRef, why: &'static str) {

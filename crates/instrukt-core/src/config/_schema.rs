@@ -72,6 +72,8 @@ enum Shape {
     Slug,
     Domain,
     Bool,
+    /// `false`, or a GitHub project `<owner>/<number>` (`board`).
+    Board,
     Str,
     OnOff,
     Approver,
@@ -112,7 +114,7 @@ fn schema() -> Node {
         ("publishes", Leaf(ProjectOnly, Shape::Publishes)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("actions", Leaf(ProjectOnly, Shape::Actions)),
-        ("board", Leaf(ProjectOnly, Shape::Bool)),
+        ("board", Leaf(ProjectOnly, Shape::Board)),
         (
             "github",
             map(vec![
@@ -324,6 +326,16 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
         },
         Shape::Domain => check_field(Field::Domain, value, path, out),
         Shape::Bool => check_field(Field::Bool, value, path, out),
+        Shape::Board => match value {
+            Value::Bool(false) => {}
+            Value::Bool(true) => out.push(invalid(
+                "name the GitHub project todos are reflected to: `<owner>/<number>` (or `false`)",
+            )),
+            Value::String(text) if super::_effective::board_ref(text).is_some() => {}
+            _ => out.push(invalid(
+                "expected `false` or a GitHub project `<owner>/<number>`",
+            )),
+        },
         Shape::Str => check_field(Field::Str, value, path, out),
         Shape::OnOff => {
             if !matches!(value.as_str(), Some("on" | "off")) {
@@ -646,7 +658,7 @@ mod tests {
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\npublishes: [{slug: sdlc, trigger: code}]\n\
         requires: [todos]\nactions: {test: make test, lint: {command: lint, takes_files: true}}\n\
-        board: true\ngithub: {approvers: [me]}\napprovals: {prd: peer, task: human}\n\
+        board: acme/7\ngithub: {approvers: [me]}\napprovals: {prd: peer, task: human}\n\
         workflow: {domain: sdlc}\nevents: {watch: [{remote: origin, ref: main}]}\n\
         runner: {autostart: {build: true}}\n";
     const BOTH: &str = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\

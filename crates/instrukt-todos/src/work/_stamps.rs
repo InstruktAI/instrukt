@@ -16,7 +16,7 @@ use super::_error::WorkError;
 use super::_model::TodoRecord;
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, ContentDigest, DriftClass,
-    PreparationReview, ReviewVerdict, StampFact, TaskResult, artifact_names,
+    Grounding, PreparationReview, ReviewVerdict, StampFact, TaskResult, artifact_names,
 };
 
 /// One admitted stamp form, as `instrukt todo stamp <slug>` takes it.
@@ -30,8 +30,8 @@ pub enum StampRequest {
     /// `--verdict approve|changes_requested --phase build_review`.
     BuildVerdict { verdict: BuildVerdict },
     /// `--prd-approved|--task-approved --by human|peer [--session
-    /// <runtime:id>] [--reasoning <text>]`; a peer approval names its
-    /// session and reasoning.
+    /// <runtime:id>] [--reason <text>]`; a peer approval names its
+    /// session and reason.
     Approval {
         gate: ApprovalGate,
         by: ApprovedBy,
@@ -166,12 +166,12 @@ pub(crate) fn resolve(
                 }
                 if reasoning.is_none() {
                     return Err(WorkError::refused(
-                        "a peer approval records the peer's reasoning with `--reasoning <text>`",
+                        "a peer approval states the peer's reason with `--reason <text>`",
                     ));
                 }
             } else if reasoning.is_some() {
                 return Err(WorkError::refused(
-                    "`--reasoning` records a peer's judgment; a human approval carries none",
+                    "a human approval states no reason; `--reason` records a peer's judgment",
                 ));
             }
             Resolved {
@@ -306,6 +306,8 @@ pub(crate) fn resolve(
             class: *class,
             reason: required(reason, "the drift reason")?,
             examined: current(record, artifact.as_str())?,
+            // Captured by the caller, which reads the project's grounding.
+            grounding: Grounding::default(),
         }),
         StampRequest::BuildStarted => {
             let plan = current(record, plan_artifact(record.kind))?;
