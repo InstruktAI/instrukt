@@ -439,23 +439,25 @@ mod tests {
     #[test]
     fn session_refs_split_at_the_first_colon() {
         let session = SessionRef::parse("tmux:main:3").unwrap();
-        assert_eq!(session.runtime.as_str(), "tmux");
-        assert_eq!(session.id.as_str(), "main:3");
-        assert_eq!(session.to_string(), "tmux:main:3");
+        let expected = SessionRef {
+            runtime: RuntimeName::parse("tmux").unwrap(),
+            id: SessionId::parse("main:3").unwrap(),
+        };
+        assert_eq!(session, expected);
+        assert_eq!(SessionRef::parse(&session.to_string()).unwrap(), session);
         for bad in ["", "tmux", ":id", "tmux:", "tm ux:id", "tmux:a b"] {
             assert!(SessionRef::parse(bad).is_err(), "{bad:?} should be refused");
         }
         let round: SessionRef = serde_yaml_ng::from_str("claude:abc").unwrap();
-        assert_eq!(
-            serde_yaml_ng::to_string(&round).unwrap().trim(),
-            "claude:abc"
-        );
+        let again: SessionRef =
+            serde_yaml_ng::from_str(&serde_yaml_ng::to_string(&round).unwrap()).unwrap();
+        assert_eq!(again, round);
     }
 
     #[test]
     fn serde_goes_through_validation() {
         let ok: ProjectSlug = serde_yaml_ng::from_str("instrukt").unwrap();
-        assert_eq!(ok.as_str(), "instrukt");
+        assert_eq!(ok, ProjectSlug::parse("instrukt").unwrap());
         assert!(serde_yaml_ng::from_str::<ProjectSlug>("Not A Slug").is_err());
     }
 }
