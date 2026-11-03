@@ -108,7 +108,7 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match value {
         Value::String(text) => ctx.out.line(&text)?,
         other => {
-            let text = serde_yaml_ng::to_string(&other).context("cannot render the value")?;
+            let text = config::render_yaml(&other).context("cannot render the value")?;
             ctx.out.text(&text)?;
         }
     }

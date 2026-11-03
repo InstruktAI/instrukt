@@ -6,7 +6,7 @@ modules:
   blueprint: false
   todos: false
   events: false
-ticks: on
+ticks: 'on'
 github:
   api_url: https://api.github.com
 runner:
