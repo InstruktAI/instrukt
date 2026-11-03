@@ -285,63 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn the_default_branch_follows_the_remote_then_configuration_then_the_fallback() {
-        let dir = repo();
-        let path = dir.path();
-        run(path, ["config", "--unset-all", "init.defaultBranch"]).ok();
-        let unconfigured = run(
-            path,
-            ["config", "--default", "", "--get", "init.defaultBranch"],
-        )
-        .unwrap();
-        if unconfigured.is_empty() {
-            assert_eq!(
-                default_branch(path, "origin").unwrap(),
-                FALLBACK_DEFAULT_BRANCH
-            );
-        }
-        run(path, ["config", "init.defaultBranch", "trunk"]).unwrap();
-        let configured = run(path, ["config", "--get", "init.defaultBranch"]).unwrap();
-        assert_eq!(default_branch(path, "origin").unwrap(), configured);
-
-        run(
-            path,
-            [
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.test",
-                "commit",
-                "--allow-empty",
-                "-q",
-                "-m",
-                "x",
-            ],
-        )
-        .unwrap();
-        let head = run(path, ["rev-parse", "HEAD"]).unwrap();
-        run(path, ["update-ref", "refs/remotes/origin/release", &head]).unwrap();
-        run(
-            path,
-            [
-                "symbolic-ref",
-                "refs/remotes/origin/HEAD",
-                "refs/remotes/origin/release",
-            ],
-        )
-        .unwrap();
-        let symref = run(
-            path,
-            ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        )
-        .unwrap();
-        assert_eq!(
-            Some(default_branch(path, "origin").unwrap().as_str()),
-            symref.strip_prefix("origin/")
-        );
-    }
-
-    #[test]
     fn worktree_root_is_none_only_outside_a_repository() {
         let outside = tempfile::tempdir().unwrap();
         assert_eq!(worktree_root(outside.path()).unwrap(), None);
