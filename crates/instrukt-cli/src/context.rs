@@ -7,7 +7,6 @@ use instrukt_core::home::Home;
 
 use crate::output::Output;
 
-#[allow(dead_code, reason = "fields are read as context commands are built")]
 pub struct Ctx {
     /// The home (`$HOME/.instrukt`) of this invocation.
     pub home: Home,

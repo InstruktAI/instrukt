@@ -12,7 +12,6 @@ pub struct Output {
     sink: Box<dyn Write>,
 }
 
-#[allow(dead_code, reason = "writers are used as context commands are built")]
 impl Output {
     pub fn stdout() -> Self {
         Self {
