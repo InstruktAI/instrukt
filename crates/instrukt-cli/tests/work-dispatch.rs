@@ -42,6 +42,49 @@ fn with_automatic_pickup_eligible_work_is_dispatched_to_an_agent() {
     );
 }
 
+fn create_change(project: &Tracked) {
+    project.todo([
+        "create",
+        "tidy-imports",
+        "Sort the imports of every module.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn a_project_choosing_automatic_pickup_in_its_own_layer_is_dispatched_by_the_machines_wake_up() {
+    // The machine's global layer leaves work tracking off; only the
+    // project's own layer switches it on.
+    let project = Tracked::with_global_modules(true, "todos: false");
+    create_change(&project);
+
+    project.tick();
+
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+}
+
+// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() {
+    let mut project = Tracked::new(true);
+    create_change(&project);
+
+    project.github.stop();
+    project.tick();
+    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+
+    project.github.resume();
+    project.tick();
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    insta::assert_snapshot!(
+        "dispatched-after-pending-claim",
+        work::redact(&project.todo(["show", "tidy-imports"]))
+    );
+}
+
 // spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {

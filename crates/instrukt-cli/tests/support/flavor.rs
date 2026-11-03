@@ -121,11 +121,17 @@ fn procedure(name: &str, role: &str, parameters: bool) -> (String, String) {
 impl Tracked {
     /// A published project whose `runner.autostart` is `autostart`.
     pub fn new(autostart: bool) -> Self {
+        Self::with_global_modules(autostart, "todos: true")
+    }
+
+    /// As [`Tracked::new`], with the machine's global `modules` switches.
+    /// The project's own layer always switches todos on.
+    pub fn with_global_modules(autostart: bool, modules: &str) -> Self {
         let mut env = TestEnv::new();
         let github = FakeGitHub::start();
         github.add_repo(REPOSITORY);
         let rt = FakeRuntime::new(&env, "rt", false);
-        global_layer(&env, "todos: true", &[&rt]);
+        global_layer(&env, modules, &[&rt]);
         github.configure(&env);
         env.set_env("GITHUB_TOKEN", "test-token");
         let repo = env.git_repo("demo");

@@ -8,18 +8,18 @@
 //! reads the event sources and delivers pending events to standing agents;
 //! with `todos` on it dispatches eligible todos.
 
-use std::path::Path;
 use std::time::Duration;
 
 use instrukt_core::config::{ConfigError, Configuration, Env, Module};
 use instrukt_core::fsx::{FsError, LockGuard};
+use instrukt_core::github;
 use instrukt_core::home::Home;
 use instrukt_core::index::GlobalIndex;
 use instrukt_core::publication::PublishedRecord;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
-use crate::ci::{self, CiClient, CiRead};
+use crate::ci::{CiClient, CiRead};
 use crate::dispatch::{self, DispatchContext};
 use crate::event_log::FileEventLog;
 use crate::events::{Event, EventLog};
@@ -223,21 +223,24 @@ fn read_sources(
     let Some(candidate) = observed.candidate else {
         return;
     };
-    let Some(repository) = repository(&considered.config, &project.root) else {
-        tracing::debug!(event = "ci_repository_unknown", project = %project.slug);
-        return;
-    };
-    let api_url = match considered.config.github_api_url() {
-        Ok(url) => url.to_owned(),
+    let api_url = match github::api_url(cx.home) {
+        Ok(url) => url,
         Err(err) => {
             tracing::warn!(event = "github_api_url_unreadable", error = %err);
+            return;
+        }
+    };
+    let repository = match github::repository(&considered.config, &api_url, &project.root) {
+        Ok(repository) => repository,
+        Err(err) => {
+            tracing::debug!(event = "ci_repository_unresolved", project = %project.slug, error = %err);
             return;
         }
     };
     let client = CiClient::new(
         &api_url,
         &repository,
-        ci::token(cx.env),
+        github::credentials(cx.env),
         state,
         &project.slug,
     );
@@ -255,16 +258,5 @@ fn read_sources(
             tracing::debug!(event = "ci_poll_deferred", project = %project.slug, until = %until);
         }
         Err(err) => tracing::warn!(event = "ci_unreadable", project = %project.slug, error = %err),
-    }
-}
-
-/// The project's GitHub repository, resolved as work resolves it.
-fn repository(config: &Configuration, root: &Path) -> Option<String> {
-    match ci::repository(config, root) {
-        Ok(repository) => Some(repository),
-        Err(reason) => {
-            tracing::debug!(event = "ci_repository_unresolved", reason);
-            None
-        }
     }
 }
