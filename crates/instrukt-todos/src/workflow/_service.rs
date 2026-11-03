@@ -459,43 +459,12 @@ pub fn related_evidence(
     Ok(others)
 }
 
-/// The todos whose evidence a derivation for `evidence` reads besides its
-/// own, by slug: its prerequisites, and each todo its artifacts' current
-/// grounding recorded a dependency on; each once, in that order.
-/// Dependencies are matched by durable identity: a grounding dependency
-/// whose slug now names another todo reads as unresolved. Prefer
-/// [`related_evidence`], which reads them by identity.
-pub fn related_todos(evidence: &TodoEvidence) -> Vec<TodoSlug> {
-    let mut out: Vec<TodoSlug> = Vec::new();
-    let prerequisites =
-        evidence
-            .prerequisites
-            .iter()
-            .filter_map(|prerequisite| match prerequisite {
-                crate::evidence::Prerequisite::Todo(slug) => Some(slug),
-                crate::evidence::Prerequisite::EmptyHolder(_) => None,
-            });
-    let grounded = evidence.artifacts.iter().flat_map(|artifact| {
-        artifact
-            .versions
-            .last()
-            .into_iter()
-            .flat_map(|version| version.grounding.dependencies.iter().map(|d| &d.todo))
-    });
-    for slug in prerequisites.chain(grounded) {
-        if !out.contains(slug) {
-            out.push(slug.clone());
-        }
-    }
-    out
-}
-
 /// Whether `evidence`'s todo has completed preparation, as the current
 /// derivation of the flavor its project selects says: preparation is
 /// complete when the todo's lane is no longer preparation (the work lane,
 /// or for a task its run). `project_root` is the project's primary
-/// worktree; `others` is the evidence of the todos [`related_todos`] names
-/// that the record has.
+/// worktree; `others` is the evidence of the todos [`related_evidence`]
+/// reads for it.
 ///
 /// `Ok(None)` when no answer can be derived: the project selects no
 /// published flavor, or the flavor defines no `prepare` or `work` flow. Reads the

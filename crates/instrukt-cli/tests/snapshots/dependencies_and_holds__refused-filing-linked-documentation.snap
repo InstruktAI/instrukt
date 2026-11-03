@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/dependencies-and-holds.rs
+expression: refusal
+---
+instrukt: [TMP]/demo/docs is a symbolic link or lies outside the repository; documentation is read and changed only inside it

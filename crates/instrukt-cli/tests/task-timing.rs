@@ -321,3 +321,50 @@ fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_clai
     project.tick_at("2030-01-06T09:30:20Z");
     assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
 }
+
+// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
+#[test]
+fn a_replayed_start_of_a_finished_run_is_refused_and_leaves_the_current_run() {
+    let mut project = Tracked::new(true);
+    project.authorized_task("quarter-hourly-sync", "cron:*/15 * * * *", &[]);
+    project.tick_at("2030-01-06T09:00:20Z");
+    project.todo_in_session(
+        "s1",
+        ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
+    );
+    project.tick_at("2030-01-06T09:15:20Z");
+    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    let before = project.todo(["show", "quarter-hourly-sync"]);
+
+    // The finished run replays its start of the occurrence it completed.
+    project.env.set_env("RT_SESSION", "s1");
+    let replayed = project
+        .env
+        .instrukt(project.repo.path())
+        .args([
+            "todo",
+            "stamp",
+            "quarter-hourly-sync",
+            "--task-firing-started",
+            "--occurrence",
+            "2030-01-06T09:00:00Z",
+        ])
+        .assert()
+        .failure();
+    project.env.remove_env("RT_SESSION");
+
+    insta::assert_snapshot!(
+        "stale-start",
+        String::from_utf8_lossy(&replayed.get_output().stderr)
+    );
+    assert_eq!(
+        project.todo(["show", "quarter-hourly-sync"]),
+        before,
+        "the replayed start recorded nothing"
+    );
+    // The current run still records its own outcome.
+    project.todo_in_session(
+        "s2",
+        ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
+    );
+}

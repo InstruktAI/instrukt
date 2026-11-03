@@ -89,6 +89,10 @@ pub(crate) struct Session<'w> {
     remote: Remote,
     /// Live reflected work read directly from GitHub this command.
     remote_live: Option<Vec<(TodoRecord, IssueRef)>>,
+    /// A listing of reflected work GitHub failed this command, short of
+    /// being unreachable: what is not local is then undetermined, never
+    /// absent.
+    lookup_failed: Option<GitHubError>,
     pub now: Timestamp,
     /// The project's default branch.
     pub base: String,
@@ -138,6 +142,7 @@ impl<'w> Session<'w> {
             items,
             remote,
             remote_live: None,
+            lookup_failed: None,
             now,
             base,
             purged: Vec::new(),
@@ -472,34 +477,51 @@ impl<'w> Session<'w> {
     }
 
     /// Runs `change` against the record set, then commits every record it
-    /// changed: a new revision, pending reflection, saved. A refused change
-    /// leaves every record as it was.
+    /// changed: a new revision, pending reflection, saved. A grouping's
+    /// documentation transfer (`pending_transfer`) is the last step, once
+    /// every check has passed and every record is saved. A refused or
+    /// failed change — a transfer included — leaves every record and the
+    /// documentation as they were.
     pub fn commit<T>(
         &mut self,
         what: &'static str,
         change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
     ) -> Result<T, WorkError> {
-        let before: Vec<TodoRecord> = self.items.iter().map(|it| it.record.clone()).collect();
+        let before: Vec<LocalItem> = self.items.clone();
         let value = match change(self) {
             Ok(value) => value,
             Err(err) => {
-                for (item, record) in self.items.iter_mut().zip(before) {
-                    item.record = record;
-                }
+                self.restore(before);
                 return Err(err);
             }
         };
+        let mut saved = Vec::new();
         for index in 0..self.items.len() {
             let changed = before
                 .get(index)
-                .is_none_or(|record| record != &self.items[index].record);
+                .is_none_or(|prior| prior.record != self.items[index].record);
             if !changed {
                 continue;
             }
             let item = &mut self.items[index];
             item.record.revision += 1;
             item.reflection.pending = true;
-            self.store.save(item)?;
+            if let Err(err) = self.store.save(item) {
+                self.unsave(&before, &saved);
+                self.restore(before);
+                return Err(err);
+            }
+            saved.push(index);
+        }
+        // Documentation moves only now: the transfer writes nothing when it
+        // refuses or fails, and the records it would orphan are put back.
+        if let Err(err) = super::_ops::transfer_documentation(self) {
+            self.unsave(&before, &saved);
+            self.restore(before);
+            return Err(err);
+        }
+        for &index in &saved {
+            let item = &self.items[index];
             tracing::info!(
                 event = "work_recorded",
                 change = what,
@@ -511,6 +533,36 @@ impl<'w> Session<'w> {
             );
         }
         Ok(value)
+    }
+
+    /// Puts the in-memory record set back as it was before a change, and
+    /// drops the change's pending documentation transfer.
+    fn restore(&mut self, before: Vec<LocalItem>) {
+        self.items = before;
+        self.pending_transfer = None;
+    }
+
+    /// Writes back the stored records a failed change already saved: each
+    /// one as it was, and a record the change created removed. A record
+    /// that cannot be put back is reported; the change's own failure is
+    /// what the caller is told.
+    fn unsave(&self, before: &[LocalItem], saved: &[usize]) {
+        for &index in saved {
+            let undone = match before.get(index) {
+                Some(prior) => self.store.save(prior),
+                None => self.store.delete(&self.items[index].record.id),
+            };
+            if let Err(err) = undone {
+                tracing::error!(
+                    event = "work_rollback_failed",
+                    project = %self.items[index].record.project,
+                    todo = %self.items[index].record.slug,
+                    id = %self.items[index].record.id,
+                    error = %err,
+                    "a record of a failed change could not be put back"
+                );
+            }
+        }
     }
 
     /// Flushes pending reflection of every local item under the lock.
@@ -527,9 +579,10 @@ impl<'w> Session<'w> {
         for index in 0..self.items.len() {
             let owed = self.items[index].reflection.pending
                 || _reflect::pull_request_owed(&self.items[index])
-                || (board.is_some()
-                    && self.items[index].reflection.issue.is_some()
-                    && _reflect::board_owed(&self.items[index]));
+                || board.as_ref().is_some_and(|board| {
+                    self.items[index].reflection.issue.is_some()
+                        && _reflect::board_owed(&self.items[index], board)
+                });
             if !owed || self.items[index].reflection.conflicted {
                 continue;
             }
@@ -603,7 +656,10 @@ impl<'w> Session<'w> {
             Remote::Client {
                 down: Some(err), ..
             } => GitHubRead::NotRead(reason_of(err)),
-            Remote::Client { down: None, .. } => GitHubRead::Read,
+            Remote::Client { down: None, .. } => match &self.lookup_failed {
+                Some(err) => GitHubRead::NotRead(PendingReason::Failed(err.to_string())),
+                None => GitHubRead::Read,
+            },
         }
     }
 
@@ -620,7 +676,7 @@ impl<'w> Session<'w> {
         let records = match result {
             Some(Ok(records)) => records,
             Some(Err(err)) => {
-                self.note(err);
+                self.lookup_failure(err);
                 Vec::new()
             }
             None => Vec::new(),
@@ -646,10 +702,19 @@ impl<'w> Session<'w> {
                     .collect(),
             ),
             Err(err) => {
-                self.note(err);
+                self.lookup_failure(err);
                 None
             }
         }
+    }
+
+    /// Records a failed listing of reflected work: what is not local can
+    /// no longer be called absent this command.
+    fn lookup_failure(&mut self, err: GitHubError) {
+        if !err.is_reach() {
+            self.lookup_failed = Some(err.clone());
+        }
+        self.note(err);
     }
 
     /// A record of reflected work read directly from GitHub, with its
@@ -665,7 +730,9 @@ impl<'w> Session<'w> {
             if let Some(index) = self.find(slug, false) {
                 return Ok(Located::Local(index));
             }
-            if let Some(item) = self.remote_matching(|r| &r.slug == slug && r.is_live())? {
+            if let Some(item) =
+                self.remote_matching(&format!("`{slug}`"), |r| &r.slug == slug && r.is_live())?
+            {
                 return Ok(Located::Remote(Box::new(item)));
             }
             let retained: Vec<String> = self
@@ -704,7 +771,7 @@ impl<'w> Session<'w> {
                 )));
             }
         }
-        match self.remote_matching(|r| address.names(r))? {
+        match self.remote_matching(&format!("`{address}`"), |r| address.names(r))? {
             Some(item) => Ok(Located::Remote(Box::new(item))),
             None => Err(self.absent(slug)),
         }
@@ -719,35 +786,70 @@ impl<'w> Session<'w> {
                 project: self.project.slug.clone(),
                 todo: slug.clone(),
             },
-            GitHubRead::NotRead(reason) => WorkError::refused(format!(
-                "`{slug}` is not on this computer, and whether it exists cannot be determined: {}",
-                describe(&reason)
-            )),
+            GitHubRead::NotRead(_) => self.undetermined(&format!("`{slug}`")),
         }
     }
 
-    /// The newest reflected record `wanted` accepts, read with its
-    /// verified contents and stored nowhere; `None` when GitHub holds none.
-    pub fn remote_matching(
+    /// The refusal when GitHub could not be read to find `what`, which
+    /// this computer does not have: undetermined, with the cause.
+    pub fn undetermined(&self, what: &str) -> WorkError {
+        let cause = match self.github_read() {
+            GitHubRead::NotRead(reason) => describe(&reason),
+            GitHubRead::Read => "GitHub's answer was not read".to_owned(),
+        };
+        WorkError::refused(format!(
+            "{what} is not on this computer, and whether it exists cannot be determined: {cause}"
+        ))
+    }
+
+    /// Every reflected record not on this computer that `wanted` accepts;
+    /// a GitHub that could not be read refuses as undetermined, naming
+    /// `what` was looked for.
+    pub fn remote_candidates(
         &mut self,
+        what: &str,
         wanted: impl Fn(&TodoRecord) -> bool,
-    ) -> Result<Option<LocalItem>, WorkError> {
+    ) -> Result<Vec<(TodoRecord, IssueRef)>, WorkError> {
         let Some(records) = self.remote_all() else {
-            return Ok(None);
+            return Err(self.undetermined(what));
         };
         let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
-        let found = records
+        Ok(records
             .into_iter()
             .filter(|(record, _)| wanted(record) && !local.contains(&record.id))
-            .max_by_key(|(record, _)| (record.is_live(), record.created));
-        let Some((record, issue)) = found else {
-            return Ok(None);
-        };
+            .collect())
+    }
+
+    /// The one reflected record `wanted` accepts, read with its verified
+    /// contents and stored nowhere; `None` when GitHub confirms it holds
+    /// none. Several are refused, naming each entry's exact address; a
+    /// GitHub that could not be read refuses as undetermined.
+    pub fn remote_matching(
+        &mut self,
+        what: &str,
+        wanted: impl Fn(&TodoRecord) -> bool,
+    ) -> Result<Option<LocalItem>, WorkError> {
+        let mut found = self.remote_candidates(what, wanted)?;
+        if found.len() > 1 {
+            return Err(several(what, found.iter().map(|(record, _)| record)));
+        }
+        match found.pop() {
+            Some((record, issue)) => self.localize_found(record, issue).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Reads a reflected record found on GitHub with its verified contents.
+    pub fn localize_found(
+        &mut self,
+        record: TodoRecord,
+        issue: IssueRef,
+    ) -> Result<LocalItem, WorkError> {
         let result = match &self.remote {
             Remote::Client { gh, down: None } => _reflect::localize(gh, record, issue),
-            _ => return Ok(None),
+            _ => return Err(self.undetermined(&format!("`{}`", record.slug))),
         };
-        result.map(Some).map_err(|err| self.github_failure(err))
+        result.map_err(|err| self.github_failure(err))
     }
 
     /// Makes a reflected record found by [`Session::locate`] a local item.
@@ -757,24 +859,21 @@ impl<'w> Session<'w> {
         Ok(self.items.len() - 1)
     }
 
+    /// The reflected entry `slug` names, not on this computer: its live
+    /// entry, else its only retained one. Several retained entries are
+    /// refused naming each exact address; `None` only when GitHub confirms
+    /// it holds none.
     pub fn remote_item(&mut self, slug: &TodoSlug) -> Result<Option<LocalItem>, WorkError> {
-        let found = match self.remote_all() {
-            Some(records) => records
-                .into_iter()
-                .filter(|(record, _)| &record.slug == slug)
-                .max_by_key(|(record, _)| (record.is_live(), record.created)),
-            None => None,
-        };
-        let Some((record, issue)) = found else {
-            return Ok(None);
-        };
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::localize(gh, record, issue),
-            _ => return Ok(None),
-        };
-        match result {
-            Ok(item) => Ok(Some(item)),
-            Err(err) => Err(self.github_failure(err)),
+        let what = format!("`{slug}`");
+        let found = self.remote_candidates(&what, |record| &record.slug == slug)?;
+        let live: Vec<_> = found.iter().filter(|(r, _)| r.is_live()).cloned().collect();
+        let mut chosen = if live.is_empty() { found } else { live };
+        if chosen.len() > 1 {
+            return Err(several(&what, chosen.iter().map(|(record, _)| record)));
+        }
+        match chosen.pop() {
+            Some((record, issue)) => self.localize_found(record, issue).map(Some),
+            None => Ok(None),
         }
     }
 
@@ -895,6 +994,18 @@ impl<'w> Session<'w> {
         }
         WorkError::GitHub(err)
     }
+}
+
+/// The refusal when `what` names several entries: each by its exact
+/// address.
+pub(crate) fn several<'r>(what: &str, records: impl Iterator<Item = &'r TodoRecord>) -> WorkError {
+    let addresses: Vec<String> = records
+        .map(|record| format!("`{}`", TodoAddress::exact(record)))
+        .collect();
+    WorkError::refused(format!(
+        "{what} names several entries; address one exactly: {}",
+        addresses.join(", ")
+    ))
 }
 
 /// Whether `record` is withdrawn work whose recovery window has passed at
