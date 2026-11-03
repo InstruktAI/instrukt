@@ -23,7 +23,7 @@ use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
 
 use super::_provider::{
     ChangeSinceReview, CodeChange, DRIFT_FACTS, GroundingChange, Observations, WorktreeObservation,
-    current_build_verdict,
+    current_build_verdict, dependency_change,
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
@@ -350,20 +350,9 @@ impl Current<'_> {
             unresolved |= is_reference && current.is_none();
             snippets |= current != snippet.digest;
         }
-        let dependencies = recorded.dependencies.iter().any(|dependency| {
-            let current = self
-                .prerequisites
-                .iter()
-                .find(|todo| todo.slug == dependency.todo)
-                .and_then(|todo| {
-                    todo.artifacts
-                        .iter()
-                        .find(|artifact| artifact.name == dependency.artifact)
-                })
-                .and_then(|artifact| artifact.versions.last())
-                .map(|version| &version.digest);
-            current != dependency.digest.as_ref()
-        });
+        let (dependencies, dependency_unresolved) =
+            dependency_change(&recorded.dependencies, self.prerequisites);
+        unresolved |= dependency_unresolved;
         Ok(GroundingChange {
             code,
             snippets,

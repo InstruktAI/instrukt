@@ -282,12 +282,7 @@ impl Workflow {
 
     /// The facts for `evidence` from the record and the repository.
     fn facts(&self, reading: &Reading, evidence: &TodoEvidence) -> Result<Facts, WorkflowError> {
-        let mut others: Vec<TodoEvidence> = Vec::new();
-        for slug in related_todos(evidence) {
-            if let Some(other) = self.evidence.evidence(&reading.project, &slug)? {
-                others.push(other);
-            }
-        }
+        let others = related_evidence(self.evidence.as_ref(), &reading.project, evidence)?;
         facts_with(&self.home, reading, evidence, &others)
     }
 
@@ -428,9 +423,48 @@ impl WorkflowAssignments for Workflow {
     }
 }
 
+/// The related todos' evidence a derivation for `evidence` reads besides
+/// its own, read through `work`: each prerequisite by slug, and each todo
+/// its artifacts' current grounding recorded a dependency on by durable
+/// identity (a slug may since name another todo). Each todo once.
+pub fn related_evidence(
+    work: &dyn WorkEvidence,
+    project: &ProjectRef,
+    evidence: &TodoEvidence,
+) -> Result<Vec<TodoEvidence>, WorkInterfaceError> {
+    let mut others: Vec<TodoEvidence> = Vec::new();
+    let mut add = |other: Option<TodoEvidence>| {
+        if let Some(other) = other
+            && !others.iter().any(|known| known.id == other.id)
+        {
+            others.push(other);
+        }
+    };
+    for prerequisite in &evidence.prerequisites {
+        if let crate::evidence::Prerequisite::Todo(slug) = prerequisite {
+            add(work.evidence(project, slug)?);
+        }
+    }
+    let grounded = evidence.artifacts.iter().flat_map(|artifact| {
+        artifact
+            .versions
+            .last()
+            .into_iter()
+            .flat_map(|version| version.grounding.dependencies.iter())
+            .filter_map(|dependency| dependency.id.as_ref())
+    });
+    for id in grounded {
+        add(work.evidence_by_id(project, id)?);
+    }
+    Ok(others)
+}
+
 /// The todos whose evidence a derivation for `evidence` reads besides its
-/// own: its prerequisites, and each todo its artifacts' current grounding
-/// recorded a dependency on; each once, in that order.
+/// own, by slug: its prerequisites, and each todo its artifacts' current
+/// grounding recorded a dependency on; each once, in that order.
+/// Dependencies are matched by durable identity: a grounding dependency
+/// whose slug now names another todo reads as unresolved. Prefer
+/// [`related_evidence`], which reads them by identity.
 pub fn related_todos(evidence: &TodoEvidence) -> Vec<TodoSlug> {
     let mut out: Vec<TodoSlug> = Vec::new();
     let prerequisites =
