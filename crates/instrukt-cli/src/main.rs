@@ -9,6 +9,7 @@ mod context;
 mod output;
 mod wiring;
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -116,6 +117,7 @@ fn init_tracing() {
     };
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr)
         .init();
 }
