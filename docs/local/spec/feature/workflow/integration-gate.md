@@ -25,8 +25,8 @@ API call. When local main is ahead and no candidate is pending, the runner
 emits `runner.main_ahead` to wake the integrator. The integrator fetches the
 review notes ref and reads direct commits' git-note verdicts
 (`local/projects/instrukt/spec/feature/repository/attributed-commit`) and takes settled direct commits through the same
-candidate and verification gate. It takes commits noted `approve` or `exempt`,
-stopping at the first commit with neither verdict.
+candidate and verification gate. It takes commits whose latest stamp is `approve` or
+`exempt`, stopping at the first commit that is not.
 
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head

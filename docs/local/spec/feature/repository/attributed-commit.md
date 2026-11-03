@@ -64,6 +64,14 @@ named commit. The notes need no separate work record or enabled todos module.
 The integrator reads these notes when assessing settled direct commits for
 integration.
 
+Each stamp is one line of a commit's note and carries its time,
+`at: <RFC 3339 UTC>`, beside the verdict and its report digest or reason. A new
+stamp is added beside the commit's earlier stamps, never replacing them, so a
+merge never loses another machine's verdict. The latest stamp of a commit
+decides its verdict. Stamps tied at the latest time settle the commit as
+`approve` or `exempt` only when every one of them agrees; otherwise the commit
+is unsettled.
+
 The notes live under `refs/notes/instrukt-review`, and instrukt moves that ref
 explicitly; no remote refspec is changed:
 
@@ -82,8 +90,8 @@ explicitly; no remote refspec is changed:
 
 `instrukt repo stamp <sha…> --verdict exempt --reason <text>` records
 the author's own-stamp exemption and reason for a commit requiring no review.
-The integrator takes commits noted `approve` or `exempt`, stopping at the
-first commit with neither verdict.
+The integrator takes commits whose latest stamp is `approve` or `exempt`,
+stopping at the first commit that is not.
 
 ### Use cases
 
