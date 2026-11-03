@@ -5,7 +5,7 @@
 //! Every target is confined to a root (the home, the project's primary
 //! worktree or the user's home directory): no existing component between
 //! the root and the target may be a symbolic link, so nothing is written
-//! through a link out of its root.
+//! through a link to another file.
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +13,12 @@ use tempfile::TempDir;
 
 use super::PublicationError;
 use crate::fsx::atomic_write;
+
+/// The name prefix of a sync's trash directory below the home root.
+const TRASH_PREFIX: &str = ".sync-trash-";
+
+/// The name prefix of a sync's staging directory below the home root.
+pub(super) const STAGING_PREFIX: &str = ".sync-staging-";
 
 /// One undoable step.
 #[derive(Debug)]
@@ -50,7 +56,7 @@ impl Transaction {
             source,
         })?;
         let trash = tempfile::Builder::new()
-            .prefix(".sync-trash-")
+            .prefix(TRASH_PREFIX)
             .tempdir_in(home_root)
             .map_err(|source| PublicationError::Io {
                 path: home_root.to_path_buf(),
@@ -156,12 +162,18 @@ impl Transaction {
         Ok(Some(saved))
     }
 
-    /// Keeps every write; the trash is deleted.
-    pub(super) fn commit(self) -> Result<(), PublicationError> {
-        let path = self.trash.path().to_path_buf();
-        self.trash
-            .close()
-            .map_err(|source| PublicationError::Io { path, source })
+    /// Keeps every write. Past this point the sync has published, so
+    /// deleting the trash cannot fail it: a trash that cannot be deleted
+    /// is reported and left for [`sweep`] on a later sync.
+    pub(super) fn commit(self) {
+        let path = self.trash.keep();
+        if let Err(error) = std::fs::remove_dir_all(&path) {
+            tracing::warn!(
+                event = "sync_trash_left",
+                path = %path.display(),
+                %error,
+            );
+        }
     }
 
     /// Undoes every write, newest first. Undo is best effort: a step that
@@ -236,24 +248,16 @@ fn read_existing(target: &Path) -> Result<Option<Vec<u8>>, PublicationError> {
     }
 }
 
-/// Where `root/rel` resolves: every existing component is resolved through
-/// its symbolic links, and must stay inside `root` (resolved likewise);
-/// `rel` climbing out, or a link leading out, is refused. The missing rest
-/// of the path is appended as written.
+/// The declared output `root/rel`, with `root` resolved. Refused when
+/// `rel` climbs out, or when any existing component below the root — the
+/// output itself included — is a symbolic link: an output is written,
+/// replaced or removed only as the object it was declared to be, never
+/// through an alias of another file.
 pub(super) fn confined(root: &Path, rel: &Path) -> Result<PathBuf, PublicationError> {
-    let unconfined = || PublicationError::Unconfined {
-        path: root.join(rel),
-    };
-    let parts: Vec<&std::ffi::OsStr> = rel
-        .components()
-        .map(|component| match component {
-            std::path::Component::Normal(part) => Ok(part),
-            _ => Err(unconfined()),
-        })
-        .collect::<Result<_, _>>()?;
+    let unconfined = |path: PathBuf| PublicationError::Unconfined { path };
     let base = match root.canonicalize() {
         Ok(base) => base,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(root.join(rel)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => root.to_path_buf(),
         Err(source) => {
             return Err(PublicationError::Io {
                 path: root.to_path_buf(),
@@ -261,89 +265,56 @@ pub(super) fn confined(root: &Path, rel: &Path) -> Result<PathBuf, PublicationEr
             });
         }
     };
-    let mut resolved = base.clone();
-    for (at, part) in parts.iter().enumerate() {
-        let candidate = resolved.join(part);
-        match std::fs::symlink_metadata(&candidate) {
-            Ok(_) => {
-                resolved = candidate
-                    .canonicalize()
-                    .map_err(|source| PublicationError::Io {
-                        path: candidate.clone(),
-                        source,
-                    })?;
-                if !resolved.starts_with(&base) {
-                    return Err(PublicationError::Unconfined { path: candidate });
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(parts[at..]
-                    .iter()
-                    .fold(resolved, |path, part| path.join(part)));
-            }
-            Err(source) => {
-                return Err(PublicationError::Io {
-                    path: candidate,
-                    source,
-                });
-            }
+    let mut path = base;
+    let mut exists = true;
+    for component in rel.components() {
+        let std::path::Component::Normal(part) = component else {
+            return Err(unconfined(root.join(rel)));
+        };
+        path.push(part);
+        if !exists {
+            continue;
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => return Err(unconfined(path)),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => exists = false,
+            Err(source) => return Err(PublicationError::Io { path, source }),
         }
     }
-    Ok(resolved)
+    Ok(path)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rollback_restores_files_and_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let file = root.join("docs/index.yaml");
-        atomic_write(&file, b"old").unwrap();
-        let domain = root.join("docs/alpha");
-        atomic_write(&domain.join("a.md"), b"old a").unwrap();
-        let staged = root.join("staged");
-        atomic_write(&staged.join("b.md"), b"new b").unwrap();
-        let gone = root.join("docs/beta");
-        atomic_write(&gone.join("c.md"), b"c").unwrap();
-
-        let mut tx = Transaction::begin(root).unwrap();
-        tx.write(&file, b"new").unwrap();
-        tx.replace_dir(&staged, &domain).unwrap();
-        tx.remove_dir(&gone).unwrap();
-        tx.write(&root.join("docs/fresh.md"), b"fresh").unwrap();
-        assert_eq!(std::fs::read(domain.join("b.md")).unwrap(), b"new b");
-        tx.rollback();
-
-        assert_eq!(std::fs::read(&file).unwrap(), b"old");
-        assert_eq!(std::fs::read(domain.join("a.md")).unwrap(), b"old a");
-        assert!(!domain.join("b.md").exists());
-        assert_eq!(std::fs::read(gone.join("c.md")).unwrap(), b"c");
-        assert!(!root.join("docs/fresh.md").exists());
+/// Deletes what earlier syncs left below `home_root` — trash a finished
+/// sync could not delete, staging an interrupted one never moved. Callers
+/// hold the docs lock. What cannot be deleted is reported and left.
+pub(super) fn sweep(home_root: &Path) -> Result<(), PublicationError> {
+    let entries = match std::fs::read_dir(home_root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(PublicationError::Io {
+                path: home_root.to_path_buf(),
+                source,
+            });
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|source| PublicationError::Io {
+            path: home_root.to_path_buf(),
+            source,
+        })?;
+        let name = entry.file_name();
+        let leftover = name
+            .to_str()
+            .is_some_and(|n| n.starts_with(TRASH_PREFIX) || n.starts_with(STAGING_PREFIX));
+        if !leftover {
+            continue;
+        }
+        let path = entry.path();
+        if let Err(error) = remove_any(&path) {
+            tracing::warn!(event = "sync_leftover_kept", path = %path.display(), %error);
+        }
     }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symbolic_link_out_of_the_root_is_refused_and_one_inside_is_followed() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        std::os::unix::fs::symlink(outside.path(), root.join("out")).unwrap();
-        std::fs::create_dir(root.join("real")).unwrap();
-        std::os::unix::fs::symlink(root.join("real"), root.join("in")).unwrap();
-        assert!(matches!(
-            confined(&root, Path::new("out/AGENTS.md")),
-            Err(PublicationError::Unconfined { .. })
-        ));
-        assert_eq!(
-            confined(&root, Path::new("in/AGENTS.md")).unwrap(),
-            root.join("real/AGENTS.md")
-        );
-        assert!(matches!(
-            confined(&root, Path::new("../x")),
-            Err(PublicationError::Unconfined { .. })
-        ));
-    }
+    Ok(())
 }

@@ -3,7 +3,7 @@
 //!
 //! Published files are copied raw into `~/.instrukt/docs/`, local files are
 //! written into their project, and the index is built from the production
-//! snippet model and saved with the production [`GlobalIndex`] type, so the
+//! snippet model and serialized from the production [`GlobalIndex`] type, so the
 //! tests read the shared persisted contract, not hand-written YAML.
 #![allow(
     clippy::unwrap_used,
@@ -112,15 +112,22 @@ pub fn publish(env: &TestEnv, project: &str, repo: Option<&Repo>, files: &[(&str
             source_project: slug.clone(),
         });
     }
-    index.save(&home).unwrap();
+    write(
+        &home.index_file(),
+        &serde_yaml_ng::to_string(&index).unwrap(),
+    );
     if let Some(repo) = repo {
-        PublishedRecord {
-            project: slug,
+        let record = PublishedRecord {
+            project: slug.clone(),
             commit: CommitSha::parse(&repo.head()).unwrap(),
             checkout: repo.path().to_path_buf(),
-        }
-        .save(&home)
-        .unwrap();
+        };
+        write(
+            &home
+                .publication_state_dir()
+                .join(format!("{}.yaml", slug.as_str())),
+            &serde_yaml_ng::to_string(&record).unwrap(),
+        );
     }
 }
 

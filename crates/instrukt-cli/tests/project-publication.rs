@@ -251,16 +251,45 @@ fn two_projects_publish_side_by_side_and_a_claim_on_anothers_domain_is_refused()
     assert_ne!(record.commit.as_str(), sha);
 }
 
+/// Every file of the project's working tree outside `.git`, with its
+/// content.
+fn project_tree(repo: &Repo) -> BTreeMap<PathBuf, Vec<u8>> {
+    walkdir::WalkDir::new(repo.path())
+        .into_iter()
+        .filter_entry(|e| e.file_name() != ".git")
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_file())
+        .map(|e| {
+            (
+                e.path().strip_prefix(repo.path()).unwrap().to_path_buf(),
+                std::fs::read(e.path()).unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn published_commit(env: &TestEnv, project: &str) -> String {
+    PublishedRecord::load(&home(env), &ProjectSlug::parse(project).unwrap())
+        .unwrap()
+        .unwrap()
+        .commit
+        .to_string()
+}
+
 // spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB3
 #[test]
-fn a_deleted_snippet_and_a_dropped_domain_are_retracted_and_nothing_else() {
+fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     let env = TestEnv::new();
     let other = project(&env, "other", &["shared"]);
     sync(&env, &other).success();
     let repo = project(&env, "demo", &["acme", "legacy"]);
-    repo.write("docs/global/acme/policy/retired.md", &policy("Retired", ""));
+    repo.write("docs/global/acme/policy/retired.md", &policy("Retired", ""))
+        .write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
+        .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
     repo.commit("retired");
     sync(&env, &repo).success();
+    assert!(repo.path().join("tools/AGENTS.md").is_file());
+    let kept_instructions = repo.read("AGENTS.md");
     let other_entries: Vec<IndexEntry> = owned_by(&index(&env), "other")
         .into_iter()
         .cloned()
@@ -272,6 +301,7 @@ fn a_deleted_snippet_and_a_dropped_domain_are_retracted_and_nothing_else() {
 
     std::fs::remove_file(repo.path().join("docs/global/acme/policy/retired.md")).unwrap();
     std::fs::remove_dir_all(repo.path().join("docs/global/legacy")).unwrap();
+    std::fs::remove_file(repo.path().join("tools/AGENTS.master.md")).unwrap();
     repo.write("instrukt.yaml", &layer("demo", &["acme"]));
     repo.commit("retire");
     sync(&env, &repo).success();
@@ -289,6 +319,8 @@ fn a_deleted_snippet_and_a_dropped_domain_are_retracted_and_nothing_else() {
             "shared/policy/rules",
         ]
     );
+    assert!(!repo.path().join("tools/AGENTS.md").exists());
+    assert_eq!(repo.read("AGENTS.md"), kept_instructions);
     let other_after: Vec<IndexEntry> = owned_by(&after, "other").into_iter().cloned().collect();
     assert_eq!(other_after, other_entries);
     let other_tree_after: Vec<(PathBuf, Vec<u8>)> = published_tree(&env)
@@ -298,29 +330,31 @@ fn a_deleted_snippet_and_a_dropped_domain_are_retracted_and_nothing_else() {
     assert_eq!(other_tree_after, other_tree);
 }
 
-// Behaviors of the spec's canonical fields that no use case states: the
-// no-op, `--force`, the validation refusal, failure and AGENTS.md
-// retraction. Unbound: no use case realizes them.
-
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB4
 #[test]
 fn main_unchanged_since_its_publication_is_a_no_op_until_forced() {
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
-    let sha = repo.head();
+    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n");
+    let sha = repo.commit("instructions");
     sync(&env, &repo).success();
     let before = published_tree(&env);
+    let project_before = project_tree(&repo);
 
     let again = sync(&env, &repo).success();
     insta::assert_snapshot!(text(&again.get_output().stdout, &[&sha]), @"demo is already published at [SHA]");
     assert_eq!(published_tree(&env), before);
+    assert_eq!(project_tree(&repo), project_before);
 
     let forced = env.run(repo.path(), ["sync", "--force"]).success();
     insta::assert_snapshot!(text(&forced.get_output().stdout, &[&sha]), @"published demo at [SHA]");
     assert_eq!(published_tree(&env), before);
+    assert_eq!(published_commit(&env, "demo"), sha);
 }
 
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB5
 #[test]
-fn committed_docs_with_findings_are_refused_and_the_previous_publication_stays() {
+fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication() {
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
     let published = repo.head();
@@ -342,12 +376,17 @@ fn committed_docs_with_findings_are_refused_and_the_previous_publication_stays()
     ");
     insta::assert_snapshot!(text(&refused.get_output().stderr, &[&sha]), @"instrukt: demo at [SHA] is not published: the committed documentation has 5 validation finding(s)");
     assert_eq!(published_tree(&env), before);
-    let record = PublishedRecord::load(&home(&env), &ProjectSlug::parse("demo").unwrap())
-        .unwrap()
-        .unwrap();
-    assert_eq!(record.commit.as_str(), published);
+    assert_eq!(published_commit(&env, "demo"), published);
+
+    let retried = sync(&env, &repo).failure();
+    assert_eq!(
+        text(&retried.get_output().stderr, &[&sha]),
+        text(&refused.get_output().stderr, &[&sha])
+    );
+    assert_eq!(published_commit(&env, "demo"), published);
 }
 
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
 fn a_failing_publish_time_command_fails_the_sync_and_keeps_the_previous_publication() {
     let env = TestEnv::new();
@@ -363,23 +402,111 @@ fn a_failing_publish_time_command_fails_the_sync_and_keeps_the_previous_publicat
     insta::assert_snapshot!(text(&failed.get_output().stderr, &[]), @"instrukt: cannot compile AGENTS.master.md: the read-time command `exit 3` failed: exit status 3");
     assert_eq!(published_tree(&env), before);
     assert!(!repo.path().join("AGENTS.md").exists());
-    let record = PublishedRecord::load(&home(&env), &ProjectSlug::parse("demo").unwrap())
-        .unwrap()
-        .unwrap();
-    assert_eq!(record.commit.as_str(), published);
+    assert_eq!(published_commit(&env, "demo"), published);
+}
+
+// Failure semantics of the write boundary that no use case states yet.
+// Unbound.
+
+/// Emitted text with the test's temporary directory shown as `[TMP]`.
+fn without_tmp(env: &TestEnv, bytes: &[u8], shas: &[&str]) -> String {
+    let base = env.path("").display().to_string();
+    text(bytes, shas).replace(base.trim_end_matches('/'), "[TMP]")
+}
+
+#[cfg(unix)]
+#[test]
+fn an_output_that_is_a_symbolic_link_is_refused_and_its_target_left_alone() {
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    let published = repo.head();
+    sync(&env, &repo).success();
+    let before = published_tree(&env);
+    let git_config = repo.read(".git/config");
+    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
+        .write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    std::os::unix::fs::symlink(".git/config", repo.path().join("AGENTS.md")).unwrap();
+    repo.commit("aliased output");
+
+    let refused = sync(&env, &repo).failure();
+    insta::assert_snapshot!(without_tmp(&env, &refused.get_output().stderr, &[]), @"instrukt: [TMP]/demo/AGENTS.md is a symbolic link or lies behind one; publication writes only inside its root");
+    assert_eq!(repo.read(".git/config"), git_config);
+    assert_eq!(published_tree(&env), before);
+    assert_eq!(published_commit(&env, "demo"), published);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    sync(&env, &repo).success();
+    let locked = env.instrukt_home().join("docs/acme/policy");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    let sha = repo.commit("later");
+
+    let run = sync(&env, &repo).success();
+    insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"published demo at [SHA]");
+    assert_eq!(published_commit(&env, "demo"), sha);
+    assert!(
+        env.instrukt_home()
+            .join("docs/acme/policy/later.md")
+            .is_file()
+    );
+
+    let leftovers = || -> Vec<PathBuf> {
+        std::fs::read_dir(env.instrukt_home())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".sync-")
+            })
+            .collect()
+    };
+    for dir in walkdir::WalkDir::new(env.instrukt_home())
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_dir())
+    {
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert!(!leftovers().is_empty(), "the undeletable trash is left");
+    env.run(repo.path(), ["sync", "--force"]).success();
+    assert!(leftovers().is_empty(), "the next sync deletes it");
 }
 
 #[test]
-fn an_agents_md_whose_master_is_gone_is_removed() {
+fn a_bundle_left_with_a_reference_fails_the_sync() {
     let env = TestEnv::new();
-    let repo = project(&env, "demo", &[]);
-    repo.write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
-    repo.commit("master");
+    let repo = project(&env, "demo", &["acme"]);
+    let published = repo.head();
     sync(&env, &repo).success();
-    assert!(repo.path().join("tools/AGENTS.md").is_file());
+    let before = published_tree(&env);
+    repo.write(
+        "docs/global/acme/policy/noted.md",
+        &policy("Noted", "").replace(
+            "Follow Noted.\n",
+            "Follow Noted.\n\n<!-- @include: docs/snippets/note.md -->\n",
+        ),
+    )
+    .write(
+        "docs/global/snippets/note.md",
+        "Read it (@docs/local/policy/house.md) first.\n",
+    )
+    .write(
+        "docs/global/acme/baseline.md",
+        "@~/.instrukt/docs/acme/policy/noted.md\n",
+    );
+    repo.commit("noted");
 
-    std::fs::remove_file(repo.path().join("tools/AGENTS.master.md")).unwrap();
-    repo.commit("drop master");
-    sync(&env, &repo).success();
-    assert!(!repo.path().join("tools/AGENTS.md").exists());
+    let failed = sync(&env, &repo).failure();
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/global/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/local/policy/house.md`");
+    assert_eq!(published_tree(&env), before);
+    assert_eq!(published_commit(&env, "demo"), published);
 }

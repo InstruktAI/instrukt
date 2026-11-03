@@ -49,6 +49,8 @@ fn layer(slug: &str, domains: &[&str]) -> String {
 #[test]
 fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
     let env = TestEnv::new();
+    // Codex is installed: it reads the project override file.
+    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
     let repo = env.git_repo("demo");
     repo.write("instrukt.yaml", &layer("demo", &[]))
         .write(
@@ -56,7 +58,9 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
              ## Required reads\n\n@docs/local/policy/house.md\n@docs/local/policy/future.md\n\n\
              ## Notes\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-             <!-- @exec: printf '%s' computed-at-publish -->\n",
+             <!-- @exec: printf '%s' computed-at-publish -->\n\n\
+             Written as ``@docs/local/policy/house.md`` it is quoted.\n\n\
+             <!-- @docs/local/policy/house.md stays a comment -->\n",
         )
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n")
         .write("docs/global/snippets/shared.md", "Shared guidance.\n")
@@ -87,6 +91,8 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
 
     insta::assert_snapshot!("root_agents_md", repo.read("AGENTS.md"));
     insta::assert_snapshot!("nested_agents_md", repo.read("tools/AGENTS.md"));
+    assert_eq!(repo.read("AGENTS.override.md"), repo.read("AGENTS.md"));
+    assert!(!repo.path().join("tools/AGENTS.override.md").exists());
 }
 
 /// The general owner: a global master inlining the general bundle, one
