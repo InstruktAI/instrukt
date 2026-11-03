@@ -42,8 +42,7 @@ A graph is one JSON object:
 (`local/projects/instrukt/spec/domain/configuration`). Either layer may name a
 shipped adapter. The command form is permitted only in the global layer: a
 command in a project layer is a validation finding and is ignored, as
-project-layer `runtimes` are, because a cloned repository does not decide what
-runs on a machine.
+project-layer `runtimes` are.
 
 | Value | Engine |
 | --- | --- |
