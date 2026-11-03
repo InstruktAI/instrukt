@@ -137,6 +137,37 @@ impl Claims for Work {
         s.flush()?;
         Ok(claim_outcome(s.status(index)))
     }
+
+    fn release_claim(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoSlug,
+        claimant: &Claimant,
+    ) -> Result<(), WorkInterfaceError> {
+        let mut s = Session::open(self, project)?;
+        let index = s.enter(todo)?;
+        let machine = s.machine()?;
+        let Some(claim) = &s.items[index].record.claim else {
+            return Ok(());
+        };
+        let holds = claim.machine == machine
+            && match claimant {
+                Claimant::Runner => claim.session.is_none(),
+                Claimant::Session(session) => claim.session.as_ref() == Some(session),
+            };
+        if !holds {
+            return Err(WorkError::refused(format!(
+                "`{todo}` is claimed elsewhere; only its holder releases the claim"
+            ))
+            .into());
+        }
+        s.commit("released", |s| {
+            s.items[index].record.claim = None;
+            Ok(())
+        })?;
+        s.flush()?;
+        Ok(())
+    }
 }
 
 fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {

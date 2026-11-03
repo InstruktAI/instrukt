@@ -212,6 +212,17 @@ pub trait Claims: Send + Sync {
         todo: &TodoSlug,
         claimant: &Claimant,
     ) -> Result<ClaimOutcome, WorkInterfaceError>;
+
+    /// Releases `claimant`'s claim on `todo` and reflects the release
+    /// (`work-dispatch`, "Agent selection": an exhausted agent order
+    /// releases the runner's own claim). Only the holder on this computer
+    /// may release; any other claimant is refused.
+    fn release_claim(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoSlug,
+        claimant: &Claimant,
+    ) -> Result<(), WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
