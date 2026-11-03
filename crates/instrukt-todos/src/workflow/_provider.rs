@@ -11,7 +11,6 @@
 
 use instrukt_core::config::Approver;
 use instrukt_core::ids::{CommitSha, SessionRef};
-use jiff::Timestamp;
 
 use crate::evidence::{
     ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, ContentDigest, DriftClass,
@@ -55,7 +54,7 @@ const DIGEST_FACTS: [(&str, &str); 9] = [
 ];
 
 /// Each artifact with a drift classification, with its fact's name.
-const DRIFT_FACTS: [(&str, &str); 3] = [
+pub(crate) const DRIFT_FACTS: [(&str, &str); 3] = [
     (artifact_names::PRD, "drift.prd"),
     (artifact_names::ARCHITECTURE, "drift.architecture"),
     (
@@ -125,6 +124,42 @@ pub(crate) struct Observations {
     /// For the current build verdict's reviewed commit; `None` when there
     /// is no current verdict or no head to compare with.
     pub reviewed_change: Option<ChangeSinceReview>,
+    /// For each tracked artifact (by artifact name), what its current
+    /// version's recorded grounding shows against current evidence; an
+    /// artifact without an entry shows no grounding change.
+    pub grounding: std::collections::BTreeMap<String, GroundingChange>,
+}
+
+/// What a version's recorded grounding shows now (`artifact-currency`,
+/// "Drift evidence").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct GroundingChange {
+    pub code: CodeChange,
+    /// A referenced or owned snippet's current digest differs.
+    pub snippets: bool,
+    /// A prerequisite artifact's current digest differs.
+    pub dependencies: bool,
+}
+
+impl GroundingChange {
+    /// Whether this is drift evidence: a change, or code that could not be
+    /// compared, which is pending until analyzed.
+    fn drifted(self) -> bool {
+        self.code != CodeChange::Unchanged || self.snippets || self.dependencies
+    }
+}
+
+/// Whether a non-merge commit between the recorded and the current
+/// canonical head changes a referenced path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum CodeChange {
+    /// None does, or the version references no paths.
+    #[default]
+    Unchanged,
+    Changed,
+    /// Git could not compare the two heads, or there is no current
+    /// canonical head.
+    Uncomparable,
 }
 
 /// Everything one derivation of facts reads.
@@ -175,7 +210,7 @@ pub(crate) fn derive_facts(input: &ProviderInput<'_>) -> Result<Facts, FactError
         "claim_commits.unreviewed",
         FactValue::ShaList(input.observed.unreviewed_claim_commits.clone()),
     )?;
-    drift(&ledger, &mut facts)?;
+    drift(&ledger, input.observed, &mut facts)?;
     build(&ledger, input.observed, &mut facts)?;
     lane_resources(input.evidence, input.observed, &mut facts)?;
     // A seeded plan is input to planning: once preparation writes a new
@@ -259,22 +294,11 @@ impl<'e> Ledger<'e> {
             .map(|artifact| artifact.versions.as_slice())
     }
 
-    /// Whether artifact `name` has a version written after the stamp made
-    /// at `at`.
-    fn rewritten_after(&self, name: &str, at: Timestamp) -> bool {
-        self.history(name).is_some_and(|versions| {
-            versions
-                .iter()
-                .any(|version| self.later(version.created, at))
-        })
-    }
-
-    /// Whether a mutation made at `first` came after one made at `second`.
-    /// The evidence orders artifact versions and stamps against each other
-    /// only by their times; mutations recorded in the same instant cannot
-    /// be ordered (reported to work: a shared record sequence).
-    fn later(&self, first: Timestamp, second: Timestamp) -> bool {
-        first > second
+    /// Whether artifact `name` has a version written after the mutation
+    /// numbered `sequence`.
+    fn rewritten_after(&self, name: &str, sequence: u64) -> bool {
+        self.history(name)
+            .is_some_and(|versions| versions.iter().any(|version| version.sequence > sequence))
     }
 
     /// The latest stamp `pick` selects, with its ledger position.
@@ -317,9 +341,12 @@ impl<'e> Ledger<'e> {
             .find_map(|(index, stamp)| pick(&stamp.fact).map(|()| index))
     }
 
-    /// The time of the stamp at `position`.
-    fn at(&self, position: usize) -> Option<Timestamp> {
-        self.evidence.stamps.get(position).map(|stamp| stamp.at)
+    /// The record sequence of the stamp at `position`.
+    fn at(&self, position: usize) -> Option<u64> {
+        self.evidence
+            .stamps
+            .get(position)
+            .map(|stamp| stamp.sequence)
     }
 
     /// The latest kickback: build and review facts before it are cleared.
@@ -485,7 +512,7 @@ fn approvals(
                 .history(artifact)
                 .and_then(|versions| versions.last())
                 .zip(ledger.at(position))
-                .is_some_and(|(version, at)| !ledger.later(version.created, at));
+                .is_some_and(|(version, at)| version.sequence < at);
             approved_current.then_some((by, target))
         };
     let prd_revoked = ledger.invalidations(PreparationReview::PrdReview).last();
@@ -530,7 +557,7 @@ fn approvals(
 ///   evidence stays settled; a newer upstream version needs a new judgment.
 /// - Without drift evidence, recorded provenance is fresh. A version written
 ///   before provenance was recorded supplies no drift fact.
-fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
+fn drift(ledger: &Ledger<'_>, observed: &Observations, facts: &mut Facts) -> Result<(), FactError> {
     for (name, fact) in DRIFT_FACTS {
         let Some(version) = ledger.history(name).and_then(|versions| versions.last()) else {
             continue;
@@ -543,14 +570,17 @@ fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
             .find_map(|stamp| match &stamp.fact {
                 StampFact::DriftReviewed {
                     artifact, class, ..
-                } if artifact.as_str() == name => Some((*class, stamp.at)),
+                } if artifact.as_str() == name => Some((*class, stamp.sequence)),
                 _ => None,
             })
             .filter(|(_, at)| !ledger.rewritten_after(name, *at));
-        let drifted = version
-            .derived_from
-            .iter()
-            .any(|upstream| ledger.current(upstream.artifact.as_str()) != upstream.digest.as_ref());
+        let grounding = observed.grounding.get(name).copied().unwrap_or_default();
+        let drifted = grounding.drifted()
+            || version.derived_from.iter().any(|upstream| {
+                ledger.current(upstream.artifact.as_str()) != upstream.digest.as_ref()
+            });
+        let recorded = !version.derived_from.is_empty()
+            || version.grounding != crate::evidence::Grounding::default();
         let class = match judged {
             Some((DriftClass::Substantive, _)) => Some(member::SUBSTANTIVE),
             Some((DriftClass::Cosmetic, at)) if drifted => {
@@ -565,7 +595,7 @@ fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
             }
             Some((DriftClass::Cosmetic, _)) => Some(member::COSMETIC),
             None if drifted => Some(member::PENDING),
-            None if version.derived_from.is_empty() => None,
+            None if !recorded => None,
             None => Some(member::FRESH),
         };
         if let Some(class) = class {
@@ -660,7 +690,7 @@ fn completion_holds(ledger: &Ledger<'_>, position: usize, observed: &Observation
     };
     let rewritten = BUILD_RELEVANT
         .iter()
-        .any(|name| ledger.rewritten_after(name, stamp.at));
+        .any(|name| ledger.rewritten_after(name, stamp.sequence));
     let current_head = observed
         .worktree
         .as_ref()
@@ -1324,6 +1354,7 @@ mod tests {
             remote_head: Some(sha('b')),
             unreviewed_claim_commits: vec![sha('c')],
             reviewed_change: None,
+            grounding: Default::default(),
         };
         let facts = facts_of(&todo(TodoKind::Change).build(), &observed);
         assert_eq!(get(&facts, "worktree.exists").cloned(), yes());
@@ -1553,6 +1584,7 @@ mod tests {
                 by: ApprovedBy::Human,
                 target: digest("prd-1"),
                 carried_from: Some(digest("prd-1")),
+                reasoning: None,
             })
             .build();
         let facts = facts_of(&evidence, &Observations::default());
@@ -1596,6 +1628,151 @@ mod tests {
         assert_eq!(
             get(&facts, "build_review.baseline_commit"),
             Some(&FactValue::Sha(sha('1')))
+        );
+    }
+
+    // ---- record order and grounding ----
+
+    #[test]
+    fn on_a_frozen_clock_a_rewrite_still_settles_substantive_drift() {
+        let evidence = todo(TodoKind::Feature)
+            .frozen()
+            .artifact(artifact_names::PRD, "prd-1")
+            .stamp(substantive(artifact_names::PRD))
+            .artifact(artifact_names::PRD, "prd-2")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), None);
+        assert_eq!(
+            get(&facts, "prd_review.cleared_by_substantive_drift").cloned(),
+            no()
+        );
+    }
+
+    #[test]
+    fn on_a_frozen_clock_a_newer_upstream_unsettles_a_cosmetic_judgment() {
+        let evidence = derived_prd()
+            .frozen()
+            .artifact(artifact_names::INPUT, "input-2")
+            .stamp(cosmetic(artifact_names::PRD))
+            .artifact(artifact_names::INPUT, "input-3")
+            .build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(get(&facts, "drift.prd"), Some(&value(member::PENDING)));
+    }
+
+    #[test]
+    fn on_a_frozen_clock_an_approval_binds_the_version_before_it() {
+        let evidence = approved_prd().frozen().build();
+        let facts = facts_of(&evidence, &Observations::default());
+        assert_eq!(
+            get(&facts, "prd_approval.digest"),
+            Some(&digest_value("prd-1"))
+        );
+        let rewritten = approved_prd()
+            .frozen()
+            .artifact(artifact_names::PRD, "prd-1")
+            .build();
+        let facts = facts_of(&rewritten, &Observations::default());
+        assert_eq!(get(&facts, "prd_approval.digest"), None);
+    }
+
+    /// A plan grounded on the canonical head `a`, referencing `src/`.
+    fn grounded_plan() -> EvidenceBuilder {
+        todo(TodoKind::Change).grounded(
+            artifact_names::IMPLEMENTATION_PLAN,
+            "plan-1",
+            crate::evidence::Grounding {
+                head: Some(sha('a')),
+                referenced_paths: vec!["src/".to_owned()],
+                ..Default::default()
+            },
+        )
+    }
+
+    fn plan_grounding(change: GroundingChange) -> Observations {
+        Observations {
+            grounding: [(artifact_names::IMPLEMENTATION_PLAN.to_owned(), change)]
+                .into_iter()
+                .collect(),
+            ..Observations::default()
+        }
+    }
+
+    #[test]
+    fn grounding_with_unchanged_evidence_is_fresh() {
+        let facts = facts_of(&grounded_plan().build(), &Observations::default());
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::FRESH))
+        );
+    }
+
+    #[test]
+    fn a_commit_changing_a_referenced_path_is_pending_drift() {
+        let observed = plan_grounding(GroundingChange {
+            code: CodeChange::Changed,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&grounded_plan().build(), &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
+        );
+    }
+
+    #[test]
+    fn code_that_cannot_be_compared_is_pending() {
+        let observed = plan_grounding(GroundingChange {
+            code: CodeChange::Uncomparable,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&grounded_plan().build(), &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
+        );
+    }
+
+    #[test]
+    fn a_changed_snippet_is_pending_drift() {
+        let observed = plan_grounding(GroundingChange {
+            snippets: true,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&grounded_plan().build(), &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
+        );
+    }
+
+    #[test]
+    fn a_changed_prerequisite_artifact_is_pending_drift() {
+        let observed = plan_grounding(GroundingChange {
+            dependencies: true,
+            ..GroundingChange::default()
+        });
+        let facts = facts_of(&grounded_plan().build(), &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::PENDING))
+        );
+    }
+
+    #[test]
+    fn a_cosmetic_judgment_settles_changed_code() {
+        let observed = plan_grounding(GroundingChange {
+            code: CodeChange::Changed,
+            ..GroundingChange::default()
+        });
+        let evidence = grounded_plan()
+            .stamp(cosmetic(artifact_names::IMPLEMENTATION_PLAN))
+            .build();
+        let facts = facts_of(&evidence, &observed);
+        assert_eq!(
+            get(&facts, "drift.implementation_plan"),
+            Some(&value(member::COSMETIC))
         );
     }
 }

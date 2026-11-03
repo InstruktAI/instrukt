@@ -1,7 +1,9 @@
 //! Repository observations the fact provider needs and the record cannot
 //! supply: the assignment worktree, the todo branch here and on the
 //! remote, the commit-review settlement of the todo's canonical-branch
-//! commits, and whether the todo's work changed since its reviewed commit.
+//! commits, whether the todo's work changed since its reviewed commit, and
+//! what each tracked artifact's recorded grounding shows against current
+//! code, snippets and prerequisite artifacts.
 //!
 //! Every observation reads git; none writes, except that reading
 //! review notes first fetches the remote's notes, as the integrator's
@@ -9,14 +11,19 @@
 
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeMap;
+
+use instrukt_core::docs::{Corpus, DocsError};
 use instrukt_core::git::{self, GitError};
-use instrukt_core::ids::{CommitSha, TodoSlug};
+use instrukt_core::home::Home;
+use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
 use instrukt_core::repository::{self, RepositoryError};
 
-use crate::evidence::TodoEvidence;
+use crate::evidence::{ContentDigest, Grounding, TodoEvidence};
 
 use super::_provider::{
-    ChangeSinceReview, Observations, WorktreeObservation, current_build_verdict,
+    ChangeSinceReview, CodeChange, DRIFT_FACTS, GroundingChange, Observations, WorktreeObservation,
+    current_build_verdict,
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
@@ -39,14 +46,19 @@ pub enum ObservationError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error(transparent)]
+    Docs(#[from] DocsError),
     #[error("git printed `{value}` where a commit id belongs ({context})")]
     NotACommit { value: String, context: String },
 }
 
 /// Observes the repository at `project_root` for `evidence`'s todo.
+/// `prerequisites` are the prerequisite todos' evidence the record has.
 pub(crate) fn observe(
+    home: &Home,
     project_root: &Path,
     evidence: &TodoEvidence,
+    prerequisites: &[TodoEvidence],
 ) -> Result<Observations, ObservationError> {
     let slug = &evidence.slug;
     let worktree_dir = worktree_dir(project_root, evidence)?;
@@ -71,12 +83,14 @@ pub(crate) fn observe(
         }
         _ => None,
     };
+    let grounding = grounding(home, project_root, evidence, prerequisites)?;
     Ok(Observations {
         worktree,
         branch_head,
         remote_head,
         unreviewed_claim_commits,
         reviewed_change,
+        grounding,
     })
 }
 
@@ -252,4 +266,136 @@ fn classify(
         }
     }
     Ok(ChangeSinceReview::CleanUpstreamMerges)
+}
+
+/// What each tracked artifact's current version's grounding shows now.
+fn grounding(
+    home: &Home,
+    project_root: &Path,
+    evidence: &TodoEvidence,
+    prerequisites: &[TodoEvidence],
+) -> Result<BTreeMap<String, GroundingChange>, ObservationError> {
+    let main = git::default_branch(project_root, REMOTE)?;
+    let canonical = resolve(project_root, &format!("refs/remotes/{REMOTE}/{main}"))?;
+    let mut corpus: Option<Corpus> = None;
+    let mut out = BTreeMap::new();
+    for (name, _) in DRIFT_FACTS {
+        let Some(version) = evidence
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.name.as_str() == name)
+            .and_then(|artifact| artifact.versions.last())
+        else {
+            continue;
+        };
+        let recorded = &version.grounding;
+        let code = code_change(project_root, recorded, canonical.as_ref());
+        let mut snippets = false;
+        for snippet in recorded
+            .referenced_snippets
+            .iter()
+            .chain(&recorded.owned_snippets)
+        {
+            if corpus.is_none() {
+                corpus = Some(Corpus::load(project_root, home)?);
+            }
+            let current = match &corpus {
+                Some(corpus) => snippet_digest(home, project_root, corpus, &snippet.id)?,
+                None => None,
+            };
+            snippets |= current != snippet.digest;
+        }
+        let dependencies = recorded.dependencies.iter().any(|dependency| {
+            let current = prerequisites
+                .iter()
+                .find(|todo| todo.slug == dependency.todo)
+                .and_then(|todo| {
+                    todo.artifacts
+                        .iter()
+                        .find(|artifact| artifact.name == dependency.artifact)
+                })
+                .and_then(|artifact| artifact.versions.last())
+                .map(|version| &version.digest);
+            current != dependency.digest.as_ref()
+        });
+        out.insert(
+            (*name).to_owned(),
+            GroundingChange {
+                code,
+                snippets,
+                dependencies,
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// Whether a non-merge commit between the recorded canonical head and the
+/// current one changes a referenced path (exactly, or under a directory
+/// prefix). Any failure to compare is uncomparable, never unchanged.
+fn code_change(
+    project_root: &Path,
+    recorded: &Grounding,
+    canonical: Option<&CommitSha>,
+) -> CodeChange {
+    if recorded.referenced_paths.is_empty() {
+        return CodeChange::Unchanged;
+    }
+    let (Some(then), Some(now)) = (&recorded.head, canonical) else {
+        return CodeChange::Uncomparable;
+    };
+    if then == now {
+        return CodeChange::Unchanged;
+    }
+    let range = format!("{then}..{now}");
+    let mut args = vec![
+        "log".to_owned(),
+        "--no-merges".to_owned(),
+        "--format=%H".to_owned(),
+        range,
+        "--".to_owned(),
+    ];
+    args.extend(recorded.referenced_paths.iter().cloned());
+    match git::run_output(project_root, &args) {
+        Ok(output) if output.status.success() => {
+            if output.stdout.iter().all(u8::is_ascii_whitespace) {
+                CodeChange::Unchanged
+            } else {
+                CodeChange::Changed
+            }
+        }
+        Ok(output) => {
+            tracing::warn!(
+                event = "grounding_uncomparable",
+                then = %then,
+                now = %now,
+                stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+            );
+            CodeChange::Uncomparable
+        }
+        Err(err) => {
+            tracing::warn!(event = "grounding_uncomparable", then = %then, now = %now, error = %err);
+            CodeChange::Uncomparable
+        }
+    }
+}
+
+/// A snippet's current digest, read where work read it when recording:
+/// the project's own file, else the published one; `None` when it does
+/// not resolve.
+fn snippet_digest(
+    home: &Home,
+    project_root: &Path,
+    corpus: &Corpus,
+    id: &SnippetId,
+) -> Result<Option<ContentDigest>, ObservationError> {
+    let path = match corpus.snippet(id) {
+        Some(snippet) => project_root.join(snippet.path()),
+        None => home.docs_dir().join(format!("{id}.md")),
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(ContentDigest::of(&text))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(ObservationError::Io { path, source }),
+    }
 }

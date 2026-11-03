@@ -282,10 +282,34 @@ impl Workflow {
 
     /// The facts for `evidence` from the record and the repository.
     fn facts(&self, reading: &Reading, evidence: &TodoEvidence) -> Result<Facts, WorkflowError> {
+        // Each prerequisite, and each todo a version's grounding recorded
+        // a dependency on, read once.
+        let mut others: Vec<TodoEvidence> = Vec::new();
+        let named = evidence
+            .prerequisites
+            .iter()
+            .filter_map(|prerequisite| match prerequisite {
+                crate::evidence::Prerequisite::Todo(slug) => Some(slug),
+                crate::evidence::Prerequisite::EmptyHolder(_) => None,
+            })
+            .chain(evidence.artifacts.iter().flat_map(|artifact| {
+                artifact
+                    .versions
+                    .last()
+                    .into_iter()
+                    .flat_map(|version| version.grounding.dependencies.iter().map(|d| &d.todo))
+            }));
+        for slug in named {
+            if !others.iter().any(|other| &other.slug == slug)
+                && let Some(other) = self.evidence.evidence(&reading.project, slug)?
+            {
+                others.push(other);
+            }
+        }
         let prerequisites = standings(evidence, |slug| {
-            self.evidence.evidence(&reading.project, slug)
+            Ok::<_, WorkflowError>(others.iter().find(|other| &other.slug == slug).cloned())
         })?;
-        let observed = observe(&reading.project.root, evidence)?;
+        let observed = observe(&self.home, &reading.project.root, evidence, &others)?;
         let approvers = Approvers {
             prd: reading.config.approver(ConfigGate::Prd)?,
             task: reading.config.approver(ConfigGate::Task)?,

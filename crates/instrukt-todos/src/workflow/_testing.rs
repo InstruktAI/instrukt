@@ -60,10 +60,12 @@ pub(crate) fn session_config(path: &str) -> Result<Option<String>, ConfigLookupE
 }
 
 /// Builds a todo's evidence in record order: each artifact version and
-/// stamp is made one second after the previous one.
+/// stamp takes the next record sequence and is made one second after the
+/// previous one, or, on a frozen clock, at the same instant.
 pub(crate) struct EvidenceBuilder {
     evidence: crate::evidence::TodoEvidence,
     tick: i64,
+    frozen: bool,
 }
 
 /// The evidence of a fresh active todo `add-login` of `kind` in `demo`.
@@ -86,6 +88,7 @@ pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuild
             implementation_plan_seeded: false,
         },
         tick: 0,
+        frozen: false,
     }
 }
 
@@ -100,7 +103,35 @@ pub(crate) fn digest(value: &str) -> crate::evidence::ContentDigest {
 impl EvidenceBuilder {
     fn next(&mut self) -> jiff::Timestamp {
         self.tick += 1;
-        jiff::Timestamp::from_second(1_800_000_000 + self.tick).unwrap()
+        let offset = if self.frozen { 0 } else { self.tick };
+        jiff::Timestamp::from_second(1_800_000_000 + offset).unwrap()
+    }
+
+    /// Every later mutation is made at one instant, as under `INSTRUKT_NOW`.
+    pub(crate) fn frozen(mut self) -> Self {
+        self.frozen = true;
+        self
+    }
+
+    /// Saves a new version of artifact `name` with digest `value`, grounded
+    /// on `grounding`.
+    pub(crate) fn grounded(
+        mut self,
+        name: &str,
+        value: &str,
+        grounding: crate::evidence::Grounding,
+    ) -> Self {
+        self = self.derived(name, value, &[]);
+        if let Some(version) = self
+            .evidence
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.name.as_str() == name)
+            .and_then(|artifact| artifact.versions.last_mut())
+        {
+            version.grounding = grounding;
+        }
+        self
     }
 
     /// Saves a new version of artifact `name` with digest `value`.
