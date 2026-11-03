@@ -20,11 +20,48 @@ use crate::evidence::{
 
 use super::_facts::{FactError, FactValue, Facts};
 
-/// The artifact a build review's complete report is written to
-/// (`review-build`: `instrukt todo artifacts write {slug} review-findings`).
-/// Work's `artifact_names` has no constant for it yet; reported to the work
-/// builder.
-pub(crate) const BUILD_REVIEW_FINDINGS: &str = "review_findings";
+/// The artifact a build review's complete report is written to.
+#[cfg(test)]
+pub(crate) const BUILD_REVIEW_FINDINGS: &str = artifact_names::REVIEW_FINDINGS;
+
+/// Each artifact whose current digest is a fact, with that fact's name.
+/// Fact names are the fact table's; artifact names are work's.
+const DIGEST_FACTS: [(&str, &str); 9] = [
+    (artifact_names::PRD, "prd.digest"),
+    (artifact_names::ARCHITECTURE, "architecture.digest"),
+    (artifact_names::DIAGNOSIS, "diagnosis.digest"),
+    (
+        artifact_names::IMPLEMENTATION_PLAN,
+        "implementation_plan.digest",
+    ),
+    (
+        artifact_names::PRD_REVIEW_FINDINGS,
+        "prd_review_findings.digest",
+    ),
+    (
+        artifact_names::ARCHITECTURE_REVIEW_FINDINGS,
+        "architecture_review_findings.digest",
+    ),
+    (
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "plan_review_findings.digest",
+    ),
+    (artifact_names::TASK_PLAN, "task_plan.digest"),
+    (
+        artifact_names::QUALITY_CHECKLIST,
+        "quality_checklist.digest",
+    ),
+];
+
+/// Each artifact with a drift classification, with its fact's name.
+const DRIFT_FACTS: [(&str, &str); 3] = [
+    (artifact_names::PRD, "drift.prd"),
+    (artifact_names::ARCHITECTURE, "drift.architecture"),
+    (
+        artifact_names::IMPLEMENTATION_PLAN,
+        "drift.implementation_plan",
+    ),
+];
 
 /// Artifacts whose new version makes an earlier build completion stale
 /// (`workflow` domain: "a new build-relevant artifact version clears
@@ -113,19 +150,9 @@ pub(crate) fn derive_facts(input: &ProviderInput<'_>) -> Result<Facts, FactError
                 .all(|standing| *standing == PrerequisiteStanding::Delivered),
         ),
     )?;
-    for name in [
-        artifact_names::PRD,
-        artifact_names::ARCHITECTURE,
-        artifact_names::DIAGNOSIS,
-        artifact_names::IMPLEMENTATION_PLAN,
-        artifact_names::PRD_REVIEW_FINDINGS,
-        artifact_names::ARCHITECTURE_REVIEW_FINDINGS,
-        artifact_names::PLAN_REVIEW_FINDINGS,
-        artifact_names::TASK_PLAN,
-        artifact_names::QUALITY_CHECKLIST,
-    ] {
+    for (name, fact) in DIGEST_FACTS {
         if let Some(digest) = ledger.current(name) {
-            facts.insert(&format!("{name}.digest"), text(digest.as_str()))?;
+            facts.insert(fact, text(digest.as_str()))?;
         }
     }
     preparation_reviews(&ledger, &mut facts)?;
@@ -414,11 +441,7 @@ fn approvals(
 /// recorded provenance, which the evidence does not carry yet; they are
 /// not supplied.
 fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
-    for name in [
-        artifact_names::PRD,
-        artifact_names::ARCHITECTURE,
-        artifact_names::IMPLEMENTATION_PLAN,
-    ] {
+    for (name, fact) in DRIFT_FACTS {
         let judged = ledger
             .evidence
             .stamps
@@ -437,7 +460,7 @@ fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
                 DriftClass::Cosmetic => "cosmetic",
                 DriftClass::Substantive => "substantive",
             };
-            facts.insert(&format!("drift.{name}"), text(class))?;
+            facts.insert(fact, text(class))?;
         }
     }
     Ok(())
@@ -541,7 +564,7 @@ fn binding(
     report: &ContentDigest,
     change: Option<ChangeSinceReview>,
 ) -> &'static str {
-    match ledger.current(BUILD_REVIEW_FINDINGS) {
+    match ledger.current(artifact_names::REVIEW_FINDINGS) {
         None => "unbound",
         Some(current) if current != report => "report_changed",
         Some(_) => match change {
