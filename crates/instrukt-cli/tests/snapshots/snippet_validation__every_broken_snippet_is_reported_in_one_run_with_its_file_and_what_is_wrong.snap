@@ -1,0 +1,37 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+assertion_line: 225
+expression: out
+---
+docs/global/acme/baseline-progressive.md: baseline-line-invalid: not a reference
+docs/global/acme/baseline-progressive.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/shape.md
+docs/global/acme/baseline-progressive.md: baseline-already-carried: ~/.instrukt/docs/acme/policy/rules.md
+docs/global/acme/concept/fields.md: frontmatter-visibility-invalid: secret
+docs/global/acme/concept/fields.md: frontmatter-eval-invalid: often
+docs/global/acme/concept/fields.md: frontmatter-procedure-field-misplaced: role
+docs/global/acme/notes/idea.md: identity-unknown-taxonomy: notes
+docs/global/acme/policy/authored.md: identity-classification-authored: id, type
+docs/global/acme/policy/refs.md: structure-required-reads-not-first
+docs/global/acme/policy/refs.md: reference-outside-required-reads: ~/.instrukt/docs/acme/principle/care.md
+docs/global/acme/policy/refs.md: reference-form-invalid: docs/global/acme/principle/care.md
+docs/global/acme/policy/refs.md: reference-unresolved: ~/.instrukt/docs/acme/principle/missing.md
+docs/global/acme/policy/refs.md: reference-local-from-published: docs/local/design/shape.md
+docs/global/acme/principle/shape.md: structure-h1-not-first
+docs/global/acme/principle/shape.md: structure-section-missing: Tensions
+docs/global/acme/principle/shape.md: structure-section-unknown: Extra
+docs/global/acme/principle/shape.md: structure-see-also-not-last
+docs/global/acme/procedure/both.md: frontmatter-activation-conflict
+docs/global/acme/procedure/both.md: frontmatter-subscriptions-without-role
+docs/global/acme/procedure/both.md: frontmatter-parameters-without-role
+docs/global/loose.md: identity-missing-domain: loose
+docs/local/adr/0001-choice.md: frontmatter-adr-date-invalid
+docs/local/adr/0001-choice.md: frontmatter-adr-number-invalid
+docs/local/spec/pending.Not_A_Slug.md: pending-slug-invalid: Not_A_Slug
+docs/local/spec/pending.md: pending-delivered-by-invalid: []
+docs/local/spec/pending.md: pending-slug-invalid: Bad_Slug
+docs/local/spec/pending.md: pending-marker-inline: <!-- planned:x -->
+docs/local/spec/pending.md: pending-marker-nested: <!-- planned:b -->
+docs/local/spec/pending.md: pending-marker-unbalanced: <!-- /planned:a -->
+docs/local/spec/pending.md: pending-marker-unbalanced: <!-- planned:open -->
+docs/third-party/tool/broken.md: frontmatter-description-missing
+docs/third-party/tool/broken.md: third-party-source-invalid: somewhere on the web
