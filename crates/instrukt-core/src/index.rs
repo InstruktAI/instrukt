@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fsx::{FsError, atomic_write};
 use crate::home::Home;
-use crate::ids::{ProjectSlug, SnippetId, TodoSlug};
+use crate::ids::{ProjectSlug, SnippetId, ThirdPartyId, TodoSlug};
 
 /// The global index could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -113,7 +113,7 @@ pub struct IndexDispatch {
 /// One third-party doc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThirdPartyEntry {
-    pub id: String,
+    pub id: ThirdPartyId,
     pub description: String,
     /// Relative to `~/.instrukt/docs/`.
     pub path: PathBuf,
