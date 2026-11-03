@@ -10,6 +10,7 @@ pub mod fsx;
 pub mod git;
 pub mod home;
 pub mod ids;
+pub mod index;
 pub mod interfaces;
 pub mod publication;
 pub mod repository;
