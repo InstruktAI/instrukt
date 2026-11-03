@@ -39,13 +39,11 @@ pub fn run_run(_args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     require_runner_modules(ctx, "run")?;
     let env = Env::from_process();
     let tz = TimeZone::system();
-    let executable = executable()?;
     let wiring = wiring::runner_wiring(ctx)?;
     let cx = RunnerContext {
         home: &ctx.home,
         env: &env,
         tz: &tz,
-        executable: &executable,
         wiring: &wiring,
     };
     runner::run(&cx, Timestamp::now, RUN_INTERVAL)?;
@@ -61,13 +59,11 @@ pub fn run_tick(_args: TickArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     require_runner_modules(ctx, "tick")?;
     let env = Env::from_process();
     let tz = TimeZone::system();
-    let executable = executable()?;
     let wiring = wiring::runner_wiring(ctx)?;
     let cx = RunnerContext {
         home: &ctx.home,
         env: &env,
         tz: &tz,
-        executable: &executable,
         wiring: &wiring,
     };
     match runner::tick(&cx, Timestamp::now())? {

@@ -12,8 +12,7 @@
 //! and pending and nothing starts. An exhausted agent order releases the
 //! runner's claim through work's command contract and is an anomaly.
 
-use std::path::Path;
-use std::time::Duration;
+use std::collections::BTreeSet;
 
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
@@ -25,12 +24,12 @@ use jiff::tz::TimeZone;
 use crate::agents::{agent_order, global_order};
 use crate::anomaly;
 use crate::interfaces::{
-    ClaimOutcome, Claimant, Lane, PickupCandidate, ProjectRef, RunnerWiring, SessionBinding,
-    TodoKind, WorkPorts, WorkflowAssignments,
+    ClaimOutcome, Claimant, HoldCause, Lane, PickupCandidate, ProjectRef, RunnerWiring,
+    SessionBinding, TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
 };
 use crate::launch;
-use crate::process::Invocation;
 use crate::sessions::{Sessions, SessionsError, StartRequest};
+use crate::state::{self, RunnerState};
 use crate::timing::{self, Decision};
 
 /// The role of the procedure that runs a due task.
@@ -43,17 +42,28 @@ pub struct DispatchContext<'a> {
     pub now: Timestamp,
     pub tz: &'a TimeZone,
     pub previous_wake: Option<Timestamp>,
-    /// The `instrukt` binary, for work's command contract.
-    pub executable: &'a Path,
+    pub state: &'a RunnerState,
 }
 
 /// What dispatch did with one todo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dispatched {
-    Started { todo: TodoSlug },
-    ClaimedElsewhere { todo: TodoSlug },
-    ClaimPending { todo: TodoSlug },
-    Exhausted { todo: TodoSlug },
+    Started {
+        todo: TodoSlug,
+    },
+    ClaimedElsewhere {
+        todo: TodoSlug,
+    },
+    ClaimPending {
+        todo: TodoSlug,
+    },
+    Exhausted {
+        todo: TodoSlug,
+    },
+    /// The task's last firing failed; the anomaly was reported.
+    TaskFailed {
+        todo: TodoSlug,
+    },
 }
 
 /// The kinds `runner.autostart` picks up automatically in `config`.
@@ -143,6 +153,9 @@ fn dispatch_one(
     candidate: &PickupCandidate,
 ) -> Option<Dispatched> {
     let todo = &candidate.todo;
+    if let Some(failed) = report_failed_firing(cx, config, work, project, candidate) {
+        return Some(failed);
+    }
     let assignment = match workflow.assignment(project, todo) {
         Ok(Some(assignment)) => assignment,
         Ok(None) => return None,
@@ -213,7 +226,14 @@ fn dispatch_one(
         Ok(started) => started,
         Err(SessionsError::OrderExhausted { tried }) => {
             tracing::warn!(event = "dispatch_order_exhausted", project = %project.slug, todo = %todo, tried = ?tried);
-            release_claim(cx, project, todo);
+            match work.claims.release_claim(project, todo, &Claimant::Runner) {
+                Ok(()) => {
+                    tracing::info!(event = "runner_claim_released", project = %project.slug, todo = %todo);
+                }
+                Err(err) => {
+                    tracing::warn!(event = "runner_claim_release_failed", project = %project.slug, todo = %todo, error = %err);
+                }
+            }
             anomaly::notify(config, cx.env, &format!("{}/{todo}", project.slug), None);
             return Some(Dispatched::Exhausted { todo: todo.clone() });
         }
@@ -261,23 +281,57 @@ pub fn procedure_for_role<'i>(
         .or_else(|| declaring().next())
 }
 
-/// Releases the runner's claim with `instrukt todo update <slug> --unclaim`.
-fn release_claim(cx: &DispatchContext<'_>, project: &ProjectRef, todo: &TodoSlug) {
-    let released = Invocation::program(
-        &cx.executable.display().to_string(),
-        &["todo", "update", todo.as_str(), "--unclaim"],
-    )
-    .cwd(&project.root)
-    .run(Duration::from_secs(120));
-    match released {
-        Ok(done) if done.success => {
-            tracing::info!(event = "runner_claim_released", project = %project.slug, todo = %todo);
-        }
-        Ok(done) => {
-            tracing::warn!(event = "runner_claim_release_refused", project = %project.slug, todo = %todo, stderr = %done.stderr.trim());
-        }
+/// A task whose last firing recorded `error` waits in no thread: report it
+/// once per firing through `runner.notify`, referencing the session bound
+/// to the task-runner role, and set the automatic hold the failure
+/// causes. A firing already reported is passed over, so a developer who
+/// released the hold gets the next occurrence.
+fn report_failed_firing(
+    cx: &DispatchContext<'_>,
+    config: &Configuration,
+    work: &WorkPorts,
+    project: &ProjectRef,
+    candidate: &PickupCandidate,
+) -> Option<Dispatched> {
+    let firing = candidate.timing.as_ref()?.last_fired.as_ref()?;
+    let Some(TaskOutcome::Error { reason }) = &firing.outcome else {
+        return None;
+    };
+    let todo = &candidate.todo;
+    let key = format!("{}/{todo}/{}", project.slug, firing.occurrence);
+    let path = cx.state.failed_firings();
+    let mut reported: BTreeSet<String> = match state::read_json(&path) {
+        Ok(reported) => reported.unwrap_or_default(),
         Err(err) => {
-            tracing::warn!(event = "runner_claim_release_failed", project = %project.slug, todo = %todo, error = %err);
+            tracing::warn!(event = "failed_firings_unreadable", error = %err);
+            return None;
         }
+    };
+    if reported.contains(&key) {
+        return None;
     }
+    let role = RoleName::parse(TASK_RUNNER_ROLE).ok()?;
+    let reference = match work.bindings.session_binding(project, todo, &role) {
+        Ok(Some(binding)) => binding.session.to_string(),
+        Ok(None) => format!("{}/{todo}", project.slug),
+        Err(err) => {
+            tracing::warn!(event = "task_binding_unreadable", project = %project.slug, todo = %todo, error = %err);
+            format!("{}/{todo}", project.slug)
+        }
+    };
+    tracing::warn!(event = "task_failed", project = %project.slug, todo = %todo, occurrence = %firing.occurrence, session = %reference);
+    anomaly::notify(config, cx.env, &reference, None);
+    let cause = HoldCause::TaskFailed {
+        reason: reason
+            .clone()
+            .unwrap_or_else(|| "no reason recorded".to_owned()),
+    };
+    if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
+        tracing::warn!(event = "task_failure_hold_failed", project = %project.slug, todo = %todo, error = %err);
+    }
+    reported.insert(key);
+    if let Err(err) = state::write_json(&path, &reported) {
+        tracing::warn!(event = "failed_firings_unwritable", error = %err);
+    }
+    Some(Dispatched::TaskFailed { todo: todo.clone() })
 }
