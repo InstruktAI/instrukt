@@ -82,6 +82,9 @@ pub enum SyncOutcome {
     Published {
         project: ProjectSlug,
         commit: CommitSha,
+        /// The replaced publication's copy that could not be removed; a
+        /// later sync removes it.
+        leftover: Option<PathBuf>,
     },
     /// Main equals the published commit; nothing changed.
     Unchanged {
@@ -278,14 +281,16 @@ fn publish(
         entrypoints,
         settings,
     };
+    refuse_links(home, project, &prepared)?;
     sweep(home.root())?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, &prepared, &mut tx) {
         Ok(()) => {
-            tx.commit();
+            let leftover = tx.commit();
             Ok(SyncOutcome::Published {
                 project: project.slug.clone(),
                 commit: commit.clone(),
+                leftover,
             })
         }
         Err(err) => {
@@ -293,6 +298,42 @@ fn publish(
             Err(err)
         }
     }
+}
+
+/// Refuses the sync before anything is written when a location the
+/// repository or instrukt controls — a compiled output in the project, one
+/// recorded for retraction, or a published domain, the index or the
+/// project's records in the home — is, or lies behind, a symbolic link.
+/// The writes check again; this makes the refusal precede every write.
+fn refuse_links(
+    home: &Home,
+    project: &Project,
+    prepared: &Prepared,
+) -> Result<(), PublicationError> {
+    let previous = Outputs::load(home, &project.slug)?;
+    for rel in prepared
+        .agents
+        .iter()
+        .map(|(rel, _)| rel)
+        .chain(&previous.agents)
+    {
+        confined(&project.primary, rel)?;
+    }
+    let root = home.root();
+    let domains = prepared.publishes.iter().map(|p| &p.domain).chain(
+        prepared
+            .publishers
+            .iter()
+            .filter(|(_, record)| record.publisher == project.slug)
+            .map(|(domain, _)| domain),
+    );
+    let mut targets: Vec<PathBuf> = domains.map(|d| home.domain_dir(d)).collect();
+    targets.push(home.index_file());
+    targets.push(record_path(home, &project.slug));
+    for target in targets {
+        confined(root, &relative_to(root, &target)?)?;
+    }
+    Ok(())
 }
 
 /// The project override instruction files of the supported agent CLIs

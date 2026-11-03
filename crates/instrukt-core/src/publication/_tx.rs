@@ -166,15 +166,16 @@ impl Transaction {
 
     /// Keeps every write. Past this point the sync has published, so
     /// deleting the trash cannot fail it: a trash that cannot be deleted
-    /// is reported and left for [`sweep`] on a later sync.
-    pub(super) fn commit(self) {
+    /// is returned for the caller to report, and [`sweep`] deletes it on a
+    /// later sync.
+    pub(super) fn commit(self) -> Option<PathBuf> {
         let path = self.trash.keep();
-        if let Err(error) = std::fs::remove_dir_all(&path) {
-            tracing::warn!(
-                event = "sync_trash_left",
-                path = %path.display(),
-                %error,
-            );
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => None,
+            Err(error) => {
+                tracing::debug!(event = "sync_trash_left", path = %path.display(), %error);
+                Some(path)
+            }
         }
     }
 

@@ -405,82 +405,13 @@ fn a_failing_publish_time_command_fails_the_sync_and_keeps_the_previous_publicat
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
-// Failure semantics of the write boundary that no use case states yet.
-// Unbound.
-
 /// Emitted text with the test's temporary directory shown as `[TMP]`.
 fn without_tmp(env: &TestEnv, bytes: &[u8], shas: &[&str]) -> String {
     let base = env.path("").display().to_string();
     text(bytes, shas).replace(base.trim_end_matches('/'), "[TMP]")
 }
 
-#[cfg(unix)]
-#[test]
-fn an_output_that_is_a_symbolic_link_is_refused_and_its_target_left_alone() {
-    let env = TestEnv::new();
-    let repo = project(&env, "demo", &["acme"]);
-    let published = repo.head();
-    sync(&env, &repo).success();
-    let before = published_tree(&env);
-    let git_config = repo.read(".git/config");
-    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
-        .write("docs/global/acme/policy/later.md", &policy("Later", ""));
-    std::os::unix::fs::symlink(".git/config", repo.path().join("AGENTS.md")).unwrap();
-    repo.commit("aliased output");
-
-    let refused = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &refused.get_output().stderr, &[]), @"instrukt: [TMP]/demo/AGENTS.md is a symbolic link or lies behind one; publication writes only inside its root");
-    assert_eq!(repo.read(".git/config"), git_config);
-    assert_eq!(published_tree(&env), before);
-    assert_eq!(published_commit(&env, "demo"), published);
-}
-
-#[cfg(unix)]
-#[test]
-fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let env = TestEnv::new();
-    let repo = project(&env, "demo", &["acme"]);
-    sync(&env, &repo).success();
-    let locked = env.instrukt_home().join("docs/acme/policy");
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
-    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""));
-    let sha = repo.commit("later");
-
-    let run = sync(&env, &repo).success();
-    insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"published demo at [SHA]");
-    assert_eq!(published_commit(&env, "demo"), sha);
-    assert!(
-        env.instrukt_home()
-            .join("docs/acme/policy/later.md")
-            .is_file()
-    );
-
-    let leftovers = || -> Vec<PathBuf> {
-        std::fs::read_dir(env.instrukt_home())
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| {
-                p.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with(".sync-")
-            })
-            .collect()
-    };
-    for dir in walkdir::WalkDir::new(env.instrukt_home())
-        .into_iter()
-        .map(Result::unwrap)
-        .filter(|e| e.file_type().is_dir())
-    {
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    assert!(!leftovers().is_empty(), "the undeletable trash is left");
-    env.run(repo.path(), ["sync", "--force"]).success();
-    assert!(leftovers().is_empty(), "the next sync deletes it");
-}
-
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
 fn a_bundle_left_with_a_reference_fails_the_sync() {
     let env = TestEnv::new();
@@ -504,9 +435,85 @@ fn a_bundle_left_with_a_reference_fails_the_sync() {
         "@~/.instrukt/docs/acme/policy/noted.md\n",
     );
     repo.commit("noted");
+    env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
     insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/global/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/local/policy/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
+}
+
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB7
+#[cfg(unix)]
+#[test]
+fn an_output_that_is_a_symbolic_link_is_refused_and_its_target_left_alone() {
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    let published = repo.head();
+    sync(&env, &repo).success();
+    let before = published_tree(&env);
+    let git_config = repo.read(".git/config");
+    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
+        .write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    std::os::unix::fs::symlink(".git/config", repo.path().join("AGENTS.md")).unwrap();
+    repo.commit("aliased output");
+
+    let refused = sync(&env, &repo).failure();
+    insta::assert_snapshot!(without_tmp(&env, &refused.get_output().stderr, &[]), @"instrukt: [TMP]/demo/AGENTS.md is a symbolic link or lies behind one; publication writes only inside its root");
+    assert_eq!(repo.read(".git/config"), git_config);
+    assert_eq!(published_tree(&env), before);
+    assert_eq!(published_commit(&env, "demo"), published);
+}
+
+// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB8
+#[cfg(unix)]
+#[test]
+fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    sync(&env, &repo).success();
+    let locked = env.instrukt_home().join("docs/acme/policy");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    let sha = repo.commit("later");
+
+    let run = sync(&env, &repo).success();
+    let leftovers = || -> Vec<PathBuf> {
+        std::fs::read_dir(env.instrukt_home())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".sync-")
+            })
+            .collect()
+    };
+    let left = leftovers();
+    assert_eq!(left.len(), 1, "the copy that could not be removed is left");
+    let stdout = text(&run.get_output().stdout, &[&sha])
+        .replace(&left[0].display().to_string(), "[LEFTOVER]");
+    insta::assert_snapshot!(stdout, @r"
+    published demo at [SHA]
+    leftover [LEFTOVER] could not be removed; a later sync removes it
+    ");
+    assert_eq!(published_commit(&env, "demo"), sha);
+    assert!(
+        env.instrukt_home()
+            .join("docs/acme/policy/later.md")
+            .is_file()
+    );
+
+    for dir in walkdir::WalkDir::new(&left[0])
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_dir())
+    {
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    env.run(repo.path(), ["sync", "--force"]).success();
+    assert!(leftovers().is_empty(), "the next sync removes the leftover");
 }
