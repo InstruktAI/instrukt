@@ -247,6 +247,13 @@ pub struct SnippetDigest {
 /// the prerequisite had no such artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyDigest {
+    /// The prerequisite's durable identity: compare against the todo with
+    /// this identity, never by slug (a slug may be reused). `None` in a
+    /// record written before identities were recorded: that dependency
+    /// grounding is incomplete provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<crate::work::TodoId>,
+    /// The slug the prerequisite had then, for display.
     pub todo: TodoSlug,
     pub artifact: ArtifactName,
     pub digest: Option<ContentDigest>,
