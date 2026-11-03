@@ -88,6 +88,13 @@ their subject against current state, making replay idempotent. Event payloads
 and keys are defined in `local/projects/instrukt/spec/domain/runner`.
 A standing agent's session is recorded per (subscribing procedure, project).
 
+A start is recorded before the runtime is asked. A start whose result never
+arrived (the invocation ended after the runtime may have created the session)
+is never repeated, so no second standing session is created for the same
+agent: it is reported once as an anomaly naming the exact command line that
+resolves it, `instrukt sessions resolve-start <procedure>@<project> --session
+<runtime:id>` or `--none`, and the standing agent waits until it is resolved.
+
 ### Use cases
 
 #### UC-EA1: Learn about an upstream change before reconciling a fork
