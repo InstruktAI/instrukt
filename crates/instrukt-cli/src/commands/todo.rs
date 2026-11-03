@@ -250,12 +250,16 @@ struct StampArgs {
     /// The work branch's head is handed to integration.
     #[arg(long)]
     finalize_ready: bool,
-    /// A task firing starts now.
+    /// A task firing starts: the run of `--occurrence`, or now.
     #[arg(long)]
     task_firing_started: bool,
     /// A task execution's result.
     #[arg(long, value_name = "success|error")]
     task_outcome: Option<OutcomeArg>,
+    /// The scheduled occurrence a firing start or outcome concerns
+    /// (RFC 3339), as the run's opening message names it.
+    #[arg(long, value_name = "RFC 3339")]
+    occurrence: Option<jiff::Timestamp>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -679,7 +683,12 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         (args.build_complete, StampRequest::BuildComplete),
         (args.deferrals_processed, StampRequest::DeferralsProcessed),
         (args.finalize_ready, StampRequest::FinalizeReady),
-        (args.task_firing_started, StampRequest::TaskFiringStarted),
+        (
+            args.task_firing_started,
+            StampRequest::TaskFiringStarted {
+                occurrence: args.occurrence,
+            },
+        ),
     ] {
         if set {
             forms.push(form);
@@ -692,7 +701,11 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
                 OutcomeArg::Error => TaskResult::Error,
             },
             reason: args.reason.clone(),
+            occurrence: args.occurrence,
         });
+    }
+    if args.occurrence.is_some() && !(args.task_firing_started || args.task_outcome.is_some()) {
+        bail!("`--occurrence` names the occurrence of `--task-firing-started` or `--task-outcome`");
     }
     if args.session.is_some() && !(args.prd_approved || args.task_approved) {
         bail!(

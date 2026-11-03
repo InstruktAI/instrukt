@@ -260,3 +260,49 @@ fn a_recurring_task_continues_after_a_completed_and_after_a_failed_run() {
     assert_eq!(project.rt.calls().len(), 3, "{:?}", project.rt.calls());
     insta::assert_snapshot!("third-occurrence", project.rt.opening("s3"));
 }
+
+// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
+#[test]
+fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_claim() {
+    let mut project = Tracked::new(true);
+    project.authorized_task("quarter-hourly-sync", "cron:*/15 * * * *", &[]);
+    project.tick_at("2030-01-06T09:00:20Z");
+    project.todo_in_session(
+        "s1",
+        [
+            "stamp",
+            "quarter-hourly-sync",
+            "--task-outcome",
+            "success",
+            "--occurrence",
+            "2030-01-06T09:00:00Z",
+        ],
+    );
+    project.tick_at("2030-01-06T09:15:20Z");
+    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+
+    project.env.set_env("RT_SESSION", "s1");
+    let repeated = project
+        .env
+        .instrukt(project.repo.path())
+        .args([
+            "todo",
+            "stamp",
+            "quarter-hourly-sync",
+            "--task-outcome",
+            "success",
+            "--occurrence",
+            "2030-01-06T09:00:00Z",
+        ])
+        .assert()
+        .failure();
+    project.env.remove_env("RT_SESSION");
+
+    insta::assert_snapshot!(
+        "stale-outcome",
+        String::from_utf8_lossy(&repeated.get_output().stderr)
+    );
+    // The second run still holds its claim: the next occurrence waits.
+    project.tick_at("2030-01-06T09:30:20Z");
+    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+}

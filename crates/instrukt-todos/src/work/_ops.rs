@@ -554,6 +554,14 @@ impl Work {
                 "workflow.finalized handed to the event log"
             );
         }
+        if resolved.already_recorded {
+            // The runner stamped this run's start; nothing new to record.
+            s.flush()?;
+            return Ok(Outcome {
+                value: stamp,
+                reflection: s.status(index),
+            });
+        }
         let now = s.now;
         s.commit("stamped", |s| {
             let record = &mut s.items[index].record;
@@ -575,10 +583,10 @@ impl Work {
             if resolved.branch.is_some() {
                 record.branch = resolved.branch;
             }
-            // Ruling H: a claim covers one occurrence; recording that
-            // occurrence's outcome releases it, so the task returns to
-            // pickup (a recurring task fires again, a failed one is seen).
-            if matches!(stamp.fact, StampFact::TaskOutcome { .. }) {
+            // Ruling H: a claim covers one occurrence's run; that run's
+            // outcome (success or error) releases it, so the task returns
+            // to pickup. Only the execution holding the claim releases it.
+            if resolved.releases_claim {
                 record.claim = None;
             }
             let mut stamp = stamp;
@@ -872,10 +880,17 @@ fn apply_update(
         let claim = record.claim.as_ref().ok_or_else(|| {
             WorkError::refused(format!("`{}` holds no execution claim", record.slug))
         })?;
+        // A task's claim covers one run: only that run's session releases
+        // it — the claiming session, or the one bound as its task runner.
+        let is_task = record.kind == TodoKind::Task;
         let holder = claim.machine == machine
             && caller.as_ref().is_some_and(|caller| {
                 claim.session.as_ref() == Some(caller)
-                    || record.bindings.iter().any(|b| &b.session == caller)
+                    || record.bindings.iter().any(|b| {
+                        &b.session == caller
+                            && (!is_task
+                                || b.role.as_str() == instrukt_runner::dispatch::TASK_RUNNER_ROLE)
+                    })
             });
         if !holder {
             return Err(WorkError::refused(format!(
