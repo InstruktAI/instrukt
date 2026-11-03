@@ -939,4 +939,48 @@ mod tests {
         assert_eq!(board_item_on(&item, &b), None);
         assert!(board_owed(&item, &b));
     }
+
+    /// A local item as the store wrote it before board membership carried
+    /// its board: an item id and status, no `board`.
+    const PRE_BOARD_IDENTITY_ITEM: &str = r#"{
+        "record": {
+            "schema": 1,
+            "id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "project": "demo",
+            "slug": "depth",
+            "kind": "change",
+            "status": "active",
+            "created": "2026-10-01T09:00:00Z",
+            "created_by": {"person": {"name": "dev"}},
+            "revision": 3,
+            "sequence": 0,
+            "artifacts": [],
+            "stamps": [],
+            "bindings": [],
+            "hold_history": [],
+            "after": [],
+            "catch_up": "once"
+        },
+        "reflection": {
+            "issue": {"number": 4, "id": 4004},
+            "pending": false,
+            "conflicted": false,
+            "board_item": "PVTI_old",
+            "board_status": "active",
+            "reviews_reflected": 0,
+            "pull_closed": false
+        }
+    }"#;
+
+    #[test]
+    fn a_membership_stored_without_its_board_is_owed_on_the_configured_board() {
+        let item: LocalItem = serde_json::from_str(PRE_BOARD_IDENTITY_ITEM).unwrap();
+        let configured = BoardRef {
+            owner: "acme".into(),
+            number: 7,
+        };
+        assert!(board_owed(&item, &configured));
+        // The old item id is never reused for the configured board.
+        assert_eq!(board_item_on(&item, &configured), None);
+    }
 }

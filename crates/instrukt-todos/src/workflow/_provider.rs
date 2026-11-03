@@ -1984,4 +1984,46 @@ mod tests {
             (false, true)
         );
     }
+
+    /// Dependency grounding as records stored it before dependencies
+    /// carried the prerequisite's identity: an artifact version's
+    /// `grounding`, and a drift judgment's stamp fact.
+    const PRE_IDENTITY_VERSION_GROUNDING: &str = r#"{
+        "head": "0123456789abcdef0123456789abcdef01234567",
+        "dependencies": [
+            {"todo": "parse-lists", "artifact": "prd", "digest": "prd-1"}
+        ]
+    }"#;
+    const PRE_IDENTITY_DRIFT_STAMP: &str = r#"{
+        "fact": "drift_reviewed",
+        "artifact": "implementation_plan",
+        "class": "cosmetic",
+        "reason": "wording only",
+        "examined": "plan-1",
+        "grounding": {
+            "dependencies": [
+                {"todo": "parse-lists", "artifact": "prd", "digest": "prd-1"}
+            ]
+        }
+    }"#;
+
+    #[test]
+    fn a_dependency_stored_before_identities_reads_as_unresolved() {
+        let others = [prerequisite('1', "prd-1")];
+        let version: crate::evidence::Grounding =
+            serde_json::from_str(PRE_IDENTITY_VERSION_GROUNDING).unwrap();
+        assert_eq!(
+            dependency_change(&version.dependencies, &others),
+            (false, true)
+        );
+        let stamp: crate::evidence::StampFact =
+            serde_json::from_str(PRE_IDENTITY_DRIFT_STAMP).unwrap();
+        let crate::evidence::StampFact::DriftReviewed { grounding, .. } = stamp else {
+            panic!("the fixture is a drift judgment");
+        };
+        assert_eq!(
+            dependency_change(&grounding.dependencies, &others),
+            (false, true)
+        );
+    }
 }
