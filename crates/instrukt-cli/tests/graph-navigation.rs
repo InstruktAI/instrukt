@@ -171,3 +171,76 @@ fn with_no_graph_or_the_module_off_path_answers_as_blast_radius_does() {
         .failure();
     insta::assert_snapshot!(String::from_utf8_lossy(&assert.get_output().stderr), @"instrukt: the blueprint module is off; switch it on with `modules.blueprint: true` in instrukt.yaml");
 }
+
+/// Puts a stand-in for Graphify, the shipped adapter's program, on the
+/// machine's `PATH`: it prints the question it was asked, the arguments it
+/// received and how many nodes the graph it was given holds.
+fn with_graphify(env: &mut TestEnv) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let bin = env.path("engine-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let graphify = bin.join("graphify");
+    std::fs::write(
+        &graphify,
+        "#!/bin/sh\nset -eu\nquestion=\"$1\"; shift\ngraph=\"\"; asked=\"\"\n\
+         while [ $# -gt 0 ]; do\n\
+         \x20 case \"$1\" in\n\
+         \x20   --graph) graph=\"$2\"; shift 2 ;;\n\
+         \x20   *) asked=\"$asked [$1]\"; shift ;;\n\
+         \x20 esac\n\
+         done\n\
+         nodes=$(grep -o '\"id\":\"[^\"]*\"' \"$graph\" | wc -l | tr -d ' ')\n\
+         echo \"graphify $question$asked over $nodes nodes\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&graphify, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    env.set_env("PATH", &path);
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+#[test]
+fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
+    let mut env = TestEnv::new();
+    with_graphify(&mut env);
+    let repo = project(&env, true);
+    seed(&env, mapped());
+    let out = stdout(
+        env.run(
+            repo.path(),
+            [
+                "blueprint",
+                "query",
+                "how does the cli reach the db",
+                "--dfs",
+            ],
+        )
+        .success(),
+    );
+    insta::assert_snapshot!(out, @r"
+    blueprint graph of 0123456789abcdef0123456789abcdef01234567
+    graphify query [how does the cli reach the db] [--dfs] over 5 nodes
+    ");
+}
+
+// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+#[test]
+fn an_explanation_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
+    let mut env = TestEnv::new();
+    with_graphify(&mut env);
+    let repo = project(&env, true);
+    seed(&env, mapped());
+    let out = stdout(
+        env.run(repo.path(), ["blueprint", "explain", "api::serve"])
+            .success(),
+    );
+    insta::assert_snapshot!(out, @r"
+    blueprint graph of 0123456789abcdef0123456789abcdef01234567
+    graphify explain [api::serve] over 5 nodes
+    ");
+}

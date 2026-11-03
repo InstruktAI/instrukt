@@ -182,10 +182,16 @@ impl GraphStore {
     /// satisfying the contract. A missing or contract-breaking graph is
     /// `false`; storage that cannot be read is an error.
     pub fn has_graph(&self, sha: &CommitSha) -> Result<bool, StoreError> {
+        Ok(self.graph(sha)?.is_some())
+    }
+
+    /// The complete graph of `sha`; `None` when it is missing or does not
+    /// satisfy the contract. Storage that cannot be read is an error.
+    pub fn graph(&self, sha: &CommitSha) -> Result<Option<Graph>, StoreError> {
         let path = self.graph_file(sha);
         match std::fs::read(&path) {
-            Ok(bytes) => Ok(Graph::from_json(&bytes).is_ok()),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+            Ok(bytes) => Ok(Graph::from_json(&bytes).ok()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(StoreError::Read { path, source }),
         }
     }

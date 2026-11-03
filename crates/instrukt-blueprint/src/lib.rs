@@ -6,19 +6,33 @@
 //!   graph and the one-step publication generation uses.
 //! - [`Graph::reach`] and [`Graph::shortest_path`] — traversal over a graph.
 //! - [`blast_radius`] and [`path`] — the answers computed from the contract.
+//! - [`Engine`] — the engine adapter: the shipped adapter or a configured
+//!   command, and the questions only an engine answers.
+//! - [`Generation`] — core's `GraphGeneration`, wired by the CLI when the
+//!   module is switched on: queues a revision and starts the detached
+//!   [`run_worker`], which publishes through [`GraphStore::publish`];
+//!   [`last_generation`] is the outcome `blueprint status` shows.
+//! - [`trace_use_case`] and [`trace_file`] — use-case trace.
 //!
-//! Depends on core only. Generation — core's `GraphGeneration` interface,
-//! wired by the CLI when the module is switched on — publishes through
-//! [`GraphStore::publish`].
+//! Depends on core only.
 
 mod _answers;
 mod _contract;
+mod _engine;
+mod _generation;
 mod _store;
+mod _trace;
 mod _traversal;
 
 pub use _answers::{BlastRadius, PathAnswer, UnknownEndpoint, blast_radius, path, repo_relative};
 pub use _contract::{
     ContractError, Graph, Link, Location, Node, Relation, SourceFileProblem, normalize_path,
 };
+pub use _engine::{Engine, EngineError, Question, SHIPPED_ENGINE};
+pub use _generation::{
+    Generation, GenerationError, GenerationState, LastGeneration, WORKER_COMMAND, last_generation,
+    run_worker,
+};
 pub use _store::{CleanupFailure, GraphStore, LatestGraph, Published, StoreError};
+pub use _trace::{ReachingTest, UseCaseTrace, trace_file, trace_use_case};
 pub use _traversal::Direction;
