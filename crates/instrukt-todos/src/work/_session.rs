@@ -14,12 +14,12 @@ use jiff::{SignedDuration, Timestamp};
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_model::{TodoId, TodoRecord, TodoRef};
-use super::_provider;
 pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
 use super::_store::{self, IssueRef, LocalItem, Store};
 use super::Work;
 use crate::evidence::{Actor, TodoStatus};
+use instrukt_core::github;
 
 /// The fixed recovery window of withdrawn work.
 const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
@@ -90,14 +90,12 @@ impl<'w> Session<'w> {
         let config = Configuration::load(work.home(), Some(&project.root))?;
         // The address the token is sent to comes from the machine's own
         // layer, never from a repository's.
-        let api_url = Configuration::load_global(work.home())?
-            .github_api_url()?
-            .to_owned();
-        let repository = _provider::repository(&config, &api_url, &project.root)?;
+        let api_url = github::api_url(work.home())?;
+        let repository = github::repository(&config, &api_url, &project.root)?;
         let store = Store::open(work.home(), &project.slug)?;
         let items = store.items()?;
         let now = work.now();
-        let remote = match _provider::token(work.env()) {
+        let remote = match github::credentials(work.env()) {
             None => Remote::Unavailable(PendingReason::NoCredentials),
             Some(token) => match store.provider()?.deferred_until {
                 Some(until) if until > now => {
@@ -109,7 +107,7 @@ impl<'w> Session<'w> {
                 },
             },
         };
-        let base = _provider::default_branch(&project.root)?;
+        let base = github::default_branch(&project.root)?;
         let mut session = Self {
             work,
             _lock: lock,

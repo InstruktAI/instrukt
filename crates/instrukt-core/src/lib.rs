@@ -8,6 +8,7 @@ pub mod config;
 pub mod docs;
 pub mod fsx;
 pub mod git;
+pub mod github;
 pub mod home;
 pub mod ids;
 pub mod index;
