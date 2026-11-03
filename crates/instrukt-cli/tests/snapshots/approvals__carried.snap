@@ -2,7 +2,7 @@
 source: crates/instrukt-cli/tests/approvals.rs
 expression: "redact(&format!(\"{}---\\n{carried}---\\n{shown}\",\nString::from_utf8_lossy(&unreviewed.get_output().stderr)))"
 ---
-instrukt: carrying an approval needs a current `prd_review` verdict `approve` binding the current prd (<digest 1>); none is recorded
+instrukt: carrying an approval needs a standing `prd_review` verdict `approve` of the current prd (<digest 1>): the latest review judged other evidence
 ---
 stamped nested-lists: prd approved by a human — <digest 1>, carried from <digest 2>
 reflection: reflected to GitHub

@@ -118,19 +118,7 @@ pub(crate) fn resolve(
     };
     Ok(match request {
         StampRequest::PreparationVerdict { phase, verdict } => {
-            let (target, report) = match phase {
-                PreparationReview::PrdReview => {
-                    (artifact_names::PRD, artifact_names::PRD_REVIEW_FINDINGS)
-                }
-                PreparationReview::ArchitectureReview => (
-                    artifact_names::ARCHITECTURE,
-                    artifact_names::ARCHITECTURE_REVIEW_FINDINGS,
-                ),
-                PreparationReview::PlanReview => (
-                    plan_artifact(record.kind),
-                    artifact_names::PLAN_REVIEW_FINDINGS,
-                ),
-            };
+            let (target, report) = reviewed_artifacts(record.kind, *phase);
             plain(StampFact::PreparationVerdict {
                 phase: *phase,
                 verdict: *verdict,
@@ -216,20 +204,11 @@ pub(crate) fn resolve(
                     "stamp #{from} approves another gate"
                 )));
             }
-            // Carry is accepted only under a current independent review's
-            // approval of the new evidence.
-            let reviewed = record.stamps.iter().rev().find_map(|s| match &s.fact {
-                StampFact::PreparationVerdict {
-                    phase,
-                    verdict,
-                    target: reviewed,
-                    ..
-                } if *phase == review_of(*gate) => Some((*verdict, reviewed.clone())),
-                _ => None,
-            });
-            if reviewed != Some((ReviewVerdict::Approve, target.clone())) {
+            // Carry is accepted only under an independent review's approval
+            // of the new evidence that still stands.
+            if let Err(why) = supporting_review(record, review_of(*gate), &target) {
                 return Err(WorkError::refused(format!(
-                    "carrying an approval needs a current `{}` verdict `approve` binding the current {} ({target}); none is recorded",
+                    "carrying an approval needs a standing `{}` verdict `approve` of the current {} ({target}): {why}",
                     match review_of(*gate) {
                         PreparationReview::PrdReview => "prd_review",
                         PreparationReview::ArchitectureReview => "architecture_review",
@@ -452,6 +431,75 @@ fn approval_target(record: &TodoRecord, gate: ApprovalGate) -> Result<ContentDig
 }
 
 /// The independent review whose verdict binds a gate's evidence.
+/// The artifact a preparation review judges and its findings artifact.
+fn reviewed_artifacts(kind: TodoKind, phase: PreparationReview) -> (&'static str, &'static str) {
+    match phase {
+        PreparationReview::PrdReview => (artifact_names::PRD, artifact_names::PRD_REVIEW_FINDINGS),
+        PreparationReview::ArchitectureReview => (
+            artifact_names::ARCHITECTURE,
+            artifact_names::ARCHITECTURE_REVIEW_FINDINGS,
+        ),
+        PreparationReview::PlanReview => {
+            (plan_artifact(kind), artifact_names::PLAN_REVIEW_FINDINGS)
+        }
+    }
+}
+
+/// Whether the latest `phase` verdict is an approval of `target` that still
+/// stands: its target is `target`, its report is the current findings,
+/// and no later kickback invalidated that review nor a later substantive
+/// drift judgment hit the artifact it judged. The reason when not.
+fn supporting_review(
+    record: &TodoRecord,
+    phase: PreparationReview,
+    target: &ContentDigest,
+) -> Result<(), &'static str> {
+    let (judged, findings) = reviewed_artifacts(record.kind, phase);
+    let Some((at, verdict, reviewed, report)) =
+        record
+            .stamps
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(at, s)| match &s.fact {
+                StampFact::PreparationVerdict {
+                    phase: p,
+                    verdict,
+                    target,
+                    report,
+                } if *p == phase => Some((at, *verdict, target, report)),
+                _ => None,
+            })
+    else {
+        return Err("no such review is recorded");
+    };
+    if verdict != ReviewVerdict::Approve {
+        return Err("the latest review did not approve");
+    }
+    if reviewed != target {
+        return Err("the latest review judged other evidence");
+    }
+    if record.current_digest(findings) != Some(report) {
+        return Err("its findings have changed since the review");
+    }
+    let invalidated = record.stamps[at + 1..].iter().any(|s| match &s.fact {
+        StampFact::Kickback {
+            invalidated_reviews,
+            ..
+        } => invalidated_reviews.contains(&phase),
+        StampFact::DriftReviewed {
+            artifact,
+            class: DriftClass::Substantive,
+            ..
+        } => artifact.as_str() == judged,
+        _ => false,
+    });
+    if invalidated {
+        return Err("a later kickback or substantive drift invalidated the review");
+    }
+    Ok(())
+}
+
 fn review_of(gate: ApprovalGate) -> PreparationReview {
     match gate {
         ApprovalGate::Prd => PreparationReview::PrdReview,

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/approvals.rs
+expression: "redact(&String::from_utf8_lossy(&refused.get_output().stderr))"
+---
+instrukt: carrying an approval needs a standing `prd_review` verdict `approve` of the current prd (<digest 1>): its findings have changed since the review

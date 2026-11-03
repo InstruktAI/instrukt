@@ -89,6 +89,62 @@ fn an_earlier_approval_carries_to_the_revised_outcome_only_under_a_current_revie
     );
 }
 
+// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP3
+#[test]
+fn a_review_whose_findings_changed_since_no_longer_supports_a_carry() {
+    let project = Project::new();
+    project.create(
+        "nested-lists",
+        "feature",
+        "Keep the depth of nested lists when parsing Markdown.",
+    );
+    reviewed_prd(&project, "Lists keep their depth through parse and render.");
+    // Stamp #5: the developer's approval of that outcome.
+    project.ok([
+        "stamp",
+        "nested-lists",
+        "--prd-approved",
+        "--by",
+        "human",
+        "--session",
+        "thread-host:thread-7",
+    ]);
+    // The outcome is revised and approved on review; then the review's
+    // findings change, so that approval no longer stands.
+    reviewed_prd(
+        &project,
+        "Lists keep their depth, and numbering restarts per level.",
+    );
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "prd-review-findings",
+        "Numbering must restart only for ordered lists.",
+    ]);
+    let before = project.ok(["show", "nested-lists"]);
+
+    let refused = project
+        .todo([
+            "stamp",
+            "nested-lists",
+            "--prd-approved",
+            "--carry-from",
+            "5",
+        ])
+        .failure();
+
+    assert_eq!(
+        project.ok(["show", "nested-lists"]),
+        before,
+        "nothing was carried"
+    );
+    insta::assert_snapshot!(
+        "carry-under-a-stale-review",
+        redact(&String::from_utf8_lossy(&refused.get_output().stderr))
+    );
+}
+
 /// The `crew` project with `approvals.prd` set to `approver`.
 fn prd_approved_by(crew: &Crew, approver: &str) {
     crew.project.repo.write(
