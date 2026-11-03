@@ -171,6 +171,7 @@ mod tests {
                 by: ApprovedBy::Human,
                 target: digest("task-1"),
                 carried_from: None,
+                reasoning: None,
             })
             .build();
         assert_eq!(lane_of(&evidence, &indexed), Lane::TaskRun);

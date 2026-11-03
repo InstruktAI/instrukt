@@ -340,6 +340,38 @@ impl<'c> Sessions<'c> {
         })
     }
 
+    /// The model and version `session` runs, from its runtime's optional
+    /// `model` template called with the session id, which prints `<model>
+    /// <version>` (`stamps`, "Evidence and attribution"). `None` when the
+    /// runtime has no template, or the template fails or prints anything
+    /// else: the model is then unknown, never guessed.
+    pub fn model(&self, session: &SessionRef) -> Option<(String, String)> {
+        let entry = self.entry(session).ok()?;
+        let template = entry.field("model")?;
+        let done = match self
+            .invocation(entry, template, Some(&session.id), &[])
+            .and_then(|invocation| invocation.run(self.timeout).map_err(SessionsError::from))
+        {
+            Ok(done) => done,
+            Err(err) => {
+                tracing::warn!(event = "session_model_unknown", session = %session, error = %err, "the runtime's `model` template could not run");
+                return None;
+            }
+        };
+        if !done.success {
+            tracing::warn!(event = "session_model_unknown", session = %session, stderr = %done.stderr.trim(), "the runtime's `model` template failed");
+            return None;
+        }
+        let mut words = done.stdout.split_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some(model), Some(version), None) => Some((model.to_owned(), version.to_owned())),
+            _ => {
+                tracing::warn!(event = "session_model_unknown", session = %session, "the runtime's `model` template did not print `<model> <version>`");
+                None
+            }
+        }
+    }
+
     /// Reads `session`'s conversation as the runtime prints it.
     pub fn conversation(&self, session: &SessionRef) -> Result<String, SessionsError> {
         let entry = self.entry(session)?;

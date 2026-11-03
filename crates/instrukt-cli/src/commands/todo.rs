@@ -3,10 +3,11 @@
 //! artifacts`), with workflow's `prepare|work` flattened in from
 //! [`todo_flow`] (`docs/local/spec/feature/work/`).
 //!
-//! The work builder owns this file; the workflow builder owns
-//! `todo_flow.rs`. The one-line abouts below appear in the `todo --help`
-//! snapshot. The `modules.todos` refusal that names its door covers the
-//! whole namespace and runs in [`run`], before dispatch.
+//! These subcommands translate between the command line and the work
+//! context; `todo_flow.rs` does the same for workflow's subcommands. The
+//! one-line abouts below are the `todo --help` contract. The
+//! `modules.todos` refusal that names its door covers the whole namespace
+//! and runs in [`run`], before dispatch.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -20,11 +21,11 @@ use instrukt_runner::interfaces::{
 };
 use instrukt_todos::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, DriftClass, HoldSource,
-    PreparationReview, ReviewVerdict, StampFact, TaskResult, TodoStatus,
+    ModelProvenance, PreparationReview, ReviewVerdict, StampFact, TaskResult, TodoStatus,
 };
 use instrukt_todos::work::{
     CreateRequest, DiffLine, ListEntry, Outcome, ReflectionStatus, Selection, StampRequest,
-    TodoView, UpdateRequest, Work, describe,
+    TodoAddress, TodoView, UpdateRequest, Work, describe,
 };
 use jiff::{SignedDuration, Timestamp};
 
@@ -47,7 +48,7 @@ enum TodoCommand {
     /// The project's work: active by default, or iceboxed, removed or delivered.
     List(ListArgs),
     /// A todo's record, evidence, holds, claim and session bindings.
-    Show(SlugArg),
+    Show(AddressArg),
     /// Change a todo's metadata, relationships, hold or claim.
     Update(UpdateArgs),
     /// Refresh a conflicted todo from GitHub.
@@ -74,6 +75,14 @@ enum TodoCommand {
 struct SlugArg {
     /// The todo's slug.
     slug: TodoSlug,
+}
+
+#[derive(Debug, clap::Args)]
+struct AddressArg {
+    /// The live todo's slug, or `<slug>@<identity-prefix>` for a retained
+    /// entry.
+    #[arg(value_name = "TODO")]
+    todo: TodoAddress,
 }
 
 #[derive(Debug, clap::Args)]
@@ -205,12 +214,19 @@ struct StampArgs {
     /// The reviewed phase.
     #[arg(long, requires = "verdict")]
     phase: Option<PhaseArg>,
-    /// Approval of the current prd, with `--by`.
-    #[arg(long, requires = "by")]
+    /// Approval of the current prd, with `--by` (or `--carry-from`).
+    #[arg(long)]
     prd_approved: bool,
-    /// Approval of the current task plan, with `--by`.
-    #[arg(long, requires = "by")]
+    /// Approval of the current task plan, with `--by` (or `--carry-from`).
+    #[arg(long)]
     task_approved: bool,
+    /// A peer approval's reasoning (required with `--by peer`).
+    #[arg(long, value_name = "TEXT")]
+    reasoning: Option<String>,
+    /// Carry the approval stamp with this number (`todo show` numbers
+    /// stamps) to the current evidence.
+    #[arg(long, value_name = "STAMP", conflicts_with = "by")]
+    carry_from: Option<u64>,
     /// Who approved.
     #[arg(long, value_name = "human|peer")]
     by: Option<ByArg>,
@@ -250,12 +266,16 @@ struct StampArgs {
     /// The work branch's head is handed to integration.
     #[arg(long)]
     finalize_ready: bool,
-    /// A task firing starts now.
+    /// A task firing starts: the run of `--occurrence`, or now.
     #[arg(long)]
     task_firing_started: bool,
     /// A task execution's result.
     #[arg(long, value_name = "success|error")]
     task_outcome: Option<OutcomeArg>,
+    /// The scheduled occurrence a firing start or outcome concerns
+    /// (RFC 3339), as the run's opening message names it.
+    #[arg(long, value_name = "RFC 3339")]
+    occurrence: Option<jiff::Timestamp>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -267,9 +287,9 @@ struct ArtifactsArgs {
 #[derive(Debug, clap::Subcommand)]
 enum ArtifactsCommand {
     /// A todo's artifacts and their retained versions.
-    List { slug: TodoSlug },
+    List { slug: TodoAddress },
     /// An artifact's current content.
-    Read { slug: TodoSlug, name: String },
+    Read { slug: TodoAddress, name: String },
     /// Append a version to an artifact.
     Write {
         slug: TodoSlug,
@@ -278,7 +298,7 @@ enum ArtifactsCommand {
     },
     /// The line diff between two retained versions, by digest.
     Diff {
-        slug: TodoSlug,
+        slug: TodoAddress,
         name: String,
         old_digest: String,
         new_digest: String,
@@ -396,7 +416,7 @@ impl Session<'_> {
                 Ok(ExitCode::SUCCESS)
             }
             TodoCommand::Show(args) => {
-                let view = work.show(project, &args.slug)?;
+                let view = work.show(project, &args.todo)?;
                 ctx.out.text(&render_view(&view))?;
                 Ok(ExitCode::SUCCESS)
             }
@@ -629,18 +649,33 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         (args.prd_approved, ApprovalGate::Prd),
         (args.task_approved, ApprovalGate::Task),
     ] {
-        if set {
-            let by = match args.by {
-                Some(ByArg::Human) => ApprovedBy::Human,
-                Some(ByArg::Peer) => ApprovedBy::Peer,
-                None => bail!("an approval names who approved with `--by human|peer`"),
-            };
-            forms.push(StampRequest::Approval {
-                gate,
-                by,
-                session: args.session.clone(),
-            });
+        if !set {
+            continue;
         }
+        if let Some(from) = args.carry_from {
+            forms.push(StampRequest::CarriedApproval { gate, from });
+            continue;
+        }
+        let by = match args.by {
+            Some(ByArg::Human) => ApprovedBy::Human,
+            Some(ByArg::Peer) => ApprovedBy::Peer,
+            None => bail!(
+                "an approval names who approved with `--by human|peer`, or carries one with `--carry-from <stamp>`"
+            ),
+        };
+        forms.push(StampRequest::Approval {
+            gate,
+            by,
+            session: args.session.clone(),
+            reasoning: args.reasoning.clone(),
+        });
+    }
+    if (args.reasoning.is_some() || args.carry_from.is_some() || args.by.is_some())
+        && !(args.prd_approved || args.task_approved)
+    {
+        bail!(
+            "`--by`, `--reasoning` and `--carry-from` go with `--prd-approved` or `--task-approved`"
+        );
     }
     if args.intent_checked {
         forms.push(StampRequest::IntentChecked);
@@ -679,7 +714,12 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         (args.build_complete, StampRequest::BuildComplete),
         (args.deferrals_processed, StampRequest::DeferralsProcessed),
         (args.finalize_ready, StampRequest::FinalizeReady),
-        (args.task_firing_started, StampRequest::TaskFiringStarted),
+        (
+            args.task_firing_started,
+            StampRequest::TaskFiringStarted {
+                occurrence: args.occurrence,
+            },
+        ),
     ] {
         if set {
             forms.push(form);
@@ -692,7 +732,11 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
                 OutcomeArg::Error => TaskResult::Error,
             },
             reason: args.reason.clone(),
+            occurrence: args.occurrence,
         });
+    }
+    if args.occurrence.is_some() && !(args.task_firing_started || args.task_outcome.is_some()) {
+        bail!("`--occurrence` names the occurrence of `--task-firing-started` or `--task-outcome`");
     }
     if args.session.is_some() && !(args.prd_approved || args.task_approved) {
         bail!(
@@ -983,7 +1027,8 @@ fn render_view(view: &TodoView) -> String {
     }
     for stamp in &record.stamps {
         stamps.push(format!(
-            "  {} {} — by {}{}{}",
+            "  #{} {} {} — by {}{}{}{}",
+            stamp.sequence,
             time(stamp.at),
             fact(&stamp.fact),
             actor(&stamp.actor),
@@ -992,6 +1037,12 @@ fn render_view(view: &TodoView) -> String {
                 .as_ref()
                 .map(|r| format!(" as {r}"))
                 .unwrap_or_default(),
+            match (&stamp.model_provenance, &stamp.model) {
+                (ModelProvenance::Reported, Some(model)) =>
+                    format!(", model {} {}", model.model, model.version),
+                (ModelProvenance::Unknown, _) => ", model unknown".to_owned(),
+                _ => String::new(),
+            },
             stamp
                 .eval_fingerprint
                 .as_ref()
@@ -1070,8 +1121,9 @@ fn fact(fact: &StampFact) -> String {
             by,
             target,
             carried_from,
+            reasoning,
         } => format!(
-            "{} approved by {} — {target}{}",
+            "{} approved by {} — {target}{}{}",
             match gate {
                 ApprovalGate::Prd => "prd",
                 ApprovalGate::Task => "task plan",
@@ -1083,6 +1135,10 @@ fn fact(fact: &StampFact) -> String {
             carried_from
                 .as_ref()
                 .map(|c| format!(", carried from {c}"))
+                .unwrap_or_default(),
+            reasoning
+                .as_ref()
+                .map(|r| format!(" — reasoning: {r}"))
                 .unwrap_or_default()
         ),
         StampFact::IntentChecked {
@@ -1146,6 +1202,21 @@ fn fact(fact: &StampFact) -> String {
                 .map(|r| format!(": {r}"))
                 .unwrap_or_default(),
             time(*occurrence)
+        ),
+        StampFact::ChangesRequested {
+            gate,
+            target,
+            reason,
+        } => format!(
+            "changes requested on {}: {reason}{}",
+            match gate {
+                ApprovalGate::Prd => "prd",
+                ApprovalGate::Task => "task plan",
+            },
+            target
+                .as_ref()
+                .map(|t| format!(" — {t}"))
+                .unwrap_or_default()
         ),
     }
 }

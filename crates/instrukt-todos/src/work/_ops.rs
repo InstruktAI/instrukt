@@ -16,15 +16,15 @@ use instrukt_runner::interfaces::{AgentPreference, CatchUp, ProjectRef, TaskSche
 use super::_diff::{DiffLine, diff_lines};
 use super::_error::WorkError;
 use super::_model::{
-    Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoId, TodoRecord, TodoRef, Version,
-    digest_of, valid_artifact_name,
+    Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef,
+    Version, digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, PullFor, ReflectionStatus, Session};
+use super::_session::{GitHubRead, Located, PullFor, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
-    Actor, ArtifactName, HoldRecord, HoldSource, PreparationReview, ReviewVerdict, StampFact,
-    StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
+    Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, PreparationReview,
+    ReviewVerdict, StampFact, StampRecord, TodoStatus, Upstream, artifact_names, upstream_of,
 };
 
 /// `instrukt todo create`.
@@ -143,6 +143,10 @@ impl Work {
             ));
         }
         ensure_slug_free(&mut s, &request.slug, None)?;
+        if !request.after.is_empty() || request.group.is_some() {
+            // A relationship is judged against the current graph.
+            s.pull_all()?;
+        }
         let actor = s.actor()?;
         let after = resolve_refs(&mut s, &request.after)?;
         if request.after.contains(&request.slug) {
@@ -177,6 +181,7 @@ impl Work {
             created_by: actor.clone(),
             human_involved: request.human_involved,
             revision: 0,
+            sequence: 1,
             artifacts: vec![Artifact {
                 name: ArtifactName::new(artifact_names::INPUT),
                 address: None,
@@ -185,6 +190,8 @@ impl Work {
                     writer: actor.clone(),
                     created: now,
                     derived_from: Vec::new(),
+                    sequence: 1,
+                    grounding: Default::default(),
                     remote: None,
                     content: Some(content),
                 }],
@@ -222,26 +229,31 @@ impl Work {
         })
     }
 
-    pub fn show(&self, project: &ProjectRef, slug: &TodoSlug) -> Result<TodoView, WorkError> {
+    /// The todo `address` names: a plain slug is the live item;
+    /// `<slug>@<identity-prefix>` an exact entry, retained ones included.
+    pub fn show(&self, project: &ProjectRef, address: &TodoAddress) -> Result<TodoView, WorkError> {
         let mut s = Session::open(self, project)?;
-        if let Some(index) = s.find(slug, true) {
-            match s.pull_through(index, PullFor::Read) {
-                Ok(()) | Err(WorkError::Conflicted { .. }) => {}
-                Err(err) => return Err(err),
+        match s.locate(address)? {
+            Located::Local(index) => {
+                match s.pull_through(index, PullFor::Read) {
+                    Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+                    Err(err) => return Err(err),
+                }
+                let item = s.items[index].clone();
+                let view = view(&mut s, item.record, true);
+                Ok(TodoView {
+                    reflection: Some(s.status(index)),
+                    issue: item.reflection.issue.map(|i| i.number),
+                    pull: item.reflection.pull,
+                    ..view
+                })
             }
-            let item = s.items[index].clone();
-            let view = view(&mut s, item.record, true);
-            return Ok(TodoView {
-                reflection: Some(s.status(index)),
-                issue: item.reflection.issue.map(|i| i.number),
-                pull: item.reflection.pull,
-                ..view
-            });
+            Located::Remote(item) => {
+                let issue = item.reflection.issue.map(|i| i.number);
+                let view = view(&mut s, item.record, false);
+                Ok(TodoView { issue, ..view })
+            }
         }
-        let item = s.remote_item(slug)?.ok_or_else(|| unknown(&s, slug))?;
-        let issue = item.reflection.issue.map(|i| i.number);
-        let view = view(&mut s, item.record, false);
-        Ok(TodoView { issue, ..view })
     }
 
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
@@ -306,6 +318,10 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
+        if request.after.is_some() || request.group.is_some() {
+            // A relationship is judged against the current graph.
+            s.pull_all()?;
+        }
         let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
         s.flush()?;
         Ok(Outcome {
@@ -372,15 +388,29 @@ impl Work {
         project: &ProjectRef,
         slug: &TodoSlug,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
-        self.transition(project, slug, "removed", |record, now| {
-            writable(record)?;
+        let mut s = Session::open(self, project)?;
+        let index = s.enter(slug)?;
+        writable(&s.items[index].record)?;
+        // Release the working resources first; a worktree holding
+        // uncommitted work refuses the withdrawal rather than losing it.
+        let (worktrees, branch) = release_resources(&project.root, &s.items[index].record)?;
+        let now = s.now;
+        s.commit("removed", |s| {
+            let record = &mut s.items[index].record;
             record.removal = Some(Removal {
                 at: now,
                 from: record.status,
+                branch,
+                worktrees,
             });
             record.status = TodoStatus::Removed;
             record.claim = None;
             Ok(())
+        })?;
+        s.flush()?;
+        Ok(Outcome {
+            value: s.items[index].record.clone(),
+            reflection: s.status(index),
         })
     }
 
@@ -391,23 +421,36 @@ impl Work {
         key: &str,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
+        // An identity, a slug, or `<slug>@<identity-prefix>`.
+        let address: Option<TodoAddress> = key.parse().ok();
+        let wanted = |record: &TodoRecord| {
+            record.status == TodoStatus::Removed
+                && (record.id.as_str() == key || address.as_ref().is_some_and(|a| a.names(record)))
+        };
         let removed: Vec<usize> = s
             .items
             .iter()
             .enumerate()
-            .filter(|(_, it)| {
-                it.record.status == TodoStatus::Removed
-                    && (it.record.id.as_str() == key || it.record.slug.as_str() == key)
-            })
+            .filter(|(_, it)| wanted(&it.record))
             .map(|(i, _)| i)
             .collect();
         let index = match removed.as_slice() {
             [index] => *index,
-            [] => {
-                return Err(WorkError::refused(format!(
-                    "no withdrawn todo `{key}` within its recovery window on this computer"
-                )));
-            }
+            [] => match s.remote_matching(wanted)? {
+                // Withdrawn on another computer, still inside its window.
+                Some(item) => s.adopt(item)?,
+                None => {
+                    return Err(match s.github_read() {
+                        GitHubRead::Read => WorkError::refused(format!(
+                            "no withdrawn todo `{key}` within its recovery window"
+                        )),
+                        GitHubRead::NotRead(reason) => WorkError::refused(format!(
+                            "no withdrawn todo `{key}` on this computer, and GitHub cannot be read to look further: {}",
+                            super::_session::describe(&reason)
+                        )),
+                    });
+                }
+            },
             many => {
                 let ids: Vec<String> = many
                     .iter()
@@ -520,14 +563,17 @@ impl Work {
             Some(actor) => actor,
             None => s.actor()?,
         };
+        let (model, model_provenance) = s.model_of(&actor);
         let stamp = StampRecord {
             fact: resolved.fact,
             at: s.now,
             role: role_of(&record, &actor),
             actor: actor.clone(),
-            model: None,
+            model,
             eval_fingerprint: EvalFingerprint::current(self.home())?.map(|f| f.fingerprint),
             human_involved: None,
+            sequence: 0,
+            model_provenance,
         };
         if let StampFact::FinalizeReady { commit } = &stamp.fact {
             let log = events.ok_or_else(|| {
@@ -550,8 +596,15 @@ impl Work {
                 "workflow.finalized handed to the event log"
             );
         }
+        if resolved.already_recorded {
+            // The runner stamped this run's start; nothing new to record.
+            s.flush()?;
+            return Ok(Outcome {
+                value: stamp,
+                reflection: s.status(index),
+            });
+        }
         let now = s.now;
-        let stamp_out = stamp.clone();
         s.commit("stamped", |s| {
             let record = &mut s.items[index].record;
             if let StampFact::DiagnosisUnresolved { reason, .. } = &stamp.fact {
@@ -572,18 +625,25 @@ impl Work {
             if resolved.branch.is_some() {
                 record.branch = resolved.branch;
             }
-            // Ruling H: a claim covers one occurrence; recording that
-            // occurrence's outcome releases it, so the task returns to
-            // pickup (a recurring task fires again, a failed one is seen).
-            if matches!(stamp.fact, StampFact::TaskOutcome { .. }) {
+            // Ruling H: a claim covers one occurrence's run; that run's
+            // outcome (success or error) releases it, so the task returns
+            // to pickup. Only the execution holding the claim releases it.
+            if resolved.releases_claim {
                 record.claim = None;
             }
+            let mut stamp = stamp;
+            stamp.sequence = record.next_sequence();
             record.stamps.push(stamp);
             Ok(())
         })?;
         s.flush()?;
         Ok(Outcome {
-            value: stamp_out,
+            value: s.items[index]
+                .record
+                .stamps
+                .last()
+                .cloned()
+                .ok_or_else(|| WorkError::refused("the stamp was not recorded"))?,
             reflection: s.status(index),
         })
     }
@@ -621,17 +681,41 @@ impl Work {
                 digest: record.current_digest(upstream).cloned(),
             })
             .collect();
+        let after = record.after.clone();
+        let mut grounding = super::_grounding::ground(
+            self.home(),
+            &project.root,
+            &project.slug,
+            &s.base,
+            slug,
+            content,
+        )?;
+        for prerequisite in &after {
+            let found = s.record_by_id(&prerequisite.id);
+            for upstream in upstream_of(name) {
+                grounding.dependencies.push(DependencyDigest {
+                    todo: prerequisite.slug.clone(),
+                    artifact: ArtifactName::new(*upstream),
+                    digest: found
+                        .as_ref()
+                        .and_then(|r| r.current_digest(upstream).cloned()),
+                });
+            }
+        }
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
             created: s.now,
             derived_from,
+            sequence: 0,
+            grounding,
             remote: None,
             content: Some(content.to_owned()),
         };
-        let written = version.clone();
         s.commit("artifact written", |s| {
             let record = &mut s.items[index].record;
+            let mut version = version;
+            version.sequence = record.next_sequence();
             match record
                 .artifacts
                 .iter_mut()
@@ -647,6 +731,12 @@ impl Work {
             Ok(())
         })?;
         s.flush()?;
+        let written = s.items[index]
+            .record
+            .artifact(name)
+            .and_then(|a| a.versions.last())
+            .cloned()
+            .ok_or_else(|| WorkError::refused("the artifact version was not recorded"))?;
         Ok(Outcome {
             value: written,
             reflection: s.status(index),
@@ -657,10 +747,11 @@ impl Work {
     pub fn read_artifact(
         &self,
         project: &ProjectRef,
-        slug: &TodoSlug,
+        address: &TodoAddress,
         name: &str,
     ) -> Result<Version, WorkError> {
-        let view = self.show(project, slug)?;
+        let view = self.show(project, address)?;
+        let slug = &address.slug;
         view.record
             .artifact(name)
             .and_then(|a| a.versions.last())
@@ -672,12 +763,13 @@ impl Work {
     pub fn diff_artifact(
         &self,
         project: &ProjectRef,
-        slug: &TodoSlug,
+        address: &TodoAddress,
         name: &str,
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let view = self.show(project, slug)?;
+        let view = self.show(project, address)?;
+        let slug = &address.slug;
         let artifact = view
             .record
             .artifact(name)
@@ -832,10 +924,17 @@ fn apply_update(
         let claim = record.claim.as_ref().ok_or_else(|| {
             WorkError::refused(format!("`{}` holds no execution claim", record.slug))
         })?;
+        // A task's claim covers one run: only that run's session releases
+        // it — the claiming session, or the one bound as its task runner.
+        let is_task = record.kind == TodoKind::Task;
         let holder = claim.machine == machine
             && caller.as_ref().is_some_and(|caller| {
                 claim.session.as_ref() == Some(caller)
-                    || record.bindings.iter().any(|b| &b.session == caller)
+                    || record.bindings.iter().any(|b| {
+                        &b.session == caller
+                            && (!is_task
+                                || b.role.as_str() == instrukt_runner::dispatch::TASK_RUNNER_ROLE)
+                    })
             });
         if !holder {
             return Err(WorkError::refused(format!(
@@ -846,6 +945,84 @@ fn apply_update(
         record.claim = None;
     }
     Ok(warnings)
+}
+
+/// Releases the working resources a withdrawn todo owns (`todos`,
+/// "Parking, withdrawal and delivery"): each worktree its session bindings
+/// returned that is a worktree of this project, then its work branch.
+/// Only git's own worktree list and the recorded branch are acted on; a
+/// path that is not one of the project's worktrees is left alone. A
+/// worktree with uncommitted work refuses the withdrawal. Returns what was
+/// released, as recovery evidence.
+fn release_resources(
+    root: &Path,
+    record: &TodoRecord,
+) -> Result<
+    (
+        Vec<std::path::PathBuf>,
+        Option<super::_model::ReleasedBranch>,
+    ),
+    WorkError,
+> {
+    let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
+    let worktrees: Vec<std::path::PathBuf> = listed
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(std::path::PathBuf::from)
+        .collect();
+    let main = worktrees.first().cloned();
+    let mut released = Vec::new();
+    for binding in &record.bindings {
+        let Some(path) = &binding.worktree else {
+            continue;
+        };
+        let owned = worktrees.iter().any(|w| w == path) && main.as_ref() != Some(path);
+        if !owned || released.contains(path) {
+            continue;
+        }
+        let target = path.to_string_lossy().into_owned();
+        match git::run(root, ["worktree", "remove", target.as_str()]) {
+            Ok(_) => released.push(path.clone()),
+            Err(git::GitError::Failed { stderr, .. }) => {
+                return Err(WorkError::refused(format!(
+                    "the worktree {} holds work git would lose ({}); commit or discard it, then withdraw again",
+                    path.display(),
+                    stderr.trim()
+                )));
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    let mut branch = None;
+    if let Some(name) = &record.branch {
+        let reference = format!("refs/heads/{name}");
+        let head = match git::run(
+            root,
+            ["rev-parse", "--verify", "--quiet", reference.as_str()],
+        ) {
+            Ok(sha) => CommitSha::parse(sha.trim()).ok(),
+            Err(git::GitError::Failed { .. }) => None,
+            Err(err) => return Err(err.into()),
+        };
+        let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
+            Ok(current) => Some(current.trim().to_owned()),
+            Err(git::GitError::Failed { .. }) => None,
+            Err(err) => return Err(err.into()),
+        };
+        if let Some(head) = head {
+            if current.as_deref() == Some(name.as_str()) {
+                return Err(WorkError::refused(format!(
+                    "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
+                )));
+            }
+            git::run(root, ["branch", "-D", name.as_str()])?;
+            branch = Some(super::_model::ReleasedBranch {
+                name: name.clone(),
+                head,
+            });
+        }
+    }
+    Ok((released, branch))
 }
 
 fn change_kind(record: &mut TodoRecord, kind: TodoKind, force: bool) -> Result<(), WorkError> {
@@ -991,24 +1168,16 @@ fn ancestors(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoId> {
 /// holder above it, no cycle. Returns a warning per iceboxed prerequisite.
 fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>, WorkError> {
     let record = s.items[index].record.clone();
-    let above = ancestors(s, &record.id);
+    if let Some(cycle) = cycle_through(s, &record) {
+        let names: Vec<String> = cycle.iter().map(ToString::to_string).collect();
+        return Err(WorkError::refused(format!(
+            "this change makes `{}` wait on itself: {}",
+            record.slug,
+            names.join(" → ")
+        )));
+    }
     let mut warnings = Vec::new();
     for prerequisite in &record.after {
-        if above.contains(&prerequisite.id) {
-            return Err(WorkError::refused(format!(
-                "`{todo}` would wait on itself: {todo} → {group} → {todo} (`{group}` is the group `{todo}` belongs to)",
-                todo = record.slug,
-                group = prerequisite.slug
-            )));
-        }
-        if let Some(path) = path_to(s, prerequisite, &record.id) {
-            let mut names: Vec<String> = vec![record.slug.to_string()];
-            names.extend(path.iter().map(ToString::to_string));
-            return Err(WorkError::refused(format!(
-                "these prerequisites make a cycle: {}",
-                names.join(" → ")
-            )));
-        }
         if s.record_by_id(&prerequisite.id)
             .is_some_and(|r| r.status == TodoStatus::Iceboxed)
         {
@@ -1021,28 +1190,63 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     Ok(warnings)
 }
 
-/// The prerequisite chain from `from` back to `target`, if one exists.
-fn path_to(s: &mut Session<'_>, from: &TodoRef, target: &TodoId) -> Option<Vec<TodoSlug>> {
-    let mut stack: Vec<(TodoRef, Vec<TodoSlug>)> = vec![(from.clone(), vec![from.slug.clone()])];
+/// What a todo waits on: its prerequisites, and for a structural holder
+/// its children (a holder's milestone is every child's).
+fn waits_on(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoRef> {
+    let Some(record) = s.record_by_id(id) else {
+        return Vec::new();
+    };
+    let mut next = record.after.clone();
+    if record.status == TodoStatus::StructuralHolder {
+        let mut children: Vec<TodoRef> = s
+            .items
+            .iter()
+            .map(|it| &it.record)
+            .filter(|r| r.group.as_ref().is_some_and(|g| &g.id == id))
+            .map(TodoRecord::reference)
+            .collect();
+        for (remote, _) in s.remote_live() {
+            if remote.group.as_ref().is_some_and(|g| &g.id == id)
+                && !children.iter().any(|c| c.id == remote.id)
+            {
+                children.push(remote.reference());
+            }
+        }
+        next.extend(children);
+    }
+    next
+}
+
+/// A cycle of waiting through `record`, if the project graph has one: the
+/// slugs from `record` back to itself. A holder waits on its children, so
+/// reaching one of `record`'s holders closes the cycle through its group.
+fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
+    let above = ancestors(s, &record.id);
+    let mut stack: Vec<(TodoRef, Vec<TodoSlug>)> = waits_on(s, &record.id)
+        .into_iter()
+        .map(|next| {
+            let path = vec![record.slug.clone(), next.slug.clone()];
+            (next, path)
+        })
+        .collect();
     let mut seen: BTreeSet<TodoId> = BTreeSet::new();
     while let Some((current, path)) = stack.pop() {
-        if &current.id == target {
+        if current.id == record.id {
+            return Some(path);
+        }
+        if above.contains(&current.id) {
+            // The holder waits on its children down to `record`.
+            let mut path = path;
+            path.push(record.slug.clone());
             return Some(path);
         }
         if !seen.insert(current.id.clone()) {
             continue;
         }
-        let next = if let Some(index) = s.find_id(&current.id) {
-            s.items[index].record.after.clone()
-        } else {
-            s.record_by_id(&current.id)
-                .map(|r| r.after)
-                .unwrap_or_default()
-        };
-        for reference in next {
+        for next in waits_on(s, &current.id) {
             let mut longer = path.clone();
-            longer.push(reference.slug.clone());
-            stack.push((reference, longer));
+            longer.push(next.slug.clone());
+            stack.push((next, longer));
         }
     }
     None
@@ -1098,10 +1302,7 @@ fn role_of(record: &TodoRecord, actor: &Actor) -> Option<instrukt_core::ids::Rol
 }
 
 fn unknown(s: &Session<'_>, slug: &TodoSlug) -> WorkError {
-    WorkError::UnknownTodo {
-        project: s.project.slug.clone(),
-        todo: slug.clone(),
-    }
+    s.absent(slug)
 }
 
 fn no_artifact(slug: &TodoSlug, name: &str) -> WorkError {
@@ -1203,6 +1404,7 @@ mod tests {
             created_by: Actor::Person { name: "dev".into() },
             human_involved: None,
             revision: 1,
+            sequence: 0,
             artifacts: Vec::new(),
             stamps: Vec::new(),
             claim: None,
@@ -1281,6 +1483,8 @@ mod tests {
             eval_fingerprint: None,
             role: None,
             human_involved: None,
+            sequence: 0,
+            model_provenance: Default::default(),
         });
         assert!(matches!(
             change_kind(&mut started, TodoKind::Bug, true),

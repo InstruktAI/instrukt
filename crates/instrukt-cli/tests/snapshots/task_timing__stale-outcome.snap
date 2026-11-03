@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/task-timing.rs
+expression: "String::from_utf8_lossy(&repeated.get_output().stderr)"
+---
+instrukt: this outcome is stale or not this session's: that occurrence already has its outcome; an outcome is recorded by the session running the current occurrence
