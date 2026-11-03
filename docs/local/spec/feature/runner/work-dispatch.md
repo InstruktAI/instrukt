@@ -47,7 +47,10 @@ reflection under the per-computer writer lock; commands that write the record fl
 `{<kind>: bool}`, set globally and overridable in a project. These settings
 do not enable or disable standing-agent event activation.
 
-In automatic mode the runner dispatches eligible work. In manual mode a todo
+In automatic mode the runner dispatches eligible work: for a todo's lane it
+starts the procedure that declares the orchestrator role of the lane's flow
+(`local/projects/instrukt/spec/feature/workflow/workflow-definition`), and that
+session holds the claim and executes the flow's own steps. In manual mode a todo
 awaits deliberate dispatch. The workflow supplies eligibility and the next
 assignment; the runner does not replace derived workflow state with a second
 state machine. A project executes through either instrukt's workflow engine

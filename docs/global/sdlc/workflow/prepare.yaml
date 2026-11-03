@@ -9,6 +9,7 @@
 # claim_commits.unreviewed includes missing and needs_work verdicts; only approve
 # or exempt settles a commit. Release checks these preconditions again.
 flow: prepare
+orchestrator: prepare-orchestrator
 initial: start
 states:
 - start

@@ -6,6 +6,7 @@
 # delivery.commit is the confirmed commit supplied to todo deliver.
 # Kickback invalidation exposes the same cleared review markers used by the return route.
 flow: work
+orchestrator: work-orchestrator
 initial: start
 states:
 - start

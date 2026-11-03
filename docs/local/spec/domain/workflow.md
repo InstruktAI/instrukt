@@ -30,7 +30,9 @@ runner and event capability. Workflow stores no phase.
 : The state computed from a definition and facts on the current call.
 
 **Obligation**
-: The action and effects selected by derivation for the responsible role.
+: The action and effects selected by derivation for the responsible role: the
+  `role` of the procedure the action's command names, or, for an action naming
+  none, the orchestrator role its flow declares.
 
 **Orchestrator**
 : The agent driving a preparation or work lane and owning its command outcomes.
@@ -82,8 +84,9 @@ loads it. Paths below are relative to that published domain.
 
 The selected flavor supplies definitions at `workflow/<flow>.yaml`, actions
 at `workflow/actions.yaml`, and Markdown templates at
-`workflow/templates/<action>.md`. A definition declares `flow`, `initial`,
-`states` and ordered `transitions`; each transition declares `from`, `to`,
+`workflow/templates/<action>.md`. A definition declares `flow`, its lane
+`orchestrator` role, `initial`, `states` and ordered `transitions`; each
+transition declares `from`, `to`,
 `when`, `action` and optional ordered effects. Actions are keyed by action id
 and declare `command` and `template`; template paths resolve within `workflow/`.
 `workflow/actions.yaml` also declares `roles:`, a non-empty list of unique role

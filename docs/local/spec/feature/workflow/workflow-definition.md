@@ -18,11 +18,11 @@ execution belongs to the orchestrator and the effect executor.
 
 | Concept | Contract |
 | --- | --- |
-| Definition | A named flow with an initial state, declared states and ordered transitions. |
+| Definition | A named flow with its orchestrator role, an initial state, declared states and ordered transitions. |
 | Transition | A source state, destination state, condition, action identifier and optional effects. |
 | Facts | Named, typed observations supplied from the work record and current evidence by the fact provider. |
 | Result | The state where derivation stops, the last selected enabled transition, its action identifier, and the effects still owed from the record along the selected walk. If no transition is selected, there is no selected action or effect. |
-| Action | A flavor-owned command and Markdown template addressed by an identifier. |
+| Action | A flavor-owned command and Markdown template addressed by an identifier; its responsible role follows from its command. |
 | Effect | A flavor-configured command executed outside evaluation. |
 
 Every call starts at the definition's initial state. At each visited state the
@@ -52,6 +52,23 @@ is the publishing project’s `docs/global/<domain>/workflow/`.
 `actions.yaml` declares a unique role-name list under `roles:`, alongside the
 action entries and `effects:`. Docs validation checks these files against the
 workflow schema, separately from snippet taxonomy validation.
+
+Each flow file declares its lane orchestrator with the required top-level key
+`orchestrator: <role>`, a role declared under `roles:`. Exactly one procedure
+declares that role; it is the procedure the runner dispatches for the lane. An
+action's responsible role follows from its command:
+
+- a command naming a procedure (`--procedure <id>` or `docs get <id>`) belongs
+  to that procedure's `role`;
+- a command naming no procedure is a step of the orchestrator of the flow that
+  selected it, executed by the session holding the todo's claim — the session
+  the runner started into the orchestrator's procedure, or the one
+  `instrukt todo prepare|work` made the orchestrator.
+
+Every procedure's `role` is one of the flavor's `roles:`. Definition findings
+include a flow without `orchestrator`, an `orchestrator` role not declared
+under `roles:`, no procedure declaring the `orchestrator` role, and an action
+whose command names a procedure that declares no `role`.
 
 ### Conditions
 
