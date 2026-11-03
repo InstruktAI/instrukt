@@ -18,7 +18,7 @@
 //! instrukt installs nothing.
 
 use std::fs::File;
-use std::io;
+use std::io::{self, Write as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -125,22 +125,19 @@ impl Engine {
     /// engine's captured output; `timeout` bounds the run, after which the
     /// engine's whole process group is ended.
     ///
-    /// The engine runs in its own process group with `hold` — the open file
-    /// through which generation holds its lock — as its standard input, so
-    /// the lock stays held while any of its processes lives. `started`
-    /// receives the engine's process group id once it runs.
+    /// The engine runs in a process group of its own, with no input;
+    /// `started` receives the group's id once it runs. When its main
+    /// process ends, any process left in the group is ended too.
     pub fn generate(
         &self,
         tree: &Path,
         scratch: &Path,
         timeout: Duration,
-        hold: &File,
         started: &mut dyn FnMut(u32),
     ) -> Result<Graph, EngineError> {
         let mut runner = Runner {
             scratch,
             timeout,
-            hold: Some(hold),
             started,
         };
         match self {
@@ -218,7 +215,6 @@ impl Engine {
         let stdout = Runner {
             scratch,
             timeout,
-            hold: None,
             started: &mut |_| {},
         }
         .run(GRAPHIFY, command)?;
@@ -244,18 +240,17 @@ fn shell(line: &str, tree: &Path) -> Command {
 }
 
 /// How one engine process runs: output captured in `scratch`, bounded by
-/// `timeout`, in its own process group with `hold` (or nothing) as input.
+/// `timeout`, with no input, in a process group of its own.
 struct Runner<'a> {
     scratch: &'a Path,
     timeout: Duration,
-    hold: Option<&'a File>,
     started: &'a mut dyn FnMut(u32),
 }
 
 impl Runner<'_> {
     /// Runs `command` and waits for it within the bound; returns the
     /// captured stdout's path.
-    fn run(&mut self, program: &str, mut command: Command) -> Result<PathBuf, EngineError> {
+    fn run(&mut self, program: &str, command: Command) -> Result<PathBuf, EngineError> {
         let stdout_path = self.scratch.join("engine.stdout");
         let stderr_path = self.scratch.join("engine.stderr");
         let create = |path: &Path| {
@@ -265,34 +260,57 @@ impl Runner<'_> {
                 source,
             })
         };
-        let stdin = match self.hold {
-            Some(hold) => Stdio::from(hold.try_clone().map_err(|source| EngineError::Io {
-                what: "cannot share the generation lock with the engine at",
-                path: self.scratch.to_path_buf(),
-                source,
-            })?),
-            None => Stdio::null(),
-        };
-        command
-            .stdin(stdin)
+        // The engine's process group is created by a shell that waits for
+        // the go-ahead before it becomes the engine: the group is announced
+        // (`started`) before any engine code runs, so no engine process can
+        // exist that its generation does not know about.
+        let mut gated = Command::new("/bin/sh");
+        gated
+            .arg("-c")
+            .arg(GO_AHEAD)
+            .arg(command.get_program())
+            .args(command.get_args());
+        if let Some(dir) = command.get_current_dir() {
+            gated.current_dir(dir);
+        }
+        gated
+            .stdin(Stdio::piped())
             .stdout(create(&stdout_path)?)
             .stderr(create(&stderr_path)?)
             .process_group(0);
-        let mut child = command.spawn().map_err(|source| {
-            if source.kind() == io::ErrorKind::NotFound && program == GRAPHIFY {
-                EngineError::NotInstalled {
-                    program: GRAPHIFY,
-                    install: GRAPHIFY_INSTALL,
-                }
-            } else {
-                EngineError::Spawn {
-                    program: program.to_owned(),
-                    source,
-                }
-            }
+        let mut child = gated.spawn().map_err(|source| EngineError::Spawn {
+            program: program.to_owned(),
+            source,
         })?;
-        (self.started)(child.id());
-        let status = wait(&mut child, self.timeout)?;
+        let group = child.id();
+        (self.started)(group);
+        let go = child
+            .stdin
+            .take()
+            .map(|mut stdin| stdin.write_all(b"go\n"))
+            .transpose();
+        let status = match go {
+            Ok(_) => wait(&mut child, self.timeout),
+            Err(source) => Err(EngineError::Io {
+                what: "cannot start the engine in",
+                path: self.scratch.to_path_buf(),
+                source,
+            }),
+        };
+        // Whatever the engine left behind in its group ends with it.
+        if group_alive(group).unwrap_or(true) {
+            kill_group(group);
+        }
+        if let Err(err) = child.try_wait() {
+            tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
+        }
+        let status = status?;
+        if status.code() == Some(COMMAND_NOT_FOUND) && program == GRAPHIFY {
+            return Err(EngineError::NotInstalled {
+                program: GRAPHIFY,
+                install: GRAPHIFY_INSTALL,
+            });
+        }
         if !status.success() {
             let stderr = std::fs::read(&stderr_path)
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
@@ -305,6 +323,15 @@ impl Runner<'_> {
         Ok(stdout_path)
     }
 }
+
+/// The shell that holds an engine's process group until its generation
+/// knows the group: it reads one line, then becomes the engine (`$0` and
+/// its arguments) with no input. Without the line — its generation is gone
+/// — it ends.
+const GO_AHEAD: &str = "IFS= read -r _ || exit 125; exec \"$0\" \"$@\" </dev/null";
+
+/// The exit status of a shell whose command was not found.
+const COMMAND_NOT_FOUND: i32 = 127;
 
 fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError> {
     let started = Instant::now();
@@ -328,6 +355,18 @@ fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError>
             }
         }
     }
+}
+
+/// Whether the process group `group` still has a member, asked of the
+/// operating system through the POSIX `kill` utility (`kill -0`).
+pub(crate) fn group_alive(group: u32) -> io::Result<bool> {
+    Command::new("kill")
+        .args(["-0", "--", &format!("-{group}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
 }
 
 /// Ends every process of the process group `group` with SIGKILL, through

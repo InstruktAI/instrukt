@@ -9,38 +9,43 @@
 //!
 //! ```text
 //! queue.json         the queued revision; a newer handoff replaces it
-//! generation.json    the last generation: its SHA and outcome
+//! generation.json    the last generation: its SHA, start, engine process
+//!                    group and outcome
 //! .queue.lock        held while the queue is read or replaced
-//! .generation.lock   held while a generation's processes live; one per project
-//! .waiter.lock       held by the one worker waiting for .generation.lock
-//! engine.pgid        the process group of the engine running, if any
+//! .generation.lock   held by the worker generating; one per project
+//! .waiter.lock       held by the one worker waiting to generate
 //! .checkout-*/       a running generation's checkout of its revision
 //! ```
 //!
 //! [`Generation::start_generation`] writes the revision as the queued one
 //! and starts a detached worker (`instrukt blueprint worker <project>`).
 //!
-//! **One generation at a time.** `.generation.lock` is held through an open
-//! file the worker shares with the engine it runs: the engine's standard
-//! input is that file. The lock is released only once the worker and every
-//! process of the engine have exited, so a worker killed mid-run leaves the
-//! lock held until its engine ends and no second engine starts beside it.
+//! **One generation at a time.** A generation runs while its worker holds
+//! `.generation.lock` *or* any process of its engine lives. The engine runs
+//! in a process group of its own, recorded in `generation.json` while the
+//! generation runs; whether the group still has a member is asked of the
+//! operating system (`kill -0`), never of the engine, so an engine that
+//! closes its input or ignores its parent cannot escape it. When the
+//! engine's main process ends, the rest of its group is ended with it.
 //!
-//! **Waiting.** A worker first takes `.waiter.lock`; if another worker
-//! already waits, that one will take the queued revision and this one
-//! leaves. The waiter waits for `.generation.lock` longer than a worker
-//! lets its engine run; a lock still held then belongs to an engine whose
-//! worker is gone, so the waiter ends that engine's process group and takes
-//! over. The holder generates queued revisions one at a time until the
-//! queue is empty, releases the lock and looks once more, so a revision
-//! queued while it was releasing is never left behind.
+//! **Waiting and recovery.** A worker first takes `.waiter.lock`; if
+//! another worker already waits, that one will take the queued revision
+//! and this one leaves. The waiter then looks, repeatedly, at who holds the
+//! generation ([`next_step`]): a live worker is waited for unless its
+//! *current* generation — measured from that generation's own start — is
+//! past the engine's time limit and a grace beyond it; an engine left
+//! running by a worker that is gone is waited for until it ends or passes
+//! its own time limit, then its group is ended. Only then does the waiter
+//! generate. A worker holding the lock generates queued revisions one at a
+//! time until the queue is empty, releases the lock and looks once more,
+//! so a revision queued while it was releasing is never left behind.
 //!
 //! **Status.** The last generation's record says `running` while it runs.
-//! A reader first tries `.generation.lock`, then reads the record. Holding
-//! the lock, a `running` record is one whose processes are all gone
-//! (interrupted); not holding it, the record is whatever the generation
-//! wrote last. No worker writes the record while the reader holds the
-//! lock, so a completed run is never read as interrupted.
+//! A reader first tries `.generation.lock`, then reads the record, so a
+//! completed run is never read as interrupted. Not holding the lock, a
+//! `running` record is running. Holding it, the record's worker is gone:
+//! the generation is running without its worker while its engine group has
+//! a member ([`GenerationState::Orphaned`]), and interrupted otherwise.
 //!
 //! A generation checks the revision's committed tree out into a private
 //! directory with git plumbing (never the working tree, no hooks), runs the
@@ -54,7 +59,7 @@ use std::io;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use instrukt_core::config::{ConfigError, Configuration};
 use instrukt_core::fsx::{self, FsError, LockGuard};
@@ -65,7 +70,7 @@ use instrukt_core::interfaces::{GenerationRequest, GraphGeneration, InterfaceErr
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::_engine::{Engine, EngineError, kill_group};
+use crate::_engine::{Engine, EngineError, group_alive, kill_group};
 use crate::_store::{GraphStore, StoreError};
 
 /// The arguments, after the executable, that start the detached worker;
@@ -77,19 +82,18 @@ const STATUS_FILE: &str = "generation.json";
 const QUEUE_LOCK_FILE: &str = ".queue.lock";
 const GENERATION_LOCK_FILE: &str = ".generation.lock";
 const WAITER_LOCK_FILE: &str = ".waiter.lock";
-const ENGINE_GROUP_FILE: &str = "engine.pgid";
 const CHECKOUT_PREFIX: &str = ".checkout-";
 
 /// How long the queue's lock is waited for; it is held for one small read
 /// or write.
 const QUEUE_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long one engine run may take before its worker ends it.
-const ENGINE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-/// How long a waiting worker waits for the generation lock: longer than a
-/// live worker lets its engine run, so a lock held past it has no worker.
-const WAITER_PATIENCE: Duration = Duration::from_secs(32 * 60);
-/// How long a waiter waits for an ended engine to release the lock.
-const KILL_GRACE: Duration = Duration::from_secs(30);
+/// How long one engine run may take before it is ended.
+pub(crate) const ENGINE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long past the engine's limit a live worker's generation may still
+/// run (checking out before, publishing after) before a waiter ends it.
+pub(crate) const HOLDER_GRACE: Duration = Duration::from_secs(5 * 60);
+/// How long a waiter pauses between looks at the generation.
+const WAITER_POLL: Duration = Duration::from_millis(100);
 
 /// Generation could not record, start or complete a revision.
 #[derive(Debug, thiserror::Error)]
@@ -124,6 +128,10 @@ pub enum GenerationError {
 pub enum GenerationState {
     /// A worker is generating it.
     Running,
+    /// Its worker is gone and its engine is still running: no other
+    /// generation starts until the engine ends or, past its time limit, a
+    /// waiting worker ends it.
+    Orphaned,
     /// It started and its worker ended before recording an outcome.
     Interrupted,
     /// Its graph is the latest graph.
@@ -177,7 +185,51 @@ enum Outcome {
 struct Record {
     sha: CommitSha,
     started_at_ms: u64,
+    /// The engine's process group, once the engine runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    engine_group: Option<u32>,
     outcome: Outcome,
+}
+
+/// Who holds the generation, as a waiting worker sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Holder {
+    /// A worker holds `.generation.lock`: it is alive.
+    Worker,
+    /// No worker holds it; the last generation's engine still has a live
+    /// process.
+    AbandonedEngine,
+    /// No worker holds it and no engine of the last generation lives.
+    Nobody,
+}
+
+/// What a waiting worker does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// Generate: nothing of an earlier generation is running.
+    Generate,
+    /// Look again shortly.
+    Wait,
+    /// End the current generation's engine group, then look again.
+    EndEngine,
+    /// Leave the queued revision for the next handoff: a live worker is
+    /// stuck past its generation's limit with no engine to end.
+    GiveUp,
+}
+
+/// The waiting worker's decision. `elapsed` is how long the current
+/// generation has run, from its own start; `None` when no generation is
+/// running. `engine_alive` is whether its engine group has a member.
+pub(crate) fn next_step(holder: Holder, engine_alive: bool, elapsed: Option<Duration>) -> Step {
+    let past = |limit: Duration| elapsed.is_some_and(|elapsed| elapsed > limit);
+    match holder {
+        Holder::Nobody => Step::Generate,
+        Holder::AbandonedEngine if past(ENGINE_TIMEOUT) => Step::EndEngine,
+        Holder::AbandonedEngine => Step::Wait,
+        Holder::Worker if !past(ENGINE_TIMEOUT + HOLDER_GRACE) => Step::Wait,
+        Holder::Worker if engine_alive => Step::EndEngine,
+        Holder::Worker => Step::GiveUp,
+    }
 }
 
 /// Graph generation for repository's hook runs: records the revision and
@@ -244,8 +296,8 @@ impl GraphGeneration for Generation {
 }
 
 /// The detached worker: generates the project's queued revisions one at a
-/// time while it holds the generation lock; leaves at once when another
-/// worker already waits for it. `now` is the invocation's clock.
+/// time once nothing of an earlier generation runs; leaves at once when
+/// another worker already waits. `now` is the invocation's clock.
 pub fn run_worker(
     home: &Home,
     project: &ProjectSlug,
@@ -261,12 +313,12 @@ pub fn run_worker(
             );
             return Ok(());
         };
-        let Some(held) = files.wait_for_generation_lock(project)? else {
+        let Some(held) = files.wait_for_generation(project, now)? else {
             return Ok(());
         };
         drop(waiting);
         while let Some(queued) = files.take()? {
-            generate(home, project, &files, &queued, &held, now)?;
+            generate(home, project, &files, &queued, now)?;
         }
         drop(held);
         if files.queued()?.is_none() {
@@ -297,17 +349,41 @@ pub fn last_generation(
     let Some(record) = files.read::<Record>(&files.status())? else {
         return Ok(None);
     };
-    let state = match record.outcome {
+    let state = match &record.outcome {
         Outcome::Mapped { .. } => GenerationState::Mapped,
-        Outcome::Failed { error, .. } => GenerationState::Failed { error },
-        Outcome::Running if free.is_some() => GenerationState::Interrupted,
-        Outcome::Running => GenerationState::Running,
+        Outcome::Failed { error, .. } => GenerationState::Failed {
+            error: error.clone(),
+        },
+        Outcome::Running if free.is_none() => GenerationState::Running,
+        Outcome::Running if engine_alive(&record) => GenerationState::Orphaned,
+        Outcome::Running => GenerationState::Interrupted,
     };
     drop(free);
     Ok(Some(LastGeneration {
         sha: record.sha,
         state,
     }))
+}
+
+/// Whether a running record's engine group still has a member. A group
+/// that cannot be asked about is reported and counted as alive: guessing
+/// it dead could start a second engine beside it.
+fn engine_alive(record: &Record) -> bool {
+    let Some(group) = record.engine_group else {
+        return false;
+    };
+    match group_alive(group) {
+        Ok(alive) => alive,
+        Err(err) => {
+            tracing::warn!(
+                event = "blueprint_engine_group_unknown",
+                group,
+                error = %err,
+                "cannot tell whether the engine still runs; treating it as running"
+            );
+            true
+        }
+    }
 }
 
 /// Generates one revision and records its outcome. Only a failure to
@@ -317,17 +393,18 @@ fn generate(
     project: &ProjectSlug,
     files: &Files,
     queued: &Queued,
-    held: &File,
     now: &dyn Fn() -> Timestamp,
 ) -> Result<(), GenerationError> {
-    let now_ms = || u64::try_from(now().as_millisecond()).unwrap_or_default();
+    let now_ms = || millis(now());
     let started_at_ms = now_ms();
-    files.record(&Record {
+    let running = Record {
         sha: queued.sha.clone(),
         started_at_ms,
+        engine_group: None,
         outcome: Outcome::Running,
-    })?;
-    let outcome = match map(home, project, files, queued, held) {
+    };
+    files.record(&running)?;
+    let outcome = match map(home, project, files, queued, &running) {
         Ok(()) => {
             tracing::info!(
                 event = "blueprint_generation_mapped",
@@ -355,6 +432,7 @@ fn generate(
     files.record(&Record {
         sha: queued.sha.clone(),
         started_at_ms,
+        engine_group: None,
         outcome,
     })
 }
@@ -366,7 +444,7 @@ fn map(
     project: &ProjectSlug,
     files: &Files,
     queued: &Queued,
-    held: &File,
+    running: &Record,
 ) -> Result<(), GenerationError> {
     let store = GraphStore::new(home, project);
     let graph = match store.graph(&queued.sha)? {
@@ -388,15 +466,15 @@ fn map(
                 })?;
             let tree = scratch.path().join("tree");
             check_out(&queued.project_root, &queued.sha, scratch.path(), &tree)?;
-            let group = files.dir.join(ENGINE_GROUP_FILE);
-            let generated =
-                engine.generate(&tree, scratch.path(), ENGINE_TIMEOUT, held, &mut |pid| {
-                    if let Err(err) = fsx::atomic_write(&group, pid.to_string().as_bytes()) {
-                        tracing::warn!(event = "blueprint_engine_group_unrecorded", error = %err);
-                    }
-                });
-            remove_file(&group);
-            generated?
+            engine.generate(&tree, scratch.path(), ENGINE_TIMEOUT, &mut |group| {
+                let record = Record {
+                    engine_group: Some(group),
+                    ..running.clone()
+                };
+                if let Err(err) = files.record(&record) {
+                    tracing::warn!(event = "blueprint_engine_group_unrecorded", error = %err);
+                }
+            })?
         }
     };
     let published = store.publish(&queued.sha, &graph)?;
@@ -482,17 +560,15 @@ impl Files {
             path: self.dir.clone(),
             source,
         })?;
-        // Readable: it becomes the engine's standard input.
         OpenOptions::new()
             .create(true)
             .truncate(false)
-            .read(true)
             .write(true)
             .open(&path)
             .map_err(|source| GenerationError::Read { path, source })
     }
 
-    /// The generation lock if nobody holds it: the open file holding it.
+    /// The generation lock if no worker holds it: the open file holding it.
     fn try_generation_lock(&self) -> Result<Option<File>, GenerationError> {
         let file = self.generation_lock_file()?;
         match file.try_lock() {
@@ -505,50 +581,55 @@ impl Files {
         }
     }
 
-    /// Waits for the generation lock (see "Waiting" above); `None` when an
-    /// engine left without its worker could not be ended.
-    fn wait_for_generation_lock(
+    /// Waits until nothing of an earlier generation runs ("Waiting and
+    /// recovery" above) and returns the generation lock; `None` when a live
+    /// worker is stuck past its generation's limit with no engine to end.
+    fn wait_for_generation(
         &self,
         project: &ProjectSlug,
+        now: &dyn Fn() -> Timestamp,
     ) -> Result<Option<File>, GenerationError> {
-        if let Some(held) = self.wait(WAITER_PATIENCE)? {
-            return Ok(Some(held));
-        }
-        let group = std::fs::read_to_string(self.dir.join(ENGINE_GROUP_FILE))
-            .ok()
-            .and_then(|text| text.trim().parse::<u32>().ok());
-        tracing::warn!(
-            event = "blueprint_orphaned_engine_ended",
-            project = %project,
-            group = ?group,
-            "the generation lock outlived any worker's bound; ending the engine holding it"
-        );
-        if let Some(group) = group {
-            kill_group(group);
-        }
-        let held = self.wait(KILL_GRACE)?;
-        if held.is_none() {
-            tracing::warn!(
-                event = "blueprint_worker_gave_up",
-                project = %project,
-                "the generation lock is still held; the queued revision waits for the next handoff"
-            );
-        }
-        Ok(held)
-    }
-
-    fn wait(&self, patience: Duration) -> Result<Option<File>, GenerationError> {
-        let started = Instant::now();
-        let mut pause = Duration::from_millis(5);
         loop {
-            if let Some(held) = self.try_generation_lock()? {
-                return Ok(Some(held));
+            let lock = self.try_generation_lock()?;
+            let record = self.read::<Record>(&self.status())?;
+            let running = record
+                .as_ref()
+                .filter(|record| record.outcome == Outcome::Running);
+            let alive = running.is_some_and(engine_alive);
+            let holder = match (&lock, alive) {
+                (None, _) => Holder::Worker,
+                (Some(_), true) => Holder::AbandonedEngine,
+                (Some(_), false) => Holder::Nobody,
+            };
+            let elapsed = running.map(|record| {
+                Duration::from_millis(millis(now()).saturating_sub(record.started_at_ms))
+            });
+            match next_step(holder, alive, elapsed) {
+                Step::Generate => return Ok(lock),
+                Step::Wait => {}
+                Step::EndEngine => {
+                    if let Some(group) = running.and_then(|record| record.engine_group) {
+                        tracing::warn!(
+                            event = "blueprint_overdue_engine_ended",
+                            project = %project,
+                            group,
+                            holder = ?holder,
+                            "the running generation is past its time limit; ending its engine"
+                        );
+                        kill_group(group);
+                    }
+                }
+                Step::GiveUp => {
+                    tracing::warn!(
+                        event = "blueprint_worker_gave_up",
+                        project = %project,
+                        "the generating worker is stuck past its limit; the queued revision waits for the next handoff"
+                    );
+                    return Ok(None);
+                }
             }
-            if started.elapsed() >= patience {
-                return Ok(None);
-            }
-            std::thread::sleep(pause);
-            pause = (pause * 2).min(Duration::from_millis(200));
+            drop(lock);
+            std::thread::sleep(WAITER_POLL);
         }
     }
 
@@ -619,11 +700,52 @@ impl Files {
     }
 }
 
-/// Removes a file; one already gone is fine.
-fn remove_file(path: &Path) {
-    if let Err(err) = std::fs::remove_file(path)
-        && err.kind() != io::ErrorKind::NotFound
-    {
-        tracing::warn!(event = "blueprint_file_not_removed", path = %path.display(), error = %err);
+fn millis(at: Timestamp) -> u64 {
+    u64::try_from(at.as_millisecond()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINUTE: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn nothing_running_is_generated_at_once() {
+        assert_eq!(next_step(Holder::Nobody, false, None), Step::Generate);
+    }
+
+    #[test]
+    fn an_abandoned_engine_is_waited_for_within_its_limit_and_ended_past_it() {
+        assert_eq!(
+            next_step(Holder::AbandonedEngine, true, Some(ENGINE_TIMEOUT - MINUTE)),
+            Step::Wait
+        );
+        assert_eq!(
+            next_step(Holder::AbandonedEngine, true, Some(ENGINE_TIMEOUT + MINUTE)),
+            Step::EndEngine
+        );
+    }
+
+    #[test]
+    fn a_live_worker_is_waited_for_while_its_current_generation_is_within_its_limit() {
+        // The holder has run for long, but its current generation started
+        // recently: its elapsed time is that generation's own.
+        assert_eq!(
+            next_step(Holder::Worker, true, Some(13 * MINUTE)),
+            Step::Wait
+        );
+        assert_eq!(
+            next_step(Holder::Worker, true, Some(ENGINE_TIMEOUT + MINUTE)),
+            Step::Wait
+        );
+        assert_eq!(next_step(Holder::Worker, false, None), Step::Wait);
+    }
+
+    #[test]
+    fn a_live_worker_past_its_limit_and_grace_has_its_engine_ended_or_is_given_up_on() {
+        let overdue = Some(ENGINE_TIMEOUT + HOLDER_GRACE + MINUTE);
+        assert_eq!(next_step(Holder::Worker, true, overdue), Step::EndEngine);
+        assert_eq!(next_step(Holder::Worker, false, overdue), Step::GiveUp);
     }
 }

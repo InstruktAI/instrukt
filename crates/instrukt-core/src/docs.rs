@@ -164,6 +164,21 @@ pub enum DocsError {
     OutsideRepository { path: PathBuf },
     #[error("cannot transfer pending documentation at {}: {reason}", path.display())]
     TransferRefused { path: PathBuf, reason: String },
+    #[error(
+        "transferring pending documentation failed: {cause}; {}",
+        if unrestored.is_empty() {
+            "every file already changed was restored".to_owned()
+        } else {
+            format!(
+                "these files could not be restored: {}",
+                unrestored.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            )
+        }
+    )]
+    TransferFailed {
+        cause: Box<DocsError>,
+        unrestored: Vec<PathBuf>,
+    },
     #[error("cannot fold {}: {reason}", path.display())]
     FoldRefused { path: PathBuf, reason: String },
     #[error(transparent)]

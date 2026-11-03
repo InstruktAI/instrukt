@@ -111,6 +111,17 @@ holders carry no dispatch hold; each child carries its own.
   And the recorded work remains available with its dispatch hold
 ```
 
+#### UC-DH3: Grouping work under a todo keeps its pending documentation
+
+```gherkin
+  Given a developer has a todo whose planned documentation is not yet delivered
+  When they file the first piece of work under that todo
+  Then that documentation now belongs to the new piece of work
+  And they are told which documentation files to commit
+  But when filing the work under that todo is refused
+  Then the documentation still belongs to the original todo
+```
+
 ## Known caveats
 
 - Readiness does not grant a session a claim. A claim does not satisfy an

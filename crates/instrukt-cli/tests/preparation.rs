@@ -153,3 +153,56 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
 
     insta::assert_snapshot!("feature-preparation", redact(&steps.join("=====\n")));
 }
+
+// spec: local/projects/instrukt/spec/feature/workflow/preparation UC-PR1
+#[test]
+fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_analysis() {
+    let crew = Crew::new();
+    let slug = "quoted-lists";
+    crew.project
+        .create(slug, "feature", "Keep list depth inside block quotes.");
+    crew.todo(["prepare", slug]);
+    // The PRD names a snippet that does not exist; the plan names a path
+    // the repository does not have. Neither resolves.
+    crew.write(
+        slug,
+        artifact_names::PRD,
+        "Quoted lists keep their depth, as @~/.instrukt/docs/crew/policy/quoting.md requires.",
+    );
+    crew.write(slug, artifact_names::PRD_REVIEW_FINDINGS, "No findings.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    crew.stamp(
+        slug,
+        &[
+            "--prd-approved",
+            "--by",
+            "human",
+            "--session",
+            "agent:lead-1",
+        ],
+    );
+    crew.write(
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "1. Parse quotes first.\n\n```referenced-paths\nsrc/quote.rs\n```\n",
+    );
+    crew.write(slug, artifact_names::PLAN_REVIEW_FINDINGS, "No findings.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    let mut steps = vec![crew.next("prepare", slug)];
+
+    // The analysis judges the unresolved provenance cosmetic: release.
+    for artifact in [artifact_names::PRD, artifact_names::IMPLEMENTATION_PLAN] {
+        crew.stamp(
+            slug,
+            &[
+                "--drift-reviewed",
+                artifact,
+                "cosmetic",
+                "the references name work still to come",
+            ],
+        );
+    }
+    steps.push(crew.next("prepare", slug));
+
+    insta::assert_snapshot!("unresolved-grounding", redact(&steps.join("=====\n")));
+}

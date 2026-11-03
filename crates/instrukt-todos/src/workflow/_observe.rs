@@ -335,12 +335,11 @@ impl Current<'_> {
     /// What `recorded` shows against current evidence.
     fn change(&mut self, recorded: &Grounding) -> Result<GroundingChange, ObservationError> {
         let code = code_change(self.project_root, recorded, self.canonical.as_ref());
+        let mut unresolved = self.missing_path(recorded)?;
         let mut snippets = false;
-        for snippet in recorded
-            .referenced_snippets
-            .iter()
-            .chain(&recorded.owned_snippets)
-        {
+        let referenced = recorded.referenced_snippets.iter().map(|s| (true, s));
+        let owned = recorded.owned_snippets.iter().map(|s| (false, s));
+        for (is_reference, snippet) in referenced.chain(owned) {
             if self.corpus.is_none() {
                 self.corpus = Some(Corpus::load(self.project_root, self.home)?);
             }
@@ -348,6 +347,7 @@ impl Current<'_> {
                 Some(corpus) => snippet_digest(self.home, self.project_root, corpus, &snippet.id)?,
                 None => None,
             };
+            unresolved |= is_reference && current.is_none();
             snippets |= current != snippet.digest;
         }
         let dependencies = recorded.dependencies.iter().any(|dependency| {
@@ -368,7 +368,27 @@ impl Current<'_> {
             code,
             snippets,
             dependencies,
+            unresolved,
         })
+    }
+
+    /// Whether a referenced path does not exist on the current canonical
+    /// head: unresolved, so incomplete provenance. Without a canonical head
+    /// nothing resolves; the code comparison already reports that.
+    fn missing_path(&self, recorded: &Grounding) -> Result<bool, ObservationError> {
+        let Some(head) = &self.canonical else {
+            return Ok(false);
+        };
+        for path in &recorded.referenced_paths {
+            let object = format!("{head}:{}", path.trim_end_matches('/'));
+            if !git::run_output(self.project_root, ["cat-file", "-e", object.as_str()])?
+                .status
+                .success()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

@@ -35,6 +35,10 @@ case "$cmd" in
     printf '%s' "$1" > "$state/$id.opening"
     echo running > "$state/$id.status"
     echo "start $id ${INSTRUKT_AGENT:-}" >> "$state/calls"
+    if [ -f "$state/silent-start" ]; then
+      # The session exists, but the runtime prints no id for it.
+      exit 0
+    fi
     if [ -f "$state/die-after-start" ]; then
       # The runner is killed after the session exists, before it learns
       # the id: kill the instrukt process that started this command.
@@ -103,6 +107,7 @@ pub struct FakeRuntime {
     script: PathBuf,
     state: PathBuf,
     link: bool,
+    agent: Option<String>,
 }
 
 impl FakeRuntime {
@@ -120,6 +125,7 @@ impl FakeRuntime {
             script,
             state,
             link,
+            agent: None,
         }
     }
 
@@ -128,10 +134,13 @@ impl FakeRuntime {
         let base = format!("'{}' '{}'", self.script.display(), self.state.display());
         let env = self.name.to_uppercase();
         let mut entry = format!(
-            "  - name: {name}\n    session_id_env: {env}_SESSION\n    start: \"{base} start\"\n    send: \"{base} send \\\"{{runtime.session_id}}\\\"\"\n    alive: \"{base} alive {{runtime.session_id}}\"\n    conversation: \"{base} conversation {{runtime.session_id}}\"\n",
+            "  - name: {name}\n    session_id_env: {env}_SESSION\n    start: \"{base} start\"\n    send: \"{base} send \\\"{{runtime.session_id}}\\\"\"\n    alive: \"{base} alive '{{runtime.session_id}}'\"\n    conversation: \"{base} conversation {{runtime.session_id}}\"\n",
             name = self.name,
         );
         entry.push_str(&format!("    notify: \"{base} notify\"\n"));
+        if let Some(agent) = &self.agent {
+            entry.push_str(&format!("    agent: {agent}\n"));
+        }
         if self.link {
             entry.push_str(&format!(
                 "    link: \"{base} link {{runtime.session_id}}\"\n"
@@ -155,6 +164,17 @@ impl FakeRuntime {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    /// This runtime is the agent CLI that starts `agent`.
+    pub fn starting_agent(mut self, agent: &str) -> Self {
+        self.agent = Some(agent.to_owned());
+        self
+    }
+
+    /// Every start creates its session but prints no id for it.
+    pub fn start_without_printing_ids(&self) {
+        std::fs::write(self.state.join("silent-start"), "").unwrap();
     }
 
     /// The next start creates its session, then kills the runner that
@@ -196,6 +216,13 @@ impl FakeRuntime {
         std::fs::read_to_string(self.state.join(format!("{id}.opening"))).unwrap()
     }
 
+    /// How many sessions this runtime started.
+    pub fn started_count(&self) -> usize {
+        std::fs::read_to_string(self.state.join("counter"))
+            .map(|n| n.trim().parse().unwrap())
+            .unwrap_or(0)
+    }
+
     /// How many texts session `id` was sent.
     pub fn sent_count(&self, id: &str) -> usize {
         (1..)
@@ -216,10 +243,16 @@ impl FakeRuntime {
 /// Writes the global layer: `modules` switches, then the runtimes;
 /// anomaly notification is left at its default.
 pub fn global_layer(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime]) {
+    global_layer_with(env, modules, runtimes, "");
+}
+
+/// As [`global_layer`], with `extra` YAML appended (an agent order).
+pub fn global_layer_with(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime], extra: &str) {
     let mut text = format!("schema_version: 1\nmodules: {{{modules}}}\nruntimes:\n");
     for runtime in runtimes {
         text.push_str(&runtime.entry());
     }
+    text.push_str(extra);
     let path = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();

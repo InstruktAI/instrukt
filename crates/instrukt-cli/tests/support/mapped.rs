@@ -103,10 +103,11 @@ pub fn engine(env: &TestEnv) -> PathBuf {
     )
 }
 
-/// A gated engine and the directory controlling it. For each run it marks
-/// its start (`started-<rev>`) and the instrukt worker that started it
-/// (`worker-<rev>`, its process id), fails when another run is in progress,
-/// waits until the test opens the gate ([`Gate::open`]) — or ends without
+/// A gated engine and the directory controlling it. It closes its standard
+/// input first, as an engine may. For each run it marks its start
+/// (`started-<rev>`) and the instrukt worker that started it
+/// (`worker-<rev>`, its process id), fails when another run's process is
+/// still alive, waits until the test opens the gate ([`Gate::open`]) — or ends without
 /// output when the test aborts it ([`Gate::abort`]) — then prints
 /// `map.json` and marks its end (`finished-<rev>`).
 pub struct Gate {
@@ -123,7 +124,8 @@ impl Gate {
             env,
             "gated-engine",
             &format!(
-                "rev=\"$(cat \"$1/rev\")\"\n\
+                "exec 0<&-\n\
+                 rev=\"$(cat \"$1/rev\")\"\n\
                  p=$PPID\n\
                  while [ \"$p\" -gt 1 ]; do\n\
                  \x20 case \"$(ps -o comm= -p \"$p\")\" in\n\
@@ -132,8 +134,9 @@ impl Gate {
                  \x20 p=$(ps -o ppid= -p \"$p\" | tr -d ' ')\n\
                  done\n\
                  touch \"{control}/started-$rev\"\n\
-                 mkdir \"{control}/running\" || exit 70\n\
-                 trap 'rmdir \"{control}/running\"' EXIT\n\
+                 if [ -e \"{control}/running\" ] && kill -0 \"$(cat \"{control}/running\")\" 2>/dev/null; then exit 70; fi\n\
+                 echo $$ > \"{control}/running\"\n\
+                 trap 'rm -f \"{control}/running\"' EXIT\n\
                  i=0\n\
                  while [ ! -e \"{control}/open\" ]; do\n\
                  \x20 [ ! -e \"{control}/abort\" ] || exit 9\n\
@@ -156,6 +159,11 @@ impl Gate {
         wait_until(&format!("the engine to start for {rev}"), || {
             self.started(rev)
         });
+    }
+
+    /// Whether the engine run for `rev` printed its map.
+    pub fn finished(&self, rev: &str) -> bool {
+        self.dir.join(format!("finished-{rev}")).exists()
     }
 
     /// Waits until the engine run for `rev` printed its map.
@@ -302,7 +310,12 @@ pub fn wait_generated(env: &TestEnv, of: &str) -> LastGeneration {
     let mut ended = None;
     wait_until(&format!("the generation of {of} to end"), || {
         ended = last_generation(env).filter(|last| {
-            last.sha == of && !matches!(last.state, instrukt_blueprint::GenerationState::Running)
+            last.sha == of
+                && !matches!(
+                    last.state,
+                    instrukt_blueprint::GenerationState::Running
+                        | instrukt_blueprint::GenerationState::Orphaned
+                )
         });
         ended.is_some()
     });

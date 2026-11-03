@@ -145,3 +145,14 @@ interpolating unescaped prose into shell command text.
   Then the clarification also reaches the linked conversation
   And is identified there as the developer's words
 ```
+
+#### UC-SS2: A developer settles a standing agent whose start was interrupted
+
+```gherkin
+  Given a developer was told that a standing agent's start was interrupted and its outcome is unknown
+  And the runner starts no new session for that agent while the outcome is unknown
+  When the developer reports that no session was created
+  Then the runner may start that standing agent again on its next wake-up
+  But when the developer names the session that was created instead
+  Then that session is bound to the standing agent and no second one is started
+```
