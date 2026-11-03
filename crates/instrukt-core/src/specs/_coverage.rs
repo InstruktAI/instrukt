@@ -60,7 +60,7 @@ impl Coverage {
             .collect();
         let mut orphans = Vec::new();
         for binding in bindings.bindings() {
-            match binding.cites.use_case().and_then(|r| tests.get_mut(r)) {
+            match binding.use_case().and_then(|r| tests.get_mut(r)) {
                 Some(count) => *count += 1,
                 None => orphans.push(binding.clone()),
             }

@@ -373,35 +373,9 @@ fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
-/// The first `UC-` token of `text` — `UC-` then a letter or digit, then
-/// letters, digits or hyphens — when it is a well-formed use-case id.
+/// The use-case id a definition line carries: its first id token.
 fn use_case_id(text: &str) -> Option<UseCaseId> {
-    let token = use_case_token(text)?;
-    UseCaseId::parse(token).ok()
-}
-
-fn use_case_token(text: &str) -> Option<&str> {
-    let mut from = 0;
-    while let Some(at) = text[from..].find("UC-").map(|i| from + i) {
-        let after = at + 3;
-        let starts_token = text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_token_char(c));
-        let first_ok = text[after..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphanumeric());
-        if starts_token && first_ok {
-            let len = text[after..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
-                .count();
-            return Some(text[at..after + len].trim_end_matches('-'));
-        }
-        from = after;
-    }
-    None
+    UseCaseId::first_in(text)
 }
 
 #[cfg(test)]
@@ -456,14 +430,6 @@ mod tests {
     fn a_level_one_heading_defines_no_use_case() {
         let body = "# UC-AB1 title\n\n```gherkin\nWhen x\n```\n";
         assert_eq!(scan_spec(body), SpecScan::default());
-    }
-
-    #[test]
-    fn the_first_token_is_read_and_a_malformed_one_carries_no_id() {
-        assert_eq!(use_case_id("#### UC-AB12: and UC-CD3"), Some(id("UC-AB12")));
-        assert_eq!(use_case_id("XUC-AB1"), None);
-        assert_eq!(use_case_id("UC-ab1"), None);
-        assert_eq!(use_case_id("UC-"), None);
     }
 
     #[test]
