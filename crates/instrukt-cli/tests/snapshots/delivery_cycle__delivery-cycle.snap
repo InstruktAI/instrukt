@@ -18,7 +18,7 @@ todo: add-depth (demo)
 flow: work
 claim: held by this session
 state: review
-transition: building -> review (#3)
+transition: building -> review (#4)
 action: review-build
 responsible: build-reviewer (crew/procedure/review-build)
 command: instrukt sessions run --procedure crew/procedure/review-build --args add-depth --todo add-depth --brief -
@@ -30,7 +30,7 @@ todo: add-depth (demo)
 flow: work
 claim: held by this session
 state: fixing
-transition: review -> fixing (#4)
+transition: review -> fixing (#5)
 action: relay-findings
 responsible: work-lead (orchestrator step)
 command: instrukt todo show add-depth
@@ -42,7 +42,7 @@ todo: add-depth (demo)
 flow: work
 claim: held by this session
 state: review
-transition: building -> review (#3)
+transition: building -> review (#4)
 action: review-build
 responsible: build-reviewer (crew/procedure/review-build)
 command: instrukt sessions run --procedure crew/procedure/review-build --args add-depth --todo add-depth --brief -
@@ -80,7 +80,7 @@ todo: add-depth (demo)
 flow: work
 claim: held by this session
 state: deferrals_owed
-transition: approved -> deferrals_owed (#6)
+transition: approved -> deferrals_owed (#7)
 action: process-deferrals
 responsible: deferrer (crew/procedure/deferrals)
 command: instrukt sessions run --procedure crew/procedure/deferrals --args add-depth --todo add-depth --brief -
@@ -93,7 +93,7 @@ todo: add-depth (demo)
 flow: work
 claim: held by this session
 state: finalize_mismatch
-transition: approved -> finalize_mismatch (#8)
+transition: approved -> finalize_mismatch (#9)
 action: restamp-finalize
 responsible: finalizer (crew/procedure/finalize)
 command: instrukt sessions run --procedure crew/procedure/finalize --args add-depth --todo add-depth --brief -
@@ -106,7 +106,7 @@ todo: add-depth (demo)
 flow: work
 claim: held by this session
 state: handoff_pending
-transition: approved -> handoff_pending (#7)
+transition: approved -> handoff_pending (#8)
 action: hand-off-integration
 responsible: work-lead (orchestrator step)
 command: instrukt todo show add-depth

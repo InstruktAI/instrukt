@@ -10,7 +10,30 @@
 use instrukt_core::ids::{RoleName, SnippetId};
 use instrukt_runner::interfaces::{Lane, TodoKind};
 
-use super::_derive::{Derivation, Responsible};
+use super::_derive::{Derivation, EvaluationError, Responsible, Subject};
+use super::_flavor::Flavor;
+use super::_render::ConfigLookup;
+
+/// The lane `subject` is owed under `flavor`, with its work and prepare
+/// derivations; `None` when the flavor defines no `prepare` or no `work`
+/// flow, so no lane can be derived.
+pub(crate) fn derive_lane(
+    flavor: &Flavor,
+    kind: TodoKind,
+    subject: &Subject,
+    config: &dyn ConfigLookup,
+    role_of: &dyn Fn(&SnippetId) -> Option<RoleName>,
+) -> Result<Option<(Lane, Derivation, Derivation)>, EvaluationError> {
+    let (Some(prepare_role), Some(_)) =
+        (flavor.orchestrator("prepare"), flavor.orchestrator("work"))
+    else {
+        return Ok(None);
+    };
+    let work = flavor.evaluate("work", subject, config)?;
+    let prepare = flavor.evaluate("prepare", subject, config)?;
+    let lane = select_lane(kind, &work, &prepare, prepare_role, role_of);
+    Ok(Some((lane, work, prepare)))
+}
 
 /// The lane for a todo of `kind` whose flows derived `work` and `prepare`.
 /// `prepare_orchestrator` is the prepare flow's orchestrator role;
@@ -50,7 +73,7 @@ mod tests {
     use super::super::_provider::{
         Approvers, Observations, PrerequisiteStanding, ProviderInput, derive_facts,
     };
-    use super::super::_testing::{EvidenceBuilder, digest, no_config, sdlc_dir, todo};
+    use super::super::_testing::{EvidenceBuilder, digest, flavor_dir, no_config, sdlc_dir, todo};
     use super::*;
     use crate::evidence::{
         ApprovalGate, ApprovedBy, PreparationReview, ReviewVerdict, StampFact, TodoEvidence,
@@ -89,10 +112,35 @@ mod tests {
             slug: evidence.slug.clone(),
             facts,
         };
-        let work = flavor.evaluate("work", &subject, &no_config).unwrap();
-        let prepare = flavor.evaluate("prepare", &subject, &no_config).unwrap();
-        let role = flavor.orchestrator("prepare").unwrap();
-        select_lane(evidence.kind, &work, &prepare, role, role_of)
+        derive_lane(&flavor, evidence.kind, &subject, &no_config, role_of)
+            .unwrap()
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn a_flavor_without_a_prepare_flow_derives_no_lane() {
+        let dir = flavor_dir(&[
+            (
+                "actions.yaml",
+                "roles: [lead]\nship:\n  command: instrukt todo show {slug}\n  template: templates/ship.md\n",
+            ),
+            ("templates/ship.md", "Ship {slug}.\n"),
+            (
+                "work.yaml",
+                "flow: work\norchestrator: lead\ninitial: start\nstates: [start, shipped]\n\
+                 transitions:\n- from: start\n  to: shipped\n  when: {exists: prd.digest}\n  action: ship\n",
+            ),
+        ]);
+        let flavor = Flavor::load(dir.path()).unwrap();
+        let evidence = todo(TodoKind::Change).build();
+        let subject = Subject {
+            project: evidence.project.clone(),
+            slug: evidence.slug.clone(),
+            facts: crate::workflow::Facts::new(),
+        };
+        let derived = derive_lane(&flavor, evidence.kind, &subject, &no_config, &indexed).unwrap();
+        assert_eq!(derived, None);
     }
 
     fn plan_review(verdict: ReviewVerdict) -> StampFact {

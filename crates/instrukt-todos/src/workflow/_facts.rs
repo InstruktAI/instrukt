@@ -7,27 +7,57 @@ use std::fmt;
 
 use instrukt_core::ids::{CommitSha, SessionRef};
 
+/// The members enum-typed facts take, named once: the provider supplies
+/// them and its tests compare with them.
+pub(crate) mod member {
+    pub const FEATURE: &str = "feature";
+    pub const CHANGE: &str = "change";
+    pub const BUG: &str = "bug";
+    pub const TASK: &str = "task";
+    pub const APPROVE: &str = "approve";
+    pub const NEEDS_WORK: &str = "needs_work";
+    pub const FRESH: &str = "fresh";
+    pub const PENDING: &str = "pending";
+    pub const COSMETIC: &str = "cosmetic";
+    pub const SUBSTANTIVE: &str = "substantive";
+    pub const CHANGES_REQUESTED: &str = "changes_requested";
+    pub const EXACT_TARGET: &str = "exact_target";
+    pub const CLEAN_UPSTREAM_MERGES: &str = "clean_upstream_merges";
+    pub const TODO_CHANGED: &str = "todo_changed";
+    pub const REPORT_CHANGED: &str = "report_changed";
+    pub const UNBOUND: &str = "unbound";
+    pub const UNDETERMINED: &str = "undetermined";
+    pub const READY: &str = "ready";
+    pub const HUMAN: &str = "human";
+    pub const PEER: &str = "peer";
+}
+
 /// Members of the `kind` fact.
-const KINDS: &[&str] = &["feature", "change", "bug", "task"];
+const KINDS: &[&str] = &[member::FEATURE, member::CHANGE, member::BUG, member::TASK];
 /// Members of a preparation review verdict.
-const REVIEW_VERDICTS: &[&str] = &["approve", "needs_work"];
+const REVIEW_VERDICTS: &[&str] = &[member::APPROVE, member::NEEDS_WORK];
 /// Members of a drift classification.
-const DRIFT: &[&str] = &["fresh", "pending", "cosmetic", "substantive"];
+const DRIFT: &[&str] = &[
+    member::FRESH,
+    member::PENDING,
+    member::COSMETIC,
+    member::SUBSTANTIVE,
+];
 /// Members of a build-review verdict.
-const BUILD_VERDICTS: &[&str] = &["approve", "changes_requested"];
+const BUILD_VERDICTS: &[&str] = &[member::APPROVE, member::CHANGES_REQUESTED];
 /// Members of a build-review binding.
 const BINDINGS: &[&str] = &[
-    "exact_target",
-    "clean_upstream_merges",
-    "todo_changed",
-    "report_changed",
-    "unbound",
-    "undetermined",
+    member::EXACT_TARGET,
+    member::CLEAN_UPSTREAM_MERGES,
+    member::TODO_CHANGED,
+    member::REPORT_CHANGED,
+    member::UNBOUND,
+    member::UNDETERMINED,
 ];
 /// Members of the finalize status.
-const FINALIZE: &[&str] = &["pending", "ready"];
+const FINALIZE: &[&str] = &[member::PENDING, member::READY];
 /// Members of a task approver.
-const APPROVERS: &[&str] = &["human", "peer"];
+const APPROVERS: &[&str] = &[member::HUMAN, member::PEER];
 
 /// The type a fact's value has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

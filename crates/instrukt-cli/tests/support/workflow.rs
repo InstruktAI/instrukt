@@ -85,6 +85,9 @@ dispatch-finalize:
 restamp-finalize:
   command: instrukt sessions run --procedure crew/procedure/finalize --args {slug} --todo {slug} --brief -
   template: templates/restamp-finalize.md
+review-evidence-undetermined:
+  command: instrukt todo show {slug}
+  template: templates/review-evidence-undetermined.md
 hand-off-integration:
   command: instrukt todo show {slug}
   template: templates/hand-off-integration.md
@@ -194,7 +197,7 @@ fn work_flow() -> String {
         "flow: work
 orchestrator: work-lead
 initial: start
-states: [start, not_prepared, building, review, fixing, approved, deferrals_owed, handoff_pending, finalize_mismatch]
+states: [start, not_prepared, building, review, review_undetermined, fixing, approved, deferrals_owed, handoff_pending, finalize_mismatch]
 transitions:
 - from: start
   to: not_prepared
@@ -214,6 +217,10 @@ transitions:
     - equals: [build_review.verdict, approve]
 {bound}  action: dispatch-finalize
   effects: [branch.publish]
+- from: building
+  to: review_undetermined
+  when: {{equals: [build_review.binding, undetermined]}}
+  action: review-evidence-undetermined
 - from: building
   to: review
   when: {{equals: [build.complete, true]}}
@@ -254,7 +261,11 @@ transitions:
 }
 
 /// Each action's instructions: what is owed, naming the evidence it binds.
-const TEMPLATES: [(&str, &str); 17] = [
+const TEMPLATES: [(&str, &str); 18] = [
+    (
+        "review-evidence-undetermined",
+        "The review of {slug} on {build_review.target_digest} is {build_review.binding}: establish what changed before relying on it.",
+    ),
     ("draft-prd", "Draft the PRD of {slug} from its input."),
     (
         "review-prd",

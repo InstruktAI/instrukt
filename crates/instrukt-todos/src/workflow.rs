@@ -44,5 +44,6 @@ pub use _observe::ObservationError;
 pub use _render::{ConfigLookup, ConfigLookupError, RenderFailure, RenderFinding, Rendering};
 pub use _schema::WorkflowSchema;
 pub use _service::{
-    Flow, Next, Pickup, SelectedFlavorRoles, Workflow, WorkflowError, todos_enabled,
+    Flow, Next, Pickup, SelectedFlavorRoles, Workflow, WorkflowError, preparation_complete,
+    related_todos, todos_enabled,
 };
