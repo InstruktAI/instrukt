@@ -3,8 +3,9 @@
 //!
 //! Callers ask for the parsed documentation of a repository
 //! ([`Corpus::load`], or [`Corpus::from_sources`] for a committed
-//! revision), for its findings ([`validate`]), or for one delivery's fold
-//! ([`fold`]); identity derivation, frontmatter reading, reference forms
+//! revision), for its findings ([`validate`]), for one delivery's fold
+//! ([`fold`]), or for moving one todo's pending documentation to another
+//! ([`transfer_pending`]); identity derivation, frontmatter reading, reference forms
 //! and the pending-marker grammar stay behind those calls.
 //!
 //! What a corpus offers its customers:
@@ -75,6 +76,7 @@ mod _refs;
 mod _render;
 mod _retrieval;
 mod _text;
+mod _transfer;
 mod _validate;
 
 use std::path::PathBuf;
@@ -96,6 +98,7 @@ pub use _render::{
 };
 pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
 pub use _text::Directive;
+pub use _transfer::{TransferOutcome, transfer_pending};
 pub use _validate::{ValidationRequest, validate};
 
 /// The `@` references visible in `text`, each without its `@`, as the
@@ -159,6 +162,8 @@ pub enum DocsError {
         path.display()
     )]
     OutsideRepository { path: PathBuf },
+    #[error("cannot transfer pending documentation at {}: {reason}", path.display())]
+    TransferRefused { path: PathBuf, reason: String },
     #[error("cannot fold {}: {reason}", path.display())]
     FoldRefused { path: PathBuf, reason: String },
     #[error(transparent)]
