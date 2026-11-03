@@ -1,0 +1,22 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &failed)"
+---
+# instrukt docs get: acme/procedure/fragile
+
+---
+id: acme/procedure/fragile
+type: procedure
+domain: acme
+scope: global
+description: Asks a command that fails.
+---
+# Fragile — Procedure
+
+## Steps
+
+Before.
+
+> instrukt: read-time command `echo partial; exit 3` failed: exit status 3
+
+After.

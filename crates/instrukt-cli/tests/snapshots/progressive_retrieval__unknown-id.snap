@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stderr(&env, &unknown)"
+---
+instrukt: unknown snippet id: acme/policy/none

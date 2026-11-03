@@ -1,0 +1,19 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: read
+---
+# instrukt docs get: beta/spec/thing
+# WARNING: publication is behind main: main is at [MAIN], the published commit is [PUBLISHED]. Run `instrukt sync` in this project to publish it.
+
+---
+id: beta/spec/thing
+type: spec
+domain: beta
+scope: global
+description: What a thing is.
+---
+# Thing — Spec
+
+## What it is
+
+A thing.

@@ -1,0 +1,68 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &closure)"
+---
+# instrukt docs get --closure: acme/procedure/start
+# Required reads (included): [TMP]/home/.instrukt/docs/acme/bundle.md, acme/principle/care, acme/concept/terms, acme/policy/rules
+
+---
+bundle: acme
+path: [TMP]/home/.instrukt/docs/acme/bundle.md
+---
+# Acme bundle
+
+Everything acme agents read.
+
+---
+id: acme/principle/care
+type: principle
+domain: acme
+scope: global
+description: Why care matters.
+---
+# Care — Principle
+
+## Principle
+
+Care.
+
+---
+id: acme/concept/terms
+type: concept
+domain: acme
+scope: global
+description: The words used.
+---
+# Terms — Concept
+
+## What
+
+Terms.
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
+---
+# Rules — Policy
+
+## Rules
+
+Follow @[TMP]/home/.instrukt/docs/acme/principle/care.md always.
+
+Shared text.
+
+---
+id: acme/procedure/start
+type: procedure
+domain: acme
+scope: global
+description: Starts a session.
+---
+# Start — Procedure
+
+## Goal
+
+Start.

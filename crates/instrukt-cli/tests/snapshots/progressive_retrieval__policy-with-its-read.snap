@@ -1,0 +1,33 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &both)"
+---
+# instrukt docs get: acme/policy/rules acme/principle/care
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
+---
+# Rules — Policy
+
+## Rules
+
+Follow @[TMP]/home/.instrukt/docs/acme/principle/care.md always.
+
+Shared text.
+
+---
+id: acme/principle/care
+type: principle
+domain: acme
+scope: global
+description: Why care matters.
+---
+# Care — Principle
+
+## Principle
+
+Care.

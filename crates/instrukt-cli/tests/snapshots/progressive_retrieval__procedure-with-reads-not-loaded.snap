@@ -1,0 +1,19 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &read)"
+---
+# instrukt docs get: acme/procedure/work
+# Required reads (not loaded) that must have been read at least once: acme/policy/rules, acme/principle/care, [TMP]/home/.instrukt/docs/acme/bundle.md
+
+---
+id: acme/procedure/work
+type: procedure
+domain: acme
+scope: global
+description: How the work is done.
+---
+# Work — Procedure
+
+## Steps
+
+Work.

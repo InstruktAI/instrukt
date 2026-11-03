@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stderr(&env, &missing)"
+---
+instrukt: the local file of project `demo` is missing at [TMP]/demo/docs/local/design/y.md; run `instrukt sync` in that project to republish its documentation
