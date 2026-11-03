@@ -19,9 +19,9 @@ artifact input (generic)
   v1: Keep the depth of nested lists when parsing Markdown.
 artifact prd (generic)
   v1: Lists keep their depth through parse and render.
-artifact implementation_plan (plan)
+artifact implementation-plan (plan)
   v1: 1. Track depth in the parser. / 2. Render it.
-artifact review_findings (generic)
+artifact review-findings (generic)
   v1: No findings.
 pull request #2 nested-lists [closed -]
 labels: 

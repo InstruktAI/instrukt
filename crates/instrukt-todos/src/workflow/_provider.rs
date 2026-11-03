@@ -22,9 +22,14 @@ use super::_facts::{FactError, FactValue, Facts};
 
 /// The artifact a build review's complete report is written to
 /// (`review-build`: `instrukt todo artifacts write {slug} review-findings`).
-/// Work's `artifact_names` has no constant for it yet; reported to the work
-/// builder.
-pub(crate) const BUILD_REVIEW_FINDINGS: &str = "review_findings";
+pub(crate) const BUILD_REVIEW_FINDINGS: &str = artifact_names::REVIEW_FINDINGS;
+
+/// The fact-name stem of an artifact: procedures name artifacts with
+/// hyphens (`implementation-plan`), the fact table with underscores
+/// (`implementation_plan.digest`).
+fn fact_stem(artifact: &str) -> String {
+    artifact.replace('-', "_")
+}
 
 /// Artifacts whose new version makes an earlier build completion stale
 /// (`workflow` domain: "a new build-relevant artifact version clears
@@ -125,7 +130,10 @@ pub(crate) fn derive_facts(input: &ProviderInput<'_>) -> Result<Facts, FactError
         artifact_names::QUALITY_CHECKLIST,
     ] {
         if let Some(digest) = ledger.current(name) {
-            facts.insert(&format!("{name}.digest"), text(digest.as_str()))?;
+            facts.insert(
+                &format!("{}.digest", fact_stem(name)),
+                text(digest.as_str()),
+            )?;
         }
     }
     preparation_reviews(&ledger, &mut facts)?;
@@ -437,7 +445,7 @@ fn drift(ledger: &Ledger<'_>, facts: &mut Facts) -> Result<(), FactError> {
                 DriftClass::Cosmetic => "cosmetic",
                 DriftClass::Substantive => "substantive",
             };
-            facts.insert(&format!("drift.{name}"), text(class))?;
+            facts.insert(&format!("drift.{}", fact_stem(name)), text(class))?;
         }
     }
     Ok(())
@@ -675,6 +683,7 @@ mod tests {
             reason: "the plan misses the API".into(),
             input: digest("input-2"),
             invalidated_plan: Some(digest("plan-1")),
+            invalidated_reviews: crate::evidence::plan_review_only(),
         }
     }
 

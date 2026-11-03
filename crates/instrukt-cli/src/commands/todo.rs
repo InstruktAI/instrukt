@@ -1098,6 +1098,7 @@ fn fact(fact: &StampFact) -> String {
             reason,
             input,
             invalidated_plan,
+            ..
         } => format!(
             "kickback: {reason} — input {input}{}",
             invalidated_plan

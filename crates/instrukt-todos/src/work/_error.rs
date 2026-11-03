@@ -44,17 +44,15 @@ pub enum WorkError {
     )]
     NoProject,
     /// The repository to reflect to cannot be derived.
-    #[error(
-        "cannot tell which GitHub repository holds this project's work: {reason}; set `github.repository: <owner>/<repo>` in the project's instrukt.yaml"
-    )]
-    NoRepository { reason: String },
+    #[error(transparent)]
+    Repository(#[from] instrukt_core::github::ResolveError),
     #[error("{project} has no todo `{todo}`; list the project's work with `instrukt todo list`")]
     UnknownTodo {
         project: ProjectSlug,
         todo: TodoSlug,
     },
     #[error(
-        "todo `{todo}` is conflicted with GitHub; refresh it with `instrukt todo refresh {todo}`, then re-apply your change"
+        "todo `{todo}` changed on GitHub since this computer last read it; refresh it with `instrukt todo refresh {todo}`, then re-apply your change"
     )]
     Conflicted { todo: TodoSlug },
     /// The record's contract refuses the change.
