@@ -117,7 +117,7 @@ Once the new publication is in place and its commit recorded, failing to
 remove the replaced publication's leftover copy does not fail the sync: the
 sync reports the leftover path and succeeds, and a later sync removes it.
 
-A refused or failed sync changes nothing in the home or the project except removing leftovers a previous sync reported.
+A refused or failed sync changes nothing in the home or the project except removing leftovers a previous sync reported. A refused or failed sync still reports the leftovers it could not remove.
 
 Listing and reading the published corpus and index belong to
 `local/projects/instrukt/spec/feature/docs/progressive-retrieval`.
@@ -212,6 +212,8 @@ Given a developer's project with new documentation committed to main
 And the copy it replaces cannot be removed
 When publication runs for the project
 Then the new documentation is published and the developer is told which leftover remains
+But when publication runs again and is refused for another reason
+Then the developer is still told which leftover remains
 When the leftover can be removed again and publication runs
 Then the leftover is gone
 ```
