@@ -1,0 +1,41 @@
+---
+source: crates/instrukt-cli/tests/layered-configuration.rs
+expression: "read(&[\"config\", \"get\"])"
+---
+modules:
+  blueprint: false
+  todos: false
+  events: false
+ticks: on
+github:
+  api_url: https://api.github.com
+runner:
+  autostart: false
+schema_version: 1
+runtimes:
+- name: machine-host
+  session_id_env: MACHINE_HOST_ID
+  start: machine-host start
+  send: machine-host send {runtime.session_id}
+  alive: machine-host alive {runtime.session_id}
+  conversation: machine-host show {runtime.session_id}
+- name: machine-agent
+  agent: claude
+  session_id_env: CLAUDE_SESSION_ID
+  start: claude
+  send: claude send {runtime.session_id}
+  alive: claude alive {runtime.session_id}
+  conversation: claude history {runtime.session_id}
+agents:
+  order:
+  - claude
+  thinking_mode: med
+board: false
+approvals:
+  prd: human
+  task: human
+workflow:
+  domain: sdlc
+project: hostile
+actions:
+  report: report hostile to machine-host

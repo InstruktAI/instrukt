@@ -1,6 +1,11 @@
 //! Interpolation: `{other.key}`, `${VAR}`, `{runtime.<field>}` and
 //! `{runtime.session_id}`, expanded when a value is read.
 //!
+//! The stored runtime mapping is the exception: its entries are templates
+//! the runner fills per session, so reading `runtimes` (or any path under
+//! it) answers them as stored. They expand only through the active-runtime
+//! view, `runtime.<field>`.
+//!
 //! The same walk checks references without an environment for validation:
 //! in check mode environment variables and the caller's runtime are not
 //! consulted, but key references must resolve and must not form a cycle.
@@ -45,11 +50,18 @@ impl<'a> Interpolator<'a> {
     }
 
     /// The value at dotted `path` (the whole configuration when `None`),
-    /// every string in it expanded.
+    /// every string in it expanded — except the stored runtime mapping,
+    /// which is answered unexpanded wherever it appears.
     pub(crate) fn get(&self, path: Option<&str>) -> Result<Value, ConfigError> {
         let Some(path) = path else {
             return self.expand_value(self.root, "");
         };
+        if is_stored_mapping(path) {
+            return match self.walk(&path.split('.').collect::<Vec<_>>(), path)? {
+                Located::Value { value, .. } => Ok(value.clone()),
+                Located::Derived(text) => Ok(Value::String(text)),
+            };
+        }
         match self.locate(path)? {
             Located::Derived(text) => Ok(Value::String(text)),
             Located::Value { path, value } => self.expand_value(value, &path),
@@ -77,7 +89,12 @@ impl<'a> Interpolator<'a> {
                 let mut out = serde_yaml_ng::Mapping::new();
                 for (key, child) in map {
                     let child_path = join(path, &key_text(key));
-                    out.insert(key.clone(), self.expand_value(child, &child_path)?);
+                    let child = if is_stored_mapping(&child_path) {
+                        child.clone()
+                    } else {
+                        self.expand_value(child, &child_path)?
+                    };
+                    out.insert(key.clone(), child);
                 }
                 Ok(Value::Mapping(out))
             }
@@ -333,6 +350,11 @@ fn missing(path: &str, segment: &str, parent: &str) -> ConfigError {
     }
 }
 
+/// Whether `path` addresses the stored runtime mapping or a part of it.
+fn is_stored_mapping(path: &str) -> bool {
+    path == "runtimes" || path.starts_with("runtimes.")
+}
+
 fn is_runtime_field(field: &str) -> bool {
     field == SESSION_ID || REQUIRED_FIELDS.contains(&field) || OPTIONAL_FIELDS.contains(&field)
 }
@@ -507,6 +529,35 @@ mod tests {
         for active in [Some(0), Some(1), None] {
             assert!(check_as(&doc, active, "{runtime.send}", "runtimes.0.start").is_ok());
         }
+    }
+
+    #[test]
+    fn the_stored_runtime_mapping_reads_unexpanded_and_the_rest_expands() {
+        let doc = doc();
+        let stored = doc.get("runtimes").unwrap().clone();
+        let none = Env::default();
+        assert_eq!(get(&doc, &none, "runtimes").unwrap(), stored);
+        assert_eq!(
+            get(&doc, &none, "runtimes.1.conversation").unwrap(),
+            stored[1]["conversation"]
+        );
+        let mut small = doc.clone();
+        for key in ["loop_a", "loop_b", "self"] {
+            small.as_mapping_mut().unwrap().remove(key);
+        }
+        let env = Env::from_pairs([("USER_NAME", USER)]);
+        let runtimes = _runtime::entries(small.get("runtimes"));
+        let whole = Interpolator::new(&small, &runtimes, Mode::Expand(&env))
+            .get(None)
+            .unwrap();
+        assert_eq!(whole["runtimes"], stored);
+        assert_eq!(whole["deep"], text(&small, &env, "deep").as_str());
+        let cli = Env::from_pairs([("CLI_ID", CLI_SESSION)]);
+        assert_ne!(
+            get(&doc, &cli, "runtime.conversation").unwrap(),
+            stored[1]["conversation"],
+            "the active-runtime view expands"
+        );
     }
 
     #[test]

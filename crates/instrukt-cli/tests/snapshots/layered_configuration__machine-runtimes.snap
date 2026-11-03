@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/layered-configuration.rs
+expression: "read(&[\"config\", \"get\", \"runtimes\"])"
+---
+- name: machine-host
+  session_id_env: MACHINE_HOST_ID
+  start: machine-host start
+  send: machine-host send {runtime.session_id}
+  alive: machine-host alive {runtime.session_id}
+  conversation: machine-host show {runtime.session_id}
+- name: machine-agent
+  agent: claude
+  session_id_env: CLAUDE_SESSION_ID
+  start: claude
+  send: claude send {runtime.session_id}
+  alive: claude alive {runtime.session_id}
+  conversation: claude history {runtime.session_id}
