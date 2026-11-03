@@ -59,6 +59,6 @@ notification command.
 - When the runtime offers no notification, or delivering one fails, nothing
   else happens: the anomaly stays where it lives, and nothing is copied or
   retried elsewhere.
-- When no session could start (the dispatch order is exhausted), the anomaly
-  lives on the work item as a dispatch hold with its reason, and the
-  notification references that item instead of a session.
+- When no session could start (the dispatch order is exhausted), the runner
+  releases its own claim and sets no hold; the notification references the
+  work item instead of a session.
