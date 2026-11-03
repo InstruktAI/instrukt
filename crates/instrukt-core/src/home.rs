@@ -124,6 +124,12 @@ impl Home {
         self.state_dir().join("work")
     }
 
+    /// `~/.instrukt/state/machine-id` — this computer's id, created once;
+    /// the holder of its execution claims.
+    pub fn machine_id_file(&self) -> PathBuf {
+        self.state_dir().join("machine-id")
+    }
+
     /// `~/.instrukt/git/` — ingested external repositories.
     pub fn git_dir(&self) -> PathBuf {
         self.root.join("git")
@@ -165,6 +171,7 @@ mod tests {
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
             home.work_state_dir(),
+            home.machine_id_file(),
             home.git_dir(),
             home.locks_dir(),
         ] {

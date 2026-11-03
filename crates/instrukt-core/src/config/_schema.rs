@@ -102,6 +102,7 @@ fn schema() -> Node {
             "github",
             map(vec![
                 ("approvers", Leaf(ProjectOnly, Shape::StrList)),
+                ("repository", Leaf(ProjectOnly, Shape::Str)),
                 ("api_url", Leaf(GlobalOnly, Shape::Str)),
             ]),
         ),

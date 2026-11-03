@@ -1,0 +1,22 @@
+---
+source: crates/instrukt-cli/tests/todos.rs
+expression: "redact(&format!(\"{filed}---\\n{shown}\"))"
+---
+created nested-lists (feature) with identity <id 1>
+reflection: reflected to GitHub
+---
+nested-lists · feature · active
+identity: <id 1>
+created: <time> by Test Developer
+revision: 1
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

@@ -258,6 +258,28 @@ impl Configuration {
             .unwrap_or(DEFAULT_GITHUB_API_URL))
     }
 
+    /// `github.repository` (`owner/repo`), when the project sets it; the
+    /// default is derived from the remote the default branch tracks.
+    pub fn github_repository(&self) -> Result<Option<&str>, ConfigError> {
+        self.str_at(&["github", "repository"])
+    }
+
+    /// `github.approvers`: the logins whose inbound approvals the work
+    /// record accepts (empty by default).
+    pub fn github_approvers(&self) -> Result<Vec<&str>, ConfigError> {
+        let Some(list) = self.at(&["github", "approvers"]) else {
+            return Ok(Vec::new());
+        };
+        list.as_sequence()
+            .ok_or_else(|| invalid("github.approvers", "is not a list"))?
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .ok_or_else(|| invalid("github.approvers", "holds a non-string login"))
+            })
+            .collect()
+    }
+
     /// `workflow.domain` (default `sdlc`).
     pub fn workflow_domain(&self) -> Result<DomainName, ConfigError> {
         let raw = self.str_at(&["workflow", "domain"])?.unwrap_or("sdlc");

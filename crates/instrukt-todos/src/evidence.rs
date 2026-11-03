@@ -118,6 +118,9 @@ pub mod artifact_names {
     pub const PLAN_REVIEW_FINDINGS: &str = "plan_review_findings";
     pub const QUALITY_CHECKLIST: &str = "quality_checklist";
     pub const DEFERRALS: &str = "deferrals";
+    /// The build review's complete report, which a build-review verdict
+    /// binds (`stamps`, "Stamp forms").
+    pub const REVIEW_FINDINGS: &str = "review_findings";
 }
 
 /// A content digest of one artifact version. Its text form is work's to
@@ -178,7 +181,7 @@ pub struct ModelIdentity {
 
 /// One stamp: its fact and the envelope every stamp carries (`stamps`,
 /// "Evidence and attribution").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StampRecord {
     pub fact: StampFact,
     pub at: Timestamp,
@@ -254,7 +257,8 @@ pub enum TaskResult {
 /// "Mutation boundary" and "Stamp forms"; `approvals`, "Command
 /// boundary"). Review rounds are not stored; they are counted from
 /// verdict stamps.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "fact", rename_all = "snake_case")]
 pub enum StampFact {
     /// `--verdict approve|needs_work --phase <preparation review>`.
     PreparationVerdict {
@@ -350,7 +354,8 @@ impl RoleBinding {
 }
 
 /// Where a dispatch hold came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HoldSource {
     /// `instrukt todo update <slug> --hold --reason`.
     Manual,
@@ -360,7 +365,7 @@ pub enum HoldSource {
 
 /// A dispatch hold with its cause (`dependencies-and-holds`, "Session
 /// bindings, claims and holds").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HoldRecord {
     pub source: HoldSource,
     pub reason: String,
