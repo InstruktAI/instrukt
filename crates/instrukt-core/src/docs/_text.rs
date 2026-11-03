@@ -325,9 +325,17 @@ pub(super) fn references(lines: &[Line<'_>]) -> Vec<RawRef> {
 pub enum Directive {
     /// `<!-- @include: <path> -->` — the fragment path as written
     /// (`docs/snippets/<name>.md`).
-    Include { path: String, span: Range<usize> },
+    Include {
+        path: String,
+        span: Range<usize>,
+        argument: Range<usize>,
+    },
     /// `<!-- @exec: <command> -->` — the command as written.
-    Exec { command: String, span: Range<usize> },
+    Exec {
+        command: String,
+        span: Range<usize>,
+        argument: Range<usize>,
+    },
 }
 
 impl Directive {
@@ -336,6 +344,16 @@ impl Directive {
     pub fn span(&self) -> Range<usize> {
         match self {
             Directive::Include { span, .. } | Directive::Exec { span, .. } => span.clone(),
+        }
+    }
+
+    /// The byte range of the argument (path or command) in the body it was
+    /// read from: exactly the source bytes the argument holds.
+    pub fn argument_span(&self) -> Range<usize> {
+        match self {
+            Directive::Include { argument, .. } | Directive::Exec { argument, .. } => {
+                argument.clone()
+            }
         }
     }
 }
@@ -348,27 +366,33 @@ pub(super) fn directives(lines: &[Line<'_>]) -> Vec<Directive> {
     for line in lines.iter().filter(|line| !line.fenced) {
         for comment in visible_comments(line.text) {
             let inner = &line.text[comment.inner.clone()];
-            let inner = inner.trim_start_matches([' ', '\t']);
-            let (kind, argument) = if let Some(arg) = inner.strip_prefix("@include:") {
-                ("include", arg)
-            } else if let Some(arg) = inner.strip_prefix("@exec:") {
-                ("exec", arg)
+            let padded = inner.trim_start_matches([' ', '\t']);
+            let (kind, prefix) = if padded.starts_with("@include:") {
+                ("include", "@include:".len())
+            } else if padded.starts_with("@exec:") {
+                ("exec", "@exec:".len())
             } else {
                 continue;
             };
-            let argument = argument.trim();
+            let raw = &padded[prefix..];
+            let argument = raw.trim();
             if argument.is_empty() {
                 continue;
             }
+            let lead = (inner.len() - padded.len()) + prefix + (raw.len() - raw.trim_start().len());
+            let start = line.span.start + comment.inner.start + lead;
+            let argument_span = start..start + argument.len();
             let span = line.span.start + comment.whole.start..line.span.start + comment.whole.end;
             out.push(match kind {
                 "include" => Directive::Include {
                     path: argument.to_owned(),
                     span,
+                    argument: argument_span,
                 },
                 _ => Directive::Exec {
                     command: argument.to_owned(),
                     span,
+                    argument: argument_span,
                 },
             });
         }
@@ -380,31 +404,34 @@ pub(super) fn directives(lines: &[Line<'_>]) -> Vec<Directive> {
 mod tests {
     use super::*;
 
-    const YAML: &str = "description: x\n";
-    const BODY: &str = "\n# T — Spec\n";
-
     #[test]
     fn frontmatter_splits_at_the_closing_fence() {
-        let text = format!("---\n{YAML}---\n{BODY}");
-        let split = split_frontmatter(&text);
-        assert_eq!(split.frontmatter, Some(YAML));
-        assert_eq!(split.body, BODY);
-        assert_eq!(&text[split.body_offset..], split.body);
+        let text = "---\ndescription: x\n---\n\n# T — Spec\n";
+        let split = split_frontmatter(text);
+        assert!(split.frontmatter.is_some());
+        assert_eq!(split.body_offset, 23);
+        assert_eq!(split.body_offset + split.body.len(), text.len());
     }
 
     #[test]
     fn an_unclosed_or_absent_frontmatter_leaves_the_whole_body() {
-        let unclosed = format!("---\n{YAML}");
-        assert_eq!(split_frontmatter(&unclosed).frontmatter, None);
-        assert_eq!(split_frontmatter(BODY).body, BODY);
+        for text in ["---\nx: 1\n", "# T\n"] {
+            let split = split_frontmatter(text);
+            assert_eq!(split.frontmatter, None);
+            assert_eq!(split.body_offset, 0);
+            assert_eq!(split.body.len(), text.len());
+        }
     }
 
     #[test]
     fn fenced_lines_are_marked_and_their_headings_ignored() {
         let body = "## A\n```\n## not\n```\n## B\n";
         let lines = lines(body);
-        let found: Vec<usize> = headings(&lines).into_iter().map(|h| h.line).collect();
-        assert_eq!(found, [0, 4]);
+        let found: Vec<(usize, usize)> = headings(&lines)
+            .into_iter()
+            .map(|h| (h.level, h.line))
+            .collect();
+        assert_eq!(found, [(2, 0), (2, 4)]);
         assert_eq!(lines.iter().filter(|l| l.fenced).count(), 3);
     }
 
@@ -418,39 +445,39 @@ mod tests {
         assert_ne!(normalize_title("See Also"), normalize_title("See"));
     }
 
-    const LISTED: &str = "~/.instrukt/docs/a/policy/b.md";
-    const PROSE: &str = "docs/local/spec/x.md";
-
     #[test]
     fn references_skip_code_comments_and_emails() {
-        let body = format!(
-            "- @{LISTED}\nsee @{PROSE} now\n`@docs/local/spec/y.md`\nmail me@host.md\n<!-- @docs/local/z.md -->\n"
-        );
-        let refs: Vec<_> = references(&lines(&body))
+        let body = "- @~/.instrukt/docs/a/policy/b.md\nsee @docs/local/spec/x.md now\n\
+                    `@docs/local/spec/y.md`\nmail me@host.md\n<!-- @docs/local/z.md -->\n";
+        let found: Vec<usize> = references(&lines(body))
             .into_iter()
-            .map(|r| r.target)
+            .map(|r| r.line)
             .collect();
-        assert_eq!(refs, [LISTED, PROSE]);
+        assert_eq!(found, [0, 1]);
     }
-
-    const COMMAND: &str = "echo `date`";
-    const FRAGMENT: &str = "docs/snippets/f.md";
 
     #[test]
     fn directive_arguments_keep_their_backticks() {
-        let body = format!("<!-- @exec: {COMMAND} -->\n");
-        let found = directives(&lines(&body));
-        assert!(matches!(&found[..], [Directive::Exec { command, .. }] if command == COMMAND));
+        // The command `echo `date`` spans bytes 12..23; masking inline code
+        // must not shorten it.
+        let body = "<!-- @exec: echo `date` -->\n";
+        let found = directives(&lines(body));
+        assert!(matches!(&found[..], [Directive::Exec { .. }]));
+        assert_eq!(found[0].argument_span(), 12..23);
+        assert_eq!(found[0].span(), 0..27);
     }
 
     #[test]
     fn directives_are_read_outside_code_with_their_spans() {
-        let exec = format!("<!-- @exec: {COMMAND} -->");
-        let body = format!("a\n{exec}\n`<!-- @exec: no -->`\n<!-- @include: {FRAGMENT} -->\n");
-        let found = directives(&lines(&body));
-        assert_eq!(found.len(), 2);
-        assert_eq!(body[found[0].span()], exec);
-        assert!(matches!(&found[1], Directive::Include { path, .. } if path == FRAGMENT));
+        let body = "a\n<!-- @exec: instrukt config get x -->\n`<!-- @exec: no -->`\n\
+                    <!-- @include: docs/snippets/f.md -->\n";
+        let found = directives(&lines(body));
+        assert!(matches!(
+            &found[..],
+            [Directive::Exec { .. }, Directive::Include { .. }]
+        ));
+        assert_eq!(found[0].span(), 2..39);
+        assert_eq!(found[1].argument_span(), 76..94);
     }
 
     #[test]

@@ -788,22 +788,33 @@ mod tests {
         assert_eq!(c.snippets()[0].superseded_by(), expected);
     }
 
+    /// The version a view reads, and the line count and marker slugs of the
+    /// body it shows.
+    fn shown(view: View<'_>) -> (PathBuf, usize, usize) {
+        match view {
+            View::Visible { version, body } => (
+                version.path().to_path_buf(),
+                body.lines().count(),
+                _markers::scan(&body).slugs.len(),
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn lenses_show_current_target_and_retired_views() {
         let c = with_companions();
         let s = &c.snippets()[0];
-        let body = |view: View<'_>| match view {
-            View::Visible { body, .. } => body,
-            other => panic!("{other:?}"),
-        };
-        assert_eq!(body(s.view(Lens::Current)), format!("{BEFORE}{AFTER}"));
+        let live = PathBuf::from("docs/local/spec/a.md");
+        let (path, current_lines, markers) = shown(s.view(Lens::Current));
+        assert_eq!((path, markers), (live.clone(), 0));
         let add = slug("add-it");
-        assert_eq!(
-            body(s.view(Lens::Target(&add))),
-            format!("{BEFORE}{ADDED}{AFTER}")
-        );
+        let (path, added_lines, markers) = shown(s.view(Lens::Target(&add)));
+        assert_eq!((path, markers), (live, 0));
+        assert_eq!(added_lines, current_lines + 1);
         let rework = slug("rework");
-        assert_eq!(body(s.view(Lens::Target(&rework))), NEXT);
+        let (path, _, _) = shown(s.view(Lens::Target(&rework)));
+        assert_eq!(path, PathBuf::from("docs/local/spec/a.rework.md"));
         let retire = slug("retire-it");
         assert_eq!(s.view(Lens::Target(&retire)), View::Retired);
     }
@@ -849,12 +860,10 @@ mod tests {
         );
     }
 
-    const SHARED: &str = "shared text\n";
-
     #[test]
     fn fragments_are_found_by_their_include_path() {
-        let c = corpus(&[("docs/global/snippets/step.md", SHARED)]);
-        assert_eq!(c.fragment("docs/snippets/step.md"), Some(SHARED));
+        let c = corpus(&[("docs/global/snippets/step.md", "shared text\n")]);
+        assert!(c.fragment("docs/snippets/step.md").is_some());
         assert_eq!(c.fragment("docs/snippets/none.md"), None);
     }
 

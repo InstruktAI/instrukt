@@ -121,6 +121,11 @@ codes! {
     OrchestratorWithoutProcedure => "workflow-orchestrator-without-procedure",
     /// An action naming a procedure that declares no `role`.
     ActionProcedureWithoutRole => "workflow-action-procedure-without-role",
+    /// An action naming a procedure that neither the repository nor the
+    /// home's published procedures hold.
+    ActionProcedureUnresolved => "workflow-action-procedure-unresolved",
+    /// An action naming a snippet that is not a procedure.
+    ActionTargetNotProcedure => "workflow-action-target-not-procedure",
 
     // Configuration
     /// `requires` names a module the effective switches turn off.

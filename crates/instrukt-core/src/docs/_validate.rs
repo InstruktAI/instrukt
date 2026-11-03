@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use super::_corpus::{
     BaselineManifest, Corpus, ManifestLine, Stray, Version, confined_docs, manifest_lines,
@@ -45,6 +46,7 @@ pub struct ValidationRequest<'a> {
 /// Validates the documentation of `request.repo_root`'s working tree and
 /// returns every finding, ordered by file. Changes nothing.
 pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsError> {
+    let started = Instant::now();
     let scope = scope_of(request.repo_root, request.paths)?;
     let corpus = Corpus::load(request.repo_root, request.home)?;
     let config = Configuration::load(request.home, Some(request.repo_root))?;
@@ -77,6 +79,23 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
     }
     findings.sort_by(|a, b| (&a.path, a.code, &a.value).cmp(&(&b.path, b.code, &b.value)));
     findings.dedup();
+    let mut by_code: BTreeMap<&str, usize> = BTreeMap::new();
+    for finding in &findings {
+        *by_code.entry(finding.code.as_str()).or_default() += 1;
+    }
+    let by_code = by_code
+        .iter()
+        .map(|(code, count)| format!("{code}={count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    tracing::debug!(
+        event = "docs_validate_completed",
+        repo_root = %request.repo_root.display(),
+        scoped = !scope.is_empty(),
+        findings = findings.len(),
+        by_code = %by_code,
+        duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    );
     Ok(findings)
 }
 
@@ -473,10 +492,11 @@ fn read_home(path: &Path) -> Result<Option<String>, DocsError> {
 }
 
 /// Required reads by identity, across the corpus and — for domains the
-/// repository does not publish — the home.
+/// repository does not publish — the home. A bundle a read names stands for
+/// everything that bundle carries.
 struct RequiredReads<'c> {
     corpus: &'c Corpus,
-    cache: HashMap<SnippetId, Vec<SnippetId>>,
+    cache: HashMap<SnippetId, Vec<RefTarget>>,
 }
 
 impl<'c> RequiredReads<'c> {
@@ -487,15 +507,16 @@ impl<'c> RequiredReads<'c> {
         }
     }
 
-    fn of(&mut self, id: &SnippetId) -> Result<Vec<SnippetId>, DocsError> {
+    /// The snippets and bundles `id`'s required reads name.
+    fn of(&mut self, id: &SnippetId) -> Result<Vec<RefTarget>, DocsError> {
         if let Some(found) = self.cache.get(id) {
             return Ok(found.clone());
         }
         let reads = match self.corpus.snippet(id) {
-            Some(snippet) => snippet_targets(snippet.current()),
+            Some(snippet) => read_targets(snippet.current()),
             None => self
                 .home_version(id)?
-                .map(|v| snippet_targets(&v))
+                .map(|v| read_targets(&v))
                 .unwrap_or_default(),
         };
         self.cache.insert(id.clone(), reads.clone());
@@ -518,31 +539,11 @@ impl<'c> RequiredReads<'c> {
         }))
     }
 
-    /// Everything reachable from `roots` through required reads, the roots
-    /// themselves excluded unless reached.
-    fn closure(&mut self, roots: &[&SnippetId]) -> Result<BTreeSet<SnippetId>, DocsError> {
-        let mut seen = BTreeSet::new();
-        let mut stack: Vec<SnippetId> = Vec::new();
-        for root in roots {
-            stack.extend(self.of(root)?);
-        }
-        while let Some(id) = stack.pop() {
-            if seen.insert(id.clone()) {
-                stack.extend(self.of(&id)?);
-            }
-        }
-        Ok(seen)
-    }
-
-    /// What a domain's bundle carries: its `baseline.md` entries with their
-    /// transitive required reads. The manifest is this repository's for a
-    /// domain it publishes, the home's otherwise.
-    fn bundle(&mut self, domain: &DomainName) -> Result<BTreeSet<SnippetId>, DocsError> {
-        let entries: Vec<SnippetId> = match domain_baseline(self.corpus, domain) {
-            Some(manifest) => manifest_ids(manifest)
-                .into_iter()
-                .map(|(_, id)| id)
-                .collect(),
+    /// The snippets and bundles a domain's `baseline.md` names: this
+    /// repository's manifest for a domain it publishes, the home's otherwise.
+    fn manifest(&self, domain: &DomainName) -> Result<Vec<RefTarget>, DocsError> {
+        let lines = match domain_baseline(self.corpus, domain) {
+            Some(manifest) => manifest.lines().to_vec(),
             None => {
                 let file = self.corpus.home().domain_dir(domain).join("baseline.md");
                 read_home(&file)?
@@ -550,22 +551,68 @@ impl<'c> RequiredReads<'c> {
                         manifest_lines(&text, self.corpus.project(), self.corpus.home().user_home())
                     })
                     .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|line| match line {
-                        ManifestLine::Entry(r) => match r.target {
-                            Some(RefTarget::Snippet(id)) => Some(id),
-                            _ => None,
-                        },
-                        ManifestLine::Invalid(_) => None,
-                    })
-                    .collect()
             }
         };
-        let roots: Vec<&SnippetId> = entries.iter().collect();
-        let mut carried = self.closure(&roots)?;
-        carried.extend(entries);
-        Ok(carried)
+        Ok(lines
+            .into_iter()
+            .filter_map(|line| match line {
+                ManifestLine::Entry(r) => r.target,
+                ManifestLine::Invalid(_) => None,
+            })
+            .filter(|t| matches!(t, RefTarget::Snippet(_) | RefTarget::Bundle(_)))
+            .collect())
     }
+
+    /// Every snippet reachable from `start` — required reads followed
+    /// transitively, each bundle expanded to its manifest — each visited
+    /// once, so cycles end.
+    fn reach(&mut self, start: Vec<RefTarget>) -> Result<BTreeSet<SnippetId>, DocsError> {
+        let mut seen = BTreeSet::new();
+        let mut bundles = BTreeSet::new();
+        let mut stack = start;
+        while let Some(target) = stack.pop() {
+            match target {
+                RefTarget::Snippet(id) => {
+                    if seen.insert(id.clone()) {
+                        stack.extend(self.of(&id)?);
+                    }
+                }
+                RefTarget::Bundle(domain) => {
+                    if bundles.insert(domain.clone()) {
+                        stack.extend(self.manifest(&domain)?);
+                    }
+                }
+                RefTarget::LocalFile(_) => {}
+            }
+        }
+        Ok(seen)
+    }
+
+    /// Everything reachable from `roots` through required reads, the roots
+    /// themselves excluded unless reached.
+    fn closure(&mut self, roots: &[&SnippetId]) -> Result<BTreeSet<SnippetId>, DocsError> {
+        let mut start = Vec::new();
+        for root in roots {
+            start.extend(self.of(root)?);
+        }
+        self.reach(start)
+    }
+
+    /// What a domain's bundle carries: its `baseline.md` entries with their
+    /// transitive required reads, nested bundles expanded.
+    fn bundle(&mut self, domain: &DomainName) -> Result<BTreeSet<SnippetId>, DocsError> {
+        self.reach(vec![RefTarget::Bundle(domain.clone())])
+    }
+}
+
+/// The snippets and bundles a version's required reads name.
+fn read_targets(version: &Version) -> Vec<RefTarget> {
+    version
+        .required_reads()
+        .iter()
+        .filter_map(|r| r.target.clone())
+        .filter(|t| matches!(t, RefTarget::Snippet(_) | RefTarget::Bundle(_)))
+        .collect()
 }
 
 fn snippet_targets(version: &Version) -> Vec<SnippetId> {
@@ -1002,17 +1049,31 @@ fn check_workflows(
             );
         }
         for (action, id) in &declarations.action_procedures {
+            let actions_file = rel_dir.join("actions.yaml");
+            let value = Some(format!("{action}: {id}"));
+            if taxonomy_of(id) != Some(Taxonomy::Procedure) {
+                push(
+                    out,
+                    &actions_file,
+                    FindingCode::ActionTargetNotProcedure,
+                    value,
+                );
+                continue;
+            }
             let Some(group) = by_id.get(id) else {
+                push(
+                    out,
+                    &actions_file,
+                    FindingCode::ActionProcedureUnresolved,
+                    value,
+                );
                 continue;
             };
             if group.iter().any(|s| s.role.is_some()) {
                 continue;
             }
-            let mut finding = Finding::new(
-                rel_dir.join("actions.yaml"),
-                FindingCode::ActionProcedureWithoutRole,
-                Some(format!("{action}: {id}")),
-            );
+            let mut finding =
+                Finding::new(actions_file, FindingCode::ActionProcedureWithoutRole, value);
             finding.involves = group.iter().filter_map(|s| s.repo_path.clone()).collect();
             out.push(finding);
         }
@@ -1267,6 +1328,87 @@ mod tests {
         assert_eq!(found[0].path, Path::new("docs/local/baseline.md"));
     }
 
+    const CONCEPT: &str = "---\ndescription: d\n---\n# C — Concept\n\n## What\n\n## Why\n";
+
+    fn concept_reading(read: &str) -> String {
+        format!(
+            "---\ndescription: d\n---\n# C — Concept\n\n## Required reads\n\n- @{read}\n\n## What\n\n## Why\n"
+        )
+    }
+
+    fn local_manifest_findings(files: &[(&str, &str)]) -> Vec<(FindingCode, PathBuf)> {
+        let mut all = vec![
+            ("docs/global/acme/concept/a.md", CONCEPT),
+            (
+                "docs/global/acme/baseline.md",
+                "@~/.instrukt/docs/acme/concept/a.md\n",
+            ),
+            (
+                "docs/local/baseline.md",
+                "@~/.instrukt/docs/outer/bundle.md\n@~/.instrukt/docs/acme/concept/a.md\n",
+            ),
+        ];
+        all.extend_from_slice(files);
+        run(&corpus(&all), &CoreWiring::default(), &[])
+            .into_iter()
+            .map(|f| (f.code, f.path))
+            .collect()
+    }
+
+    #[test]
+    fn a_bundle_naming_another_bundle_carries_what_that_bundle_carries() {
+        let carried = vec![(
+            FindingCode::BaselineCarried,
+            PathBuf::from("docs/local/baseline.md"),
+        )];
+        let nested = local_manifest_findings(&[(
+            "docs/global/outer/baseline.md",
+            "@~/.instrukt/docs/acme/bundle.md\n",
+        )]);
+        assert_eq!(nested, carried);
+        let through_reads = concept_reading("~/.instrukt/docs/acme/bundle.md");
+        let via_required_read = local_manifest_findings(&[
+            ("docs/global/outer/concept/o.md", &through_reads),
+            (
+                "docs/global/outer/baseline.md",
+                "@~/.instrukt/docs/outer/concept/o.md\n",
+            ),
+        ]);
+        assert_eq!(via_required_read, carried);
+    }
+
+    #[test]
+    fn bundles_naming_each_other_end_the_expansion() {
+        let c = corpus(&[
+            ("docs/global/acme/concept/a.md", CONCEPT),
+            (
+                "docs/global/acme/baseline.md",
+                "@~/.instrukt/docs/acme/concept/a.md\n@~/.instrukt/docs/outer/bundle.md\n",
+            ),
+            (
+                "docs/global/outer/baseline.md",
+                "@~/.instrukt/docs/acme/bundle.md\n",
+            ),
+            (
+                "docs/local/baseline.md",
+                "@~/.instrukt/docs/outer/bundle.md\n",
+            ),
+        ]);
+        // The cycle ends; acme's own entry is carried back to it through
+        // outer's bundle, and nothing else is reported.
+        let found: Vec<(FindingCode, PathBuf)> = run(&c, &CoreWiring::default(), &[])
+            .into_iter()
+            .map(|f| (f.code, f.path))
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                FindingCode::BaselineCarried,
+                PathBuf::from("docs/global/acme/baseline.md")
+            )]
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn an_unreadable_published_procedure_fails_the_run() {
@@ -1334,6 +1476,8 @@ mod tests {
             action_procedures: vec![
                 ("build".into(), id("acme/procedure/build")),
                 ("help".into(), id("acme/procedure/helper")),
+                ("vanish".into(), id("acme/procedure/missing")),
+                ("misnamed".into(), id("acme/concept/idea")),
             ],
         }));
         let c = corpus(&[
@@ -1359,6 +1503,14 @@ mod tests {
                 ),
                 (
                     FindingCode::ActionProcedureWithoutRole,
+                    Path::new("docs/global/acme/workflow/actions.yaml")
+                ),
+                (
+                    FindingCode::ActionProcedureUnresolved,
+                    Path::new("docs/global/acme/workflow/actions.yaml")
+                ),
+                (
+                    FindingCode::ActionTargetNotProcedure,
                     Path::new("docs/global/acme/workflow/actions.yaml")
                 ),
                 (
