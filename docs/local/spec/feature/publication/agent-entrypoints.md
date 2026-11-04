@@ -27,6 +27,9 @@ When events is enabled, the root `AGENTS.md` also lists standing agents under â€
 - Compilation inlines every required read the master names, expands include
   fragments and `@exec` directives, drops planned material and never inlines a
   pending snippet (`local/projects/instrukt/spec/feature/publication/project-publication`).
+- Only references outside code are read as imports. A `@â€¦md` inside a code
+  span or fenced code block is left exactly as written, never rewritten or
+  expanded, and is never reported as an unresolved import.
 - The repository-root `AGENTS.md` is followed by two generated sections: the
   project's baseline index (the ids and descriptions its progressive baseline
   lists, to load on demand) and its Activatable Procedures catalog (each

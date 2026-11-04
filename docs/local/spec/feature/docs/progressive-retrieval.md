@@ -66,6 +66,9 @@ own-repository restriction does not restrict these indexed local-file reads.
   reads that were not loaded and must have been read at least once.
 - Required reads are resolved transitively, by path. A local snippet's required
   reads follow its own project's local snippets and published snippets only.
+- A snippet's required reads are listed in the order the snippet declares
+  them.
+- A withheld snippet's required reads are not named.
 - A live snippet with pending material, read without `--target`, is followed
   by a notice naming the owning slugs and how to read their view.
 - A third-party id renders its body; required-read resolution does not apply.
@@ -76,7 +79,9 @@ own-repository restriction does not restrict these indexed local-file reads.
 A closure request naming several ids, or an id that is not a procedure, is
 refused with an error saying a closure is read for exactly one procedure.
 It renders the procedure, every transitive required read once, and every
-domain bundle those reads name, listing the included ids in its header. For a
+domain bundle those reads name, listing the included ids in its header; a
+bundle, which has no id, is listed by its path. Transitive reads are listed
+depth-first in declaration order, each once, at its first occurrence. For a
 procedure carrying root frontmatter (`role`, `subscriptions`,
 `activation_trigger` or `dispatch`), a required read that is pending or
 resolves to no readable published snippet or bundle refuses the closure,
@@ -94,7 +99,9 @@ Every body `get` renders passes, in order:
    body; a fragment that cannot be found leaves its directive visible.
 4. **Planned lens** — planned blocks resolved for the lens; hidden content never executes.
 5. **`@exec`** — each visible read-time command runs (below).
-6. **Inline references** — every `@<path>.md` becomes its absolute path.
+6. **Inline references** — every `@<path>.md` becomes its absolute path. A
+   reference inside a code span or fenced code block is left exactly as
+   written: never rewritten and never expanded.
 7. **Frontmatter** — stripped.
 8. **Required reads** — the section is stripped from the body.
 
