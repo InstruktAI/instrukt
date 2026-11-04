@@ -157,15 +157,15 @@ impl MainObservation {
     }
 }
 
-/// Reads local main, remote main and the active candidate with local git.
+/// Reads local main, and the remote's current canonical main and
+/// `integrate` heads, and the active candidate. The remote heads are the
+/// remote's own answer (`git ls-remote`), never a tracking ref a fetch may
+/// not have refreshed; the commits are then fetched into their tracking
+/// refs so ancestry can be judged against them.
 pub fn observe_main(root: &Path) -> Result<MainObservation, SourceError> {
     let branch = git::default_branch(root, CANONICAL_REMOTE)?;
     let local_main = resolve(root, &format!("refs/heads/{branch}"))?;
-    let remote_main = resolve(root, &format!("refs/remotes/{CANONICAL_REMOTE}/{branch}"))?;
-    let integrate = resolve(
-        root,
-        &format!("refs/remotes/{CANONICAL_REMOTE}/{INTEGRATE_BRANCH}"),
-    )?;
+    let (remote_main, integrate) = remote_heads(root, &branch)?;
     let ahead = match (&local_main, &remote_main) {
         (Some(local), Some(remote)) if local != remote => git::succeeds(
             root,
@@ -195,6 +195,79 @@ pub fn observe_main(root: &Path) -> Result<MainObservation, SourceError> {
         ahead,
         candidate,
     })
+}
+
+/// The canonical remote's current heads of `branch` and `integrate`, as
+/// it answers now; `(None, None)` when the project has no canonical remote.
+/// The commits are fetched into their tracking refs.
+fn remote_heads(
+    root: &Path,
+    branch: &str,
+) -> Result<(Option<CommitSha>, Option<CommitSha>), SourceError> {
+    let remotes = git::run(root, ["remote"])?;
+    if !remotes
+        .lines()
+        .any(|remote| remote.trim() == CANONICAL_REMOTE)
+    {
+        return Ok((None, None));
+    }
+    let main_ref = format!("refs/heads/{branch}");
+    let integrate_ref = format!("refs/heads/{INTEGRATE_BRANCH}");
+    let done = Invocation::program(
+        "git",
+        &[
+            "ls-remote",
+            "--",
+            CANONICAL_REMOTE,
+            &main_ref,
+            &integrate_ref,
+        ],
+    )
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .cwd(root)
+    .run(LS_REMOTE_TIMEOUT)?;
+    if !done.success {
+        return Err(SourceError::LsRemote {
+            dir: root.display().to_string(),
+            remote: CANONICAL_REMOTE.to_owned(),
+            git_ref: format!("{main_ref} {integrate_ref}"),
+            detail: done.stderr.trim().to_owned(),
+        });
+    }
+    let head = |name: &str| {
+        done.stdout
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find(|(_, listed)| *listed == name)
+            .and_then(|(sha, _)| CommitSha::parse(sha).ok())
+    };
+    let main = head(&main_ref);
+    let integrate = head(&integrate_ref);
+    let mut refspecs = Vec::new();
+    for (sha, name) in [(&main, branch), (&integrate, INTEGRATE_BRANCH)] {
+        if sha.is_some() {
+            refspecs.push(format!(
+                "+refs/heads/{name}:refs/remotes/{CANONICAL_REMOTE}/{name}"
+            ));
+        }
+    }
+    if !refspecs.is_empty() {
+        let mut args = vec!["fetch", "--quiet", "--no-tags", "--", CANONICAL_REMOTE];
+        args.extend(refspecs.iter().map(String::as_str));
+        let fetched = Invocation::program("git", &args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .cwd(root)
+            .run(LS_REMOTE_TIMEOUT)?;
+        if !fetched.success {
+            return Err(SourceError::LsRemote {
+                dir: root.display().to_string(),
+                remote: CANONICAL_REMOTE.to_owned(),
+                git_ref: refspecs.join(" "),
+                detail: fetched.stderr.trim().to_owned(),
+            });
+        }
+    }
+    Ok((main, integrate))
 }
 
 /// The commit `git_ref` names; `None` when the ref does not exist.
