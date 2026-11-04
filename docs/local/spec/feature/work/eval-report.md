@@ -24,6 +24,15 @@ log. There is only something to evaluate where work passes through the record.
 destination, defaulting to the current project’s `scratchpad/eval/index.html`.
 With no recorded work, the report says so.
 
+One report covers every project known to this home's publication state,
+grouped by project, with the current project first. Each project's record is
+read through work's normal read, which takes items that are not on this
+computer from GitHub, so work done on another computer is reported here as
+well; that is the record reconstructed from GitHub. A project whose record
+cannot be read, for example without credentials or with GitHub unreachable,
+is listed with that limitation rather than dropped. The report takes no
+options beyond `--since` and `--out`.
+
 Model identity, version and eval fingerprint come from the stamps owned by
 `local/projects/instrukt/spec/feature/work/stamps`. Report generation does not
 invent missing observations or require conversation transcripts. Unreflected
@@ -42,15 +51,32 @@ process-document change.
 
 The report aggregates recorded work by project and evaluation window. It
 shows the available review verdicts, rounds and findings, returns for repair,
-and human intervention over time. Process changes are annotated with the
-commits that changed the eval set. Missing evidence and incomplete history
-remain visible limitations on a comparison.
+and human intervention over time. Over time means the windows in order, each
+with the time of its first and last stamp; the report adds no finer time
+buckets. Process changes are annotated with the commits that changed the
+eval set. Missing evidence and incomplete history remain visible limitations
+on a comparison.
+
+Human acts stand outside the model dimension: each window has a row of its
+own for them. A human approval given with `--session` is attributed to the
+human, not to that session's model, and adds no unknown-model limitation.
 
 The flavor’s activatable `sdlc/procedure/eval-report` runs the command, opens
 or serves its HTML and explains changes alongside the commit SHAs that changed
 the eval set. The report
 does not add a statistical acceptance gate to delivery and does not require a
 separate logging service.
+
+### Outcome measures
+
+- **Review verdicts and rounds:** the verdict stamps, approving and not
+  approving, with one round per verdict. `needs_work` rounds are counted
+  here and nowhere else.
+- **Findings:** the distinct findings reports that verdicts bind.
+- **Returns for repair:** kickbacks plus approvers' change requests. Review
+  rounds that end `needs_work` are not counted again here.
+- **Human intervention:** stamps marked `human_involved`, human approvals,
+  change requests, and acts whose actor is a person or a GitHub actor.
 
 ### Use cases
 
