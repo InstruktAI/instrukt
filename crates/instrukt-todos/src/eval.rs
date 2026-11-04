@@ -643,6 +643,7 @@ mod tests {
             snippets: 1,
             project: ProjectSlug::parse("flows").unwrap(),
             commit: commit.clone(),
+            recorded_at: None,
         }];
         let window = &report(Inputs {
             fingerprints: &fingerprints,

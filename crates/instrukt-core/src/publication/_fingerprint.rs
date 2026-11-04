@@ -30,6 +30,11 @@ pub struct EvalFingerprint {
     /// The project whose sync computed it, and the commit it published.
     pub project: ProjectSlug,
     pub commit: CommitSha,
+    /// When the publishing sync recorded it, by the invocation's clock;
+    /// `None` in a record written before the time was kept, whose place
+    /// in the order of records is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<jiff::Timestamp>,
 }
 
 impl EvalFingerprint {
@@ -127,6 +132,7 @@ pub(super) fn compute(
     index: &GlobalIndex,
     project: &ProjectSlug,
     commit: &CommitSha,
+    now: jiff::Timestamp,
 ) -> Result<EvalFingerprint, PublicationError> {
     let docs = home.docs_dir();
     let mut sources = Vec::new();
@@ -174,6 +180,7 @@ pub(super) fn compute(
         snippets: evaluated.len(),
         project: project.clone(),
         commit: commit.clone(),
+        recorded_at: Some(now),
     })
 }
 
@@ -214,5 +221,20 @@ mod tests {
     fn an_empty_corpus_has_its_own_digest() {
         let a = id("sdlc/policy/a");
         assert_ne!(digest(&[]), digest(&[(&a, b"")]));
+    }
+
+    /// A per-commit record as syncs wrote it before the time was kept.
+    const PRE_TIME_RECORD: &str = "\
+fingerprint: sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+snippets: 2
+project: flows
+commit: 0123456789abcdef0123456789abcdef01234567
+";
+
+    #[test]
+    fn a_record_written_before_the_time_was_kept_loads_with_its_time_unknown() {
+        let record: EvalFingerprint = serde_yaml_ng::from_str(PRE_TIME_RECORD).unwrap();
+        assert_eq!(record.recorded_at, None);
+        assert_eq!(record.snippets, 2);
     }
 }
