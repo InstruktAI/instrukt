@@ -150,8 +150,12 @@ And it can read each commit's latest review verdict
 ## Known caveats
 
 - A candidate that introduces CI into a project whose canonical head has none
-  is judged `no_ci` and verified with the local test action; CI governs from
-  the next canonical head on.
+  is judged `no_ci` when a tick reads it before its CI reports, and is then
+  verified locally. Once its CI reports, that result is delivered as well, and
+  CI governs from the next canonical head on. If the candidate was already
+  promoted on its local verification and its CI then reports red, the
+  canonical branch is failing and recovery applies as for any failing
+  canonical branch.
 
 ## See Also
 

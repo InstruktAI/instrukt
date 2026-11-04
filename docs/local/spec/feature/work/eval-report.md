@@ -53,8 +53,12 @@ The report aggregates recorded work by project and evaluation window. It
 shows the available review verdicts, rounds and findings, returns for repair,
 and human intervention over time. Over time means the windows in order, each
 with the time of its first and last stamp; the report adds no finer time
-buckets. Process changes are annotated with the commits that changed the
-eval set. Missing evidence and incomplete history remain visible limitations
+buckets. Windows follow time order, not fingerprint identity: a set that
+changes and is later restored yields a window for each period, and the
+restoration is a process change of its own, annotated with the commit that
+restored it. Process changes are annotated with the commits that changed the
+eval set; where the order of the recorded fingerprints cannot be established,
+the report names no commit and shows the order as unknown. Missing evidence and incomplete history remain visible limitations
 on a comparison.
 
 Human acts stand outside the model dimension: each window has a row of its
