@@ -4,8 +4,7 @@ the predecessor's `telec docs get` and `telec docs index`.
 A one-off acceptance run (docs/local/policy/testing.md), not a CI test.
 
     python3 -I scripts/parity/core-parity.py \
-        --predecessor /path/to/TeleClaude --instrukt target/debug/instrukt \
-        --out /some/new/dir/outside/the/repository [--keep]
+        --predecessor /path/to/TeleClaude --instrukt target/debug/instrukt [--keep]
 
 What it does:
 
@@ -24,8 +23,13 @@ What it does:
 
 Only what the specs say legitimately differs is normalised (each rule names
 its spec in ``NORMALISATIONS``). Everything else is reported as a difference.
-The output directory receives one file per difference and ``summary.md`` /
-``summary.json``. The temporary home and repository are removed unless
+The results go to a new directory the run creates itself in this user's
+private temporary directory (mode 0700 on macOS and Linux), and its path is
+printed: one file per difference and ``summary.md`` / ``summary.json``. The
+caller chooses no destination, so nothing outside that private directory can
+be redirected into, and no other user can replace or plant anything in it. A
+process of this same user is trusted, as it could write the predecessor
+directly anyway. The temporary home and repository are removed unless
 ``--keep`` is given.
 """
 
@@ -327,50 +331,43 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--predecessor", required=True, type=Path)
     ap.add_argument("--instrukt", required=True, type=Path)
-    ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
     pred = args.predecessor.resolve()
     binary = args.instrukt.resolve()
-    if os.path.lexists(args.out):
-        raise SystemExit(f"refusing the output {args.out}: it must not exist yet")
-    parent = args.out.parent.resolve()
-    out = parent / args.out.name
     roots = forbidden_roots(pred)
-    # Every destination is checked before anything is written.
-    refuse_inside(out, roots, "output")
-    refuse_inside(Path(tempfile.gettempdir()), roots, "temporary directory")
-    # The run writes only into a private staging directory (mode 0700, created
-    # by mkdtemp beside the output, so on the same file system), which no other
-    # user can plant links in. Only at the end is it renamed to the output; a
-    # rename never follows a link at its destination, and it fails rather than
-    # merging into anything that appeared there meanwhile.
-    staging = Path(tempfile.mkdtemp(prefix=".parity-staging-", dir=parent))
-    work = Path(tempfile.mkdtemp(prefix="instrukt-parity-")).resolve()
-    for what, path in (("work directory", work), ("temporary HOME", work / "home"), ("clone", work / "teleclaude")):
-        try:
-            refuse_inside(path, roots, what)
-        except SystemExit:
-            work.rmdir()
-            staging.rmdir()
-            raise
+    private = Path(tempfile.gettempdir()).resolve()
+    # Every destination is checked before anything is written: all of them
+    # are new directories created below this user's private temporary
+    # directory.
+    refuse_inside(private, roots, "temporary directory")
+    if private.stat().st_mode & 0o077:
+        raise SystemExit(f"refusing the temporary directory {private}: other users can write to it")
+    out = None
+    work = None
     try:
-        try:
-            code = parity(pred, binary, staging, work)
-        except BaseException:
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
-        try:
-            os.rename(staging, out)
-        except OSError as err:
-            raise SystemExit(f"refusing to place the output at {out}: {err}; the results stay in {staging}")
+        out = Path(tempfile.mkdtemp(prefix="instrukt-parity-results-", dir=private))
+        work = Path(tempfile.mkdtemp(prefix="instrukt-parity-", dir=private))
+        for what, path in (
+            ("output", out),
+            ("work directory", work),
+            ("temporary HOME", work / "home"),
+            ("clone", work / "teleclaude"),
+        ):
+            refuse_inside(path, roots, what)
+        code = parity(pred, binary, out, work)
         print(f"results in {out}")
         return code
+    except BaseException:
+        if out is not None:
+            shutil.rmtree(out, ignore_errors=True)
+        raise
     finally:
-        if args.keep:
-            print(f"kept {work}", file=sys.stderr)
-        else:
-            shutil.rmtree(work, ignore_errors=True)
+        if work is not None:
+            if args.keep:
+                print(f"kept {work}", file=sys.stderr)
+            else:
+                shutil.rmtree(work, ignore_errors=True)
 
 
 def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
