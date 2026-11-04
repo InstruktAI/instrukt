@@ -7,6 +7,7 @@ reflection: pending: GitHub is unreachable
 ---
 nested-lists · feature · active
 identity: <id 1>
+record status: active
 created: <time> by Test Developer
 revision: 2
 intent:

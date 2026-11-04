@@ -4,6 +4,7 @@ expression: "redact(&format!(\"{shown}---\\n{}\",\nanswers.join(\"\\n\"))).repla
 ---
 nested-lists · feature · active
 identity: <id 1>
+record status: active
 created: <time> by Test Developer
 revision: 8
 intent:

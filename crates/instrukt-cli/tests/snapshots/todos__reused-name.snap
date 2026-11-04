@@ -4,6 +4,7 @@ expression: "redact(&format!(\"{reused}---\\n{}---\\n{earlier}\",\nString::from_
 ---
 parser-depth · change · active
 identity: <id 1>
+record status: active
 created: <time> by Test Developer
 revision: 1
 intent:
@@ -22,6 +23,7 @@ instrukt: no live todo is named `lexer-depth`; address a retained entry exactly:
 ---
 lexer-depth · change · delivered
 identity: <id 2>
+record status: delivered
 created: <time> by Test Developer
 revision: 2
 intent:
