@@ -1,5 +1,5 @@
 ---
-description: Phased documentation retrieval — `instrukt docs index` lists ids, `instrukt docs get` reads snippets through the read pipeline with read-time commands, and required reads are followed explicitly or as one closure.
+description: Phased documentation retrieval — `instrukt docs index` lists ids, `instrukt docs get` reads snippets through the read pipeline with configured values, and required reads are followed explicitly or as one closure.
 delivered_by: [instrukt-first-build]
 ---
 
@@ -98,33 +98,36 @@ Every body `get` renders passes, in order:
 3. **`@include`** — each fragment directive is replaced by the fragment's
    body; a fragment that cannot be found leaves its directive visible.
 4. **Planned lens** — planned blocks resolved for the lens; hidden content never executes.
-5. **`@exec`** — each visible read-time command runs (below).
+5. **`@config`** — each visible configured-value directive is resolved (below).
 6. **Inline references** — every `@<path>.md` becomes its absolute path. A
    reference inside a code span or fenced code block is left exactly as
    written: never rewritten and never expanded.
 7. **Frontmatter** — stripped.
 8. **Required reads** — the section is stripped from the body.
 
-### Read-time commands
+### Configured values
 
-A read-time command is the directive `<!-- @exec: <command> -->` in a snippet
-body. `get` runs it at read time:
+A configured value is the directive `<!-- @config: <path> -->` in a snippet
+body. `get` resolves `<path>` in-process through configuration's `get`, with
+the same interpolation and the same refusals: an unknown path, and a
+`runtime.*` path read with no active runtime session
+(`local/projects/instrukt/spec/feature/configuration/interpolation`).
 
-- in the caller's working directory and environment, through the shell;
-- with a 10-second limit;
-- every read, never cached;
-- its standard output, when non-empty, replaces the directive as a fenced
-  block; empty output replaces it with nothing.
+- It runs no shell and no subprocess, and does not depend on the working
+  directory.
+- It resolves on every read, never cached.
+- The value replaces the directive as a fenced block.
+- A refusal replaces the directive with a visible notice naming the path and
+  the reason; `get` prints the whole output and then exits non-zero.
 
-On a non-zero exit or the time limit, the directive is replaced by an inline
-notice naming the command and its exit status (or the time limit); `get`
-prints the whole output and then exits non-zero.
+Published snippets carry the directive unresolved; only the reader's `get`
+resolves it. Compiled outputs resolve it at publication instead, which is
+publication's contract.
 
-Published snippets carry the directive unexpanded; only the reader's `get`
-runs it. Compiled `AGENTS.md` entrypoints are expanded at publication instead,
-which is publication's contract. The configured-value form is
-`<!-- @exec: instrukt config get <path> -->`; how the value resolves is
-configuration's (`local/projects/instrukt/spec/feature/configuration/interpolation`).
+The snippet format has no directive that runs a command. A leftover
+`<!-- @exec: … -->` is never run: `get` shows it as inert text, and
+validation reports it as a finding
+(`local/projects/instrukt/spec/feature/docs/snippet-validation`).
 
 ### Publication behind main
 
@@ -160,18 +163,21 @@ Then the read is refused and says a closure is read for exactly one procedure
 #### UC-DR3: An agent reads instructions that carry values from its own session
 
 ```gherkin
-Given a published procedure whose text asks for a configured value through a read-time command
+Given a published procedure whose text asks for a configured value
 And two agents acting for the same developer run in different sessions on one machine
 When each agent reads that procedure
-Then each receives the text with the value computed in its own session at the moment of reading
-And the published procedure itself still carries the command, not a value
-But when the command fails
-Then the agent receives the text with a notice naming the failed command, and the read reports failure
+Then each receives the text with the value resolved for its own session at the moment of reading
+And the published procedure itself still carries the request, not a value
+But when the value cannot be resolved
+Then the agent receives the text with a notice naming the value and why it could not be resolved, and the read reports failure
+But when a snippet tries to run a command instead of asking for a value
+Then publication refuses it and names the file
+And reading such a snippet runs nothing
 ```
 
 ## Known caveats
 
-- The planned lens runs before read-time commands, so hidden content never executes.
+- The planned lens runs before configured values are resolved, so hidden content is never resolved.
 - `--project <slug>` lists only that project's local docs. An unknown slug lists nothing and says no such project has published.
 - A missing local file makes `get` name the project and missing path and direct the caller to republish from that project.
 

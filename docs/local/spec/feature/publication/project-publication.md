@@ -59,13 +59,16 @@ changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
 | Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path |
 | Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `local/projects/instrukt/spec/feature/publication/eval-fingerprint` |
 
-- Snippets are published raw: their `@exec` directives run when they are read
-  (`local/projects/instrukt/spec/domain/docs`). Compiled outputs — bundles,
-  `AGENTS.md` files and global agent entrypoints — expand `@exec` at publish
-  time, run in the project root with a 10-second limit, with the runtime
-  mapping's session variables removed from the environment, so no compiled
-  output captures the session that happened to publish it. A directive that
-  fails or times out fails the sync.
+- Snippets are published raw: their `@config` directives resolve when they are
+  read (`local/projects/instrukt/spec/domain/docs`). Compiled outputs — bundles,
+  `AGENTS.md` files and global agent entrypoints — resolve `@config` at
+  publication, in-process against the publishing machine's configuration with
+  no runtime session, so no compiled output captures a session. A `runtime.*`
+  path in a compiled output is a validation finding, since publication has no
+  session to resolve it against; any other path that cannot be resolved fails
+  the sync. Publication runs no command: an `@exec` directive in a published
+  snippet, fragment or master is a validation finding, and sync refuses and
+  names the file.
 - Compilation never inlines a pending snippet and drops planned material, so
   compiled outputs carry the current contract only.
 - Local snippet content stays in the project; only its index entries enter

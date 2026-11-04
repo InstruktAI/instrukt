@@ -11,8 +11,8 @@ A configured value may depend on other values, on the caller's environment and
 on the runtime session the caller is in. Such values are resolved in two
 phases. First, `instrukt config get` expands them at the moment it is called,
 in the caller's environment. Second, documentation never carries a template
-syntax of its own: a snippet asks for a value with a read-time command that
-calls `instrukt config get`, run when the snippet is read
+syntax of its own: a snippet asks for a value with the `@config` directive,
+resolved through `instrukt config get`'s resolution when the snippet is read
 (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`). Nothing published
 carries a session-bound value.
 
@@ -82,4 +82,4 @@ Then it is told that no configured runtime matches, and no command is given
 ## See Also
 
 - local/projects/instrukt/spec/domain/configuration
-- local/projects/instrukt/spec/feature/docs/progressive-retrieval
+- local/projects/instrukt/spec/feature/docs/progressive-retrieval — the `@config` directive that reads configured values into snippets

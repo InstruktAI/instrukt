@@ -59,9 +59,10 @@ when read.
 : A shared text body under `docs/global/snippets/`, inlined where an
 `@include` directive names it. Not a snippet; never retrieved by id.
 
-**Read-time command**
-: An `@exec` directive in a snippet body whose command runs when the snippet
-is read, with its output placed where the directive stood.
+**Configured value**
+: A `@config` directive in a snippet body naming a configuration path, resolved
+in-process when the snippet is read, with the value placed where the directive
+stood. The snippet format has no directive that runs a command.
 
 **Baseline manifest**
 : A domain's `baseline.md` (and `baseline-progressive.md`), or a project's
@@ -115,7 +116,7 @@ recorded by publication.
   fields and where each is allowed, sections, reference forms and placement,
   fragments, baseline manifests, third-party doc shape); structural validation
   and its findings; the pending-documentation model and the lens; phase-1
-  listing, phase-2 reading, the read pipeline and read-time commands; the
+  listing, phase-2 reading, the read pipeline and configured values; the
   publication-behind warning on read.
 - **Does not own** — copying snippets into the home, writing or patching the
   global and local indexes, generating bundles, compiling `AGENTS.md`
@@ -144,7 +145,7 @@ recorded by publication.
 
 - **Root:** Snippet.
 - **Contains:** frontmatter, sections, required reads, inline references,
-  directives (`@include`, `@exec`), companions, planned blocks.
+  directives (`@include`, `@config`), companions, planned blocks.
 - **Invariants:**
   - Identity, type, domain and scope follow from the path and the project's
     declared slug; none is authored.
@@ -197,8 +198,7 @@ None.
   snippet identity, validation, baseline and reference contracts. Local bodies
   come from indexed project paths; validation reads the invoking working tree.
 - **Configuration** — customer / supplier. Configuration supplies the
-  project's slug; a read-time command calls `instrukt config get` like any
-  other command.
+  project's slug and resolves `@config` paths in-process through its `get`.
 - **Repository** — no direct relationship; repository triggers publication.
 - **Work** — customer / supplier: work supplies todo-slug existence when
   `todos` is enabled, through the core interface wired by the CLI.
@@ -212,7 +212,7 @@ None.
 
 ## Known caveats
 
-- A read-time command runs any command with the reader's environment and
-  working directory. Trust in it is trust in the project that published the
-  snippet.
+- A snippet never decides what runs on a machine: `@config` resolves a
+  configuration path in-process, and a leftover `@exec` is inert text and a
+  validation finding.
 - With no publication yet, `index` says nothing is published and directs the caller to `instrukt sync` in a project; `get` fails as for an unknown id.

@@ -25,7 +25,8 @@ When events is enabled, the root `AGENTS.md` also lists standing agents under â€
   main compiles into an `AGENTS.md` in the same directory of the project's
   primary worktree.
 - Compilation inlines every required read the master names, expands include
-  fragments and `@exec` directives, drops planned material and never inlines a
+  fragments, resolves `@config` directives against the publishing machine's
+  configuration with no runtime session, drops planned material and never inlines a
   pending snippet (`local/projects/instrukt/spec/feature/publication/project-publication`).
 - Only references outside code are read as imports. A `@â€¦md` inside a code
   span or fenced code block is left exactly as written, never rewritten or

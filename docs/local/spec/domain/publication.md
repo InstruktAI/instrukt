@@ -73,8 +73,8 @@ configuration it reads, or the git hooks that trigger it.
 
 **Compilation**
 :  Expanding a master, a bundle or a global entrypoint into one self-contained
-   file: required reads inlined, include fragments and `@exec` directives
-   expanded, planned material dropped, no `@` reference left.
+   file: required reads inlined, include fragments expanded and `@config`
+   directives resolved, planned material dropped, no `@` reference left.
 
 **Bundle**
 :  The generated `bundle.md` of a published domain: its baseline manifest
@@ -108,7 +108,7 @@ configuration it reads, or the git hooks that trigger it.
   the global agent entrypoints and merging their entrypoint-loading keys; the
   eval fingerprint; owner-scoped publication and retraction of domain workflow
   definitions, roles, actions and templates as non-snippet files.
-- **Does not own** — snippet identity, the reference forms, the `@exec` and
+- **Does not own** — snippet identity, the reference forms, the `@config` and
   include directive grammar, pending carriers, structural validation, and
   every read of the home (docs,
   `local/projects/instrukt/spec/domain/docs`); the layered configuration, its

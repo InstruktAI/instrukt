@@ -39,6 +39,7 @@ check documentation before committing, and it changes nothing.
 | Baselines | a manifest line that is not a single `@` reference; a manifest out of taxonomy order; a manifest naming a snippet its domain's bundle already carries |
 | Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
 | Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
+| Directives | an `@exec` directive in a snippet, fragment or master; a `@config` directive with a `runtime.*` path in a file compiled into a bundle, an `AGENTS.md` or a global entrypoint |
 
 A todo slug is checked for form only. Whether it names an existing todo is
 checked as well when the `todos` module is on, by asking that module.

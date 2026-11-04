@@ -140,9 +140,9 @@ flowchart LR
 
 `instrukt docs index` shows all domains plus the local docs of the project the
 caller stands in; `instrukt docs get` resolves ids to paths, follows required
-reads, and runs `@exec` directives in the caller's environment at read time —
-which is how session-bound values (`instrukt config get runtime.conversation`)
-reach a snippet.
+reads, and resolves `@config` directives in-process at read time — which is
+how session-bound values (`<!-- @config: runtime.conversation -->`) reach a
+snippet. No snippet runs a command.
 
 ### Push and map
 

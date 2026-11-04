@@ -118,6 +118,7 @@ Document structure:
 - `## Sources` — third-party docs may include web links or a documentation index service's snippet IDs when authoritative references are available.
 - `## See Also` — optional soft references (not inlined at build time).
 - `<!-- @include: docs/snippets/<name>.md -->` — inlines a shared fragment's body exactly where the directive sits, in every rendering of the snippet: `instrukt docs get`, a session's assignment brief and generated bundles. It carries text several snippets state word for word, so it is written once. A fragment is authored under `docs/global/snippets/` and published as `docs/snippets/`; it has no frontmatter, is not a snippet and is never retrieved by ID. A fragment that cannot be found leaves its directive visible in the rendering.
+- `<!-- @config: <path> -->` — replaced by the configured value at `<path>` when the snippet is read, resolved in-process through configuration; in compiled outputs (bundles, `AGENTS.md`, global entrypoints) it is resolved at publication, where a `runtime.*` path is a finding. The format has no directive that runs a command: `@exec` is a validation finding and is never run.
 
 ### Required H2 sections per taxonomy
 
