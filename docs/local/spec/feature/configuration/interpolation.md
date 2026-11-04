@@ -12,7 +12,9 @@ on the runtime session the caller is in. Such values are resolved in two
 phases. First, `instrukt config get` expands them at the moment it is called,
 in the caller's environment. Second, documentation never carries a template
 syntax of its own: a snippet asks for a value with the `@config` directive,
-resolved through `instrukt config get`'s resolution when the snippet is read
+resolved when the snippet is read exactly as `instrukt config get` would
+resolve it for the reader, against the effective configuration of the project
+the reader stands in
 (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`). Nothing published
 carries a session-bound value.
 
