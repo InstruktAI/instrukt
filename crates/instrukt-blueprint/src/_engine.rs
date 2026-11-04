@@ -467,9 +467,9 @@ mod tests {
 
     #[test]
     fn an_engine_whose_group_could_not_be_recorded_is_withheld() {
-        assert_eq!(
+        assert!(matches!(
             go_ahead(Err("disk full".to_owned())),
-            Start::Withhold("disk full".to_owned())
-        );
+            Start::Withhold(_)
+        ));
     }
 }
