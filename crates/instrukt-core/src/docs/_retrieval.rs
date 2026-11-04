@@ -58,6 +58,9 @@ pub struct Reading {
     pub unresolved: bool,
 }
 
+/// The domain whose owner's third-party docs are global.
+const GENERAL: &str = "general";
+
 const AREAS: &str = "principle|concept|policy|procedure|design|spec|adr";
 
 /// The `docs index` listing.
@@ -813,12 +816,13 @@ impl<'i> Reader<'i> {
         };
         let rendered = _render::render(&text, Lens::Current, &cx)?;
         // third-party-docs spec: `global` for the docs of the project that
-        // owns the `general` domain, `project` for any other project's.
-        let owns_general = self.index.snippets.iter().any(|e| {
-            e.scope == IndexScope::Global
-                && e.domain == "general"
-                && e.source_project == entry.source_project
-        });
+        // owns the `general` domain, `project` for any other project's. The
+        // owner is the domain's publisher, whether or not it has snippets.
+        let owns_general = match DomainName::parse(GENERAL) {
+            Ok(general) => crate::publication::domain_publisher(self.home, &general)?
+                .is_some_and(|owner| owner == entry.source_project),
+            Err(_) => false,
+        };
         let block = [
             "---".to_owned(),
             format!("id: {}", entry.id.as_str()),

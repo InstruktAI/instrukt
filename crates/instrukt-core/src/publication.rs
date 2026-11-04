@@ -179,6 +179,23 @@ impl PublishedRecord {
     }
 }
 
+/// The project that publishes `domain`, from the domain's publisher
+/// record; `None` when no project publishes it.
+pub fn domain_publisher(
+    home: &Home,
+    domain: &crate::ids::DomainName,
+) -> Result<Option<ProjectSlug>, PublicationStateError> {
+    let path = home.domain_dir(domain).join(_tree::PUBLISHER_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(PublicationStateError::Read { path, source }),
+    };
+    serde_yaml_ng::from_str::<_tree::PublisherRecord>(&text)
+        .map(|record| Some(record.publisher))
+        .map_err(|source| PublicationStateError::Parse { path, source })
+}
+
 fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
     home.publication_state_dir()
         .join(format!("{}.yaml", project.as_str()))
