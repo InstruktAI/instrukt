@@ -718,6 +718,19 @@ def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
         for d in r["documented_changes"]:
             label = f"{r['kind']}: {re.sub(r'^\S+/\S+ ', '', d['what'])}"
             changed[label] = changed.get(label, 0) + 1
+    # `@exec` is gone: a snippet asks for a configured value with
+    # `@config` and never runs a command (progressive-retrieval § Configured
+    # values). An intended divergence; it changes no comparison while the
+    # predecessor's corpus carries no `@exec`, which the run counts.
+    exec_files = sorted(
+        str(p.relative_to(clone))
+        for p in (clone / "docs").rglob("*.md")
+        if "<!-- @exec:" in p.read_text()
+    )
+    changed["`@exec` replaced by `@config` (files of the predecessor carrying `@exec`)"] = len(
+        exec_files
+    )
+    summary["exec_files"] = exec_files
     lines += ["## Documented changes (not differences)", ""]
     lines += [f"- {k}: {v}" for k, v in sorted(changed.items())] + [""]
     summary["documented_changes"] = changed
