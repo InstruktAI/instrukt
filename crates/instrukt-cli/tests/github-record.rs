@@ -497,67 +497,79 @@ fn issue_status(project: &Project, node: &str) -> String {
         .unwrap()
 }
 
-/// Checks board `<owner>/<number>` against what reflection wrote to the
-/// issues, given its fields before reflection (`before`): every item's
-/// field values are its issue's record status, under one field; the
-/// fields before survive in place, and the only field that gains options
-/// is that one, gaining new options that include every status its items
-/// carry that it lacked.
-fn assert_board_follows_issues(
+/// The status `instrukt todo show` reports for `slug`: the last entry of
+/// its heading line, rendered by the CLI from the todo's state.
+fn shown_status(project: &Project, slug: &str) -> String {
+    let shown = project.ok(["show", slug]);
+    shown
+        .lines()
+        .next()
+        .and_then(|heading| heading.rsplit(" · ").next())
+        .unwrap()
+        .to_owned()
+}
+
+/// What a todo's record says independently of reflection: the issue it is
+/// reflected to, the status the CLI reports, and whether the developer
+/// put it on hold.
+struct Expected<'a> {
+    node: &'a str,
+    slug: &'a str,
+    held: bool,
+}
+
+/// The `field` value each item on board `<owner>/<number>` carries.
+fn values_on(project: &Project, owner: &str, number: u64, field: &str) -> Vec<(String, String)> {
+    project
+        .github
+        .project_items(owner, number)
+        .into_iter()
+        .map(|(node, values)| {
+            let [(name, value)]: [(String, String); 1] = values.try_into().unwrap();
+            assert_eq!(name, field, "item {node} carries only the owned field");
+            (node, value)
+        })
+        .collect()
+}
+
+/// Checks the statuses on board `<owner>/<number>`, under `field`, against
+/// each todo's own state: an unheld todo shows the status the CLI
+/// reports; a held one shows a status of its own; distinct states never
+/// share a value; and each value is the one reflection wrote to the
+/// todo's issue.
+fn assert_statuses(
     project: &Project,
     owner: &str,
     number: u64,
-    before: &[(String, Vec<String>)],
+    field: &str,
+    todos: &[Expected<'_>],
 ) {
-    let items = project.github.project_items(owner, number);
-    let mut owned_field = BTreeSet::new();
-    let mut carried = BTreeSet::new();
-    for (node, values) in &items {
-        assert_eq!(values.len(), 1, "item {node} carries exactly one field");
-        let (field, status) = &values[0];
-        assert_eq!(status, &issue_status(project, node), "item {node}");
-        owned_field.insert(field.clone());
-        carried.insert(status.clone());
-    }
-    let [owned_field] = owned_field
-        .into_iter()
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-
-    let after = project.github.project_fields(owner, number);
-    // Fields the board had keep their place, names and options.
-    for ((name, options), (kept, now)) in before.iter().zip(&after) {
-        assert_eq!(kept, name);
-        assert_eq!(&now[..options.len()], options.as_slice());
-        if kept != &owned_field {
-            assert_eq!(now, options, "field {kept} is untouched");
-        }
-    }
-    // Nothing is added beside the owned field, made only when it lacked.
-    let had_owned = before.iter().any(|(name, _)| name == &owned_field);
-    assert_eq!(after.len(), before.len() + usize::from(!had_owned));
-    let (_, options) = after.iter().find(|(name, _)| name == &owned_field).unwrap();
-    let earlier = before
-        .iter()
-        .find(|(name, _)| name == &owned_field)
-        .map_or(0, |(_, options)| options.len());
-    let appended: BTreeSet<&String> = options[earlier..].iter().collect();
-    assert_eq!(appended.len(), options.len() - earlier, "no option twice");
-    for status in &carried {
-        assert!(
-            options.contains(status),
-            "the field offers carried status {status}"
-        );
-        if !options[..earlier].contains(status) {
-            assert!(appended.contains(status));
-        }
-    }
-    assert!(
-        appended
+    let values = values_on(project, owner, number, field);
+    let value_of = |node: &str| {
+        values
             .iter()
-            .all(|option| !options[..earlier].contains(option)),
-        "appended options are new"
+            .find(|(n, _)| n == node)
+            .map(|(_, v)| v.clone())
+            .unwrap()
+    };
+    let mut states = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    for todo in todos {
+        let value = value_of(todo.node);
+        let shown = shown_status(project, todo.slug);
+        if todo.held {
+            assert_ne!(value, shown, "{} is shown as held", todo.slug);
+        } else {
+            assert_eq!(value, shown, "{}", todo.slug);
+        }
+        assert_eq!(value, issue_status(project, todo.node), "{}", todo.slug);
+        states.insert((shown, todo.held));
+        seen.insert(value);
+    }
+    assert_eq!(
+        seen.len(),
+        states.len(),
+        "distinct states, distinct statuses"
     );
 }
 
@@ -566,31 +578,116 @@ fn assert_board_follows_issues(
 fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     let project = Project::new();
     let github = &project.github;
-    // The developer's board, with columns and fields of its own: its
-    // `Record status` already has one of instrukt's options and one of
-    // theirs.
+    // The developer's board, with columns and fields of its own: the
+    // built-in `Status`, a non-select field, and a `Record status` already
+    // holding one of instrukt's options and one of theirs.
     github.add_project("acme", 7).add_project("acme", 8);
     github.add_project_field("acme", 7, "Status", Some(&["Todo", "Done"]));
     github.add_project_field("acme", 7, "Estimate", None);
     github.add_project_field("acme", 7, "Record status", Some(&["active", "blocked"]));
     let first_before = github.project_fields("acme", 7);
-    let second_before = github.project_fields("acme", 8);
+    assert!(github.project_fields("acme", 8).is_empty());
+    // The owned field, identified by the board state alone: the last one
+    // the developer's board had.
+    let (owned, owned_before) = first_before.last().cloned().unwrap();
     choose_board(&project, "acme/7");
 
     project.create("nested-lists", "feature", INTENT);
     project.create("parser-depth", "change", "Track list depth in the parser.");
+    project.create("renderer", "change", "Render lists at their depth.");
     project.ok(["freeze", "parser-depth"]);
-    let every_todo = BTreeSet::from([issue_node(&project, 1), issue_node(&project, 2)]);
+    project.ok(["update", "renderer", "--hold", "--reason", "waiting"]);
+    let (lists, parser, renderer) = (
+        issue_node(&project, 1),
+        issue_node(&project, 2),
+        issue_node(&project, 3),
+    );
+    let every_todo = BTreeSet::from([lists.clone(), parser.clone(), renderer.clone()]);
 
     assert_eq!(on_board(&project, "acme", 7), every_todo);
-    assert_board_follows_issues(&project, "acme", 7, &first_before);
+    assert_statuses(
+        &project,
+        "acme",
+        7,
+        &owned,
+        &[
+            Expected {
+                node: &lists,
+                slug: "nested-lists",
+                held: false,
+            },
+            Expected {
+                node: &parser,
+                slug: "parser-depth",
+                held: false,
+            },
+            Expected {
+                node: &renderer,
+                slug: "renderer",
+                held: true,
+            },
+        ],
+    );
+    // Reused, not recreated: every field keeps its place; every field but
+    // the owned one is exactly as it was; the owned one keeps its options
+    // first and only gains new ones, covering the statuses now shown.
+    let first_after = github.project_fields("acme", 7);
+    assert_eq!(first_after.len(), first_before.len());
+    assert_eq!(
+        first_after[..first_before.len() - 1],
+        first_before[..first_before.len() - 1]
+    );
+    let (name, options) = first_after.last().unwrap();
+    assert_eq!(name, &owned);
+    assert_eq!(&options[..owned_before.len()], owned_before.as_slice());
+    let appended = &options[owned_before.len()..];
+    assert_eq!(
+        appended.iter().collect::<BTreeSet<_>>().len(),
+        appended.len()
+    );
+    assert!(appended.iter().all(|option| !owned_before.contains(option)));
+    for (_, value) in values_on(&project, "acme", 7, &owned) {
+        assert!(options.contains(&value), "the field offers {value}");
+    }
 
     // The developer chooses another board; the next reflection puts the
-    // work there, with its current status.
+    // work there with its current status.
     choose_board(&project, "acme/8");
     project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
+    project.ok(["update", "renderer", "--release"]);
     project.ok(["refresh", "parser-depth"]);
 
     assert_eq!(on_board(&project, "acme", 8), every_todo);
-    assert_board_follows_issues(&project, "acme", 8, &second_before);
+    assert_statuses(
+        &project,
+        "acme",
+        8,
+        &owned,
+        &[
+            Expected {
+                node: &lists,
+                slug: "nested-lists",
+                held: true,
+            },
+            Expected {
+                node: &parser,
+                slug: "parser-depth",
+                held: false,
+            },
+            Expected {
+                node: &renderer,
+                slug: "renderer",
+                held: false,
+            },
+        ],
+    );
+    // Created there: the only field, under the same name.
+    let second_after = github.project_fields("acme", 8);
+    let [(name, options)]: [(String, Vec<String>); 1] = second_after.try_into().unwrap();
+    assert_eq!(name, owned);
+    for (_, value) in values_on(&project, "acme", 8, &owned) {
+        assert!(options.contains(&value), "the field offers {value}");
+    }
+    // The first board is left as the work last put it.
+    assert_eq!(github.project_fields("acme", 7), first_after);
 }
