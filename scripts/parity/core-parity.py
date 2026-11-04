@@ -332,11 +332,18 @@ def main() -> int:
     args = ap.parse_args()
     pred = args.predecessor.resolve()
     binary = args.instrukt.resolve()
+    if args.out.is_symlink():
+        raise SystemExit(f"refusing the output {args.out}: it is a symbolic link")
     out = args.out.resolve()
     roots = forbidden_roots(pred)
     # Every destination is checked before anything is written.
     refuse_inside(out, roots, "output")
     refuse_inside(Path(tempfile.gettempdir()), roots, "temporary directory")
+    # The output must be new or empty: every file the run writes is then one
+    # it creates itself, so no link already inside the output can redirect a
+    # write into a forbidden tree.
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise SystemExit(f"refusing the output {out}: it must be a new or empty directory")
     out.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="instrukt-parity-")).resolve()
     for what, path in (("work directory", work), ("temporary HOME", work / "home"), ("clone", work / "teleclaude")):
