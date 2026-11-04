@@ -42,6 +42,10 @@ computed-at-publish
 
 Written as ``@docs/local/policy/house.md`` it is quoted.
 
+```
+@docs/local/policy/not-a-snippet.md
+```
+
 <!-- @docs/local/policy/house.md stays a comment -->
 
 ---

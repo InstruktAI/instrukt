@@ -7,7 +7,7 @@
 //! from the absolute path its index entry carries, with the companions
 //! beside either file.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
@@ -324,13 +324,7 @@ fn plain<'i>(
         .target
         .map_or_else(String::new, |slug| format!(" --target {slug}"));
     let mut out = vec![format!("# instrukt docs get{lens}: {}", req.ids.join(" "))];
-    let not_loaded: Vec<String> = graph
-        .snippets
-        .iter()
-        .map(|l| l.entry.id.as_str().to_owned())
-        .chain(graph.unreadable.iter().cloned())
-        .chain(graph.bundles.iter().map(|d| bundle_path(reader.home, d)))
-        .collect();
+    let not_loaded = graph.names(reader.home);
     if !not_loaded.is_empty() {
         out.push(format!(
             "# Required reads (not loaded) that must have been read at least once: {}",
@@ -398,14 +392,7 @@ fn closure<'i>(
         Strictness::Skip
     };
     let graph = reader.follow(std::slice::from_ref(&root), strictness)?;
-    let mut deps: Vec<&Loaded<'_>> = graph.snippets.iter().collect();
-    deps.sort_by(|a, b| entry_order(a.entry).cmp(&entry_order(b.entry)));
-    let included: Vec<String> = graph
-        .bundles
-        .iter()
-        .map(|d| bundle_path(reader.home, d))
-        .chain(deps.iter().map(|l| l.entry.id.as_str().to_owned()))
-        .collect();
+    let included = graph.names(reader.home);
     let mut out = vec![format!(
         "# instrukt docs get --closure: {}",
         entry.id.as_str()
@@ -417,17 +404,25 @@ fn closure<'i>(
         ));
     }
     out.extend(warning);
-    for domain in &graph.bundles {
-        out.push(String::new());
-        out.push(reader.render_bundle(domain)?);
-    }
     let mut exec_failed = false;
-    for loaded in deps.into_iter().chain(std::iter::once(&root)) {
+    // Every read in the order it is listed, then the procedure itself.
+    for item in &graph.items {
         out.push(String::new());
-        let (block, failed) = reader.render(loaded)?;
-        out.push(block);
-        exec_failed |= failed;
+        match item {
+            Reached::Bundle(domain) => out.push(reader.render_bundle(domain)?),
+            Reached::Snippet(loaded) => {
+                let (block, failed) = reader.render(loaded)?;
+                out.push(block);
+                exec_failed |= failed;
+            }
+            // A closure refuses or leaves out what cannot be read.
+            Reached::Unreadable(_) => {}
+        }
     }
+    out.push(String::new());
+    let (block, failed) = reader.render(&root)?;
+    out.push(block);
+    exec_failed |= failed;
     Ok(Reading {
         text: finish(out),
         exec_failed,
@@ -454,12 +449,42 @@ enum Strictness {
     Refuse,
 }
 
-/// Everything required reads reached beyond the roots, each once.
+/// Everything required reads reached beyond the roots, each once, depth
+/// first in declaration order at its first occurrence.
 struct Graph<'i> {
-    snippets: Vec<Loaded<'i>>,
-    bundles: Vec<DomainName>,
-    /// References that name nothing readable, as written.
-    unreadable: Vec<String>,
+    items: Vec<Reached<'i>>,
+}
+
+/// One required read reached.
+enum Reached<'i> {
+    Snippet(Box<Loaded<'i>>),
+    /// A published domain's bundle, which has no id: named by its path.
+    Bundle(DomainName),
+    /// A reference that names nothing readable, as written.
+    Unreadable(String),
+}
+
+impl Graph<'_> {
+    /// Each read's name, in order: a snippet's id, a bundle's path, an
+    /// unreadable reference as written.
+    fn names(&self, home: &Home) -> Vec<String> {
+        self.items
+            .iter()
+            .map(|item| match item {
+                Reached::Snippet(loaded) => loaded.entry.id.as_str().to_owned(),
+                Reached::Bundle(domain) => bundle_path(home, domain),
+                Reached::Unreadable(raw) => raw.clone(),
+            })
+            .collect()
+    }
+}
+
+/// What a walk of required reads has seen so far.
+#[derive(Default)]
+struct Walk {
+    snippets: BTreeSet<SnippetId>,
+    bundles: BTreeSet<DomainName>,
+    unreadable: BTreeSet<String>,
 }
 
 /// A snippet read from its file, with the repository it belongs to when
@@ -582,108 +607,125 @@ impl<'i> Reader<'i> {
     }
 
     /// Follows required reads from `roots`, transitively, by what each
-    /// names. A local snippet's reads reach its own project's local
-    /// snippets and published snippets only.
+    /// names: depth first in declaration order, each read once, at its
+    /// first occurrence. A local snippet's reads reach its own project's
+    /// local snippets and published snippets only.
     fn follow(&self, roots: &[Loaded<'i>], strictness: Strictness) -> Result<Graph<'i>, DocsError> {
-        let mut seen: BTreeSet<SnippetId> = roots.iter().map(|l| l.entry.id.clone()).collect();
-        let mut bundles = BTreeSet::new();
-        let mut unreadable = BTreeSet::new();
-        let mut reached: Vec<Loaded<'i>> = Vec::new();
-        let mut queue: VecDeque<Vec<Reference>> = roots
-            .iter()
-            .map(|l| self.reads_of(l))
-            .collect::<Result<_, _>>()?;
-        while let Some(reads) = queue.pop_front() {
-            for read in reads {
-                let refused = |reason: &str| DocsError::ClosureRefused {
-                    id: roots
-                        .first()
-                        .map_or_else(String::new, |l| l.entry.id.as_str().to_owned()),
-                    reason: format!("its required read `{}` {reason}", read.raw),
-                };
-                match &read.target {
-                    Some(RefTarget::Snippet(id)) => {
-                        if seen.contains(id) {
-                            continue;
-                        }
-                        let Some(entry) = self.index.snippets.iter().find(|e| &e.id == id) else {
-                            match strictness {
-                                Strictness::Refuse => {
-                                    return Err(refused("names no published snippet"));
-                                }
-                                Strictness::Skip => {}
-                                Strictness::List => {
-                                    unreadable.insert(read.raw.clone());
-                                }
-                            }
-                            continue;
-                        };
-                        seen.insert(id.clone());
-                        let loaded = match self.load(entry) {
-                            Ok(loaded) => loaded,
-                            // Only a missing file is unreadable; any other
-                            // failure is the read's own error.
-                            Err(
-                                err @ (DocsError::MissingLocalFile { .. }
-                                | DocsError::MissingPublishedFile { .. }),
-                            ) => match strictness {
-                                Strictness::List => {
-                                    unreadable.insert(read.raw.clone());
-                                    continue;
-                                }
-                                Strictness::Refuse => {
-                                    return Err(refused(&format!("cannot be read: {err}")));
-                                }
-                                Strictness::Skip => return Err(err),
-                            },
-                            Err(err) => return Err(err),
-                        };
-                        if loaded.snippet.is_pending() {
-                            match strictness {
-                                Strictness::Refuse => return Err(refused("is still pending")),
-                                Strictness::Skip => continue,
-                                Strictness::List => {}
-                            }
-                        }
-                        queue.push_back(self.reads_of(&loaded)?);
-                        reached.push(loaded);
+        let mut walk = Walk {
+            snippets: roots.iter().map(|l| l.entry.id.clone()).collect(),
+            ..Walk::default()
+        };
+        let mut items = Vec::new();
+        let root = roots
+            .first()
+            .map_or_else(String::new, |l| l.entry.id.as_str().to_owned());
+        for loaded in roots {
+            let reads = self.reads_of(loaded)?;
+            self.visit(reads, strictness, &root, &mut walk, &mut items)?;
+        }
+        Ok(Graph { items })
+    }
+
+    fn visit(
+        &self,
+        reads: Vec<Reference>,
+        strictness: Strictness,
+        root: &str,
+        walk: &mut Walk,
+        items: &mut Vec<Reached<'i>>,
+    ) -> Result<(), DocsError> {
+        for read in reads {
+            let refused = |reason: &str| DocsError::ClosureRefused {
+                id: root.to_owned(),
+                reason: format!("its required read `{}` {reason}", read.raw),
+            };
+            let mut unreadable = |items: &mut Vec<Reached<'i>>| {
+                if walk.unreadable.insert(read.raw.clone()) {
+                    items.push(Reached::Unreadable(read.raw.clone()));
+                }
+            };
+            match &read.target {
+                Some(RefTarget::Snippet(id)) => {
+                    if walk.snippets.contains(id) {
+                        continue;
                     }
-                    Some(RefTarget::Bundle(domain)) => {
-                        let path = self.home.domain_dir(domain).join("bundle.md");
-                        let readable = read_confined(
-                            &self.home.docs_dir(),
-                            &Path::new(domain.as_str()).join("bundle.md"),
-                            outside_home,
-                        )?
-                        .is_some();
-                        match (readable, strictness) {
-                            (true, _) | (false, Strictness::List) => {
-                                bundles.insert(domain.clone());
+                    let Some(entry) = self.index.snippets.iter().find(|e| &e.id == id) else {
+                        match strictness {
+                            Strictness::Refuse => {
+                                return Err(refused("names no published snippet"));
                             }
-                            (false, Strictness::Refuse) => {
-                                return Err(refused(&format!(
-                                    "names a bundle that is not published ({})",
-                                    path.display()
-                                )));
+                            Strictness::Skip => {}
+                            Strictness::List => unreadable(items),
+                        }
+                        continue;
+                    };
+                    walk.snippets.insert(id.clone());
+                    let loaded = match self.load(entry) {
+                        Ok(loaded) => loaded,
+                        // Only a missing file is unreadable; any other
+                        // failure is the read's own error.
+                        Err(
+                            err @ (DocsError::MissingLocalFile { .. }
+                            | DocsError::MissingPublishedFile { .. }),
+                        ) => match strictness {
+                            Strictness::List => {
+                                unreadable(items);
+                                continue;
                             }
-                            (false, Strictness::Skip) => {}
+                            Strictness::Refuse => {
+                                return Err(refused(&format!("cannot be read: {err}")));
+                            }
+                            Strictness::Skip => return Err(err),
+                        },
+                        Err(err) => return Err(err),
+                    };
+                    if loaded.snippet.is_pending() {
+                        match strictness {
+                            Strictness::Refuse => return Err(refused("is still pending")),
+                            Strictness::Skip => continue,
+                            Strictness::List => {}
                         }
                     }
-                    // A manifest is not a required read; a malformed
-                    // reference is validation's finding.
-                    Some(RefTarget::LocalFile(_)) | None => {
-                        if strictness == Strictness::Refuse {
-                            return Err(refused("names no published snippet or bundle"));
+                    // A withheld snippet names no reads (`reads_of`).
+                    let nested = self.reads_of(&loaded)?;
+                    items.push(Reached::Snippet(Box::new(loaded)));
+                    self.visit(nested, strictness, root, walk, items)?;
+                }
+                Some(RefTarget::Bundle(domain)) => {
+                    if walk.bundles.contains(domain) {
+                        continue;
+                    }
+                    let path = self.home.domain_dir(domain).join("bundle.md");
+                    let readable = read_confined(
+                        &self.home.docs_dir(),
+                        &Path::new(domain.as_str()).join("bundle.md"),
+                        outside_home,
+                    )?
+                    .is_some();
+                    match (readable, strictness) {
+                        (true, _) | (false, Strictness::List) => {
+                            walk.bundles.insert(domain.clone());
+                            items.push(Reached::Bundle(domain.clone()));
                         }
+                        (false, Strictness::Refuse) => {
+                            return Err(refused(&format!(
+                                "names a bundle that is not published ({})",
+                                path.display()
+                            )));
+                        }
+                        (false, Strictness::Skip) => {}
+                    }
+                }
+                // A manifest is not a required read; a malformed reference
+                // is validation's finding.
+                Some(RefTarget::LocalFile(_)) | None => {
+                    if strictness == Strictness::Refuse {
+                        return Err(refused("names no published snippet or bundle"));
                     }
                 }
             }
         }
-        Ok(Graph {
-            snippets: reached,
-            bundles: bundles.into_iter().collect(),
-            unreadable: unreadable.into_iter().collect(),
-        })
+        Ok(())
     }
 
     fn context<'c>(&'c self, loaded: &'c Loaded<'_>) -> RenderContext<'c> {
@@ -765,9 +807,17 @@ impl<'i> Reader<'i> {
             project: None,
         };
         let rendered = _render::render(&text, Lens::Current, &cx)?;
+        // third-party-docs spec: `global` for the docs of the project that
+        // owns the `general` domain, `project` for any other project's.
+        let owns_general = self.index.snippets.iter().any(|e| {
+            e.scope == IndexScope::Global
+                && e.domain == "general"
+                && e.source_project == entry.source_project
+        });
         let block = [
             "---".to_owned(),
             format!("id: {}", entry.id.as_str()),
+            format!("scope: {}", if owns_general { "global" } else { "project" }),
             format!("description: {}", entry.description),
             "---".to_owned(),
             rendered.text.trim_matches('\n').to_owned(),

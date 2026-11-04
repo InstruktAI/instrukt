@@ -21,6 +21,12 @@ Shared text.
 
 <!-- @include: docs/snippets/missing.md -->
 
+A reference is written `@docs/local/design/y.md`, for example:
+
+```
+- @~/.instrukt/docs/acme/principle/care.md
+```
+
 ## Rationale
 
 Text.

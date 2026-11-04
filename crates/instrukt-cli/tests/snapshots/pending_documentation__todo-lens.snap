@@ -3,6 +3,7 @@ source: crates/instrukt-cli/tests/pending-documentation.rs
 expression: "stdout(&env, &lens)"
 ---
 # instrukt docs get --target build-it: acme/spec/fresh acme/policy/reworked acme/spec/live acme/concept/old
+# Required reads (not loaded) that must have been read at least once: acme/spec/later
 
 ---
 id: acme/spec/fresh

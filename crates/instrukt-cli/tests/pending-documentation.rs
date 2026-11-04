@@ -64,7 +64,9 @@ fn published_demo(env: &TestEnv) -> Repo {
         "Fresh",
         "A new contract build-it delivers.",
         "delivered_by: [build-it]\n",
-        &[],
+        // Named only where the body is shown: a withheld snippet's
+        // required reads are not named.
+        &["- @~/.instrukt/docs/acme/spec/later.md"],
         "New with build-it.\n",
     );
     let later = snippet(

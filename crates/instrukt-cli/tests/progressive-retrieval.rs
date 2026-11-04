@@ -50,7 +50,9 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "",
                 &[CARE],
                 "Follow the rules.\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-                 <!-- @include: docs/snippets/missing.md -->\n",
+                 <!-- @include: docs/snippets/missing.md -->\n\n\
+                 A reference is written `@docs/local/design/y.md`, for example:\n\n\
+                 ```\n- @~/.instrukt/docs/acme/principle/care.md\n```\n",
             ),
         ),
         (
@@ -245,6 +247,34 @@ fn an_agent_narrows_to_baselines_and_adds_third_party_documentation() {
         .run(demo.path(), ["docs", "get", "third-party/tool/guide"])
         .success();
     insta::assert_snapshot!("third-party-read", stdout(&env, &guide));
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+#[test]
+fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
+    let env = TestEnv::new();
+    let platform = project(
+        &env,
+        "platform",
+        &["general"],
+        &[
+            (
+                "docs/global/general/principle/care.md",
+                snippet("principle", "Care", "Why care matters.", "", &[], "Care.\n"),
+            ),
+            (
+                "docs/third-party/tool/guide.md",
+                "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n"
+                    .to_owned(),
+            ),
+        ],
+    );
+    sync(&env, &platform);
+
+    let guide = env
+        .run(platform.path(), ["docs", "get", "third-party/tool/guide"])
+        .success();
+    insta::assert_snapshot!("general-owner-third-party-read", stdout(&env, &guide));
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
