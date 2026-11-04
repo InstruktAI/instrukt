@@ -222,6 +222,19 @@ impl<'a> Compiler<'a> {
             .collect())
     }
 
+    /// The refusal for a required read of `file` into `domain` when no
+    /// adopted docs repository publishes that domain on this computer;
+    /// `None` when the domain is published (the read is unresolved for
+    /// another reason).
+    fn missing_domain(&self, domain: &DomainName, file: &str) -> Option<PublicationError> {
+        (!self.owned.contains(domain) && !self.home.domain_dir(domain).is_dir()).then(|| {
+            PublicationError::Docs(docs::DocsError::DomainUnpublished {
+                domain: domain.clone(),
+                required_by: file.to_owned(),
+            })
+        })
+    }
+
     fn render(&self, file: &str, text: &str) -> Result<Rendered, PublicationError> {
         docs::render(text, Lens::Current, &self.project_context())
             .map_err(|e| compile_error(file, &e.to_string()))
@@ -282,7 +295,9 @@ impl<'a> Compiler<'a> {
                     match std::fs::read_to_string(&path) {
                         Ok(text) => text,
                         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                            return Err(unresolved());
+                            return Err(self
+                                .missing_domain(domain, file)
+                                .unwrap_or_else(unresolved));
                         }
                         Err(source) => return Err(PublicationError::Io { path, source }),
                     }
@@ -346,7 +361,14 @@ impl<'a> Compiler<'a> {
                     let text = match std::fs::read_to_string(&path) {
                         Ok(text) => text,
                         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                            return Err(unresolved());
+                            let domain = id
+                                .as_str()
+                                .split('/')
+                                .next()
+                                .and_then(|d| DomainName::parse(d).ok());
+                            return Err(domain
+                                .and_then(|d| self.missing_domain(&d, file))
+                                .unwrap_or_else(unresolved));
                         }
                         Err(source) => return Err(PublicationError::Io { path, source }),
                     };

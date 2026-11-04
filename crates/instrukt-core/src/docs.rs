@@ -139,6 +139,17 @@ use crate::publication::PublicationStateError;
 pub enum DocsError {
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// A project needs a domain no adopted docs repository publishes on
+    /// this computer (`local/projects/instrukt/spec/feature/publication/docs-repositories`).
+    #[error(
+        "domain `{domain}` is not published on this computer, but {required_by} needs it; adopt a docs repository that publishes it"
+    )]
+    DomainUnpublished {
+        domain: crate::ids::DomainName,
+        /// What needs it: `workflow.domain`, or the file whose required
+        /// read names it.
+        required_by: String,
+    },
     #[error("cannot read {path}: {source}")]
     Read {
         path: PathBuf,
