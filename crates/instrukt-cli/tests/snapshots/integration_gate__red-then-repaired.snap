@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "format!(\"{}\\n---\\n{}\", project.rt.sent(INTEGRATOR, 1),\nproject.rt.sent(INTEGRATOR,\n2)).replace(&failed,\n\"<failed candidate>\").replace(&repaired, \"<repaired candidate>\")"
+---
+instrukt events:
+{"event":"runner.ci_completed","project":"demo","candidate":"<failed candidate>","result":"failure"}
+
+---
+instrukt events:
+{"event":"runner.ci_completed","project":"demo","candidate":"<repaired candidate>","result":"success"}

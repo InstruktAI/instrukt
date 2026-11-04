@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "work::redact(&project.rt.opening(INTEGRATOR))"
+---
+Run `instrukt docs get acme/procedure/integrate --closure` and execute that procedure.
+
+instrukt events:
+{"event":"workflow.finalized","project":"demo","todo":"tidy-imports","revision":"<commit 1>"}

@@ -19,7 +19,7 @@ use instrukt_core::publication::PublishedRecord;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
-use crate::ci::{CiClient, CiRead};
+use crate::ci::{self, CiClient, CiRead};
 use crate::dispatch::{self, DispatchContext};
 use crate::event_log::FileEventLog;
 use crate::events::{Event, EventLog};
@@ -244,9 +244,18 @@ fn read_sources(
         state,
         &project.slug,
     );
-    match client.read(&candidate, now) {
-        Ok(CiRead::State(ci_state)) => {
-            if let Some(result) = ci_state.completed() {
+    // The canonical head is read too: only it decides a project without CI.
+    let mut commits = vec![&candidate];
+    if let Some(main) = &observed.remote_main {
+        commits.push(main);
+    }
+    match client.read(&commits, now) {
+        Ok(CiRead::States(states)) => {
+            let candidate_state = states.first().copied();
+            let canonical_state = states.get(1).copied();
+            if let Some(result) =
+                candidate_state.and_then(|state| ci::candidate_result(state, canonical_state))
+            {
                 append(&Event::CiCompleted {
                     project: project.slug.clone(),
                     candidate,
