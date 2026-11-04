@@ -3,39 +3,40 @@ source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stdout(&env, &closure)"
 ---
 # instrukt docs get --closure: acme/procedure/start
-# Required reads (included): [TMP]/home/.instrukt/docs/acme/bundle.md, acme/principle/care, acme/concept/terms, acme/policy/rules
+# Required reads (included): acme/policy/rules, acme/principle/care, acme/concept/terms, [TMP]/home/.instrukt/docs/acme/bundle.md
 
 ---
-bundle: acme
-path: [TMP]/home/.instrukt/docs/acme/bundle.md
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
 ---
-# acme — Platform Baseline
+# Rules — Policy
 
-id: acme/principle/care
+## Rules
 
-# Care — Principle
+Follow the rules.
 
-## Principle
+Shared text.
 
-Care.
+<!-- @include: docs/snippets/missing.md -->
 
 ## Rationale
 
 Text.
 
-## Implications
+## Scope
 
 Text.
 
-## Tensions
+## Enforcement
 
 Text.
 
----
+## Exceptions
 
-## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
-
-- `acme/procedure/broken` — Requires what is not published. — When broken.
+Text.
 
 ---
 id: acme/principle/care
@@ -80,37 +81,36 @@ Terms.
 Text.
 
 ---
-id: acme/policy/rules
-type: policy
-domain: acme
-scope: global
-description: The rules of the work.
+bundle: acme
+path: [TMP]/home/.instrukt/docs/acme/bundle.md
 ---
-# Rules — Policy
+# acme — Platform Baseline
 
-## Rules
+id: acme/principle/care
 
-Follow the rules.
+# Care — Principle
 
-Shared text.
+## Principle
 
-<!-- @include: docs/snippets/missing.md -->
+Care.
 
 ## Rationale
 
 Text.
 
-## Scope
+## Implications
 
 Text.
 
-## Enforcement
+## Tensions
 
 Text.
 
-## Exceptions
+---
 
-Text.
+## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
+
+- `acme/procedure/broken` — Requires what is not published. — When broken.
 
 ---
 id: acme/procedure/start
