@@ -1,0 +1,43 @@
+---
+source: crates/instrukt-cli/tests/docs-repositories.rs
+expression: claude
+---
+# general — Platform Baseline
+
+id: general/policy/rules
+
+# general rules — Policy
+
+## Rules
+
+Test first.
+
+## Rationale
+
+Because.
+
+## Scope
+
+All work.
+
+## Enforcement
+
+Review.
+
+## Exceptions
+
+None.
+
+---
+
+# Global baseline
+
+## Working here
+
+Follow the doctrine.
+
+---
+
+## Published Domains — load the relevant domain's bundle when needed
+
+- `sdlc` — 1 snippet(s); bundle: `~/.instrukt/docs/sdlc/bundle.md` — When working on sdlc.

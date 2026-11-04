@@ -1,0 +1,35 @@
+---
+source: crates/instrukt-cli/tests/docs-repositories.rs
+expression: "app.read(\"AGENTS.md\")"
+---
+# sdlc — Platform Baseline
+
+id: sdlc/policy/rules
+
+# sdlc rules — Policy
+
+## Rules
+
+Test first.
+
+## Rationale
+
+Because.
+
+## Scope
+
+All work.
+
+## Enforcement
+
+Review.
+
+## Exceptions
+
+None.
+
+---
+
+## Purpose
+
+The app.

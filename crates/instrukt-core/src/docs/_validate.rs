@@ -50,6 +50,23 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
     let scope = scope_of(request.repo_root, request.paths)?;
     let corpus = Corpus::load(request.repo_root, request.home)?;
     let config = Configuration::load(request.home, Some(request.repo_root))?;
+    // The flavor-role lookup is wired exactly when `todos` is on.
+    if request.wiring.flavor_roles.is_some() {
+        // The workflow comes from the domain `workflow.domain` names: the
+        // repository's own authored one, or one published on the computer.
+        let domain = config.workflow_domain()?;
+        let authored = request
+            .repo_root
+            .join("docs/global")
+            .join(domain.as_str())
+            .is_dir();
+        if !authored && !request.home.domain_dir(&domain).is_dir() {
+            return Err(DocsError::DomainUnpublished {
+                domain,
+                required_by: "`workflow.domain`".to_owned(),
+            });
+        }
+    }
     let agents: BTreeSet<String> = config
         .runtimes()
         .iter()
