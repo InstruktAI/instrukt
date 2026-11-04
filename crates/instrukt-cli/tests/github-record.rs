@@ -481,34 +481,84 @@ fn on_board(project: &Project, owner: &str, number: u64) -> BTreeSet<String> {
         .collect()
 }
 
-/// Board `<owner>/<number>` as the developer sees it: its fields with their
-/// options, in order, and each item's set fields, the item named by the
-/// issue it shows (`#<number>`, from `issues`).
-fn board(project: &Project, owner: &str, number: u64, issues: &[(u64, &str)]) -> String {
-    let fields: Vec<String> = project
+/// The record status the reflection wrote into issue `node`'s body: the
+/// value its `Status` entry carries.
+fn issue_status(project: &Project, node: &str) -> String {
+    let issue = project
         .github
-        .project_fields(owner, number)
+        .issues(REPOSITORY)
         .into_iter()
-        .map(|(name, options)| format!("field {name}: {}", options.join(", ")))
-        .collect();
-    let mut items: Vec<String> = project
-        .github
-        .project_items(owner, number)
+        .find(|issue| issue["node_id"] == node)
+        .unwrap();
+    let body = issue["body"].as_str().unwrap();
+    body.lines()
+        .find_map(|line| line.split_once("**Status:** "))
+        .map(|(_, status)| status.trim().to_owned())
+        .unwrap()
+}
+
+/// Checks board `<owner>/<number>` against what reflection wrote to the
+/// issues, given its fields before reflection (`before`): every item's
+/// field values are its issue's record status, under one field; the
+/// fields before survive in place, and the only field that gains options
+/// is that one, gaining new options that include every status its items
+/// carry that it lacked.
+fn assert_board_follows_issues(
+    project: &Project,
+    owner: &str,
+    number: u64,
+    before: &[(String, Vec<String>)],
+) {
+    let items = project.github.project_items(owner, number);
+    let mut owned_field = BTreeSet::new();
+    let mut carried = BTreeSet::new();
+    for (node, values) in &items {
+        assert_eq!(values.len(), 1, "item {node} carries exactly one field");
+        let (field, status) = &values[0];
+        assert_eq!(status, &issue_status(project, node), "item {node}");
+        owned_field.insert(field.clone());
+        carried.insert(status.clone());
+    }
+    let [owned_field] = owned_field
         .into_iter()
-        .map(|(node, values)| {
-            let issue = issues
-                .iter()
-                .find(|(_, n)| *n == node)
-                .map_or_else(|| format!("unknown {node}"), |(i, _)| format!("#{i}"));
-            let values: Vec<String> = values
-                .into_iter()
-                .map(|(field, option)| format!("{field}={option}"))
-                .collect();
-            format!("item {issue}: {}", values.join(", "))
-        })
-        .collect();
-    items.sort();
-    format!("{}\n{}", fields.join("\n"), items.join("\n"))
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+
+    let after = project.github.project_fields(owner, number);
+    // Fields the board had keep their place, names and options.
+    for ((name, options), (kept, now)) in before.iter().zip(&after) {
+        assert_eq!(kept, name);
+        assert_eq!(&now[..options.len()], options.as_slice());
+        if kept != &owned_field {
+            assert_eq!(now, options, "field {kept} is untouched");
+        }
+    }
+    // Nothing is added beside the owned field, made only when it lacked.
+    let had_owned = before.iter().any(|(name, _)| name == &owned_field);
+    assert_eq!(after.len(), before.len() + usize::from(!had_owned));
+    let (_, options) = after.iter().find(|(name, _)| name == &owned_field).unwrap();
+    let earlier = before
+        .iter()
+        .find(|(name, _)| name == &owned_field)
+        .map_or(0, |(_, options)| options.len());
+    let appended: BTreeSet<&String> = options[earlier..].iter().collect();
+    assert_eq!(appended.len(), options.len() - earlier, "no option twice");
+    for status in &carried {
+        assert!(
+            options.contains(status),
+            "the field offers carried status {status}"
+        );
+        if !options[..earlier].contains(status) {
+            assert!(appended.contains(status));
+        }
+    }
+    assert!(
+        appended
+            .iter()
+            .all(|option| !options[..earlier].contains(option)),
+        "appended options are new"
+    );
 }
 
 // spec: local/projects/instrukt/spec/feature/work/github-record UC-GR5
@@ -523,40 +573,24 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     github.add_project_field("acme", 7, "Status", Some(&["Todo", "Done"]));
     github.add_project_field("acme", 7, "Estimate", None);
     github.add_project_field("acme", 7, "Record status", Some(&["active", "blocked"]));
-    let before = github.project_fields("acme", 7);
+    let first_before = github.project_fields("acme", 7);
+    let second_before = github.project_fields("acme", 8);
     choose_board(&project, "acme/7");
 
     project.create("nested-lists", "feature", INTENT);
     project.create("parser-depth", "change", "Track list depth in the parser.");
     project.ok(["freeze", "parser-depth"]);
-    let (lists, parser) = (issue_node(&project, 1), issue_node(&project, 2));
-    let issues = [(1, lists.as_str()), (2, parser.as_str())];
-    let every_todo = BTreeSet::from([lists.clone(), parser.clone()]);
+    let every_todo = BTreeSet::from([issue_node(&project, 1), issue_node(&project, 2)]);
 
     assert_eq!(on_board(&project, "acme", 7), every_todo);
-    // The board's own fields survive as they were: none removed, renamed
-    // or reordered, every option kept in place; at most one field gains
-    // options, appended after its own.
-    let after = github.project_fields("acme", 7);
-    assert_eq!(after.len(), before.len());
-    let mut grown = 0;
-    for ((name, options), (kept, now)) in before.iter().zip(&after) {
-        assert_eq!(kept, name);
-        assert_eq!(&now[..options.len()], options.as_slice());
-        grown += usize::from(now.len() > options.len());
-    }
-    assert!(grown <= 1, "only the owned field gains options");
-    let first = board(&project, "acme", 7, &issues);
+    assert_board_follows_issues(&project, "acme", 7, &first_before);
 
     // The developer chooses another board; the next reflection puts the
-    // work there.
+    // work there, with its current status.
     choose_board(&project, "acme/8");
     project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
     project.ok(["refresh", "parser-depth"]);
 
     assert_eq!(on_board(&project, "acme", 8), every_todo);
-    insta::assert_snapshot!(
-        "boards",
-        format!("{first}\n---\n{}", board(&project, "acme", 8, &issues))
-    );
+    assert_board_follows_issues(&project, "acme", 8, &second_before);
 }
