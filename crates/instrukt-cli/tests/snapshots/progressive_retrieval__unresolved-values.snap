@@ -9,7 +9,7 @@ id: acme/procedure/fragile
 type: procedure
 domain: acme
 scope: global
-description: Asks a command that fails.
+description: Asks for values it cannot have.
 ---
 # Fragile — Procedure
 
@@ -17,7 +17,9 @@ description: Asks a command that fails.
 
 Before.
 
-> instrukt: read-time command `echo partial; exit 3` failed: exit status 3
+> instrukt: configured value `runtime.session_id` cannot be resolved: no configured runtime's session variable is set; `runtime.*` has no value here
+
+> instrukt: configured value `no.such.setting` cannot be resolved: `no.such.setting` does not exist: no `no` in the configuration
 
 After.
 

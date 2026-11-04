@@ -19,10 +19,11 @@ fn stdout(env: &TestEnv, assert: &Assert) -> String {
     String::from_utf8_lossy(&assert.get_output().stdout).replace(&base, "[TMP]")
 }
 
-/// Files a read-time command inside a todo's planned block creates in the
-/// reader's working directory when that block is read.
-const BUILD_RAN: &str = "build-it-ran";
-const OTHER_RAN: &str = "other-work-ran";
+/// Configured values inside the todos' planned blocks. `build-it`'s
+/// resolves (the GitHub API address); `other-work`'s names nothing configured, so
+/// resolving it would be refused with a notice and a failed read.
+const BUILD_VALUE: &str = "github.api_url";
+const OTHER_VALUE: &str = "no.such.setting";
 
 /// Project `demo` publishing domain `acme` with pending material of two
 /// todos, `build-it` and `other-work`: new snippets, a next version, a
@@ -36,8 +37,8 @@ fn published_demo(env: &TestEnv) -> Repo {
         &[],
         &format!(
             "The current text.\n\n<!-- planned:build-it -->\nAdded by build-it.\n\
-             <!-- @exec: touch {BUILD_RAN} -->\n<!-- /planned:build-it -->\n\
-             <!-- planned:other-work -->\nAdded by other-work.\n<!-- @exec: touch {OTHER_RAN} -->\n\
+             <!-- @config: {BUILD_VALUE} -->\n<!-- /planned:build-it -->\n\
+             <!-- planned:other-work -->\nAdded by other-work.\n<!-- @config: {OTHER_VALUE} -->\n\
              <!-- /planned:other-work -->\n\n<!-- planned-change:build-it -->\n- field: current\n\
              <!-- change:build-it -->\n- field: replaced by build-it\n\
              <!-- /planned-change:build-it -->\n"
@@ -119,9 +120,8 @@ fn a_reader_of_the_current_contract_is_told_pending_changes_exist_and_who_owns_t
         )
         .success();
     insta::assert_snapshot!("current-with-awareness", stdout(&env, &current));
-    // Hidden pending content never runs.
-    assert!(!demo.path().join(BUILD_RAN).exists());
-    assert!(!demo.path().join(OTHER_RAN).exists());
+    // Hidden pending content is never resolved: the read succeeds with no
+    // refusal notice (the snapshot).
 
     let withheld = env
         .run(demo.path(), ["docs", "get", "acme/spec/fresh"])
@@ -156,10 +156,8 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
         )
         .success();
     insta::assert_snapshot!("todo-lens", stdout(&env, &lens));
-    // The lens's own material is read, commands included; another todo's
-    // is not.
-    assert!(demo.path().join(BUILD_RAN).exists());
-    assert!(!demo.path().join(OTHER_RAN).exists());
+    // The lens's own material is read and its value resolved; another
+    // todo's is never resolved, so the read succeeds without its refusal.
 
     let not_mine = env
         .run(

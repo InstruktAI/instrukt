@@ -2,34 +2,27 @@
 //! publication's compilation.
 //!
 //! One rendering takes a text through, in order: the frontmatter strip, the
-//! `@include` expansion, the planned lens, the `@exec` read-time commands,
+//! `@include` expansion, the planned lens, the `@config` configured values,
 //! the inline references and the `Required reads` strip
 //! (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`, read
-//! pipeline). The frontmatter goes first so nothing in it ever runs; the
-//! lens goes before `@exec` so hidden content never runs.
+//! pipeline). The lens goes before `@config`, so hidden content is never
+//! resolved. Nothing runs a command: a leftover `@exec` stays inert text.
 //!
-//! The two callers differ in where fragments come from and in what a
-//! read-time command runs with and what its failure means; both are the
+//! The two callers differ in where fragments come from and in how a
+//! configured value resolves and what a refusal means; both are the
 //! [`RenderContext`].
 
-use std::io::Read as _;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
 use super::_corpus::{Corpus, Lens, Version, required_reads_section};
 use super::_markers::{self, Side};
 use super::_refs::{self, Reference};
 use super::_text::{self, Directive};
 use super::DocsError;
-use crate::config::RuntimeEntry;
+use crate::config::{Configuration, Env};
 use crate::home::Home;
 use crate::ids::ProjectSlug;
-
-/// How long one read-time command may run, at read and at publish.
-pub const EXEC_TIME_LIMIT: Duration = Duration::from_secs(10);
 
 /// Where `@include` fragments come from.
 #[derive(Debug, Clone, Copy)]
@@ -106,59 +99,83 @@ pub(super) fn read_confined(
         .map_err(|source| DocsError::Read { path, source })
 }
 
-/// What a read-time command's failure does to the rendering.
+/// When a configured value resolves, and what a refusal means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OnFailure {
-    /// The directive becomes an inline notice; the rendering reports it.
-    Notice,
-    /// The rendering fails.
-    Fail,
+enum Moment {
+    /// At read: the reader's session; a refusal becomes a notice.
+    Read,
+    /// At publication: no runtime session; a refusal fails the rendering.
+    Publish,
 }
 
-/// How `@exec` read-time commands run: in which directory, with which
-/// environment, and what a failure means. Every command runs through
-/// `/bin/sh -c`, is given [`EXEC_TIME_LIMIT`], and is never cached.
+/// How `@config` directives resolve: in-process through configuration's
+/// `get`, with its interpolation and its refusals. No shell, no
+/// subprocess, no working directory, nothing cached.
 #[derive(Debug, Clone)]
-pub struct ExecPolicy {
-    cwd: PathBuf,
-    removed_env: Vec<String>,
-    on_failure: OnFailure,
+pub struct Values<'a> {
+    configuration: &'a Configuration,
+    env: Env,
+    moment: Moment,
 }
 
-impl ExecPolicy {
-    /// At read: the caller's working directory and environment. A failure
-    /// or the time limit becomes an inline notice naming the command, and
-    /// the rendering reports it in [`Rendered::exec_failures`].
-    pub fn read(cwd: &Path) -> Self {
+impl<'a> Values<'a> {
+    /// At read: `configuration` in the reader's environment, so `runtime.*`
+    /// paths resolve for the reader's own session. A refusal replaces the
+    /// directive with a notice and is listed in
+    /// [`Rendered::config_refusals`].
+    pub fn read(configuration: &'a Configuration) -> Self {
         Self {
-            cwd: cwd.to_path_buf(),
-            removed_env: Vec::new(),
-            on_failure: OnFailure::Notice,
+            configuration,
+            env: Env::from_process(),
+            moment: Moment::Read,
         }
     }
 
-    /// At publish: the project root as working directory, and the
-    /// environment without the session variable of any runtime in the
-    /// mapping, so no session's value is compiled into shared text. A
-    /// failure or the time limit fails the rendering
-    /// ([`DocsError::ExecFailed`]).
-    pub fn publish(project_root: &Path, runtimes: &[RuntimeEntry]) -> Self {
+    /// At publication: the publishing machine's `configuration` with no
+    /// runtime session. A `runtime.*` path is refused (validation reports
+    /// it first), and so is any value interpolating a session; any refusal
+    /// fails the rendering ([`DocsError::ConfigUnresolved`]).
+    pub fn publish(configuration: &'a Configuration) -> Self {
+        let sessions: Vec<&str> = configuration
+            .runtimes()
+            .iter()
+            .map(|r| r.session_id_env.as_str())
+            .collect();
+        let env = Env::from_pairs(std::env::vars_os().filter_map(|(k, v)| {
+            let k = k.into_string().ok()?;
+            (!sessions.contains(&k.as_str())).then_some((k, v.into_string().ok()?))
+        }));
         Self {
-            cwd: project_root.to_path_buf(),
-            removed_env: runtimes.iter().map(|r| r.session_id_env.clone()).collect(),
-            on_failure: OnFailure::Fail,
+            configuration,
+            env,
+            moment: Moment::Publish,
         }
     }
+
+    /// The value at `path`, or why it cannot be resolved.
+    fn resolve(&self, path: &str) -> Result<String, String> {
+        if self.moment == Moment::Publish && is_runtime(path) {
+            return Err("publication has no runtime session".to_owned());
+        }
+        self.configuration
+            .get_str(path, &self.env)
+            .map_err(|err| err.to_string())
+    }
+}
+
+/// Whether `path` addresses the active runtime session.
+pub(super) fn is_runtime(path: &str) -> bool {
+    path == "runtime" || path.starts_with("runtime.")
 }
 
 /// Everything a rendering resolves outside the text itself.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
     /// Where `@include` fragments come from; also the home whose user
     /// directory `~/` references expand to.
     pub fragments: Fragments<'a>,
-    /// How `@exec` directives run.
-    pub exec: &'a ExecPolicy,
+    /// How `@config` directives resolve.
+    pub values: &'a Values<'a>,
     /// The root of the repository the text belongs to, against which
     /// `docs/…` references resolve; `None` for text read from the home,
     /// whose relative references stay as written.
@@ -167,35 +184,12 @@ pub struct RenderContext<'a> {
     pub project: Option<&'a ProjectSlug>,
 }
 
-/// Why a read-time command failed.
+/// One configured value that could not be resolved at read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecOutcome {
-    /// It exited with this non-zero status.
-    Exited(i32),
-    /// A signal ended it.
-    Signalled,
-    /// It was still running, or still holding its output open, when the
-    /// time limit passed; it was killed.
-    TimedOut,
-}
-
-impl std::fmt::Display for ExecOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExecOutcome::Exited(code) => write!(f, "exit status {code}"),
-            ExecOutcome::Signalled => f.write_str("ended by a signal"),
-            ExecOutcome::TimedOut => {
-                write!(f, "time limit of {} s reached", EXEC_TIME_LIMIT.as_secs())
-            }
-        }
-    }
-}
-
-/// One read-time command that failed during a rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecFailure {
-    pub command: String,
-    pub outcome: ExecOutcome,
+pub struct ConfigRefusal {
+    pub path: String,
+    /// Configuration's refusal, as it states it.
+    pub reason: String,
 }
 
 /// A rendered text.
@@ -206,9 +200,9 @@ pub struct Rendered {
     /// The references of its `## Required reads` section, read after the
     /// lens and before the section was stripped.
     pub required_reads: Vec<Reference>,
-    /// The read-time commands that failed, in order; always empty under
-    /// [`ExecPolicy::publish`], where a failure is an error.
-    pub exec_failures: Vec<ExecFailure>,
+    /// The configured values that could not be resolved, in order; always
+    /// empty under [`Values::publish`], where a refusal is an error.
+    pub config_refusals: Vec<ConfigRefusal>,
 }
 
 impl Version {
@@ -230,23 +224,23 @@ pub fn render(text: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rend
 fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
     let lensed = include_and_lens(body, lens, cx)?;
     let required_reads = section_reads(&lensed, cx);
-    let (executed, exec_failures) = run_execs(&lensed, cx.exec)?;
+    let (resolved, config_refusals) = resolve_values(&lensed, cx.values)?;
     // The section is stripped before references expand, which leaves the
     // text the same.
-    let stripped = strip_required_reads(&executed);
+    let stripped = strip_required_reads(&resolved);
     let text = expand_references(&stripped, cx);
     Ok(Rendered {
         text,
         required_reads,
-        exec_failures,
+        config_refusals,
     })
 }
 
 /// The required reads a rendering of `body` through `lens` reports, read
-/// without running any read-time command: fragments are included and the
+/// without resolving any configured value: fragments are included and the
 /// lens applied first, so a fragment's required reads count and hidden
-/// ones do not. A command's output is fenced and never adds a reference,
-/// so this is exactly [`Rendered::required_reads`].
+/// ones do not. A value is fenced and never adds a reference, so this is
+/// exactly [`Rendered::required_reads`].
 pub(super) fn dependency_reads(
     body: &str,
     lens: Lens<'_>,
@@ -295,206 +289,51 @@ fn expand_includes(body: &str, fragments: &Fragments<'_>) -> Result<String, Docs
     Ok(splice(body, replacements))
 }
 
-fn run_execs(body: &str, policy: &ExecPolicy) -> Result<(String, Vec<ExecFailure>), DocsError> {
+/// Every visible `@config` directive replaced by its value as a fenced
+/// block, or at read by a notice naming the path and why it was refused.
+/// An `@exec` directive is left exactly as written: it runs nothing.
+fn resolve_values(
+    body: &str,
+    values: &Values<'_>,
+) -> Result<(String, Vec<ConfigRefusal>), DocsError> {
     let mut replacements = Vec::new();
-    let mut failures = Vec::new();
+    let mut refusals = Vec::new();
     for directive in _text::directives(&_text::lines(body)) {
-        let Directive::Exec { command, span } = directive else {
+        let Directive::Config { path, span } = directive else {
             continue;
         };
-        match run_command(&command, policy)? {
-            Ok(stdout) => replacements.push((span, fenced(&stdout))),
-            Err((outcome, stderr)) if policy.on_failure == OnFailure::Fail => {
-                return Err(DocsError::ExecFailed {
-                    command,
-                    outcome,
-                    stderr,
-                });
+        match values.resolve(&path) {
+            Ok(value) => replacements.push((span, fenced(&value))),
+            Err(reason) if values.moment == Moment::Publish => {
+                return Err(DocsError::ConfigUnresolved { path, reason });
             }
-            Err((outcome, _)) => {
+            Err(reason) => {
                 replacements.push((
                     span,
-                    format!("> instrukt: read-time command `{command}` failed: {outcome}"),
+                    format!("> instrukt: configured value `{path}` cannot be resolved: {reason}"),
                 ));
-                failures.push(ExecFailure { command, outcome });
+                refusals.push(ConfigRefusal { path, reason });
             }
         }
     }
-    Ok((splice(body, replacements), failures))
+    tracing::trace!(
+        event = "docs_config_resolved",
+        resolved = replacements.len() - refusals.len(),
+        refused = refusals.len(),
+    );
+    Ok((splice(body, replacements), refusals))
 }
 
-/// Non-empty output as a fenced block whose fence is longer than any
-/// backtick run inside it; nothing for empty output.
-fn fenced(stdout: &str) -> String {
-    let output = stdout.trim_end_matches(['\n', '\r']);
+/// A value as a fenced block whose fence is longer than any backtick run
+/// inside it; nothing for an empty value.
+fn fenced(value: &str) -> String {
+    let output = value.trim_end_matches(['\n', '\r']);
     if output.trim().is_empty() {
         return String::new();
     }
     let longest = output.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest.max(2) + 1);
     format!("{fence}\n{output}\n{fence}")
-}
-
-/// Runs one command; its standard output, or why it failed with what it
-/// wrote to standard error. Spawning or waiting failing at all is an
-/// error.
-fn run_command(
-    command: &str,
-    policy: &ExecPolicy,
-) -> Result<Result<String, (ExecOutcome, String)>, DocsError> {
-    let started = Instant::now();
-    let deadline = started + EXEC_TIME_LIMIT;
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(&policy.cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for name in &policy.removed_env {
-        cmd.env_remove(name);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        // Its own process group, so the time limit ends everything it
-        // started.
-        cmd.process_group(0);
-    }
-    let exec_error = |source| DocsError::Exec {
-        command: command.to_owned(),
-        source,
-    };
-    let mut child = cmd.spawn().map_err(exec_error)?;
-    let (sender, outputs) = mpsc::channel();
-    for (stream, pipe) in [
-        (Stream::Stdout, child.stdout.take().map(PipeReader::Out)),
-        (Stream::Stderr, child.stderr.take().map(PipeReader::Err)),
-    ] {
-        let sender = sender.clone();
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let read = match pipe {
-                Some(mut pipe) => pipe.read_to_end(&mut bytes).map(|_| ()),
-                None => Ok(()),
-            };
-            // The receiver is gone only when the command was abandoned.
-            if sender.send((stream, read.map(|()| bytes))).is_err() {
-                tracing::trace!(event = "docs_exec_output_abandoned");
-            }
-        });
-    }
-    drop(sender);
-    let mut status = wait_until(&mut child, deadline).map_err(exec_error)?;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    // Both streams must close before the deadline too: a command that
-    // leaves something running with its output open has not finished.
-    let mut open = 2;
-    while status.is_some() && open > 0 {
-        let left = deadline.saturating_duration_since(Instant::now());
-        match outputs.recv_timeout(left) {
-            Ok((Stream::Stdout, read)) => stdout = read.map_err(exec_error)?,
-            Ok((Stream::Stderr, read)) => stderr = read.map_err(exec_error)?,
-            Err(mpsc::RecvTimeoutError::Timeout) => status = None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        open -= 1;
-    }
-    let outcome = match status {
-        None => {
-            kill_group(&mut child);
-            Err(ExecOutcome::TimedOut)
-        }
-        Some(status) if status.success() => Ok(String::from_utf8_lossy(&stdout).into_owned()),
-        Some(status) => Err(failed(status)),
-    };
-    tracing::debug!(
-        event = "docs_exec_completed",
-        command,
-        cwd = %policy.cwd.display(),
-        outcome = %match &outcome {
-            Ok(_) => "success".to_owned(),
-            Err(outcome) => outcome.to_string(),
-        },
-        stdout_bytes = stdout.len(),
-        stderr_bytes = stderr.len(),
-        duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    );
-    let stderr = String::from_utf8_lossy(&stderr).into_owned();
-    tracing::trace!(event = "docs_exec_stderr", command, stderr = %stderr);
-    Ok(outcome.map_err(|outcome| (outcome, stderr)))
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Stream {
-    Stdout,
-    Stderr,
-}
-
-enum PipeReader {
-    Out(std::process::ChildStdout),
-    Err(std::process::ChildStderr),
-}
-
-impl std::io::Read for PipeReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            PipeReader::Out(pipe) => pipe.read(buf),
-            PipeReader::Err(pipe) => pipe.read(buf),
-        }
-    }
-}
-
-/// Waits for `child` until `deadline`; `None` when it is still running
-/// then.
-fn wait_until(
-    child: &mut std::process::Child,
-    deadline: Instant,
-) -> std::io::Result<Option<ExitStatus>> {
-    let mut pause = Duration::from_millis(1);
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(None);
-        }
-        std::thread::sleep(pause.min(deadline - now));
-        pause = (pause * 2).min(Duration::from_millis(50));
-    }
-}
-
-/// Ends the command and everything it started, then reaps it.
-fn kill_group(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    {
-        let group = format!("-{}", child.id());
-        match Command::new("kill")
-            .args(["-KILL", "--", &group])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-        {
-            Ok(status) if status.success() => {}
-            Ok(status) => tracing::warn!(event = "docs_exec_kill_failed", group, %status),
-            Err(err) => tracing::warn!(event = "docs_exec_kill_failed", group, error = %err),
-        }
-    }
-    if let Err(err) = child.kill() {
-        tracing::debug!(event = "docs_exec_kill_skipped", error = %err);
-    }
-    if let Err(err) = child.wait() {
-        tracing::warn!(event = "docs_exec_reap_failed", error = %err);
-    }
-}
-
-fn failed(status: ExitStatus) -> ExecOutcome {
-    match status.code() {
-        Some(code) => ExecOutcome::Exited(code),
-        None => ExecOutcome::Signalled,
-    }
 }
 
 /// Every `@<path>.md` reference outside code and comments, as an absolute

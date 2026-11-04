@@ -1,0 +1,38 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &read).replace(&marker.display().to_string(), \"[MARKER]\")"
+---
+# instrukt docs get: local/projects/demo/procedure/later
+
+---
+id: local/projects/demo/procedure/later
+type: procedure
+domain: project
+scope: project
+description: Written after publication.
+---
+# Later — Procedure
+
+## Goal
+
+Before.
+
+<!-- @exec: touch [TMP]/command-ran -->
+
+After.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

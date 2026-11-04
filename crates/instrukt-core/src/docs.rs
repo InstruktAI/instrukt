@@ -34,30 +34,30 @@
 //!
 //! pub struct RenderContext<'a> {
 //!     pub fragments: Fragments<'a>,    // Home(&Home) | CorpusFirst(&Corpus)
-//!     pub exec: &'a ExecPolicy,        // ExecPolicy::read(cwd)
-//!                                      // | ExecPolicy::publish(root, runtimes)
+//!     pub values: &'a Values<'a>,      // Values::read(&configuration)
+//!                                      // | Values::publish(&configuration)
 //!     pub repo_root: Option<&'a Path>, // resolves `docs/…` references
 //!     pub project: Option<&'a ProjectSlug>,
 //! }
 //! pub struct Rendered {
 //!     pub text: String,
 //!     pub required_reads: Vec<Reference>,
-//!     pub exec_failures: Vec<ExecFailure>,
+//!     pub config_refusals: Vec<ConfigRefusal>,
 //! }
 //! ```
 //!
 //! A rendering strips frontmatter, expands `@include` fragments (a missing
-//! one leaves its directive), resolves planned blocks for the lens, runs
-//! each visible `@exec` (`/bin/sh -c`, [`EXEC_TIME_LIMIT`]), turns `@<path>.md`
-//! references into absolute paths and strips the `Required reads` section,
-//! returning its references. The pending gate and the companion are
+//! one leaves its directive), resolves planned blocks for the lens, replaces
+//! each visible `@config` directive by its configured value, turns
+//! `@<path>.md` references into absolute paths and strips the `Required
+//! reads` section, returning its references. It runs no command: a leftover
+//! `@exec` stays exactly as written. The pending gate and the companion are
 //! [`Snippet::view`]: render the version a `View::Visible` names.
-//! [`ExecPolicy::read`] runs in the caller's directory and environment and
-//! turns a failure into an inline notice listed in
-//! [`Rendered::exec_failures`]; [`ExecPolicy::publish`] runs in the project
-//! root without the runtime mapping's session variables and fails the
-//! rendering ([`DocsError::ExecFailed`]). [`Fragments::Home`] reads the
-//! home's published fragments; [`Fragments::CorpusFirst`] reads the
+//! [`Values::read`] resolves in the reader's session and turns a refusal
+//! into an inline notice listed in [`Rendered::config_refusals`];
+//! [`Values::publish`] resolves with no runtime session and fails the
+//! rendering ([`DocsError::ConfigUnresolved`]). [`Fragments::Home`] reads
+//! the home's published fragments; [`Fragments::CorpusFirst`] reads the
 //! corpus's own `docs/global/snippets/` first, then the home's.
 //!
 //! Retrieval reads what publication wrote into the home: [`index`] lists
@@ -67,6 +67,7 @@
 //! anything; publication's copying and indexing belong to publication.
 
 mod _corpus;
+mod _directives;
 mod _finding;
 mod _fold;
 mod _frontmatter;
@@ -92,10 +93,7 @@ pub use _frontmatter::{
 };
 pub use _identity::{BaselineOwner, DocDomain, Scope, Taxonomy};
 pub use _refs::{RefTarget, Reference};
-pub use _render::{
-    EXEC_TIME_LIMIT, ExecFailure, ExecOutcome, ExecPolicy, Fragments, RenderContext, Rendered,
-    render,
-};
+pub use _render::{ConfigRefusal, Fragments, RenderContext, Rendered, Values, render};
 pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
 pub use _text::Directive;
 pub use _transfer::{TransferOutcome, transfer_pending};
@@ -188,20 +186,8 @@ pub enum DocsError {
         path.display()
     )]
     OutsideHome { path: PathBuf },
-    #[error("cannot run the read-time command `{command}`: {source}")]
-    Exec {
-        command: String,
-        source: std::io::Error,
-    },
-    #[error(
-        "the read-time command `{command}` failed: {outcome}{}",
-        stderr_suffix(stderr)
-    )]
-    ExecFailed {
-        command: String,
-        outcome: ExecOutcome,
-        stderr: String,
-    },
+    #[error("the configured value `{path}` cannot be resolved: {reason}")]
+    ConfigUnresolved { path: String, reason: String },
     #[error(transparent)]
     Index(#[from] IndexError),
     #[error(transparent)]
@@ -243,13 +229,4 @@ pub enum DocsError {
 
 fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
-}
-
-fn stderr_suffix(stderr: &str) -> String {
-    let stderr = stderr.trim();
-    if stderr.is_empty() {
-        String::new()
-    } else {
-        format!(": {stderr}")
-    }
 }

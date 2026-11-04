@@ -118,7 +118,8 @@ fn valid_tree(repo: &Repo) {
             &snippet(
                 "spec",
                 "delivered_by: [build-thing]\n",
-                "\n<!-- @exec: instrukt config get project -->\n",
+                // Read in a session, never compiled: a runtime value is fine.
+                "\n<!-- @config: runtime.session_id -->\n",
             )
             .replace(
                 "# Sample — Spec\n",
@@ -297,6 +298,21 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         .write(
             "docs/third-party/tool/broken.md",
             "---\nvisibility: public\ntype: spec\n---\n\n# Broken\n\n## Sources\n\n- somewhere on the web\n",
+        )
+        // Directives
+        .write(
+            "docs/global/acme/concept/runs.md",
+            &snippet("concept", "", "\n<!-- @exec: touch ran -->\n"),
+        )
+        .write("docs/global/snippets/runs.md", "<!-- @exec: touch ran -->\n")
+        .write(
+            "docs/global/acme/principle/session.md",
+            &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),
+        )
+        .write(
+            "AGENTS.master.md",
+            "## Required reads\n\n@~/.instrukt/docs/acme/principle/session.md\n\n## Purpose\n\n\
+             <!-- @config: runtime.conversation -->\n\n<!-- @exec: touch ran -->\n",
         );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);

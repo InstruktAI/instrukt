@@ -388,18 +388,21 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
 
 // spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
-fn a_failing_publish_time_command_fails_the_sync_and_keeps_the_previous_publication() {
+fn an_unresolvable_configured_value_fails_the_sync_and_keeps_the_previous_publication() {
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
     let published = repo.head();
     sync(&env, &repo).success();
     let before = published_tree(&env);
     repo.write("docs/global/acme/policy/later.md", &policy("Later", ""))
-        .write("AGENTS.master.md", "## Purpose\n\n<!-- @exec: exit 3 -->\n");
-    repo.commit("failing command");
+        .write(
+            "AGENTS.master.md",
+            "## Purpose\n\n<!-- @config: no.such.setting -->\n",
+        );
+    repo.commit("unresolvable value");
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(text(&failed.get_output().stderr, &[]), @"instrukt: cannot compile AGENTS.master.md: the read-time command `exit 3` failed: exit status 3");
+    insta::assert_snapshot!(text(&failed.get_output().stderr, &[]));
     assert_eq!(published_tree(&env), before);
     assert!(!repo.path().join("AGENTS.md").exists());
     assert_eq!(published_commit(&env, "demo"), published);

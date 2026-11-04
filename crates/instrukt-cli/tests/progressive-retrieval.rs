@@ -522,46 +522,30 @@ runtimes:
     conversation: agent-cli history {runtime.session_id}
 ";
 
+/// A machine whose runtime mapping knows one agent CLI.
+fn machine(env: &TestEnv) {
+    std::fs::create_dir_all(env.instrukt_home()).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"), RUNTIMES).unwrap();
+}
+
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
 fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
     let mut env = TestEnv::new();
-    std::fs::create_dir_all(env.instrukt_home()).unwrap();
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"), RUNTIMES).unwrap();
-    // Read-time commands find `instrukt` where agents find it: on PATH.
-    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
-        .parent()
-        .unwrap()
-        .display()
-        .to_string();
-    env.set_env(
-        "PATH",
-        &format!("{bin}:{}", std::env::var("PATH").unwrap_or_default()),
-    );
+    machine(&env);
     let procedure = snippet(
         "procedure",
         "Report",
         "Reports into the session.",
         "",
         &[],
-        "Your session:\n\n<!-- @exec: instrukt config get runtime.session_id -->\n\nThen report.\n",
-    );
-    let failing = snippet(
-        "procedure",
-        "Fragile",
-        "Asks a command that fails.",
-        "",
-        &[],
-        "Before.\n\n<!-- @exec: echo partial; exit 3 -->\n\nAfter.\n",
+        "Your session:\n\n<!-- @config: runtime.session_id -->\n\nThen report.\n",
     );
     let demo = project(
         &env,
         "demo",
         &["acme"],
-        &[
-            ("docs/global/acme/procedure/report.md", procedure.clone()),
-            ("docs/global/acme/procedure/fragile.md", failing),
-        ],
+        &[("docs/global/acme/procedure/report.md", procedure.clone())],
     );
     sync(&env, &demo);
 
@@ -580,11 +564,98 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         std::fs::read_to_string(env.instrukt_home().join("docs/acme/procedure/report.md")).unwrap();
     assert_eq!(
         published, procedure,
-        "the published procedure keeps the command"
+        "the published procedure keeps the request"
     );
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+#[test]
+fn a_value_that_cannot_be_resolved_is_named_with_why_and_the_read_fails() {
+    let env = TestEnv::new();
+    machine(&env);
+    // Read outside every runtime session, and naming nothing configured.
+    let fragile = snippet(
+        "procedure",
+        "Fragile",
+        "Asks for values it cannot have.",
+        "",
+        &[],
+        "Before.\n\n<!-- @config: runtime.session_id -->\n\n<!-- @config: no.such.setting -->\n\n\
+         After.\n",
+    );
+    let demo = project(
+        &env,
+        "demo",
+        &["acme"],
+        &[("docs/global/acme/procedure/fragile.md", fragile)],
+    );
+    sync(&env, &demo);
 
     let failed = env
         .run(demo.path(), ["docs", "get", "acme/procedure/fragile"])
         .failure();
-    insta::assert_snapshot!("failed-command", stdout(&env, &failed));
+    insta::assert_snapshot!("unresolved-values", stdout(&env, &failed));
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+#[test]
+fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when_read() {
+    let env = TestEnv::new();
+    machine(&env);
+    let marker = env.path("command-ran");
+    let runs = |title: &str| {
+        snippet(
+            "procedure",
+            title,
+            "Tries to run a command.",
+            "",
+            &[],
+            &format!(
+                "Before.\n\n<!-- @exec: touch {} -->\n\nAfter.\n",
+                marker.display()
+            ),
+        )
+    };
+    let demo = project(
+        &env,
+        "demo",
+        &["acme"],
+        &[("docs/global/acme/procedure/runs.md", runs("Runs"))],
+    );
+    let refused = env.run(demo.path(), ["sync"]).failure();
+    insta::assert_snapshot!(
+        "command-refused-at-publication",
+        format!("{}{}", stdout(&env, &refused), stderr(&env, &refused))
+            .replace(&demo.head(), "[SHA]")
+    );
+    assert!(!env.instrukt_home().join("docs/acme").exists());
+
+    // A local snippet is read from the project's working tree, so a
+    // command written there after publication is still met at read.
+    demo.write(
+        "docs/global/acme/procedure/runs.md",
+        &snippet("procedure", "Runs", "Runs nothing.", "", &[], "Nothing.\n"),
+    )
+    .write(
+        "docs/local/procedure/later.md",
+        &snippet(
+            "procedure",
+            "Later",
+            "Written after publication.",
+            "",
+            &[],
+            "Nothing yet.\n",
+        ),
+    );
+    demo.commit("docs: no commands");
+    sync(&env, &demo);
+    demo.write("docs/local/procedure/later.md", &runs("Later"));
+    let read = env
+        .run(
+            demo.path(),
+            ["docs", "get", "local/projects/demo/procedure/later"],
+        )
+        .success();
+    assert!(!marker.exists(), "the leftover command never ran");
+    insta::assert_snapshot!("leftover-command-inert", stdout(&env, &read));
 }

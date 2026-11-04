@@ -61,6 +61,12 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
         agents: &agents,
     };
     let mut findings = check(&corpus, &env)?;
+    super::_directives::check(
+        &corpus,
+        request.repo_root,
+        &super::_render::Values::publish(&config),
+        &mut findings,
+    )?;
     for module in config.requires()? {
         if !config.module_enabled(module)? {
             findings.push(Finding::new(

@@ -42,10 +42,10 @@ enum DocsCommand {
     /// Read snippets through the read pipeline (phase 2).
     ///
     /// Prints each snippet's header and body, with fragments included,
-    /// read-time commands run in this directory and environment, and
-    /// references made absolute. Names the required reads it did not load;
-    /// `--closure` loads them with one procedure instead. Exits non-zero
-    /// when an id is unknown or a read-time command failed.
+    /// configured values resolved for this session, and references made
+    /// absolute. Names the required reads it did not load; `--closure`
+    /// loads them with one procedure instead. Exits non-zero when an id is
+    /// unknown or a configured value cannot be resolved.
     Get(GetArgs),
 }
 
@@ -142,7 +142,7 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         target: args.target.as_ref(),
     })?;
     ctx.out.text(&reading.text)?;
-    Ok(if reading.exec_failed {
+    Ok(if reading.unresolved {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
