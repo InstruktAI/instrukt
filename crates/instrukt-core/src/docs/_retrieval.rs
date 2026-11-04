@@ -765,9 +765,17 @@ impl<'i> Reader<'i> {
             project: None,
         };
         let rendered = _render::render(&text, Lens::Current, &cx)?;
+        // third-party-docs spec: `global` for the docs of the project that
+        // owns the `general` domain, `project` for any other project's.
+        let owns_general = self.index.snippets.iter().any(|e| {
+            e.scope == IndexScope::Global
+                && e.domain == "general"
+                && e.source_project == entry.source_project
+        });
         let block = [
             "---".to_owned(),
             format!("id: {}", entry.id.as_str()),
+            format!("scope: {}", if owns_general { "global" } else { "project" }),
             format!("description: {}", entry.description),
             "---".to_owned(),
             rendered.text.trim_matches('\n').to_owned(),
