@@ -293,3 +293,51 @@ fn publishing_a_project_whose_workflow_domain_is_unpublished_names_it() {
     let refused = env.run(app.path(), ["sync"]).failure();
     insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `flows` is not published on this computer, but `workflow.domain` needs it; adopt a docs repository that publishes it");
 }
+
+// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+#[test]
+fn publishing_reads_the_todos_switch_from_committed_main_not_the_working_tree() {
+    let env = machine();
+    let app = workflow_consumer(&env);
+    app.write(
+        "instrukt.yaml",
+        &layer("app", &[], "workflow: {domain: flows}\n"),
+    );
+
+    let refused = env.run(app.path(), ["sync"]).failure();
+    insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `flows` is not published on this computer, but `workflow.domain` needs it; adopt a docs repository that publishes it");
+}
+
+/// A project whose local concept requires a snippet of `flows`, which no
+/// repository on the computer publishes.
+fn dependent_consumer(env: &TestEnv) -> Repo {
+    let app = env.git_repo("app");
+    app.write("instrukt.yaml", &layer("app", &[], "")).write(
+        "docs/local/concept/flow.md",
+        "---\ndescription: How work flows here.\n---\n\n# Flow — Concept\n\n\
+         ## Required reads\n\n- @~/.instrukt/docs/flows/policy/rules.md\n\n\
+         ## What\n\nOur flow.\n\n## Why\n\nTo ship.\n",
+    );
+    app.commit("app");
+    app
+}
+
+// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+#[test]
+fn validating_a_snippet_that_requires_an_unpublished_domain_names_it() {
+    let env = machine();
+    let app = dependent_consumer(&env);
+
+    let refused = env.run(app.path(), ["docs", "validate"]).failure();
+    insta::assert_snapshot!(stdout(&env, &refused), @"docs/local/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
+}
+
+// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+#[test]
+fn publishing_a_snippet_that_requires_an_unpublished_domain_names_it() {
+    let env = machine();
+    let app = dependent_consumer(&env);
+
+    let refused = env.run(app.path(), ["sync"]).failure();
+    insta::assert_snapshot!(stdout(&env, &refused), @"docs/local/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
+}

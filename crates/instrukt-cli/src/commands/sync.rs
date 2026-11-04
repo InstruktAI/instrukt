@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use instrukt_core::publication::{self, Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest};
 
 use crate::context::Ctx;
-use crate::wiring::core_wiring;
+use crate::wiring::publication_wiring;
 
 #[derive(Debug, clap::Args)]
 pub struct SyncArgs {
@@ -23,7 +23,7 @@ pub struct SyncArgs {
 /// validation findings are printed one per line, the leftovers likewise,
 /// then the refusal or failure is reported on stderr.
 pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let wiring = core_wiring(ctx)?;
+    let wiring = publication_wiring(ctx)?;
     let synced = publication::sync(&SyncRequest {
         home: &ctx.home,
         cwd: &ctx.cwd,

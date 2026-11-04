@@ -88,6 +88,9 @@ codes! {
     RequiredReadsLevel => "reference-required-reads-not-h2",
     ReferenceForm => "reference-form-invalid",
     ReferenceUnresolved => "reference-unresolved",
+    /// A reference into a published domain that no adopted docs
+    /// repository publishes on this computer.
+    ReferenceDomainUnpublished => "reference-domain-unpublished",
     /// A published snippet referencing local material.
     ReferenceLocalFromPublished => "reference-local-from-published",
 

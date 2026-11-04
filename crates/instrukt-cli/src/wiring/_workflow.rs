@@ -18,7 +18,14 @@ pub(super) fn flavor_roles(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn FlavorRol
     if !todos_enabled(&ctx.home, &ctx.cwd)? {
         return Ok(None);
     }
-    Ok(Some(Arc::new(SelectedFlavorRoles::new(ctx.home.clone()))))
+    Ok(Some(available_flavor_roles(ctx)))
+}
+
+/// Core's flavor-role lookup whatever the caller's working-tree switch:
+/// publication applies it only when the committed configuration it
+/// publishes switches `todos` on.
+pub(super) fn available_flavor_roles(ctx: &Ctx) -> Arc<dyn FlavorRoles> {
+    Arc::new(SelectedFlavorRoles::new(ctx.home.clone()))
 }
 
 /// The runner-declared workflow interface, reading work's evidence. The

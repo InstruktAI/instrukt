@@ -40,6 +40,18 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     })
 }
 
+/// The optional-module implementations publication may apply: those of
+/// `todos` wired whatever the caller's working tree switches, because
+/// publication decides from the committed configuration it publishes.
+pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
+    Ok(CoreWiring {
+        todo_existence: _work::available_todo_existence(ctx)?,
+        flavor_roles: Some(_workflow::available_flavor_roles(ctx)),
+        flavor_schema: Some(Arc::new(WorkflowSchema)),
+        graph_generation: _blueprint::graph_generation(ctx)?,
+    })
+}
+
 /// The work and workflow implementations the runner dispatches todos
 /// through. The runner decides per project whether `modules.todos` is on;
 /// an empty slot means the implementation is not available in this build.
