@@ -12,7 +12,8 @@ CLI that makes documentation the way agents are instructed and, when switched
 on, runs the work those docs describe. It has no daemon and no API. Every
 behavior is a command that starts, does its work against files, git, GitHub or
 a runtime, and ends; whatever must happen later is triggered by git hooks, the
-operating system's scheduler, or an event delivered to a command.
+operating system's scheduler, or an event delivered to a command. Doctrine
+comes from adopted docs repositories, not from instrukt.
 
 The modules and their bounded contexts are listed in
 `local/projects/instrukt/spec/domain/context-map`; each context's model is its

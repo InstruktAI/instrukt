@@ -9,6 +9,18 @@ The repository is documentation-first. Start with
 `docs/local/spec/domain/context-map.md` and
 `docs/local/design/architecture/overview.md`.
 
+## Doctrine comes from a docs repository
+
+instrukt ships no doctrine of its own. The principles, policies, procedures and
+workflow definitions agents follow come from a docs repository: an ordinary
+project that declares the domains it `publishes` and is adopted with
+`instrukt init`. Its sync publishes those domains into `~/.instrukt/docs/` on
+the computer, and every project there reads them. Our docs repository publishes
+`general` and `sdlc`; fork it, change it or bring your own
+(`docs/local/spec/feature/publication/docs-repositories.md`). Until it is split
+out, this repository is that docs repository: its `docs/global/` is the
+doctrine, and its `instrukt.yaml` declares `publishes`.
+
 ## Development
 
 One Cargo workspace, one binary `instrukt` (`crates/instrukt-cli`), with

@@ -189,6 +189,7 @@ runs it.
 - **project-publication** — `docs/local/spec/feature/publication/project-publication.md` — a project's committed docs reach the agents on this computer, side by side with other projects' docs, without either taking the other's.
 - **agent-entrypoints** — `docs/local/spec/feature/publication/agent-entrypoints.md` — project instructions compile into `AGENTS.md`, and the `general` owner gives every supported agent CLI its global baseline.
 - **eval-fingerprint** — `docs/local/spec/feature/publication/eval-fingerprint.md` — every publishing sync leaves a digest of the evaluated doctrine for stamps to carry.
+- **docs-repositories** — `docs/local/spec/feature/publication/docs-repositories.md` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
 
 ### Governing designs and decisions (index)
 
