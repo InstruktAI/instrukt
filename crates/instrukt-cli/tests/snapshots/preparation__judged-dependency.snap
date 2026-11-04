@@ -6,7 +6,7 @@ todo: render-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#10)
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update render-lists --unclaim
@@ -18,7 +18,7 @@ todo: render-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#10)
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update render-lists --unclaim
@@ -30,10 +30,10 @@ todo: render-lists (demo)
 flow: prepare
 claim: held by this session
 state: drift_analysis
-transition: plan_review -> drift_analysis (#9)
-action: analyze-plan-drift
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
 responsible: drift-analyzer (crew/procedure/drift-analyze)
 command: instrukt sessions run --procedure crew/procedure/drift-analyze --args render-lists --todo render-lists --brief -
 effects: none
 instructions:
-Judge the drift of render-lists: plan pending.
+Judge the drift of render-lists: PRD fresh, plan pending.

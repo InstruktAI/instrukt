@@ -78,7 +78,7 @@ todo: nested-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#10)
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update nested-lists --unclaim
@@ -102,7 +102,7 @@ todo: nested-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#10)
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update nested-lists --unclaim
@@ -126,7 +126,7 @@ todo: nested-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#10)
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update nested-lists --unclaim
@@ -150,7 +150,7 @@ todo: nested-lists (demo)
 flow: prepare
 claim: held by this session
 state: prepared
-transition: plan_review -> prepared (#10)
+transition: plan_review -> prepared (#9)
 action: release-prepared
 responsible: prepare-lead (orchestrator step)
 command: instrukt todo update nested-lists --unclaim
