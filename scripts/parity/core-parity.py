@@ -5,7 +5,7 @@ A one-off acceptance run (docs/local/policy/testing.md), not a CI test.
 
     python3 -I scripts/parity/core-parity.py \
         --predecessor /path/to/TeleClaude --instrukt target/debug/instrukt \
-        --out /some/dir/outside/the/repository [--keep]
+        --out /some/new/dir/outside/the/repository [--keep]
 
 What it does:
 
@@ -332,28 +332,40 @@ def main() -> int:
     args = ap.parse_args()
     pred = args.predecessor.resolve()
     binary = args.instrukt.resolve()
-    if args.out.is_symlink():
-        raise SystemExit(f"refusing the output {args.out}: it is a symbolic link")
-    out = args.out.resolve()
+    if os.path.lexists(args.out):
+        raise SystemExit(f"refusing the output {args.out}: it must not exist yet")
+    parent = args.out.parent.resolve()
+    out = parent / args.out.name
     roots = forbidden_roots(pred)
     # Every destination is checked before anything is written.
     refuse_inside(out, roots, "output")
     refuse_inside(Path(tempfile.gettempdir()), roots, "temporary directory")
-    # The output must be new or empty: every file the run writes is then one
-    # it creates itself, so no link already inside the output can redirect a
-    # write into a forbidden tree.
-    if out.exists() and (not out.is_dir() or any(out.iterdir())):
-        raise SystemExit(f"refusing the output {out}: it must be a new or empty directory")
-    out.mkdir(parents=True, exist_ok=True)
+    # The run writes only into a private staging directory (mode 0700, created
+    # by mkdtemp beside the output, so on the same file system), which no other
+    # user can plant links in. Only at the end is it renamed to the output; a
+    # rename never follows a link at its destination, and it fails rather than
+    # merging into anything that appeared there meanwhile.
+    staging = Path(tempfile.mkdtemp(prefix=".parity-staging-", dir=parent))
     work = Path(tempfile.mkdtemp(prefix="instrukt-parity-")).resolve()
     for what, path in (("work directory", work), ("temporary HOME", work / "home"), ("clone", work / "teleclaude")):
         try:
             refuse_inside(path, roots, what)
         except SystemExit:
             work.rmdir()
+            staging.rmdir()
             raise
     try:
-        return parity(pred, binary, out, work)
+        try:
+            code = parity(pred, binary, staging, work)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        try:
+            os.rename(staging, out)
+        except OSError as err:
+            raise SystemExit(f"refusing to place the output at {out}: {err}; the results stay in {staging}")
+        print(f"results in {out}")
+        return code
     finally:
         if args.keep:
             print(f"kept {work}", file=sys.stderr)
