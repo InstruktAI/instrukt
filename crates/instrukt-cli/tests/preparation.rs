@@ -218,10 +218,29 @@ fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
         artifact_names::PRD,
         "Lists parse with depth.",
     );
+    // The feature is prepared through its intent's review and approval,
+    // then its plan's review.
     let slug = "render-lists";
     crew.project
-        .create(slug, "change", "Render nested lists with their depth.");
+        .create(slug, "feature", "Render nested lists with their depth.");
     crew.todo(["prepare", slug]);
+    crew.write(
+        slug,
+        artifact_names::PRD,
+        "Rendered lists keep their depth.",
+    );
+    crew.write(slug, artifact_names::PRD_REVIEW_FINDINGS, "No findings.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    crew.stamp(
+        slug,
+        &[
+            "--prd-approved",
+            "--by",
+            "human",
+            "--session",
+            "agent:lead-1",
+        ],
+    );
     crew.write(
         slug,
         artifact_names::IMPLEMENTATION_PLAN,
@@ -231,7 +250,7 @@ fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
     crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
     let mut steps = vec![crew.next("prepare", slug)];
 
-    // The change comes to depend on `parse-lists`; drift analysis assesses
+    // The feature comes to depend on `parse-lists`; drift analysis assesses
     // the plan against that prerequisite's PRD.
     crew.todo(["update", slug, "--after", "parse-lists"]);
     crew.stamp(
