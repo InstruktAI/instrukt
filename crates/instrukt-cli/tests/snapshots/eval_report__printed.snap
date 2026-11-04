@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/eval-report.rs
+expression: printed
+---
+demo: 2 evaluation windows
+report: [TMP]/demo/scratchpad/eval/index.html

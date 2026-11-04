@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/eval-report.rs
+expression: printed
+---
+no recorded work: there is nothing to compare yet
+report: [TMP]/elsewhere/report.html

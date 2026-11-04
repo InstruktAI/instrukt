@@ -43,6 +43,42 @@ impl EvalFingerprint {
     pub fn for_commit(home: &Home, commit: &CommitSha) -> Result<Option<Self>, PublicationError> {
         read(record_path(home, commit))
     }
+
+    /// Every per-commit record: the fingerprint each published commit was
+    /// recorded with, in commit order of their names. None before the first
+    /// publishing sync.
+    pub fn recorded(home: &Home) -> Result<Vec<Self>, PublicationError> {
+        let dir = home.eval_fingerprint_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => return Err(PublicationError::Io { path: dir, source }),
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| PublicationError::Io {
+                path: dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let is_commit = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".yaml"))
+                .is_some_and(|stem| CommitSha::parse(stem).is_ok());
+            if is_commit {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        let mut out = Vec::new();
+        for path in paths {
+            if let Some(record) = read(path)? {
+                out.push(record);
+            }
+        }
+        Ok(out)
+    }
 }
 
 fn record_path(home: &Home, commit: &CommitSha) -> PathBuf {
