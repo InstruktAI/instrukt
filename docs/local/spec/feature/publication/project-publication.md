@@ -62,8 +62,8 @@ changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
 - Snippets are published raw: their `@config` directives resolve when they are
   read (`local/projects/instrukt/spec/domain/docs`). Compiled outputs — bundles,
   `AGENTS.md` files and global agent entrypoints — resolve `@config` at
-  publication, in-process against the publishing machine's configuration with
-  no runtime session, so no compiled output captures a session. A `runtime.*`
+  publication, in-process against the publishing project's effective
+  configuration with no runtime session, so no compiled output captures a session. A `runtime.*`
   path in a compiled output is a validation finding, since publication has no
   session to resolve it against; any other path that cannot be resolved fails
   the sync. Publication runs no command: an `@exec` directive in a published
