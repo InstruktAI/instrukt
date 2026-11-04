@@ -21,6 +21,15 @@ pub(super) fn todo_existence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn TodoExi
     if !enabled(ctx)? {
         return Ok(None);
     }
+    available_todo_existence(ctx)
+}
+
+/// Core's todo-existence question whatever the caller's working-tree
+/// switch: publication applies it only when the committed configuration
+/// it publishes switches `todos` on.
+pub(super) fn available_todo_existence(
+    ctx: &Ctx,
+) -> anyhow::Result<Option<Arc<dyn TodoExistence>>> {
     let Some(root) = git::worktree_root(&ctx.cwd)? else {
         return Ok(None);
     };

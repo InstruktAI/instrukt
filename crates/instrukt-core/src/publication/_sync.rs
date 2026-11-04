@@ -48,8 +48,10 @@ pub struct SyncRequest<'a> {
     pub cwd: &'a Path,
     /// Republish even when main equals the published commit.
     pub force: bool,
-    /// The optional modules wired for this invocation (validation reads
-    /// them).
+    /// The optional-module implementations available to this invocation.
+    /// Publication applies those the committed configuration it publishes
+    /// switches on (validation reads them); the caller's working tree
+    /// decides nothing.
     pub wiring: &'a CoreWiring,
     /// The invocation's clock reading: when this publication is recorded.
     pub now: jiff::Timestamp,
@@ -236,11 +238,18 @@ fn publish(
         commit: commit.clone(),
         refusal,
     };
+    // Whether `todos` is on is the committed configuration's to say.
+    let todos = Configuration::load(home, Some(checkout.path()))?.module_enabled(Module::Todos)?;
+    let wiring = CoreWiring {
+        todo_existence: request.wiring.todo_existence.clone().filter(|_| todos),
+        flavor_roles: request.wiring.flavor_roles.clone().filter(|_| todos),
+        ..request.wiring.clone()
+    };
     let findings = docs::validate(&ValidationRequest {
         repo_root: checkout.path(),
         home,
         paths: &[],
-        wiring: request.wiring,
+        wiring: &wiring,
     })?;
     if !findings.is_empty() {
         return Ok(refused(Refusal::Findings(findings)));

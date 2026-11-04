@@ -50,7 +50,9 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
     let scope = scope_of(request.repo_root, request.paths)?;
     let corpus = Corpus::load(request.repo_root, request.home)?;
     let config = Configuration::load(request.home, Some(request.repo_root))?;
-    // The flavor-role lookup is wired exactly when `todos` is on.
+    // The flavor-role lookup is wired exactly when the configuration being
+    // validated switches `todos` on: the working tree's for `docs
+    // validate`, the committed one's at publication.
     if request.wiring.flavor_roles.is_some() {
         // The workflow comes from the domain `workflow.domain` names: the
         // repository's own authored one, or one published on the computer.
@@ -420,16 +422,39 @@ fn check_target(
                 Some(raw.to_owned()),
             );
         }
-        Some(target) if !corpus.resolves(target) => {
-            push(
+        Some(target) if !corpus.resolves(target) => match unpublished_domain(corpus, target) {
+            Some(domain) => push(
+                out,
+                path,
+                FindingCode::ReferenceDomainUnpublished,
+                Some(format!(
+                    "{raw}: domain `{domain}` is not published on this computer; adopt a docs repository that publishes it"
+                )),
+            ),
+            None => push(
                 out,
                 path,
                 FindingCode::ReferenceUnresolved,
                 Some(raw.to_owned()),
-            );
-        }
+            ),
+        },
         Some(_) => {}
     }
+}
+
+/// The domain of a reference into the published home that neither this
+/// repository nor any adopted docs repository on the computer publishes.
+fn unpublished_domain(corpus: &Corpus, target: &RefTarget) -> Option<DomainName> {
+    let domain = match target {
+        RefTarget::Bundle(domain) => domain.clone(),
+        RefTarget::Snippet(id) if !target.is_local() => {
+            DomainName::parse(id.as_str().split('/').next()?).ok()?
+        }
+        _ => return None,
+    };
+    let published =
+        corpus.published_domains().contains(&domain) || corpus.home().domain_dir(&domain).is_dir();
+    (!published).then_some(domain)
 }
 
 /// A documentation-service identifier: `/<org>/<project>`.
