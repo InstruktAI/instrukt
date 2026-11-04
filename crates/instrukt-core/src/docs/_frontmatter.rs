@@ -304,8 +304,14 @@ fn yaml_text(value: &Value) -> String {
 pub(super) type Issue = (FindingCode, Option<String>);
 
 /// The frontmatter findings of a snippet of `taxonomy` (`None` when the
-/// path yields no taxonomy) whose file name stem is `stem`.
-pub(super) fn check(raw: &Mapping, taxonomy: Option<Taxonomy>, stem: &str) -> Vec<Issue> {
+/// path yields no taxonomy) whose file name stem is `stem`. `yaml` is the
+/// frontmatter as written, which `raw` was parsed from.
+pub(super) fn check(
+    raw: &Mapping,
+    yaml: Option<&str>,
+    taxonomy: Option<Taxonomy>,
+    stem: &str,
+) -> Vec<Issue> {
     let mut issues = Vec::new();
     let authored: Vec<&str> = CLASSIFICATION_FIELDS
         .into_iter()
@@ -343,7 +349,7 @@ pub(super) fn check(raw: &Mapping, taxonomy: Option<Taxonomy>, stem: &str) -> Ve
         None => {}
     }
     if taxonomy == Some(Taxonomy::Adr) {
-        check_adr(raw, stem, &mut issues);
+        check_adr(raw, yaml, stem, &mut issues);
     }
     issues
 }
@@ -439,19 +445,46 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
     }
 }
 
-fn check_adr(raw: &Mapping, stem: &str, issues: &mut Vec<Issue>) {
+fn check_adr(raw: &Mapping, yaml: Option<&str>, stem: &str, issues: &mut Vec<Issue>) {
     let date = get(raw, "date");
     if !date.and_then(Value::as_str).is_some_and(is_iso_date) {
         issues.push((FindingCode::AdrDateInvalid, date.map(yaml_text)));
     }
     let number = get(raw, "number");
     let prefix: String = stem.chars().take_while(char::is_ascii_digit).collect();
-    let matches_prefix = number
-        .and_then(Value::as_u64)
-        .is_some_and(|n| prefix.parse::<u64>().is_ok_and(|p| p == n));
+    let matches_prefix =
+        adr_number(number, yaml).is_some_and(|n| prefix.parse::<u64>().is_ok_and(|p| p == n));
     if !matches_prefix {
         issues.push((FindingCode::AdrNumberInvalid, number.map(yaml_text)));
     }
+}
+
+/// An `adr`'s `number`: an unquoted integer. Written with leading zeros
+/// (`0049`, as its file name prefix is) it is read as that decimal integer,
+/// never as YAML 1.1 octal; a quoted value is a string, not a number.
+fn adr_number(number: Option<&Value>, yaml: Option<&str>) -> Option<u64> {
+    let written = yaml.and_then(|yaml| top_level_value(yaml, "number"));
+    match written {
+        Some(text) if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit()) => {
+            text.parse().ok()
+        }
+        Some(text) if text.starts_with(['\'', '"']) => None,
+        _ => number.and_then(Value::as_u64),
+    }
+}
+
+/// The value text of a top-level `key:` line of `yaml`, as written, without
+/// a trailing comment.
+fn top_level_value<'y>(yaml: &'y str, key: &str) -> Option<&'y str> {
+    yaml.lines().find_map(|line| {
+        let rest = line.strip_prefix(key)?.trim_start_matches([' ', '\t']);
+        let value = rest.strip_prefix(':')?;
+        let value = match value.find(" #") {
+            Some(at) => &value[..at],
+            None => value,
+        };
+        Some(value.trim())
+    })
 }
 
 fn is_iso_date(value: &str) -> bool {
@@ -472,7 +505,7 @@ mod tests {
     }
 
     fn codes(yaml: &str, taxonomy: Taxonomy) -> Vec<FindingCode> {
-        check(&map(yaml), Some(taxonomy), "x")
+        check(&map(yaml), Some(yaml), Some(taxonomy), "x")
             .into_iter()
             .map(|(code, _)| code)
             .collect()
@@ -551,16 +584,68 @@ mod tests {
         );
     }
 
+    fn adr_number_codes(number: &str, stem: &str) -> Vec<FindingCode> {
+        check(
+            &map(&format!(
+                "description: d\ndate: 2026-01-02\nnumber: {number}\n"
+            )),
+            Some(&format!(
+                "description: d\ndate: 2026-01-02\nnumber: {number}\n"
+            )),
+            Some(Taxonomy::Adr),
+            stem,
+        )
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect()
+    }
+
+    #[test]
+    fn an_adr_number_with_leading_zeros_is_read_as_that_integer() {
+        assert!(adr_number_codes("0049", "0049-choice").is_empty());
+    }
+
+    #[test]
+    fn an_adr_number_with_leading_zeros_is_never_read_as_octal() {
+        assert!(adr_number_codes("0010", "0010-choice").is_empty());
+    }
+
+    #[test]
+    fn an_adr_number_with_leading_zeros_still_has_to_match_its_prefix() {
+        assert_eq!(
+            adr_number_codes("0049", "0048-choice"),
+            [FindingCode::AdrNumberInvalid]
+        );
+    }
+
+    #[test]
+    fn a_quoted_adr_number_is_refused() {
+        assert_eq!(
+            adr_number_codes("'1'", "0001-choice"),
+            [FindingCode::AdrNumberInvalid]
+        );
+    }
+
+    #[test]
+    fn a_quoted_adr_number_with_leading_zeros_is_refused() {
+        assert_eq!(
+            adr_number_codes("\"0049\"", "0049-choice"),
+            [FindingCode::AdrNumberInvalid]
+        );
+    }
+
     #[test]
     fn adr_needs_a_date_and_a_number_matching_its_prefix() {
         let ok = check(
             &map("description: d\ndate: 2026-01-02\nnumber: 7\n"),
+            Some("description: d\ndate: 2026-01-02\nnumber: 7\n"),
             Some(Taxonomy::Adr),
             "0007-x",
         );
         assert!(ok.is_empty(), "{ok:?}");
         let bad = check(
             &map("description: d\nnumber: 8\n"),
+            Some("description: d\nnumber: 8\n"),
             Some(Taxonomy::Adr),
             "0007-x",
         );

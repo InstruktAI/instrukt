@@ -221,9 +221,12 @@ fn check_version(
             .file_stem()
             .map(|s| s.to_string_lossy())
             .unwrap_or_default();
-        for (code, value) in
-            _frontmatter::check(&version.frontmatter().raw, Some(class.taxonomy), &stem)
-        {
+        for (code, value) in _frontmatter::check(
+            &version.frontmatter().raw,
+            version.frontmatter_text(),
+            Some(class.taxonomy),
+            &stem,
+        ) {
             push(out, path, code, value);
         }
         if let Some(dispatch) = &version.frontmatter().entry.dispatch {
@@ -436,6 +439,14 @@ fn link_target(source: &str) -> Option<&str> {
     valid.then_some(target)
 }
 
+/// The target of an autolink `<target>` making up the whole entry.
+fn autolink_target(source: &str) -> Option<&str> {
+    let target = source.strip_prefix('<')?.strip_suffix('>')?;
+    let valid =
+        !target.is_empty() && !target.contains(|c: char| c == '<' || c == '>' || c.is_whitespace());
+    valid.then_some(target)
+}
+
 fn check_third_party(version: &Version, sources: Vec<String>, out: &mut Vec<Finding>) {
     let path = version.path();
     if !version.frontmatter_valid() {
@@ -459,7 +470,9 @@ fn check_third_party(version: &Version, sources: Vec<String>, out: &mut Vec<Find
         }
     }
     for source in sources {
-        let url = link_target(&source).unwrap_or(&source);
+        let url = link_target(&source)
+            .or_else(|| autolink_target(&source))
+            .unwrap_or(&source);
         let web = url.starts_with("https://") || url.starts_with("http://");
         if !web && !is_doc_service_id(&source) {
             push(out, path, FindingCode::SourceInvalid, Some(source.clone()));
@@ -1318,6 +1331,36 @@ mod tests {
         )]);
         let found = run(&c, &CoreWiring::default(), &[]);
         assert_eq!(codes(&found), [FindingCode::ThirdPartyFieldNotAllowed; 3]);
+    }
+
+    fn source_findings(entry: &str) -> Vec<FindingCode> {
+        let doc = format!("---\ndescription: d\n---\n# Tool\n\n## Sources\n\n- {entry}\n");
+        codes(&run(
+            &corpus(&[("docs/third-party/tool/usage.md", &doc)]),
+            &CoreWiring::default(),
+            &[],
+        ))
+    }
+
+    #[test]
+    fn a_source_written_as_an_autolink_is_a_web_link() {
+        assert!(source_findings("<https://tool.example/docs>").is_empty());
+    }
+
+    #[test]
+    fn an_autolink_to_something_other_than_the_web_is_refused() {
+        assert_eq!(
+            source_findings("<mailto:someone@tool.example>"),
+            [FindingCode::SourceInvalid]
+        );
+    }
+
+    #[test]
+    fn a_source_that_is_not_a_link_is_refused() {
+        assert_eq!(
+            source_findings("somewhere on the web"),
+            [FindingCode::SourceInvalid]
+        );
     }
 
     #[test]
