@@ -539,7 +539,9 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         "Reports into the session.",
         "",
         &[],
-        "Your session:\n\n<!-- @config: runtime.session_id -->\n\nThen report.\n",
+        // A structured value prints as YAML, as `instrukt config get` does.
+        "Your session:\n\n<!-- @config: runtime.session_id -->\n\nThe modules:\n\n\
+         <!-- @config: modules -->\n\nThen report.\n",
     );
     let demo = project(
         &env,

@@ -20,7 +20,7 @@ use super::_markers::{self, Side};
 use super::_refs::{self, Reference};
 use super::_text::{self, Directive};
 use super::DocsError;
-use crate::config::{Configuration, Env};
+use crate::config::{Configuration, Env, render_yaml};
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
@@ -157,9 +157,13 @@ impl<'a> Values<'a> {
         if self.moment == Moment::Publish && is_runtime(path) {
             return Err("publication has no runtime session".to_owned());
         }
-        self.configuration
-            .get_str(path, &self.env)
-            .map_err(|err| err.to_string())
+        // As `instrukt config get` prints it: a string as is, anything else,
+        // structured values included, as YAML.
+        match self.configuration.get(Some(path), &self.env) {
+            Ok(serde_yaml_ng::Value::String(text)) => Ok(text),
+            Ok(other) => render_yaml(&other).map_err(|err| err.to_string()),
+            Err(err) => Err(err.to_string()),
+        }
     }
 }
 

@@ -21,6 +21,14 @@ Your session:
 session-two
 ```
 
+The modules:
+
+```
+blueprint: false
+todos: false
+events: false
+```
+
 Then report.
 
 ## Preconditions
