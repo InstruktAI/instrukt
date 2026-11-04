@@ -279,6 +279,36 @@ fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
 
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
+fn the_general_owner_is_known_by_its_publisher_record_even_without_snippets() {
+    let env = TestEnv::new();
+    // `general` is published with an empty baseline and no snippet: no
+    // index entry names its owner.
+    let platform = project(
+        &env,
+        "platform",
+        &["general"],
+        &[
+            ("docs/global/general/baseline.md", String::new()),
+            (
+                "docs/third-party/tool/guide.md",
+                "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n"
+                    .to_owned(),
+            ),
+        ],
+    );
+    sync(&env, &platform);
+
+    let guide = env
+        .run(platform.path(), ["docs", "get", "third-party/tool/guide"])
+        .success();
+    insta::assert_snapshot!(
+        "general-owner-without-snippets-third-party-read",
+        stdout(&env, &guide)
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+#[test]
 fn an_agent_is_warned_when_main_is_ahead_of_what_was_published() {
     let env = TestEnv::new();
     let demo = published_demo(&env);
@@ -539,7 +569,9 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         "Reports into the session.",
         "",
         &[],
-        "Your session:\n\n<!-- @config: runtime.session_id -->\n\nThen report.\n",
+        // A structured value prints as YAML, as `instrukt config get` does.
+        "Your session:\n\n<!-- @config: runtime.session_id -->\n\nThe modules:\n\n\
+         <!-- @config: modules -->\n\nThen report.\n",
     );
     let demo = project(
         &env,
@@ -566,6 +598,56 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         published, procedure,
         "the published procedure keeps the request"
     );
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+#[test]
+fn each_agent_reads_the_value_of_the_project_it_stands_in() {
+    let env = TestEnv::new();
+    let procedure = snippet(
+        "procedure",
+        "Verify",
+        "Runs the project's tests.",
+        "",
+        &[],
+        "Run the tests:\n\n<!-- @config: actions.test -->\n",
+    );
+    let demo = project(
+        &env,
+        "demo",
+        &["acme"],
+        &[("docs/global/acme/procedure/verify.md", procedure)],
+    );
+    demo.write(
+        "instrukt.yaml",
+        "schema_version: 1\nproject: demo\npublishes:\n  - slug: acme\n    trigger: When working on acme.\n\
+         actions:\n  test: make test\n",
+    );
+    demo.commit("chore: the test action");
+    sync(&env, &demo);
+    let other = project(&env, "other", &[], &[]);
+    other.write(
+        "instrukt.yaml",
+        "schema_version: 1\nproject: other\nactions:\n  test: cargo test --workspace\n",
+    );
+
+    let in_demo = env
+        .run(demo.path(), ["docs", "get", "acme/procedure/verify"])
+        .success();
+    insta::assert_snapshot!("value-of-demo", stdout(&env, &in_demo));
+    let in_other = env
+        .run(other.path(), ["docs", "get", "acme/procedure/verify"])
+        .success();
+    insta::assert_snapshot!("value-of-other", stdout(&env, &in_other));
+
+    // Outside every project the global layer alone answers, and it has no
+    // test action.
+    let outside = env.path("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+    let refused = env
+        .run(&outside, ["docs", "get", "acme/procedure/verify"])
+        .failure();
+    insta::assert_snapshot!("value-outside-projects", stdout(&env, &refused));
 }
 
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
