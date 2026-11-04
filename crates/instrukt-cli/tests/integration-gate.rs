@@ -196,13 +196,118 @@ fn without_ci_on_the_canonical_head_the_integrator_is_told_to_verify_locally() {
     );
 }
 
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+#[test]
+fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
+    let project = finalized(true);
+    // The delivery was promoted, and the canonical branch is now red.
+    let delivered = work_head(&project);
+    project
+        .repo
+        .git(["merge", "--quiet", "--ff-only", &delivered]);
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    project
+        .github
+        .set_status(REPOSITORY, &delivered, "ci", StatusState::Failure);
+    project.tick();
+    assert_eq!(
+        project.rt.sent_count(INTEGRATOR),
+        0,
+        "a red main wakes no one"
+    );
+
+    // The integrator pushes a revert of the delivery for integration.
+    project
+        .repo
+        .git(["checkout", "--quiet", "-b", "revert-tidy-imports"]);
+    project.repo.git(["revert", "--no-edit", &delivered]);
+    let revert = project.repo.head();
+    project.repo.git(["checkout", "--quiet", "main"]);
+    push_candidate(&project, &revert);
+    project.tick();
+    assert_eq!(
+        project.rt.sent_count(INTEGRATOR),
+        0,
+        "the revert's CI is still running"
+    );
+
+    project.github.set_check_run(
+        REPOSITORY,
+        &revert,
+        "test",
+        CheckRun::Completed(Conclusion::Success),
+    );
+    project.tick();
+
+    assert_eq!(project.rt.sent_count(INTEGRATOR), 1);
+    insta::assert_snapshot!(
+        "revert-candidate",
+        project
+            .rt
+            .sent(INTEGRATOR, 1)
+            .replace(&revert, "<revert>")
+            .replace(&delivered, "<reverted delivery>")
+    );
+}
+
+/// A reviewed direct commit on local main, its exemption stamped by
+/// `instrukt repo stamp` and pushed with the review notes; the project has
+/// no candidate pending.
+fn reviewed_direct_commit(project: &mut Tracked) -> String {
+    project.repo.write("NOTES.md", "a direct change\n");
+    let direct = project.repo.commit("docs: a direct note");
+    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
+    let stamped = project.env.run(
+        project.repo.path(),
+        [
+            "repo",
+            "stamp",
+            &direct,
+            "--verdict",
+            "exempt",
+            "--reason",
+            "a typo fix",
+        ],
+    );
+    assert!(
+        stamped.get_output().status.success(),
+        "{}",
+        String::from_utf8_lossy(&stamped.get_output().stderr)
+    );
+    project.env.remove_env("INSTRUKT_NOW");
+    direct
+}
+
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG3
+#[test]
+fn a_direct_commits_review_verdict_is_readable_from_the_fetched_notes_ref() {
+    let mut project = Tracked::integrating();
+    let direct = reviewed_direct_commit(&mut project);
+
+    // The integrator reads verdicts from the notes ref it fetches; nothing
+    // local stands in for it.
+    project
+        .repo
+        .git(["update-ref", "-d", "refs/notes/instrukt-review"]);
+    project.repo.git([
+        "fetch",
+        "--quiet",
+        "origin",
+        "refs/notes/instrukt-review:refs/notes/instrukt-review",
+    ]);
+    let note = project
+        .repo
+        .git(["notes", "--ref", "instrukt-review", "show", &direct]);
+
+    insta::assert_snapshot!("direct-commit-verdict", note);
+}
+
 // spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG3
 #[test]
 fn direct_commits_on_local_main_wake_the_integrator_to_take_them_through_verification() {
-    let project = Tracked::integrating();
+    let mut project = Tracked::integrating();
     let pushed = project.repo.head();
-    project.repo.write("NOTES.md", "a direct change\n");
-    let direct = project.repo.commit("docs: a direct note");
+    let direct = reviewed_direct_commit(&mut project);
 
     project.tick();
 
