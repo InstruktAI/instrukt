@@ -166,7 +166,7 @@ tick; it does not carry authoritative state or require reliable delivery.
 | --- | --- | --- | --- | --- |
 | `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `general/procedure/upstream-watch` |
 | `runner.main_ahead` | Local main is ahead of remote main and no candidate is pending | Project, local main revision, remote main revision | Project, local main revision, remote main revision | Workflow's subscribed integrator |
-| `runner.ci_completed` | The integrate candidate's CI result completes | Project, candidate SHA, CI result | Project, candidate SHA, CI result | Workflow's subscribed integrator |
+| `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
 
 ### Domain events consumed
 
