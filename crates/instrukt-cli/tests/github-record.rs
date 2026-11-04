@@ -14,6 +14,8 @@ mod common;
 mod support;
 
 use common::github::CannedResponse;
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 use support::{Project, REPOSITORY, redact, stdout};
 
@@ -469,40 +471,44 @@ fn issue_node(project: &Project, number: u64) -> String {
         .to_owned()
 }
 
-fn owned(fields: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
-    fields
-        .iter()
-        .map(|(name, options)| {
-            (
-                (*name).to_owned(),
-                options.iter().map(|o| (*o).to_owned()).collect(),
-            )
-        })
-        .collect()
-}
-
-/// A board's items as a set: which issue each shows, with its fields.
-type BoardItems = std::collections::BTreeSet<(String, Vec<(String, String)>)>;
-
-/// The items on board `<owner>/<number>`, in no particular order.
-fn board_items(project: &Project, owner: &str, number: u64) -> BoardItems {
+/// The issues on board `<owner>/<number>`, by node id.
+fn on_board(project: &Project, owner: &str, number: u64) -> BTreeSet<String> {
     project
         .github
         .project_items(owner, number)
         .into_iter()
+        .map(|(node, _)| node)
         .collect()
 }
 
-fn items(entries: &[(&str, &str)]) -> BoardItems {
-    entries
-        .iter()
-        .map(|(node, status)| {
-            (
-                (*node).to_owned(),
-                vec![("Record status".to_owned(), (*status).to_owned())],
-            )
+/// Board `<owner>/<number>` as the developer sees it: its fields with their
+/// options, in order, and each item's set fields, the item named by the
+/// issue it shows (`#<number>`, from `issues`).
+fn board(project: &Project, owner: &str, number: u64, issues: &[(u64, &str)]) -> String {
+    let fields: Vec<String> = project
+        .github
+        .project_fields(owner, number)
+        .into_iter()
+        .map(|(name, options)| format!("field {name}: {}", options.join(", ")))
+        .collect();
+    let mut items: Vec<String> = project
+        .github
+        .project_items(owner, number)
+        .into_iter()
+        .map(|(node, values)| {
+            let issue = issues
+                .iter()
+                .find(|(_, n)| *n == node)
+                .map_or_else(|| format!("unknown {node}"), |(i, _)| format!("#{i}"));
+            let values: Vec<String> = values
+                .into_iter()
+                .map(|(field, option)| format!("{field}={option}"))
+                .collect();
+            format!("item {issue}: {}", values.join(", "))
         })
-        .collect()
+        .collect();
+    items.sort();
+    format!("{}\n{}", fields.join("\n"), items.join("\n"))
 }
 
 // spec: local/projects/instrukt/spec/feature/work/github-record UC-GR5
@@ -517,36 +523,30 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     github.add_project_field("acme", 7, "Status", Some(&["Todo", "Done"]));
     github.add_project_field("acme", 7, "Estimate", None);
     github.add_project_field("acme", 7, "Record status", Some(&["active", "blocked"]));
+    let before = github.project_fields("acme", 7);
     choose_board(&project, "acme/7");
 
     project.create("nested-lists", "feature", INTENT);
     project.create("parser-depth", "change", "Track list depth in the parser.");
     project.ok(["freeze", "parser-depth"]);
     let (lists, parser) = (issue_node(&project, 1), issue_node(&project, 2));
+    let issues = [(1, lists.as_str()), (2, parser.as_str())];
+    let every_todo = BTreeSet::from([lists.clone(), parser.clone()]);
 
-    assert_eq!(
-        board_items(&project, "acme", 7),
-        items(&[(&lists, "active"), (&parser, "iceboxed")])
-    );
-    assert_eq!(
-        github.project_fields("acme", 7),
-        owned(&[
-            ("Status", &["Todo", "Done"]),
-            ("Estimate", &[]),
-            (
-                "Record status",
-                &[
-                    "active",
-                    "blocked",
-                    "iceboxed",
-                    "held",
-                    "delivered",
-                    "withdrawn"
-                ]
-            ),
-        ]),
-        "the board's own fields and options are as they were; only missing statuses are added"
-    );
+    assert_eq!(on_board(&project, "acme", 7), every_todo);
+    // The board's own fields survive as they were: none removed, renamed
+    // or reordered, every option kept in place; at most one field gains
+    // options, appended after its own.
+    let after = github.project_fields("acme", 7);
+    assert_eq!(after.len(), before.len());
+    let mut grown = 0;
+    for ((name, options), (kept, now)) in before.iter().zip(&after) {
+        assert_eq!(kept, name);
+        assert_eq!(&now[..options.len()], options.as_slice());
+        grown += usize::from(now.len() > options.len());
+    }
+    assert!(grown <= 1, "only the owned field gains options");
+    let first = board(&project, "acme", 7, &issues);
 
     // The developer chooses another board; the next reflection puts the
     // work there.
@@ -554,15 +554,9 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
     project.ok(["refresh", "parser-depth"]);
 
-    assert_eq!(
-        board_items(&project, "acme", 8),
-        items(&[(&lists, "held"), (&parser, "iceboxed")])
-    );
-    assert_eq!(
-        github.project_fields("acme", 8),
-        owned(&[(
-            "Record status",
-            &["active", "iceboxed", "held", "delivered", "withdrawn"]
-        )])
+    assert_eq!(on_board(&project, "acme", 8), every_todo);
+    insta::assert_snapshot!(
+        "boards",
+        format!("{first}\n---\n{}", board(&project, "acme", 8, &issues))
     );
 }
