@@ -32,6 +32,8 @@ pub struct Version {
     frontmatter: Frontmatter,
     /// Whether the frontmatter block, when present, is a YAML mapping.
     frontmatter_valid: bool,
+    /// The frontmatter block as written, without its fences.
+    frontmatter_text: Option<String>,
     body: String,
     required_reads: Vec<Reference>,
     directives: Vec<Directive>,
@@ -64,6 +66,7 @@ impl Version {
             path: PathBuf::from(path),
             frontmatter,
             frontmatter_valid,
+            frontmatter_text: split.frontmatter.map(str::to_owned),
             body,
             required_reads,
             directives,
@@ -122,6 +125,10 @@ impl Version {
 
     pub(super) fn markers(&self) -> &Scan {
         &self.markers
+    }
+
+    pub(super) fn frontmatter_text(&self) -> Option<&str> {
+        self.frontmatter_text.as_deref()
     }
 
     pub(super) fn frontmatter_valid(&self) -> bool {

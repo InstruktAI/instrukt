@@ -142,7 +142,13 @@ fn valid_tree(repo: &Repo) {
         .write(
             "docs/third-party/tool/usage.md",
             "---\ndescription: How to use the tool.\n---\n\n# Tool usage\n\n## Sources\n\n\
-             - https://tool.example/docs\n- [Guide](https://tool.example/guide)\n- /tool/docs\n",
+             - https://tool.example/docs\n- [Guide](https://tool.example/guide)\n- /tool/docs\n\
+             - <https://tool.example/reference>\n",
+        )
+        .write(
+            "docs/local/adr/0049-choice.md",
+            "---\ndescription: A choice.\ndate: 2026-01-02\nnumber: 0049\n---\n\n# Choice — ADR\n\n\
+             ## Context\n\n## Decision\n\n## Consequences\n",
         )
         .write("docs/global/acme/_drafts/notes.md", "no frontmatter at all\n");
 }
