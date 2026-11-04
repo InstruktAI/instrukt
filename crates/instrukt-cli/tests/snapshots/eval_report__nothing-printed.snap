@@ -3,4 +3,7 @@ source: crates/instrukt-cli/tests/eval-report.rs
 expression: printed
 ---
 no recorded work: there is nothing to compare yet
+demo: 0 evaluation windows
+flows: 0 evaluation windows
+flows: limitation: Work tracking is switched off in this project: it has no work record.
 report: [TMP]/elsewhere/report.html

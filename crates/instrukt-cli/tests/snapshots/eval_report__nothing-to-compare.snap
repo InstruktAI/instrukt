@@ -14,5 +14,19 @@ expression: page
 <h1>Evaluation report</h1>
 <p class="meta">Generated 2030-01-15 09:00 UTC.</p>
 <p class="empty">No recorded work: there is nothing to compare yet. Outcomes appear here once work passes through the record.</p>
+<section class="project">
+<h2>Project demo</h2>
+<p class="empty">No recorded work.</p>
+</section>
+<section class="project">
+<h2>Project flows</h2>
+<section class="limits">
+<h3>Limitations</h3>
+<ul>
+<li>Work tracking is switched off in this project: it has no work record.</li>
+</ul>
+</section>
+<p class="empty">No recorded work.</p>
+</section>
 </body>
 </html>

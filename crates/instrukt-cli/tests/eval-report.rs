@@ -1,10 +1,13 @@
 //! `local/projects/instrukt/spec/feature/work/eval-report`: an HTML
-//! evaluation report derived from the work record, by project and
-//! evaluation window, with the model a separate dimension.
+//! evaluation report derived from the work record of every project the home
+//! publishes, by project and evaluation window, with the model a separate
+//! dimension and human acts in a row of their own.
 //!
-//! The eval fingerprint comes from real publication: a second project
-//! publishes an `eval: true` policy with `instrukt sync`, and republishes
-//! it changed. The model comes from the agent runtime's `model` template.
+//! The eval fingerprint comes from real publication: the `flows` project
+//! publishes the `crew` flavor with an `eval: true` policy through
+//! `instrukt sync`, and republishes the policy changed. The model comes from
+//! the agent runtime's `model` template. Two projects selecting that flavor,
+//! `demo` and `lists`, record work reflected to the fake GitHub.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -14,11 +17,16 @@
 mod common;
 #[path = "support/documented.rs"]
 mod documented;
+#[path = "support/runtime.rs"]
+mod runtime;
 #[path = "support/work.rs"]
 mod support;
+#[path = "support/workflow.rs"]
+mod workflow;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use instrukt_core::config::CURRENT_SCHEMA_VERSION;
 use support::{Project, redact, stdout};
 
 /// The review policy the flows project publishes into the eval set.
@@ -33,12 +41,23 @@ fn review_policy(rule: &str) -> String {
     )
 }
 
-/// A project whose agent runtime reports the model named in a file the
-/// test controls, and a flows project publishing the eval set.
+/// The developer's project `demo`, whose agent runtime reports the model
+/// named in a file the test controls; the `flows` project publishing the
+/// eval set; and a second project, `lists`, recording work of its own.
 struct Evaluated {
     project: Project,
-    model: std::path::PathBuf,
-    flows: common::Repo,
+    model: PathBuf,
+    flavor: workflow::Flavor,
+    lists: common::Repo,
+}
+
+/// A project layer for `slug` that tracks work on GitHub `repository`
+/// under the `crew` flavor.
+fn tracked(slug: &str, repository: &str) -> String {
+    format!(
+        "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: {slug}\nmodules:\n  todos: true\n\
+         github:\n  repository: {repository}\nworkflow:\n  domain: crew\n"
+    )
 }
 
 impl Evaluated {
@@ -53,20 +72,30 @@ impl Evaluated {
         )
         .unwrap();
         project.env.set_env("AGENT_SESSION", "s1");
-        let flows = documented::project(
-            &project.env,
-            "flows",
-            &["crew"],
-            &[(
-                "docs/global/crew/policy/review.md",
-                review_policy("Review every change against its requirements."),
-            )],
+        project.env.set_env("INSTRUKT_NOW", "2030-01-05T08:00:00Z");
+        let flavor = workflow::Flavor::publish(&project.env);
+        // The eval set: a review policy, published an hour later.
+        project.env.set_env("INSTRUKT_NOW", "2030-01-05T09:00:00Z");
+        flavor.repo.write(
+            "docs/global/crew/policy/review.md",
+            &review_policy("Review every change against its requirements."),
         );
-        documented::sync(&project.env, &flows);
+        flavor.republish(&project.env, "put the review policy in the eval set");
+        project
+            .repo
+            .write("instrukt.yaml", &tracked("demo", support::REPOSITORY));
+        project.repo.commit("select the crew workflow");
+        project.github.add_repo("acme/lists");
+        let lists = project.env.git_repo("lists");
+        lists
+            .write("instrukt.yaml", &tracked("lists", "acme/lists"))
+            .write("README.md", "# lists\n");
+        lists.commit("the lists project");
         Self {
             project,
             model,
-            flows,
+            flavor,
+            lists,
         }
     }
 
@@ -82,27 +111,46 @@ impl Evaluated {
 
     /// The eval set changes: the review policy is rewritten and published.
     fn change_process(&self, rule: &str) {
-        self.flows
+        self.flavor
+            .repo
             .write("docs/global/crew/policy/review.md", &review_policy(rule));
-        self.flows.commit("tighten the review policy");
-        documented::sync(&self.project.env, &self.flows);
+        self.flavor
+            .republish(&self.project.env, "tighten the review policy");
     }
 
-    /// Files `slug` and reviews its prd: a first review returning it for
-    /// more when `returned`, then an approving one.
-    fn reviewed(&self, slug: &str, returned: bool) {
-        let p = &self.project;
-        p.create(slug, "feature", "Keep list depth through parse and render.");
-        p.ok(["artifacts", "write", slug, "prd", "Lists keep their depth."]);
+    /// `instrukt todo <args>` in the project checked out at `repo`.
+    fn todo(&self, repo: &Path, args: &[&str]) {
+        self.project
+            .env
+            .instrukt(repo)
+            .arg("todo")
+            .args(args)
+            .assert()
+            .success();
+    }
+
+    /// Files `slug` in the project at `repo` and reviews its prd: a first
+    /// review returning it for more when `returned`, then an approving one.
+    fn reviewed(&self, repo: &Path, slug: &str, returned: bool) {
+        let todo = |args: &[&str]| self.todo(repo, args);
+        todo(&[
+            "create",
+            slug,
+            "Keep list depth.",
+            "--kind",
+            "feature",
+            "--approved",
+        ]);
+        todo(&["artifacts", "write", slug, "prd", "Lists keep their depth."]);
         if returned {
-            p.ok([
+            todo(&[
                 "artifacts",
                 "write",
                 slug,
                 "prd-review-findings",
-                "Depth is undefined for mixed lists.",
+                "Mixed lists are undefined.",
             ]);
-            p.ok([
+            todo(&[
                 "stamp",
                 slug,
                 "--verdict",
@@ -110,7 +158,7 @@ impl Evaluated {
                 "--phase",
                 "prd_review",
             ]);
-            p.ok([
+            todo(&[
                 "artifacts",
                 "write",
                 slug,
@@ -118,14 +166,14 @@ impl Evaluated {
                 "Lists keep their depth, mixed lists too.",
             ]);
         }
-        p.ok([
+        todo(&[
             "artifacts",
             "write",
             slug,
             "prd-review-findings",
             "No findings.",
         ]);
-        p.ok([
+        todo(&[
             "stamp",
             slug,
             "--verdict",
@@ -133,6 +181,22 @@ impl Evaluated {
             "--phase",
             "prd_review",
         ]);
+    }
+
+    /// A human approves `slug`'s prd, stating it in a conversation.
+    fn approved_by_human(&self, repo: &Path, slug: &str) {
+        self.todo(
+            repo,
+            &[
+                "stamp",
+                slug,
+                "--prd-approved",
+                "--by",
+                "human",
+                "--session",
+                "thread-host:thread-7",
+            ],
+        );
     }
 
     /// `instrukt eval report` with `args`: what it printed, and the HTML
@@ -154,31 +218,37 @@ impl Evaluated {
 
 // spec: local/projects/instrukt/spec/feature/work/eval-report UC-ER1
 #[test]
-fn a_report_compares_outcomes_across_process_changes_and_models() {
+fn a_report_compares_outcomes_across_process_changes_and_models_in_every_project() {
     let mut eval = Evaluated::new();
+    let (demo, lists) = (
+        eval.project.repo.path().to_path_buf(),
+        eval.lists.path().to_path_buf(),
+    );
+    // Both work projects publish too, the eval set unchanged: no process
+    // change.
+    eval.at("2030-01-05T12:00:00Z");
+    documented::sync(&eval.project.env, &eval.project.repo);
+    eval.at("2030-01-05T12:30:00Z");
+    documented::sync(&eval.project.env, &eval.lists);
     // Under the first eval set, with one model.
     eval.uses("claude-opus 4.1");
     eval.at("2030-01-06T09:00:00Z");
-    eval.reviewed("nested-lists", true);
-    eval.project.ok([
-        "stamp",
-        "nested-lists",
-        "--prd-approved",
-        "--by",
-        "human",
-        "--session",
-        "thread-host:thread-7",
-    ]);
-    // The process changes; the same model works on, then another.
+    eval.reviewed(&demo, "nested-lists", true);
+    eval.approved_by_human(&demo, "nested-lists");
+    // The process changes; the same model works on, then another, in
+    // both projects.
+    eval.at("2030-01-12T09:00:00Z");
     eval.change_process("Review every change against its requirements and its tests.");
     eval.at("2030-01-13T09:00:00Z");
-    eval.reviewed("parser-depth", false);
+    eval.reviewed(&demo, "parser-depth", false);
     eval.uses("claude-sonnet 4.5");
     eval.at("2030-01-14T09:00:00Z");
-    eval.reviewed("renderer", true);
+    eval.reviewed(&demo, "renderer", true);
+    eval.reviewed(&lists, "list-markers", false);
+    eval.approved_by_human(&lists, "list-markers");
     eval.at("2030-01-15T09:00:00Z");
 
-    let html = eval.project.repo.path().join("scratchpad/eval/index.html");
+    let html = demo.join("scratchpad/eval/index.html");
     let (printed, page) = eval.report(&[], &html);
 
     insta::assert_snapshot!("printed", printed);

@@ -1,13 +1,13 @@
 //! The evaluation report (`local/projects/instrukt/spec/feature/work/eval-report`):
 //! delivery outcomes aggregated from the work record by project and
 //! evaluation window, with the model a separate dimension inside each
-//! window, rendered as HTML.
+//! window and human acts in a row of their own, rendered as HTML.
 //!
-//! Everything here is pure: the CLI hands in the records work makes
-//! available, the per-commit fingerprint records publication keeps, and the
-//! time range; it writes the HTML where the developer asked. Nothing is
-//! invented: a missing observation is counted as missing and named as a
-//! limitation of the comparison it affects.
+//! Everything here is pure: the CLI hands in each project's records as
+//! work makes them available, the per-commit fingerprint records
+//! publication keeps, and the time range; it writes the HTML where the
+//! developer asked. Nothing is invented: a missing observation is counted
+//! as missing and named as a limitation of the comparison it affects.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,17 +20,25 @@ use crate::evidence::{
 };
 use crate::work::TodoRecord;
 
+/// One project as the report reads it.
+#[derive(Debug, Clone)]
+pub struct ProjectInput<'a> {
+    pub project: ProjectSlug,
+    /// The records available for it.
+    pub records: &'a [TodoRecord],
+    /// What limits its record: why it, or part of it, could not be read.
+    pub limitations: Vec<String>,
+}
+
 /// What the report is built from.
 #[derive(Debug, Clone, Copy)]
 pub struct Inputs<'a> {
-    /// Every work record available.
-    pub records: &'a [TodoRecord],
+    /// Every project, in report order (the current one first).
+    pub projects: &'a [ProjectInput<'a>],
     /// The fingerprint each published commit was recorded with.
     pub fingerprints: &'a [EvalFingerprint],
     /// The start of the history range, when one was asked for.
     pub since: Option<Timestamp>,
-    /// Why reflected work could not be read, when it could not.
-    pub unread_github: Option<&'a str>,
     /// When the report is made.
     pub now: Timestamp,
 }
@@ -40,16 +48,16 @@ pub struct Inputs<'a> {
 pub struct Report {
     pub generated: Timestamp,
     pub since: Option<Timestamp>,
-    /// Per project, in project order.
+    /// Per project, in report order.
     pub projects: Vec<ProjectReport>,
     /// Limitations on every comparison in the report.
     pub limitations: Vec<String>,
 }
 
 impl Report {
-    /// Whether any recorded work entered the report.
+    /// Whether no recorded work entered the report.
     pub fn is_empty(&self) -> bool {
-        self.projects.is_empty()
+        self.projects.iter().all(|p| p.windows.is_empty())
     }
 }
 
@@ -58,6 +66,7 @@ impl Report {
 pub struct ProjectReport {
     pub project: ProjectSlug,
     pub windows: Vec<Window>,
+    pub limitations: Vec<String>,
 }
 
 /// One evaluation window: the stamps recorded under one eval fingerprint.
@@ -68,16 +77,15 @@ pub struct Window {
     /// The first and last stamp in the window.
     pub first: Timestamp,
     pub last: Timestamp,
-    /// The published commits recorded with this fingerprint: the commits
-    /// that set this eval set.
-    pub commits: Vec<(ProjectSlug, CommitSha)>,
-    /// Outcomes per model, in model order.
+    /// The published commits that changed the eval set to this one.
+    pub changed_by: Vec<(ProjectSlug, CommitSha)>,
+    /// Outcomes per model, in model order; human acts last.
     pub models: Vec<ModelRow>,
     /// Limitations on this window's comparison.
     pub limitations: Vec<String>,
 }
 
-/// The model a stamp was produced with, as recorded.
+/// Who produced a stamp: a model as recorded, or a human.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Model {
     Reported {
@@ -86,27 +94,32 @@ pub enum Model {
     },
     /// An agent session whose runtime could not say.
     Unknown,
-    /// Recorded outside an agent session.
+    /// An agent act recorded outside an agent session.
     NoSession,
+    /// A human act: outside the model dimension.
+    Human,
 }
 
-/// One model's outcomes within a window.
+/// One row's outcomes within a window (`eval-report`, "Outcome measures").
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tally {
     /// Todos with a stamp in the window.
     pub todos: usize,
     pub stamps: usize,
-    /// Review verdicts: approving, and returning the work for more.
+    /// Review verdicts: approving, and not approving (`needs_work`,
+    /// `changes_requested`) — counted here and nowhere else.
     pub approved: usize,
     pub not_approved: usize,
-    /// Distinct reviews (todo and review phase) and their verdict rounds.
+    /// Distinct reviews (todo and review phase) and their rounds, one per
+    /// verdict.
     pub reviews: usize,
     pub rounds: usize,
     /// Distinct findings reports the verdicts bound.
     pub findings: usize,
     /// Kickbacks and approvers' requests for changes.
     pub returns: usize,
-    /// Stamps a human made or declared involvement in.
+    /// Stamps marked human-involved, human approvals, change requests, and
+    /// acts of a person or GitHub actor.
     pub human: usize,
 }
 
@@ -125,27 +138,31 @@ pub fn report(inputs: Inputs<'_>) -> Report {
             day(since)
         ));
     }
-    if let Some(cause) = inputs.unread_github {
+    let changes = change_points(inputs.fingerprints);
+    if changes.untimed > 0 {
         limitations.push(format!(
-            "Reflected work on GitHub could not be read ({cause}); work recorded only on other computers is missing."
+            "{} published commit{} recorded an eval fingerprint without its time; where {} in the order of process changes is unknown, so {} not named as changing the eval set.",
+            changes.untimed,
+            if changes.untimed == 1 { "" } else { "s" },
+            if changes.untimed == 1 { "its place" } else { "their place" },
+            if changes.untimed == 1 { "it is" } else { "they are" },
         ));
     }
-    let mut by_project: BTreeMap<ProjectSlug, Vec<(&TodoRecord, &StampRecord)>> = BTreeMap::new();
-    for record in inputs.records {
-        for stamp in &record.stamps {
-            if inputs.since.is_none_or(|since| stamp.at >= since) {
-                by_project
-                    .entry(record.project.clone())
-                    .or_default()
-                    .push((record, stamp));
+    let projects = inputs
+        .projects
+        .iter()
+        .map(|input| {
+            let stamps: Vec<(&TodoRecord, &StampRecord)> = input
+                .records
+                .iter()
+                .flat_map(|record| record.stamps.iter().map(move |stamp| (record, stamp)))
+                .filter(|(_, stamp)| inputs.since.is_none_or(|since| stamp.at >= since))
+                .collect();
+            ProjectReport {
+                project: input.project.clone(),
+                windows: windows(&stamps, &changes),
+                limitations: input.limitations.clone(),
             }
-        }
-    }
-    let projects = by_project
-        .into_iter()
-        .map(|(project, stamps)| ProjectReport {
-            windows: windows(&stamps, inputs.fingerprints),
-            project,
         })
         .collect();
     Report {
@@ -156,11 +173,46 @@ pub fn report(inputs: Inputs<'_>) -> Report {
     }
 }
 
+/// Where the eval set changed, from the timed fingerprint records in time
+/// order across every project: for each fingerprint, the commits whose
+/// record differs from the one before it.
+struct ChangePoints {
+    by_fingerprint: BTreeMap<String, Vec<(ProjectSlug, CommitSha)>>,
+    /// Fingerprints with at least one record of unknown time.
+    untimed_fingerprints: BTreeSet<String>,
+    untimed: usize,
+}
+
+fn change_points(fingerprints: &[EvalFingerprint]) -> ChangePoints {
+    let mut timed: Vec<(&Timestamp, &EvalFingerprint)> = fingerprints
+        .iter()
+        .filter_map(|f| f.recorded_at.as_ref().map(|at| (at, f)))
+        .collect();
+    timed.sort_by(|a, b| (a.0, &a.1.commit).cmp(&(b.0, &b.1.commit)));
+    let mut by_fingerprint: BTreeMap<String, Vec<(ProjectSlug, CommitSha)>> = BTreeMap::new();
+    let mut previous: Option<&str> = None;
+    for (_, record) in timed {
+        if previous != Some(record.fingerprint.as_str()) {
+            by_fingerprint
+                .entry(record.fingerprint.clone())
+                .or_default()
+                .push((record.project.clone(), record.commit.clone()));
+        }
+        previous = Some(record.fingerprint.as_str());
+    }
+    let untimed: Vec<&EvalFingerprint> = fingerprints
+        .iter()
+        .filter(|f| f.recorded_at.is_none())
+        .collect();
+    ChangePoints {
+        by_fingerprint,
+        untimed_fingerprints: untimed.iter().map(|f| f.fingerprint.clone()).collect(),
+        untimed: untimed.len(),
+    }
+}
+
 /// The project's stamps grouped into windows, oldest first.
-fn windows(
-    stamps: &[(&TodoRecord, &StampRecord)],
-    fingerprints: &[EvalFingerprint],
-) -> Vec<Window> {
+fn windows(stamps: &[(&TodoRecord, &StampRecord)], changes: &ChangePoints) -> Vec<Window> {
     let mut grouped: BTreeMap<Option<&str>, Vec<(&TodoRecord, &StampRecord)>> = BTreeMap::new();
     for (record, stamp) in stamps {
         grouped
@@ -173,11 +225,10 @@ fn windows(
         .filter_map(|(fingerprint, stamps)| {
             let first = stamps.iter().map(|(_, s)| s.at).min()?;
             let last = stamps.iter().map(|(_, s)| s.at).max()?;
-            let commits: Vec<(ProjectSlug, CommitSha)> = fingerprints
-                .iter()
-                .filter(|f| Some(f.fingerprint.as_str()) == fingerprint)
-                .map(|f| (f.project.clone(), f.commit.clone()))
-                .collect();
+            let changed_by = fingerprint
+                .and_then(|f| changes.by_fingerprint.get(f))
+                .cloned()
+                .unwrap_or_default();
             let models = rows(&stamps);
             let mut limitations = Vec::new();
             match fingerprint {
@@ -185,8 +236,14 @@ fn windows(
                     "These stamps copied no eval fingerprint: they were recorded before any publication, so their process-document set is unknown."
                         .to_owned(),
                 ),
-                Some(_) if commits.is_empty() => limitations.push(
-                    "No published commit on this computer is recorded with this fingerprint: the commits that set this eval set are unknown here."
+                Some(f) if changed_by.is_empty() && changes.untimed_fingerprints.contains(f) => {
+                    limitations.push(
+                        "The commits recorded with this eval set carry no recording time: which one changed it is unknown."
+                            .to_owned(),
+                    );
+                }
+                Some(_) if changed_by.is_empty() => limitations.push(
+                    "No published commit on this computer is recorded with this eval set: the commit that changed it is unknown here."
                         .to_owned(),
                 ),
                 Some(_) => {}
@@ -206,7 +263,7 @@ fn windows(
                 fingerprint: fingerprint.map(str::to_owned),
                 first,
                 last,
-                commits,
+                changed_by,
                 models,
                 limitations,
             })
@@ -216,7 +273,7 @@ fn windows(
     out
 }
 
-/// The window's outcomes per model.
+/// The window's outcomes per model, and the human row.
 fn rows(stamps: &[(&TodoRecord, &StampRecord)]) -> Vec<ModelRow> {
     let mut by_model: BTreeMap<Model, Vec<(&TodoRecord, &StampRecord)>> = BTreeMap::new();
     for (record, stamp) in stamps {
@@ -235,6 +292,9 @@ fn rows(stamps: &[(&TodoRecord, &StampRecord)]) -> Vec<ModelRow> {
 }
 
 fn model_of(stamp: &StampRecord) -> Model {
+    if human_act(stamp) {
+        return Model::Human;
+    }
     match (&stamp.model, stamp.model_provenance) {
         (Some(identity), _) => Model::Reported {
             model: identity.model.clone(),
@@ -243,6 +303,18 @@ fn model_of(stamp: &StampRecord) -> Model {
         (None, ModelProvenance::OutsideSession) => Model::NoSession,
         (None, _) => Model::Unknown,
     }
+}
+
+/// A human's own act: a human approval (whatever session stated it), an
+/// approver's change request, or an act of a person or GitHub actor.
+fn human_act(stamp: &StampRecord) -> bool {
+    matches!(
+        stamp.fact,
+        StampFact::Approval {
+            by: ApprovedBy::Human,
+            ..
+        } | StampFact::ChangesRequested { .. }
+    ) || matches!(stamp.actor, Actor::Person { .. } | Actor::GitHub { .. })
 }
 
 fn tally(stamps: &[(&TodoRecord, &StampRecord)]) -> Tally {
@@ -291,7 +363,7 @@ fn tally(stamps: &[(&TodoRecord, &StampRecord)]) -> Tally {
         ) {
             tally.returns += 1;
         }
-        if human(stamp) {
+        if stamp.human_involved == Some(true) || human_act(stamp) {
             tally.human += 1;
         }
     }
@@ -299,19 +371,6 @@ fn tally(stamps: &[(&TodoRecord, &StampRecord)]) -> Tally {
     tally.reviews = reviews.len();
     tally.findings = findings.len();
     tally
-}
-
-/// Whether a human acted in or declared involvement in `stamp`.
-fn human(stamp: &StampRecord) -> bool {
-    stamp.human_involved == Some(true)
-        || matches!(
-            stamp.fact,
-            StampFact::Approval {
-                by: ApprovedBy::Human,
-                ..
-            } | StampFact::ChangesRequested { .. }
-        )
-        || matches!(stamp.actor, Actor::Person { .. } | Actor::GitHub { .. })
 }
 
 fn day(at: Timestamp) -> String {
@@ -338,18 +397,16 @@ pub fn render_html(report: &Report) -> String {
             "<p class=\"empty\">No recorded work: there is nothing to compare yet. Outcomes appear here once work passes through the record.</p>\n",
         );
     }
-    if !report.limitations.is_empty() {
-        body.push_str("<section class=\"limits\">\n<h2>Limitations</h2>\n<ul>\n");
-        for limitation in &report.limitations {
-            body.push_str(&format!("<li>{}</li>\n", escape(limitation)));
-        }
-        body.push_str("</ul>\n</section>\n");
-    }
+    body.push_str(&limits("Limitations", &report.limitations));
     for project in &report.projects {
         body.push_str(&format!(
             "<section class=\"project\">\n<h2>Project {}</h2>\n",
             escape(project.project.as_str())
         ));
+        body.push_str(&limits("Limitations", &project.limitations));
+        if project.windows.is_empty() {
+            body.push_str("<p class=\"empty\">No recorded work.</p>\n");
+        }
         let mut previous: Option<&Window> = None;
         for (number, window) in project.windows.iter().enumerate() {
             body.push_str(&render_window(number + 1, window, previous));
@@ -362,6 +419,19 @@ pub fn render_html(report: &Report) -> String {
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>Evaluation report</title>\n<style>{STYLE}</style>\n</head>\n<body>\n{body}</body>\n</html>\n"
     )
+}
+
+/// A titled list of limitations; nothing when there are none.
+fn limits(title: &str, limitations: &[String]) -> String {
+    if limitations.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("<section class=\"limits\">\n<h3>{title}</h3>\n<ul>\n");
+    for limitation in limitations {
+        out.push_str(&format!("<li>{}</li>\n", escape(limitation)));
+    }
+    out.push_str("</ul>\n</section>\n");
+    out
 }
 
 fn render_window(number: usize, window: &Window, previous: Option<&Window>) -> String {
@@ -379,11 +449,9 @@ fn render_window(number: usize, window: &Window, previous: Option<&Window>) -> S
             "<p class=\"change\">Process change: the eval set differs from the previous window's.</p>\n",
         );
     }
-    if !window.commits.is_empty() {
-        out.push_str(
-            "<p>Published commits recorded with this eval set:</p>\n<ul class=\"commits\">\n",
-        );
-        for (project, commit) in &window.commits {
+    if !window.changed_by.is_empty() {
+        out.push_str("<p>Eval set changed to this one by:</p>\n<ul class=\"commits\">\n");
+        for (project, commit) in &window.changed_by {
             out.push_str(&format!(
                 "<li>{} <code>{}</code></li>\n",
                 escape(project.as_str()),
@@ -393,9 +461,14 @@ fn render_window(number: usize, window: &Window, previous: Option<&Window>) -> S
         out.push_str("</ul>\n");
     }
     if let Some(previous) = previous {
-        let before: BTreeSet<&Model> = previous.models.iter().map(|r| &r.model).collect();
-        let now: BTreeSet<&Model> = window.models.iter().map(|r| &r.model).collect();
-        if before != now {
+        let models = |w: &Window| -> BTreeSet<Model> {
+            w.models
+                .iter()
+                .map(|r| r.model.clone())
+                .filter(|m| *m != Model::Human)
+                .collect()
+        };
+        if models(previous) != models(window) {
             out.push_str("<p class=\"change\">Model change: the models used differ from the previous window's.</p>\n");
         }
     }
@@ -409,6 +482,7 @@ fn render_window(number: usize, window: &Window, previous: Option<&Window>) -> S
             Model::Reported { model, version } => (escape(model), escape(version)),
             Model::Unknown => ("unknown".to_owned(), "unknown".to_owned()),
             Model::NoSession => ("no agent session".to_owned(), "—".to_owned()),
+            Model::Human => ("human".to_owned(), "—".to_owned()),
         };
         let t = &row.tally;
         out.push_str(&format!(
@@ -455,7 +529,7 @@ th,td{border-bottom:1px solid var(--line);padding:.3rem .5rem;text-align:left;wh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evidence::{ContentDigest, ModelIdentity, PreparationReview};
+    use crate::evidence::{ApprovalGate, ContentDigest, ModelIdentity, PreparationReview};
     use crate::work::TodoId;
     use instrukt_core::ids::{SessionRef, TodoSlug};
     use instrukt_runner::interfaces::{CatchUp, TodoKind};
@@ -498,7 +572,7 @@ mod tests {
         TodoRecord {
             schema: 1,
             id: TodoId::parse(&fill.to_string().repeat(32)).unwrap(),
-            project: ProjectSlug::parse("demo").unwrap(),
+            project: demo(),
             slug: TodoSlug::parse("depth").unwrap(),
             kind: TodoKind::Feature,
             status: crate::evidence::TodoStatus::Active,
@@ -524,13 +598,41 @@ mod tests {
         }
     }
 
-    fn inputs(records: &[TodoRecord]) -> Inputs<'_> {
-        Inputs {
+    fn demo() -> ProjectSlug {
+        ProjectSlug::parse("demo").unwrap()
+    }
+
+    fn of(records: &[TodoRecord]) -> Vec<ProjectInput<'_>> {
+        vec![ProjectInput {
+            project: demo(),
             records,
+            limitations: Vec::new(),
+        }]
+    }
+
+    fn inputs<'a>(projects: &'a [ProjectInput<'a>]) -> Inputs<'a> {
+        Inputs {
+            projects,
             fingerprints: &[],
             since: None,
-            unread_github: None,
             now: at(100),
+        }
+    }
+
+    fn published(fingerprint: &str, fill: char, recorded: Option<i64>) -> EvalFingerprint {
+        EvalFingerprint {
+            fingerprint: fingerprint.into(),
+            snippets: 1,
+            project: ProjectSlug::parse("flows").unwrap(),
+            commit: CommitSha::parse(&fill.to_string().repeat(40)).unwrap(),
+            recorded_at: recorded.map(at),
+        }
+    }
+
+    fn reported(name: &str) -> Model {
+        Model::Reported {
+            model: name.into(),
+            version: "1".into(),
         }
     }
 
@@ -544,9 +646,10 @@ mod tests {
                 stamp(3, verdict(ReviewVerdict::Approve, "r3"), "f2", Some("m2")),
             ],
         )];
-        let report = report(inputs(&records));
-        let windows = &report.projects[0].windows;
-        let shape: Vec<(Option<&str>, Vec<&Model>)> = windows
+        let projects = of(&records);
+        let report = report(inputs(&projects));
+        let shape: Vec<(Option<&str>, Vec<&Model>)> = report.projects[0]
+            .windows
             .iter()
             .map(|w| {
                 (
@@ -555,21 +658,17 @@ mod tests {
                 )
             })
             .collect();
-        let m = |name: &str| Model::Reported {
-            model: name.into(),
-            version: "1".into(),
-        };
         assert_eq!(
             shape,
             vec![
-                (Some("f1"), vec![&m("m1")]),
-                (Some("f2"), vec![&m("m1"), &m("m2")])
+                (Some("f1"), vec![&reported("m1")]),
+                (Some("f2"), vec![&reported("m1"), &reported("m2")])
             ]
         );
     }
 
     #[test]
-    fn verdict_rounds_findings_and_returns_are_counted_per_review() {
+    fn a_needs_work_round_is_a_verdict_not_also_a_return_for_repair() {
         let mut kickback = stamp(
             4,
             StampFact::Kickback {
@@ -590,7 +689,8 @@ mod tests {
                 kickback,
             ],
         )];
-        let tally = report(inputs(&records)).projects[0].windows[0].models[0]
+        let projects = of(&records);
+        let tally = report(inputs(&projects)).projects[0].windows[0].models[0]
             .tally
             .clone();
         assert_eq!(
@@ -610,6 +710,43 @@ mod tests {
     }
 
     #[test]
+    fn a_human_approval_stated_in_a_session_is_in_the_human_row() {
+        let approval = stamp(
+            2,
+            StampFact::Approval {
+                gate: ApprovalGate::Prd,
+                by: ApprovedBy::Human,
+                target: ContentDigest::new("prd"),
+                carried_from: None,
+                reasoning: None,
+            },
+            "f1",
+            None,
+        );
+        let records = [record(
+            'a',
+            vec![
+                stamp(1, verdict(ReviewVerdict::Approve, "r1"), "f1", Some("m1")),
+                approval,
+            ],
+        )];
+        let projects = of(&records);
+        // The eval set's change is known, so any limitation would be the
+        // model's.
+        let fingerprints = [published("f1", 'a', Some(0))];
+        let window = report(Inputs {
+            fingerprints: &fingerprints,
+            ..inputs(&projects)
+        })
+        .projects[0]
+            .windows[0]
+            .clone();
+        let models: Vec<Model> = window.models.iter().map(|r| r.model.clone()).collect();
+        assert_eq!(models, vec![reported("m1"), Model::Human]);
+        assert!(window.limitations.is_empty(), "no unknown model");
+    }
+
+    #[test]
     fn stamps_before_the_range_are_left_out() {
         let records = [record(
             'a',
@@ -618,46 +755,76 @@ mod tests {
                 stamp(5, verdict(ReviewVerdict::Approve, "r2"), "f1", Some("m1")),
             ],
         )];
+        let projects = of(&records);
         let report = report(Inputs {
             since: Some(at(3)),
-            ..inputs(&records)
+            ..inputs(&projects)
         });
-        assert_eq!(report.projects[0].windows[0].models[0].tally.rounds, 1);
-        assert_eq!(report.projects[0].windows[0].first, at(5));
+        let window = &report.projects[0].windows[0];
+        assert_eq!((window.models[0].tally.rounds, window.first), (1, at(5)));
     }
 
     #[test]
-    fn no_recorded_work_is_an_empty_report() {
-        assert!(report(inputs(&[])).is_empty());
+    fn no_recorded_work_is_an_empty_report_that_still_lists_each_project() {
+        let projects = of(&[]);
+        let report = report(inputs(&projects));
+        assert!(report.is_empty());
+        assert_eq!(report.projects.len(), 1);
     }
 
     #[test]
-    fn a_window_names_the_commits_recorded_with_its_fingerprint() {
+    fn only_the_commit_that_changed_the_eval_set_is_named() {
         let records = [record(
             'a',
-            vec![stamp(1, verdict(ReviewVerdict::Approve, "r1"), "f1", None)],
+            vec![
+                stamp(1, verdict(ReviewVerdict::Approve, "r1"), "f1", Some("m1")),
+                stamp(5, verdict(ReviewVerdict::Approve, "r2"), "f2", Some("m1")),
+            ],
         )];
-        let commit = CommitSha::parse(&"c".repeat(40)).unwrap();
-        let fingerprints = [EvalFingerprint {
-            fingerprint: "f1".into(),
-            snippets: 1,
-            project: ProjectSlug::parse("flows").unwrap(),
-            commit: commit.clone(),
-            recorded_at: None,
-        }];
-        let window = &report(Inputs {
+        let projects = of(&records);
+        // f1, republished unchanged, then f2.
+        let fingerprints = [
+            published("f2", 'c', Some(4)),
+            published("f1", 'a', Some(0)),
+            published("f1", 'b', Some(2)),
+        ];
+        let report = report(Inputs {
             fingerprints: &fingerprints,
-            ..inputs(&records)
-        })
-        .projects[0]
-            .windows[0];
+            ..inputs(&projects)
+        });
+        let named: Vec<Vec<CommitSha>> = report.projects[0]
+            .windows
+            .iter()
+            .map(|w| w.changed_by.iter().map(|(_, c)| c.clone()).collect())
+            .collect();
         assert_eq!(
-            (window.commits.clone(), window.models[0].model.clone()),
-            (
-                vec![(ProjectSlug::parse("flows").unwrap(), commit)],
-                Model::Unknown
-            )
+            named,
+            vec![
+                vec![fingerprints[1].commit.clone()],
+                vec![fingerprints[0].commit.clone()]
+            ]
         );
-        assert_eq!(window.limitations.len(), 1, "the unknown model is named");
+    }
+
+    #[test]
+    fn a_record_of_unknown_time_names_no_commit_and_is_a_limitation() {
+        let records = [record(
+            'a',
+            vec![stamp(
+                1,
+                verdict(ReviewVerdict::Approve, "r1"),
+                "f1",
+                Some("m1"),
+            )],
+        )];
+        let projects = of(&records);
+        let fingerprints = [published("f1", 'a', None)];
+        let report = report(Inputs {
+            fingerprints: &fingerprints,
+            ..inputs(&projects)
+        });
+        let window = &report.projects[0].windows[0];
+        assert!(window.changed_by.is_empty());
+        assert_eq!((report.limitations.len(), window.limitations.len()), (1, 1));
     }
 }

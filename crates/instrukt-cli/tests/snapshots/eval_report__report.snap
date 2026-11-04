@@ -18,7 +18,7 @@ expression: page
 <article class="window">
 <h3>Window 1: eval set <code><digest 1></code></h3>
 <p class="meta">2030-01-06 09:00 UTC – 2030-01-06 09:00 UTC</p>
-<p>Published commits recorded with this eval set:</p>
+<p>Eval set changed to this one by:</p>
 <ul class="commits">
 <li>flows <code><commit 1></code></li>
 </ul>
@@ -26,18 +26,15 @@ expression: page
 <thead><tr><th>Model</th><th>Version</th><th>Todos</th><th>Stamps</th><th>Approved</th><th>Not approved</th><th>Reviews</th><th>Rounds</th><th>Findings reports</th><th>Returns for repair</th><th>Human intervention</th></tr></thead>
 <tbody>
 <tr><td>claude-opus</td><td>4.1</td><td>1</td><td>2</td><td>1</td><td>1</td><td>1</td><td>2</td><td>2</td><td>0</td><td>0</td></tr>
-<tr><td>unknown</td><td>unknown</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
+<tr><td>human</td><td>—</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 </tbody>
 </table>
-<ul class="limits">
-<li>1 stamp by an agent session whose runtime did not report its model.</li>
-</ul>
 </article>
 <article class="window">
 <h3>Window 2: eval set <code><digest 2></code></h3>
 <p class="meta">2030-01-13 09:00 UTC – 2030-01-14 09:00 UTC</p>
 <p class="change">Process change: the eval set differs from the previous window's.</p>
-<p>Published commits recorded with this eval set:</p>
+<p>Eval set changed to this one by:</p>
 <ul class="commits">
 <li>flows <code><commit 2></code></li>
 </ul>
@@ -47,6 +44,34 @@ expression: page
 <tbody>
 <tr><td>claude-opus</td><td>4.1</td><td>1</td><td>1</td><td>1</td><td>0</td><td>1</td><td>1</td><td>1</td><td>0</td><td>0</td></tr>
 <tr><td>claude-sonnet</td><td>4.5</td><td>1</td><td>2</td><td>1</td><td>1</td><td>1</td><td>2</td><td>2</td><td>0</td><td>0</td></tr>
+</tbody>
+</table>
+</article>
+</section>
+<section class="project">
+<h2>Project flows</h2>
+<section class="limits">
+<h3>Limitations</h3>
+<ul>
+<li>Work tracking is switched off in this project: it has no work record.</li>
+</ul>
+</section>
+<p class="empty">No recorded work.</p>
+</section>
+<section class="project">
+<h2>Project lists</h2>
+<article class="window">
+<h3>Window 1: eval set <code><digest 2></code></h3>
+<p class="meta">2030-01-14 09:00 UTC – 2030-01-14 09:00 UTC</p>
+<p>Eval set changed to this one by:</p>
+<ul class="commits">
+<li>flows <code><commit 2></code></li>
+</ul>
+<table>
+<thead><tr><th>Model</th><th>Version</th><th>Todos</th><th>Stamps</th><th>Approved</th><th>Not approved</th><th>Reviews</th><th>Rounds</th><th>Findings reports</th><th>Returns for repair</th><th>Human intervention</th></tr></thead>
+<tbody>
+<tr><td>claude-sonnet</td><td>4.5</td><td>1</td><td>1</td><td>1</td><td>0</td><td>1</td><td>1</td><td>1</td><td>0</td><td>0</td></tr>
+<tr><td>human</td><td>—</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td></tr>
 </tbody>
 </table>
 </article>

@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
-use instrukt_core::config::Env;
+use instrukt_core::config::{self, Env, Module};
 use instrukt_core::git;
-use instrukt_core::publication::EvalFingerprint;
+use instrukt_core::ids::ProjectSlug;
+use instrukt_core::publication::{EvalFingerprint, PublishedRecord};
 use instrukt_todos::eval;
-use instrukt_todos::work::{GitHubRead, Work, describe};
+use instrukt_todos::work::{GitHubRead, TodoRecord, Work, describe};
 use jiff::Timestamp;
 
 use crate::context::Ctx;
@@ -65,20 +66,36 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     };
     let work = Work::new(ctx.home.clone(), Env::from_process(), ctx.clock.shared());
     let project = work.project_at(&root)?;
-    let recorded = work
-        .recorded_work(&project)
-        .context("cannot read the work record")?;
+    // Every project publication knows, the current one first.
+    let mut checkouts = vec![(project.slug.clone(), root.clone())];
+    for published in PublishedRecord::load_all(&ctx.home)
+        .context("cannot read which projects this home publishes")?
+    {
+        if published.project != project.slug {
+            checkouts.push((published.project, published.checkout));
+        }
+    }
+    let read: Vec<(ProjectSlug, Vec<TodoRecord>, Vec<String>)> = checkouts
+        .into_iter()
+        .map(|(slug, checkout)| {
+            let (records, limitations) = project_record(ctx, &work, &checkout);
+            (slug, records, limitations)
+        })
+        .collect();
+    let projects: Vec<eval::ProjectInput<'_>> = read
+        .iter()
+        .map(|(slug, records, limitations)| eval::ProjectInput {
+            project: slug.clone(),
+            records,
+            limitations: limitations.clone(),
+        })
+        .collect();
     let fingerprints = EvalFingerprint::recorded(&ctx.home)
         .context("cannot read the recorded eval fingerprints")?;
-    let unread = match recorded.github {
-        GitHubRead::Read => None,
-        GitHubRead::NotRead(reason) => Some(describe(&reason)),
-    };
     let report = eval::report(eval::Inputs {
-        records: &recorded.records,
+        projects: &projects,
         fingerprints: &fingerprints,
         since: args.since,
-        unread_github: unread.as_deref(),
         now: ctx.clock.now(),
     });
     let out = match args.out {
@@ -97,21 +114,67 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     if report.is_empty() {
         ctx.out
             .line("no recorded work: there is nothing to compare yet")?;
-    } else {
-        for project in &report.projects {
-            ctx.out.line(&format!(
-                "{}: {} evaluation window{}",
-                project.project,
-                project.windows.len(),
-                if project.windows.len() == 1 { "" } else { "s" }
-            ))?;
-        }
     }
     for limitation in &report.limitations {
         ctx.out.line(&format!("limitation: {limitation}"))?;
     }
+    for project in &report.projects {
+        ctx.out.line(&format!(
+            "{}: {} evaluation window{}",
+            project.project,
+            project.windows.len(),
+            if project.windows.len() == 1 { "" } else { "s" }
+        ))?;
+        for limitation in &project.limitations {
+            ctx.out
+                .line(&format!("{}: limitation: {limitation}", project.project))?;
+        }
+    }
     ctx.out.line(&format!("report: {}", out.display()))?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// The records of the project checked out at `checkout`, through work's
+/// normal read, and what limits them. A record that cannot be read is a
+/// limitation, never a reason to drop the project.
+fn project_record(ctx: &Ctx, work: &Work, checkout: &Path) -> (Vec<TodoRecord>, Vec<String>) {
+    match config::module_enabled(&ctx.home, Some(checkout), Module::Todos) {
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                Vec::new(),
+                vec![
+                    "Work tracking is switched off in this project: it has no work record."
+                        .to_owned(),
+                ],
+            );
+        }
+        Err(err) => {
+            return (
+                Vec::new(),
+                vec![format!("Its work record cannot be read: {err}.")],
+            );
+        }
+    }
+    let recorded = work
+        .project_at(checkout)
+        .and_then(|project| work.recorded_work(&project));
+    match recorded {
+        Ok(recorded) => {
+            let limitations = match recorded.github {
+                GitHubRead::Read => Vec::new(),
+                GitHubRead::NotRead(reason) => vec![format!(
+                    "Reflected work on GitHub could not be read ({}); work recorded only on other computers is missing.",
+                    describe(&reason)
+                )],
+            };
+            (recorded.records, limitations)
+        }
+        Err(err) => (
+            Vec::new(),
+            vec![format!("Its work record cannot be read: {err}.")],
+        ),
+    }
 }
 
 /// Writes the report to `path`, never through a link.
