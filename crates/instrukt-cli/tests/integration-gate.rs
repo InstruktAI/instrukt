@@ -196,25 +196,53 @@ fn without_ci_on_the_canonical_head_the_integrator_is_told_to_verify_locally() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
-#[test]
-fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
-    let project = finalized(true);
-    // The delivery was promoted, and the canonical branch is now red.
-    let delivered = work_head(&project);
-    project
-        .repo
-        .git(["merge", "--quiet", "--ff-only", &delivered]);
+/// The integrator promotes `commit`: local main fast-forwards to it and
+/// it is pushed as remote canonical main.
+fn promote(project: &Tracked, commit: &str) {
+    project.repo.git(["merge", "--quiet", "--ff-only", commit]);
     project.repo.git(["push", "--quiet", "origin", "main"]);
+}
+
+/// A commit on local main touching `file`, not yet pushed.
+fn commit_on_main(project: &Tracked, file: &str) -> String {
+    project.repo.write(file, "a delivery\n");
+    project.repo.commit("feat: another delivery")
+}
+
+/// `finalized(true)` with its delivery promoted and main's CI on it red;
+/// the integrator was woken with that failure.
+fn failing_main() -> (Tracked, String) {
+    let project = finalized(true);
+    let delivered = work_head(&project);
+    promote(&project, &delivered);
     project
         .github
         .set_status(REPOSITORY, &delivered, "ci", StatusState::Failure);
     project.tick();
-    assert_eq!(
-        project.rt.sent_count(INTEGRATOR),
-        0,
-        "a red main wakes no one"
+    (project, delivered)
+}
+
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+#[test]
+fn a_failing_canonical_head_wakes_the_integrator_with_that_commit_once() {
+    let (project, delivered) = failing_main();
+    project.tick();
+
+    assert_eq!(project.rt.sent_count(INTEGRATOR), 1, "reported once");
+    insta::assert_snapshot!(
+        "main-failing",
+        project
+            .rt
+            .sent(INTEGRATOR, 1)
+            .replace(&delivered, "<failing head>")
     );
+}
+
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+#[test]
+fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
+    let (project, delivered) = failing_main();
+    project.rt.set_status(INTEGRATOR, "ended ok");
 
     // The integrator pushes a revert of the delivery for integration.
     project
@@ -227,7 +255,7 @@ fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
     project.tick();
     assert_eq!(
         project.rt.sent_count(INTEGRATOR),
-        0,
+        1,
         "the revert's CI is still running"
     );
 
@@ -239,14 +267,59 @@ fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
     );
     project.tick();
 
-    assert_eq!(project.rt.sent_count(INTEGRATOR), 1);
+    assert_eq!(project.rt.sent_count(INTEGRATOR), 2);
     insta::assert_snapshot!(
         "revert-candidate",
         project
             .rt
-            .sent(INTEGRATOR, 1)
+            .sent(INTEGRATOR, 2)
             .replace(&revert, "<revert>")
             .replace(&delivered, "<reverted delivery>")
+    );
+}
+
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+#[test]
+fn a_red_result_on_a_commit_main_has_moved_past_is_not_reported() {
+    let project = finalized(true);
+    let earlier = work_head(&project);
+    promote(&project, &earlier);
+    let latest = commit_on_main(&project, "later.md");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    project
+        .github
+        .set_status(REPOSITORY, &latest, "ci", StatusState::Success);
+
+    // The earlier commit's CI reports red only after main moved past it.
+    project
+        .github
+        .set_status(REPOSITORY, &earlier, "ci", StatusState::Failure);
+    project.tick();
+
+    assert_eq!(project.rt.sent_count(INTEGRATOR), 0);
+}
+
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+#[test]
+fn each_new_failing_head_is_reported_afresh() {
+    let (project, delivered) = failing_main();
+    project.rt.set_status(INTEGRATOR, "ended ok");
+    let next = commit_on_main(&project, "next.md");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    project
+        .github
+        .set_status(REPOSITORY, &next, "ci", StatusState::Failure);
+
+    project.tick();
+
+    assert_eq!(project.rt.sent_count(INTEGRATOR), 2);
+    insta::assert_snapshot!(
+        "new-failing-head",
+        project
+            .rt
+            .sent(INTEGRATOR, 2)
+            .replace(&next, "<new failing head>")
+            .replace(&delivered, "<earlier failing head>")
     );
 }
 
