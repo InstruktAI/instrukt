@@ -301,6 +301,28 @@ def migrate(clone: Path, user_home: Path) -> dict:
     return done
 
 
+#: The live agent and instrukt homes below the user's home directory: never
+#: written by the run.
+LIVE_HOMES = (".teleclaude", ".instrukt", ".claude", ".codex", ".gemini")
+
+
+def forbidden_roots(pred: Path) -> list[Path]:
+    """Where the run never writes, symbolic links resolved: the predecessor,
+    the live homes and this repository."""
+    user_home = Path(os.environ.get("HOME", str(Path.home())))
+    repository = Path(__file__).resolve().parents[2]
+    return [pred.resolve(), repository] + [(user_home / name).resolve() for name in LIVE_HOMES]
+
+
+def refuse_inside(path: Path, roots: list[Path], what: str) -> None:
+    """Stops the run before it writes `path` (resolved, links followed)
+    inside any of `roots`."""
+    resolved = path.resolve()
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            raise SystemExit(f"refusing to write the {what} at {resolved}: it lies inside {root}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--predecessor", required=True, type=Path)
@@ -311,8 +333,18 @@ def main() -> int:
     pred = args.predecessor.resolve()
     binary = args.instrukt.resolve()
     out = args.out.resolve()
+    roots = forbidden_roots(pred)
+    # Every destination is checked before anything is written.
+    refuse_inside(out, roots, "output")
+    refuse_inside(Path(tempfile.gettempdir()), roots, "temporary directory")
     out.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="instrukt-parity-")).resolve()
+    for what, path in (("work directory", work), ("temporary HOME", work / "home"), ("clone", work / "teleclaude")):
+        try:
+            refuse_inside(path, roots, what)
+        except SystemExit:
+            work.rmdir()
+            raise
     try:
         return parity(pred, binary, out, work)
     finally:
