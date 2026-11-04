@@ -214,22 +214,44 @@ MACHINE = "schema_version: 1\nruntimes:\n" + "".join(
     for a in ("claude", "codex", "deepseek", "gemini")
 )
 
-#: Sources the copy leaves out: not documentation in instrukt's model, or
-#: content instrukt's validation refuses that cannot be migrated without
-#: changing rendered text. Each is reported.
+# The source migrations
+# ---------------------
+#
+# The predecessor's committed docs do not meet instrukt's source contract in
+# the ways below. The owner has ruled that instrukt is not loosened to accept
+# any of them: these migrations are the reference for the predecessor's
+# cut-over commit, which applies them to its own sources. The run applies
+# them to its copy only, and records every file each one touches in
+# `migrations.json`.
+#
+# - home-reference-form: required reads are committed home-expanded as
+#   `@/Users/<user>/.teleclaude/docs/<id>.md`. instrukt's reference form is
+#   `~/.instrukt/docs/<id>.md` (snippet-authoring-schema, reference forms;
+#   architecture overview § The home). Rewritten to that form.
+# - adr-number-integer: ADR `number` authored as a quoted string
+#   (`number: '1'`). The schema requires an integer. The quotes are dropped;
+#   frontmatter only, never rendered. (Unquoted numbers with leading zeros,
+#   `number: 0049`, are valid and left alone.)
+# - third-party-classification-removed: third-party docs authoring `id`,
+#   `type` or `scope`. Third-party docs author only `description`
+#   (third-party-docs spec). The keys are removed; frontmatter only.
+# - authored-classification-removed: snippets authoring `id`, `type`, `scope`
+#   and `domain`, which are derived from the path, never authored
+#   (snippet-authoring-schema). The keys are removed; frontmatter only.
+# - quarantined: files outside instrukt's documentation model, left out of
+#   the copy: `docs/explore/`, `docs/prompts/` and `docs/snippets/` (no such
+#   halves; fragments live in `docs/global/snippets/`), and
+#   `docs/local/baseline-progressive.md` (a project has only
+#   `docs/local/baseline.md`).
+
+#: Directories and files outside instrukt's documentation model.
 QUARANTINE_DIRS = ("docs/explore", "docs/prompts", "docs/snippets")
-QUARANTINE_FILES = (
-    # local progressive baseline: no such manifest in instrukt's model
-    "docs/local/baseline-progressive.md",
-    # `## Sources` entries in angle brackets: body text, so not migrated
-    "docs/third-party/herdr/overview.md",
-)
+QUARANTINE_FILES = ("docs/local/baseline-progressive.md",)
 
 
 def migrate(clone: Path, user_home: Path) -> dict:
-    """Brings the copy into instrukt's source contract where the difference is
-    one the specs name or touches frontmatter only (never rendered). Returns
-    the files each migration touched."""
+    """Applies the source migrations above to the copy. Returns the files
+    each migration touched."""
     done: dict[str, list[str]] = {
         "home-reference-form": [],
         "adr-number-integer": [],
@@ -260,7 +282,7 @@ def migrate(clone: Path, user_home: Path) -> dict:
         if fm:
             fm2 = fm
             if "/adr/" in rel:
-                fm2 = re.sub(r"^number: ['\"]?0*(\d+)['\"]?$", r"number: \1", fm2, flags=re.M)
+                fm2 = re.sub(r"^number: (['\"])0*(\d+)\1$", r"number: \2", fm2, flags=re.M)
                 if fm2 != fm:
                     done["adr-number-integer"].append(rel)
             keys = ("id", "type", "scope", "domain")
@@ -389,8 +411,14 @@ def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
     results = []
 
     def record(kind, name, ref, got, diffs):
-        results.append({"kind": kind, "name": name, "differences": diffs})
-        if diffs:
+        # Order is a documented change, not a difference: required reads
+        # are listed in declaration order and a closure depth-first in
+        # declaration order (progressive-retrieval § Get, § Closure), where
+        # the predecessor sorted them by taxonomy.
+        changes = [d for d in diffs if d.get("class") == "order" and kind != "index"]
+        diffs = [d for d in diffs if d not in changes]
+        results.append({"kind": kind, "name": name, "differences": diffs, "documented_changes": changes})
+        if diffs or changes:
             safe = re.sub(r"[^A-Za-z0-9._-]+", "__", f"{kind}--{name}")
             (out / "diffs").mkdir(exist_ok=True)
             (out / "diffs" / f"{safe}.json").write_text(
@@ -635,7 +663,13 @@ def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
         go_order = [k for k in entry_lines(io_) if scope(k) and k in r]
         if ro_order != go_order:
             diffs.append({"what": "order", "reference": ro_order, "instrukt": go_order})
-        record("index", name, {"stdout": ro, "header": header_lines(ro)}, {"stdout": io_, "header": header_lines(io_)}, diffs)
+        record(
+            "index",
+            name,
+            {"stdout": ro, "header": header_lines(ro)},
+            {"stdout": io_, "header": header_lines(io_)},
+            diffs,
+        )
         return header_lines(ro), header_lines(io_)
 
     headers = compare_index("unfiltered", [], ours)
@@ -679,6 +713,14 @@ def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
             kinds[label] = kinds.get(label, 0) + 1
     lines += [f"- {k}: {v}" for k, v in sorted(kinds.items())] + [""]
     summary["by_kind"] = kinds
+    changed: dict[str, int] = {}
+    for r in results:
+        for d in r["documented_changes"]:
+            label = f"{r['kind']}: {re.sub(r'^\S+/\S+ ', '', d['what'])}"
+            changed[label] = changed.get(label, 0) + 1
+    lines += ["## Documented changes (not differences)", ""]
+    lines += [f"- {k}: {v}" for k, v in sorted(changed.items())] + [""]
+    summary["documented_changes"] = changed
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     for r in results:
         if r["differences"]:
