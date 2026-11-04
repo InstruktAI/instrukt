@@ -50,7 +50,9 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "",
                 &[CARE],
                 "Follow the rules.\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-                 <!-- @include: docs/snippets/missing.md -->\n",
+                 <!-- @include: docs/snippets/missing.md -->\n\n\
+                 A reference is written `@docs/local/design/y.md`, for example:\n\n\
+                 ```\n- @~/.instrukt/docs/acme/principle/care.md\n```\n",
             ),
         ),
         (

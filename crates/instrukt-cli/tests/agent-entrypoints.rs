@@ -60,6 +60,7 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
              ## Notes\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
              <!-- @exec: printf '%s' computed-at-publish -->\n\n\
              Written as ``@docs/local/policy/house.md`` it is quoted.\n\n\
+             ```\n@docs/local/policy/not-a-snippet.md\n```\n\n\
              <!-- @docs/local/policy/house.md stays a comment -->\n",
         )
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n")
