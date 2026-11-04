@@ -18,15 +18,5 @@ expression: page
 <h2>Project demo</h2>
 <p class="empty">No recorded work.</p>
 </section>
-<section class="project">
-<h2>Project flows</h2>
-<section class="limits">
-<h3>Limitations</h3>
-<ul>
-<li>Work tracking is switched off in this project: it has no work record.</li>
-</ul>
-</section>
-<p class="empty">No recorded work.</p>
-</section>
 </body>
 </html>

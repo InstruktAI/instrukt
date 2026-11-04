@@ -77,9 +77,9 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
     let read: Vec<(ProjectSlug, Vec<TodoRecord>, Vec<String>)> = checkouts
         .into_iter()
-        .map(|(slug, checkout)| {
-            let (records, limitations) = project_record(ctx, &work, &checkout);
-            (slug, records, limitations)
+        .filter_map(|(slug, checkout)| {
+            let (records, limitations) = project_record(ctx, &work, &checkout)?;
+            Some((slug, records, limitations))
         })
         .collect();
     let projects: Vec<eval::ProjectInput<'_>> = read
@@ -135,31 +135,28 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 /// The records of the project checked out at `checkout`, through work's
-/// normal read, and what limits them. A record that cannot be read is a
-/// limitation, never a reason to drop the project.
-fn project_record(ctx: &Ctx, work: &Work, checkout: &Path) -> (Vec<TodoRecord>, Vec<String>) {
+/// normal read, and what limits them; `None` for a project with work
+/// tracking switched off, which has no record to evaluate. A record that
+/// cannot be read is a limitation, never a reason to drop the project.
+fn project_record(
+    ctx: &Ctx,
+    work: &Work,
+    checkout: &Path,
+) -> Option<(Vec<TodoRecord>, Vec<String>)> {
     match config::module_enabled(&ctx.home, Some(checkout), Module::Todos) {
         Ok(true) => {}
-        Ok(false) => {
-            return (
-                Vec::new(),
-                vec![
-                    "Work tracking is switched off in this project: it has no work record."
-                        .to_owned(),
-                ],
-            );
-        }
+        Ok(false) => return None,
         Err(err) => {
-            return (
+            return Some((
                 Vec::new(),
                 vec![format!("Its work record cannot be read: {err}.")],
-            );
+            ));
         }
     }
     let recorded = work
         .project_at(checkout)
         .and_then(|project| work.recorded_work(&project));
-    match recorded {
+    Some(match recorded {
         Ok(recorded) => {
             let limitations = match recorded.github {
                 GitHubRead::Read => Vec::new(),
@@ -174,7 +171,7 @@ fn project_record(ctx: &Ctx, work: &Work, checkout: &Path) -> (Vec<TodoRecord>, 
             Vec::new(),
             vec![format!("Its work record cannot be read: {err}.")],
         ),
-    }
+    })
 }
 
 /// Writes the report to `path`, never through a link.
