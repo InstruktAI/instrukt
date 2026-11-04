@@ -21,7 +21,7 @@ pub const MASTER_FILE: &str = "AGENTS.master.md";
 /// The generated instruction file a master compiles into.
 pub const GENERATED_FILE: &str = "AGENTS.md";
 /// The project's own baseline manifest a seeded master requires.
-const LOCAL_BASELINE: &str = "docs/local/baseline.md";
+pub const LOCAL_BASELINE: &str = "docs/local/baseline.md";
 /// The docs folders adoption creates.
 const DOCS_FOLDERS: [&str; 2] = ["docs/global", "docs/local"];
 
@@ -34,6 +34,8 @@ pub enum InitPart {
     DocsFolders,
     /// `AGENTS.master.md` at the repository root.
     Master,
+    /// `docs/local/baseline.md`, the manifest a seeded master requires.
+    LocalBaseline,
     /// The `instrukt-docs` filter in the repository's git configuration.
     DocsFilter,
     /// The filter's line in `.gitattributes`.
@@ -85,6 +87,7 @@ pub fn init(
         .map(|folder| bounds.resolve(&root.join(folder)))
         .collect::<Result<Vec<_>, _>>()?;
     let master_path = bounds.resolve(&root.join(MASTER_FILE))?;
+    let baseline_path = bounds.resolve(&root.join(LOCAL_BASELINE))?;
     let attributes = bounds.resolve(&root.join(".gitattributes"))?;
     let ignore = bounds.resolve(&root.join(".gitignore"))?;
     let hooks_plan = _hooks::plan_install_at(home, &root)?;
@@ -98,6 +101,7 @@ pub fn init(
     parts.push((InitPart::ProjectLayer, layer));
     parts.push((InitPart::DocsFolders, docs_folders(&folders)?));
     parts.push((InitPart::Master, master(&root, &master_path)?));
+    parts.push((InitPart::LocalBaseline, local_baseline(&baseline_path)?));
     parts.push((InitPart::DocsFilter, docs_filter(&root)?));
     parts.push((
         InitPart::FilterPatterns,
@@ -154,6 +158,17 @@ fn master(root: &Path, path: &Path) -> Result<PartOutcome, RepositoryError> {
     };
     let text = format!("## Purpose\n\n{name}\n\n## Required reads\n\n@{LOCAL_BASELINE}\n");
     atomic_write(path, text.as_bytes())?;
+    Ok(PartOutcome::Created)
+}
+
+/// Writes an empty local baseline manifest at `path` (resolved) when none
+/// exists, so the required read of a seeded master resolves; an existing one
+/// is never touched.
+fn local_baseline(path: &Path) -> Result<PartOutcome, RepositoryError> {
+    if exists(path)? {
+        return Ok(PartOutcome::AlreadyPresent);
+    }
+    atomic_write(path, b"")?;
     Ok(PartOutcome::Created)
 }
 

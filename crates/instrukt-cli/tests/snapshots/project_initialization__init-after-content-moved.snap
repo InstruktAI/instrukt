@@ -5,6 +5,7 @@ expression: "stdout(&env, &next)"
 project layer (instrukt.yaml): already present
 docs folders (docs/global/, docs/local/): already present
 master (AGENTS.master.md): created
+local baseline (docs/local/baseline.md): already present
 docs reference filter (git config filter.instrukt-docs): already present
 filter patterns (.gitattributes): already present
 generated AGENTS.md ignore (.gitignore): already present

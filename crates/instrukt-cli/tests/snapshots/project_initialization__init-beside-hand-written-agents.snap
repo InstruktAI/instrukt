@@ -5,6 +5,7 @@ expression: "stdout(&env, &first)"
 project layer (instrukt.yaml): created
 docs folders (docs/global/, docs/local/): created
 master (AGENTS.master.md): not seeded: AGENTS.md is hand-written; move its content into a docs/local snippet, remove AGENTS.md (it becomes generated) and run `instrukt init` again
+local baseline (docs/local/baseline.md): created
 docs reference filter (git config filter.instrukt-docs): created
 filter patterns (.gitattributes): created
 generated AGENTS.md ignore (.gitignore): created

@@ -123,6 +123,28 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
         "own-hook-beside-section",
         repo.read(".git/hooks/post-commit")
     );
+    assert!(
+        repo.read("docs/local/baseline.md").is_empty(),
+        "the local baseline the master requires is seeded empty"
+    );
+
+    repo.commit("adopt instrukt");
+    let adopted = wait_for_run(&env, "my-demo", Hook::PostCommit);
+    assert!(
+        matches!(
+            adopted.sync,
+            Some(SyncOutcome::Finished {
+                exit_code: Some(0),
+                ..
+            })
+        ),
+        "the commit's publication succeeded: {:?}",
+        adopted.sync
+    );
+    env.run(repo.path(), ["sync"]).success();
+    let validated = env.run(repo.path(), ["docs", "validate"]).success();
+    insta::assert_snapshot!("adopted-docs-validate", stdout(&env, &validated));
+    insta::assert_snapshot!("compiled-seeded-master", repo.read("AGENTS.md"));
 
     repo.write(
         "docs/local/reference.md",
@@ -163,6 +185,7 @@ fn a_folder_without_a_usable_slug_needs_one_supplied_and_outside_a_repository_in
 }
 
 const OWN_MASTER: &str = "## Purpose\n\nThe developer's own master.\n";
+const OWN_BASELINE: &str = "@docs/local/policy/house-rules.md\n";
 const OWN_ATTRIBUTES: &str = "*.png binary\ndocs/**/*.md text eol=lf\n";
 
 // spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN2
@@ -172,9 +195,11 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
     let repo = env.git_repo("demo");
     repo.write("AGENTS.master.md", OWN_MASTER);
     repo.write(".gitattributes", OWN_ATTRIBUTES);
+    repo.write("docs/local/baseline.md", OWN_BASELINE);
     env.run(repo.path(), ["config", "init"]).success();
     repo.commit("the developer's partial adoption");
     let master = std::fs::read(repo.path().join("AGENTS.master.md")).unwrap();
+    let baseline = std::fs::read(repo.path().join("docs/local/baseline.md")).unwrap();
 
     let completed = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("completing-init", stdout(&env, &completed));
@@ -182,6 +207,11 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
         std::fs::read(repo.path().join("AGENTS.master.md")).unwrap(),
         master,
         "the developer's master is unchanged"
+    );
+    assert_eq!(
+        std::fs::read(repo.path().join("docs/local/baseline.md")).unwrap(),
+        baseline,
+        "the developer's local baseline is unchanged"
     );
     insta::assert_snapshot!("completed-attributes", repo.read(".gitattributes"));
 

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "stdout(&env, &validated)"
+---
+
