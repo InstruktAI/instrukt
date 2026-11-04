@@ -23,6 +23,7 @@ When a hand-written `AGENTS.md` exists without a master, init seeds no master an
 | Project layer | `instrukt.yaml` at the repository root, holding `schema_version` and `project` (the slug, from the primary worktree's folder name, normalized) with defaults | absent; an existing one is brought to the current schema version instead (`local/projects/instrukt/spec/domain/configuration`) |
 | Docs folders | `docs/global/` and `docs/local/` | absent |
 | Master | `AGENTS.master.md` at the repository root | absent |
+| Local baseline | `docs/local/baseline.md`, empty: the manifest the seeded master's required reads name | absent |
 | Docs reference filter | the repository's own git configuration: filter `instrukt-docs`, expanding `@~/.instrukt` to the absolute home path on checkout and restoring `@~/.instrukt` on commit, marked required | not defined, or defined differently |
 | Filter patterns | `.gitattributes`: `docs/**/*.md filter=instrukt-docs` | the line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`local/projects/instrukt/spec/feature/repository/hook-sections`) |
