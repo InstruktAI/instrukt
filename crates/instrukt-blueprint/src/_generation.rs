@@ -41,11 +41,14 @@
 //! so a revision queued while it was releasing is never left behind.
 //!
 //! **Status.** The last generation's record says `running` while it runs.
-//! A reader first tries `.generation.lock`, then reads the record, so a
-//! completed run is never read as interrupted. Not holding the lock, a
-//! `running` record is running. Holding it, the record's worker is gone:
-//! the generation is running without its worker while its engine group has
-//! a member ([`GenerationState::Orphaned`]), and interrupted otherwise.
+//! Workers take `.generation.lock` exclusively; whoever only looks — a
+//! status reader or a waiting worker — takes it shared, so looking never
+//! looks like generating. A reader first looks at the lock, then reads the
+//! record, so a completed run is never read as interrupted. While a worker
+//! holds the lock, a `running` record is that worker's: running. Otherwise
+//! its worker is gone: running without its worker while its engine group
+//! has a member ([`GenerationState::Orphaned`]), interrupted otherwise. A
+//! worker that takes over first closes such a record as interrupted.
 //!
 //! A generation checks the revision's committed tree out into a private
 //! directory with git plumbing (never the working tree, no hooks), runs the
@@ -176,8 +179,17 @@ struct Queued {
 #[serde(tag = "state", rename_all = "snake_case")]
 enum Outcome {
     Running,
-    Mapped { finished_at_ms: u64 },
-    Failed { finished_at_ms: u64, error: String },
+    Mapped {
+        finished_at_ms: u64,
+    },
+    Failed {
+        finished_at_ms: u64,
+        error: String,
+    },
+    /// Its worker and engine were gone when the next worker took over.
+    Interrupted {
+        finished_at_ms: u64,
+    },
 }
 
 /// What `generation.json` holds.
@@ -345,7 +357,7 @@ pub fn last_generation(
         }
     }
     // The lock first, the record second: see "Status" above.
-    let free = files.try_generation_lock()?;
+    let free = files.probe_generation_lock()?;
     let Some(record) = files.read::<Record>(&files.status())? else {
         return Ok(None);
     };
@@ -369,6 +381,7 @@ fn state_of(record: &Record, lock_free: bool, engine_alive: bool) -> GenerationS
         Outcome::Failed { error, .. } => GenerationState::Failed {
             error: error.clone(),
         },
+        Outcome::Interrupted { .. } => GenerationState::Interrupted,
         Outcome::Running if !lock_free => GenerationState::Running,
         Outcome::Running if engine_alive => GenerationState::Orphaned,
         Outcome::Running => GenerationState::Interrupted,
@@ -615,6 +628,21 @@ impl Files {
             .map_err(|source| GenerationError::Read { path, source })
     }
 
+    /// Whether no worker holds the generation lock, looked at without
+    /// excluding other lookers: the lock taken shared, `None` while a
+    /// worker holds it.
+    fn probe_generation_lock(&self) -> Result<Option<File>, GenerationError> {
+        let file = self.generation_lock_file()?;
+        match file.try_lock_shared() {
+            Ok(()) => Ok(Some(file)),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(source)) => Err(GenerationError::Read {
+                path: self.dir.join(GENERATION_LOCK_FILE),
+                source,
+            }),
+        }
+    }
+
     /// The generation lock if no worker holds it: the open file holding it.
     fn try_generation_lock(&self) -> Result<Option<File>, GenerationError> {
         let file = self.generation_lock_file()?;
@@ -637,19 +665,26 @@ impl Files {
         now: &dyn Fn() -> Timestamp,
     ) -> Result<Option<File>, GenerationError> {
         loop {
-            let lock = self.try_generation_lock()?;
+            // Looking takes the lock shared, as status does: a waiter
+            // looking is never mistaken for a worker generating.
+            let probe = self.probe_generation_lock()?;
             let record = self.read::<Record>(&self.status())?;
             let running = record
                 .as_ref()
                 .filter(|record| record.outcome == Outcome::Running);
             let group = record.as_ref().and_then(running_group);
             let alive = engine_alive(group);
-            let holder = holder(lock.is_some(), alive);
+            let holder = holder(probe.is_some(), alive);
             let elapsed = running.map(|record| {
                 Duration::from_millis(millis(now()).saturating_sub(record.started_at_ms))
             });
+            drop(probe);
             match next_step(holder, alive, elapsed) {
-                Step::Generate => return Ok(lock),
+                Step::Generate => {
+                    if let Some(lock) = self.take_over(now)? {
+                        return Ok(Some(lock));
+                    }
+                }
                 Step::Wait => {}
                 Step::EndEngine => {
                     if let Some(group) = group {
@@ -672,9 +707,34 @@ impl Files {
                     return Ok(None);
                 }
             }
-            drop(lock);
             std::thread::sleep(WAITER_POLL);
         }
+    }
+
+    /// Takes the generation lock exclusively once nothing runs, and closes
+    /// a record left `running` by a worker and engine that are gone as
+    /// interrupted before anything else is written, so no reader takes this
+    /// worker for that generation's. `None` when the lock or a live engine
+    /// came in between; the caller looks again.
+    fn take_over(&self, now: &dyn Fn() -> Timestamp) -> Result<Option<File>, GenerationError> {
+        let Some(lock) = self.try_generation_lock()? else {
+            return Ok(None);
+        };
+        if let Some(record) = self.read::<Record>(&self.status())?
+            && record.outcome == Outcome::Running
+        {
+            if engine_alive(running_group(&record)) {
+                return Ok(None);
+            }
+            self.record(&Record {
+                engine_group: None,
+                outcome: Outcome::Interrupted {
+                    finished_at_ms: millis(now()),
+                },
+                ..record
+            })?;
+        }
+        Ok(Some(lock))
     }
 
     fn queue_lock(&self) -> Result<LockGuard, GenerationError> {
@@ -847,6 +907,19 @@ mod tests {
         let record = old_running_record();
         let alive = engine_alive(running_group(&record));
         assert_eq!(state_of(&record, true, alive), GenerationState::Interrupted);
+    }
+
+    #[test]
+    fn a_record_closed_by_the_next_worker_reads_as_interrupted_whoever_holds_the_lock() {
+        let record: Record = serde_json::from_str(
+            r#"{"sha": "0123456789abcdef0123456789abcdef01234567", "started_at_ms": 1,
+                "outcome": {"state": "interrupted", "finished_at_ms": 2}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            state_of(&record, false, false),
+            GenerationState::Interrupted
+        );
     }
 
     #[test]

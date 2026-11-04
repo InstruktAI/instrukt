@@ -186,6 +186,16 @@ impl Gate {
             .status()
             .unwrap();
         assert!(killed.success(), "the worker was killed");
+        // Gone, not merely signalled: its locks are released only once it
+        // has exited.
+        wait_until(&format!("the worker of {rev} to have exited"), || {
+            !std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        });
     }
 
     pub fn open(&self) {
