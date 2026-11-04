@@ -197,9 +197,40 @@ pub fn observe_main(root: &Path) -> Result<MainObservation, SourceError> {
     })
 }
 
+/// How many times a sample of the remote's heads is taken before the
+/// tick gives the observation up.
+const SAMPLE_ATTEMPTS: u32 = 3;
+
+/// What follows a sampling attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sampling {
+    /// The sampled commits are available locally; judge them.
+    Observed,
+    /// A sampled commit could not be fetched (the ref moved on); sample
+    /// again.
+    Resample,
+    /// The bound is spent; this tick's observation failed and the next
+    /// tick retries.
+    GiveUp,
+}
+
+/// The step after attempt `attempt` (from 1) whose sampled commits were
+/// `fetched` or not.
+pub fn after_sample(attempt: u32, fetched: bool) -> Sampling {
+    match (fetched, attempt < SAMPLE_ATTEMPTS) {
+        (true, _) => Sampling::Observed,
+        (false, true) => Sampling::Resample,
+        (false, false) => Sampling::GiveUp,
+    }
+}
+
 /// The canonical remote's current heads of `branch` and `integrate`, as
 /// it answers now; `(None, None)` when the project has no canonical remote.
-/// The commits are fetched into their tracking refs.
+/// The sampled commits themselves — never whatever the branch names by the
+/// time of a later fetch — are fetched and recorded in the tracking refs,
+/// so the commits judged are exactly the commits observed. A sampled
+/// commit that is no longer available is sampled afresh, a bounded number
+/// of times.
 fn remote_heads(
     root: &Path,
     branch: &str,
@@ -211,6 +242,51 @@ fn remote_heads(
     {
         return Ok((None, None));
     }
+    let mut attempt = 1;
+    loop {
+        let (main, integrate) = sample(root, branch)?;
+        let sampled: Vec<&CommitSha> = main.iter().chain(integrate.iter()).collect();
+        let fetched = fetch_commits(root, &sampled)?;
+        match after_sample(attempt, fetched) {
+            Sampling::Observed => {
+                for (sha, name) in [(&main, branch), (&integrate, INTEGRATE_BRANCH)] {
+                    if let Some(sha) = sha {
+                        git::run(
+                            root,
+                            [
+                                "update-ref",
+                                &format!("refs/remotes/{CANONICAL_REMOTE}/{name}"),
+                                sha.as_str(),
+                            ],
+                        )?;
+                    }
+                }
+                return Ok((main, integrate));
+            }
+            Sampling::Resample => {
+                tracing::debug!(event = "remote_heads_resampled", attempt);
+                attempt += 1;
+            }
+            Sampling::GiveUp => {
+                tracing::warn!(event = "remote_heads_unstable", attempts = attempt, dir = %root.display());
+                return Err(SourceError::LsRemote {
+                    dir: root.display().to_string(),
+                    remote: CANONICAL_REMOTE.to_owned(),
+                    git_ref: format!("refs/heads/{branch} refs/heads/{INTEGRATE_BRANCH}"),
+                    detail: format!(
+                        "the sampled heads kept moving before they could be fetched ({attempt} attempts); the next tick observes again"
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// One `git ls-remote` sample of the canonical branch and `integrate`.
+fn sample(
+    root: &Path,
+    branch: &str,
+) -> Result<(Option<CommitSha>, Option<CommitSha>), SourceError> {
     let main_ref = format!("refs/heads/{branch}");
     let integrate_ref = format!("refs/heads/{INTEGRATE_BRANCH}");
     let done = Invocation::program(
@@ -241,33 +317,43 @@ fn remote_heads(
             .find(|(_, listed)| *listed == name)
             .and_then(|(sha, _)| CommitSha::parse(sha).ok())
     };
-    let main = head(&main_ref);
-    let integrate = head(&integrate_ref);
-    let mut refspecs = Vec::new();
-    for (sha, name) in [(&main, branch), (&integrate, INTEGRATE_BRANCH)] {
-        if sha.is_some() {
-            refspecs.push(format!(
-                "+refs/heads/{name}:refs/remotes/{CANONICAL_REMOTE}/{name}"
-            ));
+    Ok((head(&main_ref), head(&integrate_ref)))
+}
+
+/// Makes `commits` available locally, fetching by object id those not
+/// present yet; `false` when the remote no longer serves one of them.
+fn fetch_commits(root: &Path, commits: &[&CommitSha]) -> Result<bool, SourceError> {
+    let mut missing = Vec::new();
+    for commit in commits {
+        // `cat-file -e` on a full id answers presence without resolving a
+        // name: any failure means the object is not here (yet).
+        let present = git::run_output(root, ["cat-file", "-e", commit.as_str()])?
+            .status
+            .success();
+        if !present {
+            missing.push(commit.as_str());
         }
     }
-    if !refspecs.is_empty() {
-        let mut args = vec!["fetch", "--quiet", "--no-tags", "--", CANONICAL_REMOTE];
-        args.extend(refspecs.iter().map(String::as_str));
-        let fetched = Invocation::program("git", &args)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .cwd(root)
-            .run(LS_REMOTE_TIMEOUT)?;
-        if !fetched.success {
-            return Err(SourceError::LsRemote {
-                dir: root.display().to_string(),
-                remote: CANONICAL_REMOTE.to_owned(),
-                git_ref: refspecs.join(" "),
-                detail: fetched.stderr.trim().to_owned(),
-            });
-        }
+    if missing.is_empty() {
+        return Ok(true);
     }
-    Ok((main, integrate))
+    let mut args = vec![
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "--",
+        CANONICAL_REMOTE,
+    ];
+    args.extend(missing.iter().copied());
+    let fetched = Invocation::program("git", &args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .cwd(root)
+        .run(LS_REMOTE_TIMEOUT)?;
+    if !fetched.success {
+        tracing::debug!(event = "sampled_commit_unfetchable", stderr = %fetched.stderr.trim());
+    }
+    Ok(fetched.success)
 }
 
 /// The commit `git_ref` names; `None` when the ref does not exist.
@@ -331,5 +417,14 @@ mod tests {
             ..ahead
         };
         assert_eq!(level.main_ahead(&project), None);
+    }
+
+    #[test]
+    fn a_sample_that_cannot_be_fetched_is_retaken_then_given_up_at_the_bound() {
+        assert_eq!(after_sample(1, true), Sampling::Observed);
+        assert_eq!(after_sample(1, false), Sampling::Resample);
+        assert_eq!(after_sample(SAMPLE_ATTEMPTS - 1, false), Sampling::Resample);
+        assert_eq!(after_sample(SAMPLE_ATTEMPTS, false), Sampling::GiveUp);
+        assert_eq!(after_sample(SAMPLE_ATTEMPTS, true), Sampling::Observed);
     }
 }
