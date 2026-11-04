@@ -328,14 +328,17 @@ pub(super) fn references(lines: &[Line<'_>]) -> Vec<RawRef> {
     out
 }
 
-/// A directive in a body: an `@include` of a fragment or an `@exec`
-/// read-time command.
+/// A directive in a body: an `@include` of a fragment, a `@config`
+/// configured value, or a leftover `@exec`, which the format does not have:
+/// it is read only so validation can report it, and is never run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
     /// `<!-- @include: <path> -->` — the fragment path as written
     /// (`docs/snippets/<name>.md`).
     Include { path: String, span: Range<usize> },
-    /// `<!-- @exec: <command> -->` — the command as written.
+    /// `<!-- @config: <path> -->` — the configuration path as written.
+    Config { path: String, span: Range<usize> },
+    /// `<!-- @exec: <command> -->` — not a directive of the format; inert.
     Exec { command: String, span: Range<usize> },
 }
 
@@ -344,40 +347,44 @@ impl Directive {
     /// it there replaces the directive.
     pub fn span(&self) -> Range<usize> {
         match self {
-            Directive::Include { span, .. } | Directive::Exec { span, .. } => span.clone(),
+            Directive::Include { span, .. }
+            | Directive::Config { span, .. }
+            | Directive::Exec { span, .. } => span.clone(),
         }
     }
 }
 
 /// The directives of a body, outside fenced and inline code. The argument
-/// is read from the source as written, so backticks inside a command stay.
-/// A directive with nothing after its colon is not one.
+/// is read from the source as written, so backticks inside it stay. A
+/// directive with nothing after its colon is not one.
 pub(super) fn directives(lines: &[Line<'_>]) -> Vec<Directive> {
     let mut out = Vec::new();
     for line in lines.iter().filter(|line| !line.fenced) {
         for comment in visible_comments(line.text) {
             let inner = &line.text[comment.inner.clone()];
             let padded = inner.trim_start_matches([' ', '\t']);
-            let (kind, prefix) = if padded.starts_with("@include:") {
-                ("include", "@include:".len())
-            } else if padded.starts_with("@exec:") {
-                ("exec", "@exec:".len())
-            } else {
+            let Some((kind, raw)) = ["@include:", "@config:", "@exec:"]
+                .into_iter()
+                .find_map(|prefix| padded.strip_prefix(prefix).map(|raw| (prefix, raw)))
+            else {
                 continue;
             };
-            let raw = &padded[prefix..];
-            let argument = raw.trim();
+            let argument = raw.trim().to_owned();
             if argument.is_empty() {
                 continue;
             }
             let span = line.span.start + comment.whole.start..line.span.start + comment.whole.end;
             out.push(match kind {
-                "include" => Directive::Include {
-                    path: argument.to_owned(),
+                "@include:" => Directive::Include {
+                    path: argument,
+                    span,
+                },
+                "@config:" => Directive::Config {
+                    path: argument,
                     span,
                 },
                 _ => Directive::Exec {
-                    command: argument.to_owned(),
+                    command: argument,
                     span,
                 },
             });
@@ -453,34 +460,38 @@ mod tests {
 
     #[test]
     fn directive_arguments_keep_their_backticks() {
-        // The command `echo `date`` spans bytes 12..23; masking inline code
-        // must not shorten it.
-        let body = "<!-- @exec: echo `date` -->\n";
+        // The path `a`b`` spans bytes 14..18; masking inline code must not
+        // shorten it.
+        let body = "<!-- @config: a`b` -->\n";
         let found = directives(&lines(body));
         assert!(
-            matches!(&found[..], [Directive::Exec { command, .. }] if command.as_str() == &body[12..23])
+            matches!(&found[..], [Directive::Config { path, .. }] if path.as_str() == &body[14..18])
         );
-        assert_eq!(found[0].span(), 0..27);
+        assert_eq!(found[0].span(), 0..22);
     }
 
     #[test]
     fn directives_are_read_outside_code_with_their_spans() {
-        let body = "a\n<!-- @exec: instrukt config get x -->\n`<!-- @exec: no -->`\n\
-                    <!-- @include: docs/snippets/f.md -->\n";
+        let body = "a\n<!-- @config: runtime.session_id -->\n`<!-- @config: no -->`\n\
+                    <!-- @include: docs/snippets/f.md -->\n<!-- @exec: touch x -->\n";
         let found = directives(&lines(body));
         assert!(matches!(
             &found[..],
-            [Directive::Exec { .. }, Directive::Include { .. }]
+            [
+                Directive::Config { .. },
+                Directive::Include { .. },
+                Directive::Exec { .. }
+            ]
         ));
-        assert_eq!(found[0].span(), 2..39);
+        assert_eq!(found[0].span(), 2..38);
         assert!(
-            matches!(&found[1], Directive::Include { path, .. } if path.as_str() == &body[76..94])
+            matches!(&found[1], Directive::Include { path, .. } if path.as_str() == &body[77..95])
         );
     }
 
     #[test]
     fn a_directive_in_inline_code_or_fences_is_not_one() {
-        let body = "`<!-- @exec: x -->`\n```\n<!-- @exec: y -->\n```\n";
+        let body = "`<!-- @config: x -->`\n```\n<!-- @exec: y -->\n```\n";
         assert!(directives(&lines(body)).is_empty());
     }
 }

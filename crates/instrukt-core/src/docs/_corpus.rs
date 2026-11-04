@@ -94,7 +94,7 @@ impl Version {
         &self.required_reads
     }
 
-    /// The `@include` and `@exec` directives of `body()`, with their spans
+    /// The `@include`, `@config` and leftover `@exec` directives of `body()`, with their spans
     /// in it.
     pub fn directives(&self) -> &[Directive] {
         &self.directives
@@ -631,6 +631,14 @@ impl Corpus {
     /// its `docs/global/`.
     pub fn published_domains(&self) -> &BTreeSet<DomainName> {
         &self.owned_domains
+    }
+
+    /// Every fragment as its repository path (`docs/global/snippets/…`)
+    /// and body.
+    pub(super) fn fragment_files(&self) -> impl Iterator<Item = (String, &str)> {
+        self.fragments
+            .iter()
+            .map(|(name, body)| (format!("docs/global/snippets/{name}.md"), body.as_str()))
     }
 
     pub(super) fn strays(&self) -> &[Stray] {

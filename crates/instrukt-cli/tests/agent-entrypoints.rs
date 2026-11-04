@@ -58,7 +58,7 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
              ## Required reads\n\n@docs/local/policy/house.md\n@docs/local/policy/future.md\n\n\
              ## Notes\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-             <!-- @exec: printf '%s' computed-at-publish -->\n\n\
+             <!-- @config: project -->\n\n\
              Written as ``@docs/local/policy/house.md`` it is quoted.\n\n\
              ```\n@docs/local/policy/not-a-snippet.md\n```\n\n\
              <!-- @docs/local/policy/house.md stays a comment -->\n",

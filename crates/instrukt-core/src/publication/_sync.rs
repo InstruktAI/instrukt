@@ -14,7 +14,7 @@ use super::_tree::{self, BUNDLE_FILE, Outputs, PublisherRecord};
 use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, ConfigError, Configuration, Layer, Module};
-use crate::docs::{self, Corpus, ExecPolicy, Finding, ValidationRequest};
+use crate::docs::{self, Corpus, Finding, ValidationRequest, Values};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::home::Home;
 use crate::ids::{CommitSha, DomainName, ProjectSlug};
@@ -285,7 +285,7 @@ fn publish(
     // Compilation reads the committed tree and the home as it stands; it
     // writes nothing, so a failure here leaves everything as it was.
     let owned: BTreeSet<DomainName> = domains.iter().cloned().collect();
-    let exec = ExecPolicy::publish(&project.primary, config.runtimes());
+    let values = Values::publish(&config);
     let events = config.module_enabled(Module::Events)?;
     let mut compiler = Compiler::new(
         home,
@@ -294,7 +294,7 @@ fn publish(
         &owned,
         &patched,
         events,
-        &exec,
+        &values,
         &project.primary,
     );
     let mut bundles = BTreeMap::new();

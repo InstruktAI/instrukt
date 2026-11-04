@@ -127,6 +127,14 @@ codes! {
     /// An action naming a snippet that is not a procedure.
     ActionTargetNotProcedure => "workflow-action-target-not-procedure",
 
+    // Directives
+    /// An `@exec` directive: the format has no directive that runs a
+    /// command.
+    DirectiveExec => "directive-exec",
+    /// A `@config` directive with a `runtime.*` path in a file publication
+    /// compiles, which has no runtime session to resolve it against.
+    ConfigRuntimeCompiled => "directive-config-runtime-compiled",
+
     // Configuration
     /// `requires` names a module the effective switches turn off.
     RequiresModuleOff => "configuration-requires-module-off",

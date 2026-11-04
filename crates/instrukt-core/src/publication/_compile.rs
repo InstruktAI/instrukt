@@ -1,8 +1,8 @@
 //! Compilation: a bundle, a master or a global agent entrypoint expanded
 //! into one self-contained text. Required reads are inlined ahead of the
-//! text that requires them, each once; include fragments and `@exec`
-//! directives are expanded by the docs read pipeline under the publish
-//! policy; planned material is dropped and pending snippets are never
+//! text that requires them, each once; include fragments are expanded and
+//! `@config` values resolved by the docs read pipeline with no runtime
+//! session; planned material is dropped and pending snippets are never
 //! inlined. A text left with an `@` reference fails compilation.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,8 +11,8 @@ use std::path::Path;
 use super::_tree::BUNDLE_FILE;
 use super::PublicationError;
 use crate::docs::{
-    self, BaselineOwner, Corpus, ExecPolicy, Fragments, Lens, RefTarget, Reference, RenderContext,
-    Rendered, SourceFile, View,
+    self, BaselineOwner, Corpus, Fragments, Lens, RefTarget, Reference, RenderContext, Rendered,
+    SourceFile, Values, View,
 };
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
@@ -37,7 +37,7 @@ pub(super) struct Compiler<'a> {
     /// Whether the events module is on: configured responsibilities are
     /// listed.
     pub events: bool,
-    pub exec: &'a ExecPolicy,
+    pub values: &'a Values<'a>,
     /// The project's primary worktree, against which its `docs/…`
     /// references resolve.
     pub primary: &'a Path,
@@ -58,7 +58,7 @@ impl<'a> Compiler<'a> {
         owned: &'a BTreeSet<DomainName>,
         index: &'a GlobalIndex,
         events: bool,
-        exec: &'a ExecPolicy,
+        values: &'a Values<'a>,
         primary: &'a Path,
     ) -> Self {
         Self {
@@ -68,7 +68,7 @@ impl<'a> Compiler<'a> {
             owned,
             index,
             events,
-            exec,
+            values,
             primary,
             bundles: BTreeMap::new(),
             compiling: BTreeSet::new(),
@@ -78,7 +78,7 @@ impl<'a> Compiler<'a> {
     fn project_context(&self) -> RenderContext<'_> {
         RenderContext {
             fragments: Fragments::CorpusFirst(self.corpus),
-            exec: self.exec,
+            values: self.values,
             repo_root: Some(self.primary),
             project: Some(self.project),
         }
@@ -87,7 +87,7 @@ impl<'a> Compiler<'a> {
     fn home_context(&self) -> RenderContext<'_> {
         RenderContext {
             fragments: Fragments::Home(self.home),
-            exec: self.exec,
+            values: self.values,
             repo_root: None,
             project: None,
         }

@@ -14,8 +14,9 @@ use std::time::Instant;
 use super::_corpus::{Corpus, Lens, ManifestLine, Snippet, SourceFile, View, manifest_lines};
 use super::_identity::{Scope, Taxonomy, companion_shape};
 use super::_refs::{RefTarget, Reference};
-use super::_render::{self, ExecPolicy, Fragments, RenderContext, read_confined};
+use super::_render::{self, Fragments, RenderContext, Values, read_confined};
 use super::DocsError;
+use crate::config::Configuration;
 use crate::git;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug, SnippetId, TodoSlug};
@@ -49,12 +50,12 @@ pub struct GetRequest<'a> {
     pub target: Option<&'a TodoSlug>,
 }
 
-/// The text `docs get` prints, and whether a read-time command failed in
-/// it (the read then reports failure).
+/// The text `docs get` prints, and whether a configured value in it could
+/// not be resolved (the read then reports failure).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
     pub text: String,
-    pub exec_failed: bool,
+    pub unresolved: bool,
 }
 
 const AREAS: &str = "principle|concept|policy|procedure|design|spec|adr";
@@ -278,10 +279,14 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
             nothing_published: false,
         });
     }
+    // Published snippets resolve configured values against the machine's
+    // configuration, never the caller's working directory; a local snippet
+    // against its own project's.
+    let global = Configuration::load_global(req.home)?;
     let reader = Reader {
         home: req.home,
         index: &index,
-        exec: ExecPolicy::read(req.cwd),
+        values: Values::read(&global),
         lens: req.target.map_or(Lens::Current, Lens::Target),
     };
     let warning = behind_warning(req.home, &caller)?;
@@ -294,7 +299,7 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
         event = "docs_get_completed",
         requested = req.ids.len(),
         closure = req.closure,
-        exec_failed = reading.exec_failed,
+        unresolved = reading.unresolved,
         duration_ms = elapsed_ms(started),
     );
     Ok(reading)
@@ -332,22 +337,22 @@ fn plain<'i>(
         ));
     }
     out.extend(warning);
-    let mut exec_failed = false;
+    let mut unresolved = false;
     for loaded in &roots {
         out.push(String::new());
         let (block, failed) = reader.render(loaded)?;
         out.push(block);
-        exec_failed |= failed;
+        unresolved |= failed;
     }
     for entry in third_party {
         out.push(String::new());
         let (block, failed) = reader.render_third_party(entry)?;
         out.push(block);
-        exec_failed |= failed;
+        unresolved |= failed;
     }
     Ok(Reading {
         text: finish(out),
-        exec_failed,
+        unresolved,
     })
 }
 
@@ -404,7 +409,7 @@ fn closure<'i>(
         ));
     }
     out.extend(warning);
-    let mut exec_failed = false;
+    let mut unresolved = false;
     // Every read in the order it is listed, then the procedure itself.
     for item in &graph.items {
         out.push(String::new());
@@ -413,7 +418,7 @@ fn closure<'i>(
             Reached::Snippet(loaded) => {
                 let (block, failed) = reader.render(loaded)?;
                 out.push(block);
-                exec_failed |= failed;
+                unresolved |= failed;
             }
             // A closure refuses or leaves out what cannot be read.
             Reached::Unreadable(_) => {}
@@ -422,10 +427,10 @@ fn closure<'i>(
     out.push(String::new());
     let (block, failed) = reader.render(&root)?;
     out.push(block);
-    exec_failed |= failed;
+    unresolved |= failed;
     Ok(Reading {
         text: finish(out),
-        exec_failed,
+        unresolved,
     })
 }
 
@@ -504,7 +509,7 @@ impl Loaded<'_> {
 struct Reader<'i> {
     home: &'i Home,
     index: &'i GlobalIndex,
-    exec: ExecPolicy,
+    values: Values<'i>,
     lens: Lens<'i>,
 }
 
@@ -731,15 +736,15 @@ impl<'i> Reader<'i> {
     fn context<'c>(&'c self, loaded: &'c Loaded<'_>) -> RenderContext<'c> {
         RenderContext {
             fragments: Fragments::Home(self.home),
-            exec: &self.exec,
+            values: &self.values,
             repo_root: loaded.repo_root.as_deref(),
             project: loaded.project(),
         }
     }
 
     /// One snippet's block: its header, then its body through the read
-    /// pipeline, or the notice that replaces it; whether a read-time
-    /// command failed.
+    /// pipeline, or the notice that replaces it; whether a configured value
+    /// could not be resolved.
     fn render(&self, loaded: &Loaded<'_>) -> Result<(String, bool), DocsError> {
         let snippet = &loaded.snippet;
         let id = snippet.id().as_str();
@@ -772,8 +777,17 @@ impl<'i> Reader<'i> {
             }
             View::Retired => {}
             View::Visible { version, .. } => {
-                let rendered = version.render(self.lens, &self.context(loaded))?;
-                failed = !rendered.exec_failures.is_empty();
+                let project = match &loaded.repo_root {
+                    Some(root) => Some(Configuration::load(self.home, Some(root))?),
+                    None => None,
+                };
+                let project_values = project.as_ref().map(Values::read);
+                let cx = RenderContext {
+                    values: project_values.as_ref().unwrap_or(&self.values),
+                    ..self.context(loaded)
+                };
+                let rendered = version.render(self.lens, &cx)?;
+                failed = !rendered.config_refusals.is_empty();
                 block.push(rendered.text.trim_matches('\n').to_owned());
                 let pending = snippet.superseded_by();
                 if self.lens == Lens::Current && !pending.is_empty() {
@@ -802,7 +816,7 @@ impl<'i> Reader<'i> {
         })?;
         let cx = RenderContext {
             fragments: Fragments::Home(self.home),
-            exec: &self.exec,
+            values: &self.values,
             repo_root: None,
             project: None,
         };
@@ -822,7 +836,7 @@ impl<'i> Reader<'i> {
             "---".to_owned(),
             rendered.text.trim_matches('\n').to_owned(),
         ];
-        Ok((block.join("\n"), !rendered.exec_failures.is_empty()))
+        Ok((block.join("\n"), !rendered.config_refusals.is_empty()))
     }
 
     fn render_bundle(&self, domain: &DomainName) -> Result<String, DocsError> {
