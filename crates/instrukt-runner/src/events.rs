@@ -42,6 +42,15 @@ pub enum Event {
         candidate: CommitSha,
         result: CiResult,
     },
+    /// The CI of remote canonical main's head commit completed red. It
+    /// wakes the integrator to restore the canonical branch and authorizes
+    /// nothing by itself.
+    #[serde(rename = "runner.main_failing")]
+    MainFailing {
+        project: ProjectSlug,
+        /// The failing head commit.
+        head: CommitSha,
+    },
     /// A finalized todo was handed off to integration: work's
     /// finalize-ready stamp, expressing workflow's handoff.
     #[serde(rename = "workflow.finalized")]
@@ -55,10 +64,11 @@ pub enum Event {
 
 impl Event {
     /// Every name of the vocabulary, as subscriptions use them.
-    pub const NAMES: [&'static str; 4] = [
+    pub const NAMES: [&'static str; 5] = [
         "runner.upstream_changed",
         "runner.main_ahead",
         "runner.ci_completed",
+        "runner.main_failing",
         "workflow.finalized",
     ];
 
@@ -68,6 +78,7 @@ impl Event {
             Event::UpstreamChanged { .. } => "runner.upstream_changed",
             Event::MainAhead { .. } => "runner.main_ahead",
             Event::CiCompleted { .. } => "runner.ci_completed",
+            Event::MainFailing { .. } => "runner.main_failing",
             Event::WorkflowFinalized { .. } => "workflow.finalized",
         }
     }
@@ -78,6 +89,7 @@ impl Event {
             Event::UpstreamChanged { project, .. }
             | Event::MainAhead { project, .. }
             | Event::CiCompleted { project, .. }
+            | Event::MainFailing { project, .. }
             | Event::WorkflowFinalized { project, .. } => project,
         }
     }
@@ -91,6 +103,11 @@ impl Event {
 pub enum CiResult {
     Success,
     Failure,
+    /// The project has no CI: the canonical branch's head carries no
+    /// status and no check run, and the candidate has nothing reported
+    /// either (`integration-gate`, "Project without CI"). The integrator
+    /// verifies the candidate with the project's local test action.
+    NoCi,
 }
 
 /// Whether an append added a new event or met its idempotency key.

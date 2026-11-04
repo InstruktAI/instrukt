@@ -33,6 +33,7 @@ roles:
   - planner
   - task-preparer
   - task-runner
+  - integrator
 draft-plan:
   command: instrukt sessions run --procedure acme/procedure/plan --args {slug} --todo {slug} --brief -
   template: templates/draft-plan.md
@@ -127,6 +128,32 @@ impl Tracked {
     /// As [`Tracked::new`], with the machine's global `modules` switches.
     /// The project's own layer always switches todos on.
     pub fn with_global_modules(autostart: bool, modules: &str) -> Self {
+        Self::build(autostart, modules, "todos: true", false)
+    }
+
+    /// A project integrating through the standing integrator: work and
+    /// events on, pickup deliberate, the flavor publishing an `integrator`
+    /// procedure subscribed to `workflow.finalized`, `runner.ci_completed`,
+    /// `runner.main_ahead` and `runner.main_failing`, and `main` pushed to
+    /// a bare `origin`.
+    pub fn integrating() -> Self {
+        let project = Self::build(
+            false,
+            "todos: true, events: true",
+            "todos: true, events: true",
+            true,
+        );
+        let origin = project.env.bare_remote("demo-origin");
+        project
+            .repo
+            .git(["remote", "add", "origin", origin.to_str().unwrap()]);
+        project
+            .repo
+            .git(["push", "--quiet", "-u", "origin", "main"]);
+        project
+    }
+
+    fn build(autostart: bool, modules: &str, project_modules: &str, integrator: bool) -> Self {
         let mut env = TestEnv::new();
         let github = FakeGitHub::start();
         github.add_repo(REPOSITORY);
@@ -138,7 +165,7 @@ impl Tracked {
         repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: 1\nproject: demo\nmodules: {{todos: true}}\n\
+                "schema_version: 1\nproject: demo\nmodules: {{{project_modules}}}\n\
                  runner: {{autostart: {autostart}}}\nworkflow: {{domain: acme}}\n\
                  github: {{repository: {REPOSITORY}}}\n\
                  publishes:\n  - slug: acme\n    trigger: When working on acme.\n"
@@ -168,6 +195,19 @@ impl Tracked {
         ] {
             let (path, text) = procedure(name, role, parameters);
             repo.write(&path, &text);
+        }
+        if integrator {
+            repo.write(
+                "docs/global/acme/procedure/integrate.md",
+                &snippet(
+                    "procedure",
+                    "Integrate",
+                    "Integrate exact verified candidates.",
+                    "role: integrator\nparameters:\n  - name: slug\nsubscriptions:\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_ahead\n  - runner.main_failing\n",
+                    &[],
+                    "Integrate.\n",
+                ),
+            );
         }
         repo.commit("docs: the acme flavor");
         sync(&env, &repo);

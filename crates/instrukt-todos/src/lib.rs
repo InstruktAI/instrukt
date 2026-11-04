@@ -22,6 +22,7 @@
 //! The CLI wires every implementation (`crates/instrukt-cli/src/wiring.rs`)
 //! only when `modules.todos` is on.
 
+pub mod eval;
 pub mod evidence;
 pub mod work;
 pub mod workflow;

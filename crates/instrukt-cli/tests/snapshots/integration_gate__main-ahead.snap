@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "project.rt.opening(INTEGRATOR).replace(&direct,\n\"<local main>\").replace(&pushed, \"<remote main>\")"
+---
+Run `instrukt docs get acme/procedure/integrate --closure` and execute that procedure.
+
+instrukt events:
+{"event":"runner.main_ahead","project":"demo","local_main":"<local main>","remote_main":"<remote main>"}

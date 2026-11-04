@@ -9,7 +9,12 @@ delivered_by: [instrukt-first-build]
 A developer's finalized work reaches the canonical branch through a verified
 integration candidate. The standing integrator owns candidate composition,
 failure interpretation, promotion and recovery. GitHub supplies CI results
-and branch protection; the integrator supplies the decisions.
+and branch protection; the integrator supplies the decisions. instrukt
+itself never moves the canonical branch: it wakes the integrator with each
+exact candidate and that candidate's own result, and keeps review verdicts
+readable. Promotion, failure judgment, revert-first recovery and separate
+repair are the integrator's obligations under its procedure, guarded by
+branch protection.
 
 ## Canonical fields
 
@@ -50,6 +55,8 @@ check runs:
   one status or check run exists.
 - **Red:** any status or check run has failed.
 - **Pending:** anything is still running, or nothing has reported yet.
+- **`no_ci`:** nothing has reported for the candidate and the canonical
+  head carries no status and no check run; the project has no CI.
 
 | Observed result | Integrator obligation |
 | --- | --- |
@@ -106,41 +113,49 @@ anomaly is notified; the integration gate reports the unresolved failure.
 
 ### Use cases
 
-#### UC-IG1: Admit only a verified integration candidate
+#### UC-IG1: A developer's integrator learns each candidate's own verification result
 
 ```gherkin
-Scenario Outline: Promote a verified candidate
-  Given a developer has finalized work ready for integration
-  And the project uses <verification> to verify integration candidates
-  When the developer has that work integrated
-  Then the integrator learns the candidate's verification result without anyone relaying it
-  And the canonical branch advances only to the exact candidate that passed verification
-  And a failing or unfinished candidate remains unpromoted
-
-  Examples:
-    | verification                   |
-    | required CI checks             |
-    | a configured local test action |
+Given a developer has finalized work ready for integration
+When the work is finalized
+Then the integrator is woken to integrate it
+When its candidate's CI completes
+Then the integrator is woken with that exact candidate and its result
+And while the candidate's CI is still running, nobody is woken for it
+When a red candidate is replaced by a repaired one
+Then the integrator is woken with the repaired candidate's own result
+But when the project has no CI
+Then the integrator is woken with the exact candidate and told the project has no CI
 ```
 
-#### UC-IG2: Restore a usable shared baseline
+#### UC-IG2: A revert is verified as its own candidate
 
 ```gherkin
-Given a developer's project has a failing canonical branch after a delivery
-When the developer has the failed delivery recovered
-Then the offending delivery is reverted before its cause is repaired
-And repair proceeds as separate work from restoration of the shared baseline
+Given a developer's project verifies its canonical branch with CI
+When the CI of the canonical branch's latest commit reports a failure
+Then the integrator is woken with that exact commit and its failure
+When a revert of the failing delivery is pushed for integration
+Then the integrator is woken with the revert's own verification result
+And the failing result of the reverted delivery is never reported for the revert
 ```
 
-#### UC-IG3: Reviewed direct commits reach the shared branch through the same gate
+#### UC-IG3: Direct commits on local main wake the integrator
 
 ```gherkin
 Given a developer committed reviewed work directly on their local main
+And no integration candidate is pending
 When the runner next checks the project
-Then the integrator is woken to take those commits through verification
-And only commits whose latest review settled them reach the shared branch
-And the first commit whose review has not settled stops the rest
+Then the integrator is woken to take those commits through integration
+And it can read each commit's latest review verdict
 ```
+
+## Known caveats
+
+- A candidate that introduces CI into a project whose canonical head has none
+  is judged `no_ci` when a tick reads it before its CI reports, and is then
+  verified locally. Once its CI reports on the canonical branch, a red result
+  is reported as a failing canonical branch (`runner.main_failing`), and CI
+  governs from then on.
 
 ## See Also
 

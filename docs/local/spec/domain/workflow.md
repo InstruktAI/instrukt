@@ -259,6 +259,20 @@ the engine's derived state.
   the integration gate. The event does not authorize promotion.
 - **Failure handling:** unsettled or unverified commits remain unpromoted.
 
+#### Failing canonical branch
+
+- **Name:** `runner.main_failing`.
+- **Producer:** the runner, observing the CI result of remote canonical main's
+  head on each tick.
+- **Payload:** project identity and the failing head commit identity.
+- **Idempotency key:** project and head commit; a commit's red result is
+  reported once, and a new head is observed afresh.
+- **Reaction:** wake the standing integrator to restore the canonical branch
+  (revert first, repair as separate work). The event authorizes nothing by
+  itself.
+- **Not observed:** a red result on a commit that is no longer the head. The
+  head's own CI covers the combined state.
+
 ### Use cases
 
 - **Workflow definition** — `local/projects/instrukt/spec/feature/workflow/workflow-definition` — adopt a flavor and configure project obligations independently of the engine.
@@ -287,7 +301,8 @@ The context map indexes the cross-cutting architecture design.
 - **Repository → workflow — Customer / Supplier:** repository supplies the
   candidate integration branch and exact-commit main advancement.
 - **Runner → workflow — Published language:** `runner.ci_completed` and `runner.main_ahead` wake the
-  integrator to assess candidates and direct commits.
+  integrator to assess candidates and direct commits; `runner.main_failing`
+  wakes it to restore a failing canonical branch.
 
 `runner.main_ahead` is consumed by the subscribed integrator to assess direct
 commits through the integration gate. The `--finalize-ready` work stamp owns

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "project.rt.sent(INTEGRATOR,\n1).replace(&revert, \"<revert>\").replace(&delivered, \"<reverted delivery>\")"
+---
+instrukt events:
+{"event":"runner.ci_completed","project":"demo","candidate":"<revert>","result":"success"}

@@ -82,7 +82,7 @@ authorization and derived workflow state.
   the runtime creates/reattaches it and the binding records its path as `worktree.path`), `instrukt sessions link --remove <a> <b>`, `instrukt ticks status`, and the wake-up
   registration performed by `instrukt install`; the five-state session
   contract; every sessions facade command accepts `--json`; linked-session input capability; instrukt event vocabulary,
-  including `runner.upstream_changed`, `runner.ci_completed`, `runner.main_ahead` and
+  including `runner.upstream_changed`, `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and
   project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
@@ -166,7 +166,8 @@ tick; it does not carry authoritative state or require reliable delivery.
 | --- | --- | --- | --- | --- |
 | `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `general/procedure/upstream-watch` |
 | `runner.main_ahead` | Local main is ahead of remote main and no candidate is pending | Project, local main revision, remote main revision | Project, local main revision, remote main revision | Workflow's subscribed integrator |
-| `runner.ci_completed` | The integrate candidate's CI result completes | Project, candidate SHA, CI result | Project, candidate SHA, CI result | Workflow's subscribed integrator |
+| `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
+| `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
 
 ### Domain events consumed
 
@@ -209,7 +210,7 @@ record-backed completion.
 | runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
-| runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits |
+| runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits; `runner.main_failing` wakes it to restore a failing canonical branch |
 
 The runtime mapping and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are
