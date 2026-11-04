@@ -481,96 +481,50 @@ fn on_board(project: &Project, owner: &str, number: u64) -> BTreeSet<String> {
         .collect()
 }
 
-/// The record status the reflection wrote into issue `node`'s body: the
-/// value its `Status` entry carries.
-fn issue_status(project: &Project, node: &str) -> String {
-    let issue = project
+/// The board state the fake holds for `<owner>/<number>`: its fields with
+/// their options in order, then each item, named by the issue it shows
+/// (`#<number>`, by the node ids in `issues`), with its field values.
+fn board_state(project: &Project, owner: &str, number: u64, issues: &[(u64, &str)]) -> String {
+    let fields = project
         .github
-        .issues(REPOSITORY)
+        .project_fields(owner, number)
         .into_iter()
-        .find(|issue| issue["node_id"] == node)
-        .unwrap();
-    let body = issue["body"].as_str().unwrap();
-    body.lines()
-        .find_map(|line| line.split_once("**Status:** "))
-        .map(|(_, status)| status.trim().to_owned())
-        .unwrap()
-}
-
-/// The status `instrukt todo show` reports for `slug`: the last entry of
-/// its heading line, rendered by the CLI from the todo's state.
-fn shown_status(project: &Project, slug: &str) -> String {
-    let shown = project.ok(["show", slug]);
-    shown
-        .lines()
-        .next()
-        .and_then(|heading| heading.rsplit(" · ").next())
-        .unwrap()
-        .to_owned()
-}
-
-/// What a todo's record says independently of reflection: the issue it is
-/// reflected to, the status the CLI reports, and whether the developer
-/// put it on hold.
-struct Expected<'a> {
-    node: &'a str,
-    slug: &'a str,
-    held: bool,
-}
-
-/// The `field` value each item on board `<owner>/<number>` carries.
-fn values_on(project: &Project, owner: &str, number: u64, field: &str) -> Vec<(String, String)> {
-    project
+        .map(|(name, options)| format!("field {name}: [{}]", options.join(", ")));
+    let mut items: Vec<String> = project
         .github
         .project_items(owner, number)
         .into_iter()
         .map(|(node, values)| {
-            let [(name, value)]: [(String, String); 1] = values.try_into().unwrap();
-            assert_eq!(name, field, "item {node} carries only the owned field");
-            (node, value)
+            let (issue, _) = issues.iter().find(|(_, n)| *n == node).unwrap();
+            let values: Vec<String> = values
+                .into_iter()
+                .map(|(field, option)| format!("{field} = {option}"))
+                .collect();
+            format!("item #{issue}: {}", values.join(", "))
         })
-        .collect()
+        .collect();
+    items.sort();
+    fields.chain(items).collect::<Vec<_>>().join("\n")
 }
 
-/// Checks the statuses on board `<owner>/<number>`, under `field`, against
-/// each todo's own state: an unheld todo shows the status the CLI
-/// reports; a held one shows a status of its own; distinct states never
-/// share a value; and each value is the one reflection wrote to the
-/// todo's issue.
-fn assert_statuses(
-    project: &Project,
-    owner: &str,
-    number: u64,
-    field: &str,
-    todos: &[Expected<'_>],
-) {
-    let values = values_on(project, owner, number, field);
-    let value_of = |node: &str| {
-        values
-            .iter()
-            .find(|(n, _)| n == node)
-            .map(|(_, v)| v.clone())
-            .unwrap()
-    };
-    let mut states = BTreeSet::new();
-    let mut seen = BTreeSet::new();
-    for todo in todos {
-        let value = value_of(todo.node);
-        let shown = shown_status(project, todo.slug);
-        if todo.held {
-            assert_ne!(value, shown, "{} is shown as held", todo.slug);
-        } else {
-            assert_eq!(value, shown, "{}", todo.slug);
-        }
-        assert_eq!(value, issue_status(project, todo.node), "{}", todo.slug);
-        states.insert((shown, todo.held));
-        seen.insert(value);
-    }
-    assert_eq!(
-        seen.len(),
-        states.len(),
-        "distinct states, distinct statuses"
-    );
+/// `instrukt todo show` for each of `slugs`, as the developer reads it.
+fn shown(project: &Project, slugs: &[&str]) -> String {
+    slugs
+        .iter()
+        .map(|slug| redact(&project.ok(["show", slug])))
+        .collect::<Vec<_>>()
+        .join("---\n")
+}
+
+/// The field name every item on board `<owner>/<number>` carries values
+/// under.
+fn valued_fields(project: &Project, owner: &str, number: u64) -> BTreeSet<String> {
+    project
+        .github
+        .project_items(owner, number)
+        .into_iter()
+        .flat_map(|(_, values)| values.into_iter().map(|(field, _)| field))
+        .collect()
 }
 
 // spec: local/projects/instrukt/spec/feature/work/github-record UC-GR5
@@ -592,45 +546,24 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     let (owned, owned_before) = first_before.last().cloned().unwrap();
     choose_board(&project, "acme/7");
 
-    project.create("nested-lists", "feature", INTENT);
-    project.create("parser-depth", "change", "Track list depth in the parser.");
-    project.create("renderer", "change", "Render lists at their depth.");
-    project.ok(["freeze", "parser-depth"]);
-    project.ok(["update", "renderer", "--hold", "--reason", "waiting"]);
-    let (lists, parser, renderer) = (
-        issue_node(&project, 1),
-        issue_node(&project, 2),
-        issue_node(&project, 3),
-    );
-    let every_todo = BTreeSet::from([lists.clone(), parser.clone(), renderer.clone()]);
+    let slugs = ["nested-lists", "parser-depth", "renderer"];
+    project.create(slugs[0], "feature", INTENT);
+    project.create(slugs[1], "change", "Track list depth in the parser.");
+    project.create(slugs[2], "change", "Render lists at their depth.");
+    project.ok(["freeze", slugs[1]]);
+    project.ok(["update", slugs[2], "--hold", "--reason", "waiting"]);
+    let nodes: Vec<String> = (1..=3).map(|n| issue_node(&project, n)).collect();
+    let issues: Vec<(u64, &str)> = (1..=3).zip(nodes.iter().map(String::as_str)).collect();
+    let every_todo: BTreeSet<String> = nodes.iter().cloned().collect();
 
     assert_eq!(on_board(&project, "acme", 7), every_todo);
-    assert_statuses(
-        &project,
-        "acme",
-        7,
-        &owned,
-        &[
-            Expected {
-                node: &lists,
-                slug: "nested-lists",
-                held: false,
-            },
-            Expected {
-                node: &parser,
-                slug: "parser-depth",
-                held: false,
-            },
-            Expected {
-                node: &renderer,
-                slug: "renderer",
-                held: true,
-            },
-        ],
+    assert_eq!(
+        valued_fields(&project, "acme", 7),
+        BTreeSet::from([owned.clone()])
     );
     // Reused, not recreated: every field keeps its place; every field but
     // the owned one is exactly as it was; the owned one keeps its options
-    // first and only gains new ones, covering the statuses now shown.
+    // first.
     let first_after = github.project_fields("acme", 7);
     assert_eq!(first_after.len(), first_before.len());
     assert_eq!(
@@ -640,54 +573,34 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     let (name, options) = first_after.last().unwrap();
     assert_eq!(name, &owned);
     assert_eq!(&options[..owned_before.len()], owned_before.as_slice());
-    let appended = &options[owned_before.len()..];
-    assert_eq!(
-        appended.iter().collect::<BTreeSet<_>>().len(),
-        appended.len()
-    );
-    assert!(appended.iter().all(|option| !owned_before.contains(option)));
-    for (_, value) in values_on(&project, "acme", 7, &owned) {
-        assert!(options.contains(&value), "the field offers {value}");
-    }
+    let first_shown = shown(&project, &slugs);
+    let first_board = board_state(&project, "acme", 7, &issues);
 
     // The developer chooses another board; the next reflection puts the
     // work there with its current status.
     choose_board(&project, "acme/8");
-    project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
-    project.ok(["update", "renderer", "--release"]);
-    project.ok(["refresh", "parser-depth"]);
+    project.ok(["update", slugs[0], "--hold", "--reason", "waiting"]);
+    project.ok(["update", slugs[2], "--release"]);
+    project.ok(["refresh", slugs[1]]);
 
     assert_eq!(on_board(&project, "acme", 8), every_todo);
-    assert_statuses(
-        &project,
-        "acme",
-        8,
-        &owned,
-        &[
-            Expected {
-                node: &lists,
-                slug: "nested-lists",
-                held: true,
-            },
-            Expected {
-                node: &parser,
-                slug: "parser-depth",
-                held: false,
-            },
-            Expected {
-                node: &renderer,
-                slug: "renderer",
-                held: false,
-            },
-        ],
-    );
-    // Created there: the only field, under the same name.
+    // Created there, under the same name, as the only field.
     let second_after = github.project_fields("acme", 8);
-    let [(name, options)]: [(String, Vec<String>); 1] = second_after.try_into().unwrap();
-    assert_eq!(name, owned);
-    for (_, value) in values_on(&project, "acme", 8, &owned) {
-        assert!(options.contains(&value), "the field offers {value}");
-    }
+    assert_eq!(second_after.len(), 1);
+    assert_eq!(second_after[0].0, owned);
+    assert_eq!(valued_fields(&project, "acme", 8), BTreeSet::from([owned]));
     // The first board is left as the work last put it.
     assert_eq!(github.project_fields("acme", 7), first_after);
+
+    insta::assert_snapshot!(
+        "shown-before-and-after-the-switch",
+        format!("{first_shown}===\n{}", shown(&project, &slugs))
+    );
+    insta::assert_snapshot!(
+        "boards-before-and-after-the-switch",
+        format!(
+            "{first_board}\n===\n{}",
+            board_state(&project, "acme", 8, &issues)
+        )
+    );
 }

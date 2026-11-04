@@ -93,6 +93,9 @@ pub struct UpdateReport {
 #[derive(Debug, Clone)]
 pub struct TodoView {
     pub record: TodoRecord,
+    /// The record status — active, iceboxed, held, delivered or withdrawn —
+    /// exactly as reflection writes it to GitHub.
+    pub record_status: &'static str,
     /// Whether the todo is a local item of this computer.
     pub local: bool,
     /// A local item's reflection; `None` for work read from GitHub.
@@ -1562,6 +1565,7 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
         }
     }
     TodoView {
+        record_status: super::_envelope::record_status(&record),
         record,
         local,
         reflection: None,

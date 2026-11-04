@@ -4,6 +4,7 @@ expression: "work::redact(&project.todo([\"show\", \"tidy-imports\"]))"
 ---
 tidy-imports · change · active
 identity: <id 1>
+record status: active
 created: <time> by Test Developer
 revision: 3
 intent:

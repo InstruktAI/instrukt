@@ -37,6 +37,7 @@ Ask the developer to approve PRD <digest 1> of nested-lists.
 ---
 nested-lists · feature · active
 identity: <id 1>
+record status: active
 created: <time> by session agent:lead-1
 revision: 6
 intent:

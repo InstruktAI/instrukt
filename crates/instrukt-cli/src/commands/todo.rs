@@ -872,6 +872,7 @@ fn render_view(view: &TodoView) -> String {
         status_word(record.status)
     ));
     out.push(format!("identity: {}", record.id));
+    out.push(format!("record status: {}", view.record_status));
     out.push(format!(
         "created: {} by {}{}",
         time(record.created),
