@@ -13,8 +13,9 @@ use instrukt_core::config::Env;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
 use instrukt_core::repository::{
     self, CommitRequest, FilterDirection, GENERATED_FILE, GenerationOutcome, Hook, HookChange,
-    HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, MASTER_FILE, NotesPush,
-    PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, StampTime, SyncOutcome,
+    HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, LOCAL_BASELINE, MASTER_FILE,
+    NotesPush, PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, StampTime,
+    SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -51,6 +52,7 @@ fn part_label(part: InitPart) -> String {
         InitPart::ProjectLayer => "project layer (instrukt.yaml)".to_owned(),
         InitPart::DocsFolders => "docs folders (docs/global/, docs/local/)".to_owned(),
         InitPart::Master => format!("master ({MASTER_FILE})"),
+        InitPart::LocalBaseline => format!("local baseline ({LOCAL_BASELINE})"),
         InitPart::DocsFilter => format!(
             "docs reference filter (git config filter.{})",
             repository::FILTER_NAME

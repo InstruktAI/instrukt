@@ -26,7 +26,9 @@ mod _run;
 mod _section;
 mod _stamp;
 
-pub use _adoption::{GENERATED_FILE, InitPart, InitReport, MASTER_FILE, PartOutcome, init};
+pub use _adoption::{
+    GENERATED_FILE, InitPart, InitReport, LOCAL_BASELINE, MASTER_FILE, PartOutcome, init,
+};
 pub use _commit::{CommitRequest, OWNED_TRAILERS, commit};
 pub use _error::RepositoryError;
 pub use _filter::{
