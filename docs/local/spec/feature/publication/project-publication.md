@@ -187,9 +187,9 @@ And the next publication of the project tries that commit again
 
 ```gherkin
 Given a developer's project whose documentation is published
-When its compiled agent instructions run a command at publication and that command fails
+When its compiled agent instructions ask for a configured value that cannot be resolved at publication
 And publication runs for the project
-Then publication fails and names the file and the command
+Then publication fails and names the file and the value
 And the previously published documentation is unchanged
 When its documentation passes validation but a compiled bundle would keep an unresolved reference
 And publication runs for the project

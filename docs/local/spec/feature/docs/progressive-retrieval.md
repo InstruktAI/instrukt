@@ -113,10 +113,13 @@ the same interpolation and the same refusals: an unknown path, and a
 `runtime.*` path read with no active runtime session
 (`local/projects/instrukt/spec/feature/configuration/interpolation`).
 
-- It runs no shell and no subprocess, and does not depend on the working
-  directory. A published or third-party snippet resolves against the global
-  layer; a local snippet resolves against its own project's effective
-  configuration.
+- It runs no shell and no subprocess. It resolves exactly as
+  `instrukt config get <path>` would for the caller: against the effective
+  configuration of the project the caller stands in (project over global),
+  found by the same project resolution `index` and `get` use for local docs,
+  or against the global layer alone outside a project. A published procedure
+  asking for `actions.test` therefore receives the caller's project's own test
+  command.
 - It resolves on every read, never cached.
 - The value replaces the directive as a fenced block, rendered as
   `instrukt config get` prints it; a structured value prints as YAML.
@@ -124,8 +127,9 @@ the same interpolation and the same refusals: an unknown path, and a
   the reason; `get` prints the whole output and then exits non-zero.
 
 Published snippets carry the directive unresolved; only the reader's `get`
-resolves it. Compiled outputs resolve it at publication instead, which is
-publication's contract.
+resolves it. Compiled outputs resolve it at publication instead, against the
+publishing project's effective configuration with no runtime session, which
+is publication's contract.
 
 The snippet format has no directive that runs a command. A leftover
 `<!-- @exec: … -->` is never run: `get` shows it as inert text, and
