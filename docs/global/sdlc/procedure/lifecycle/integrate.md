@@ -93,9 +93,11 @@ CI status with conditional requests on ticks and wakes this session through
 `runner.ci_completed`. Yield to that event rather than constructing a local
 watch. Missing, incomplete or mismatched results leave main unchanged.
 
-Without CI, read `instrukt config get actions.test` and run the project's
-configured command in the integration worktree against the candidate. An
-unavailable or failing action supplies no admission. This is the local gate;
+Without CI, the runner wakes this session through `runner.ci_completed` with
+the result `no_ci` for the exact candidate. Read
+`instrukt config get actions.test` and run the project's configured command in
+the integration worktree against that exact candidate. An unavailable or
+failing action supplies no admission. This is the local gate;
 builders, reviewers and the evaluator add no suite execution of their own.
 
 - **Green:** fast-forward main to exactly the verified candidate and push it.

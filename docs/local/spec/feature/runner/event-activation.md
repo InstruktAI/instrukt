@@ -35,7 +35,7 @@ session operations that receive the resulting assignment.
 | Workflow | `workflow.finalized` | Finalize-ready work wakes the subscribed standing integrator. |
 | Repositories | `git ls-remote` for configured watched upstream refs on each tick | A changed upstream produces `runner.upstream_changed`. |
 | Local repository | Compare local main with remote main using local git on each tick; no API call | When local main is ahead and no candidate is pending, emit `runner.main_ahead` to wake the integrator. |
-| Candidate CI | Conditional requests for the active integrate candidate's CI status per SHA, respecting the source poll interval | A completed result produces `runner.ci_completed` and wakes the integrator. |
+| Candidate CI | Conditional requests for the active integrate candidate's CI status per SHA, respecting the source poll interval | A completed result produces `runner.ci_completed` and wakes the integrator. When nothing has reported for the candidate and the canonical head carries no status and no check run, the result is `no_ci`. |
 
 The active candidate SHA is the fetched `origin/integrate` head not yet
 contained in remote canonical main, under the integration-gate contract.
