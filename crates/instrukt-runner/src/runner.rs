@@ -14,6 +14,7 @@ use instrukt_core::config::{ConfigError, Configuration, Env, Module};
 use instrukt_core::fsx::{FsError, LockGuard};
 use instrukt_core::github;
 use instrukt_core::home::Home;
+use instrukt_core::ids::CommitSha;
 use instrukt_core::index::GlobalIndex;
 use instrukt_core::publication::PublishedRecord;
 use jiff::Timestamp;
@@ -220,9 +221,13 @@ fn read_sources(
     if let Some(event) = observed.main_ahead(&project.slug) {
         append(&event);
     }
-    let Some(candidate) = observed.candidate else {
+    // CI is read for the active candidate and for remote canonical main's
+    // head, in one conditional pass.
+    let candidate = observed.candidate.clone();
+    let head = observed.remote_main.clone();
+    if candidate.is_none() && head.is_none() {
         return;
-    };
+    }
     let api_url = match github::api_url(cx.home) {
         Ok(url) => url,
         Err(err) => {
@@ -244,23 +249,20 @@ fn read_sources(
         state,
         &project.slug,
     );
-    // The canonical head is read too: only it decides a project without CI.
-    let mut commits = vec![&candidate];
-    if let Some(main) = &observed.remote_main {
-        commits.push(main);
-    }
+    let commits: Vec<&CommitSha> = candidate.iter().chain(head.iter()).collect();
     match client.read(&commits, now) {
         Ok(CiRead::States(states)) => {
-            let candidate_state = states.first().copied();
-            let canonical_state = states.get(1).copied();
-            if let Some(result) =
-                candidate_state.and_then(|state| ci::candidate_result(state, canonical_state))
-            {
-                append(&Event::CiCompleted {
-                    project: project.slug.clone(),
-                    candidate,
-                    result,
-                });
+            let mut states = states.into_iter();
+            let candidate_state = candidate.as_ref().and_then(|_| states.next());
+            let head_state = head.as_ref().and_then(|_| states.next());
+            for event in ci::events(
+                &project.slug,
+                candidate.as_ref(),
+                candidate_state,
+                head.as_ref(),
+                head_state,
+            ) {
+                append(&event);
             }
         }
         Ok(CiRead::Deferred(until)) => {
