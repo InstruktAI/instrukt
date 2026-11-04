@@ -114,9 +114,12 @@ the same interpolation and the same refusals: an unknown path, and a
 (`local/projects/instrukt/spec/feature/configuration/interpolation`).
 
 - It runs no shell and no subprocess, and does not depend on the working
-  directory.
+  directory. A published or third-party snippet resolves against the global
+  layer; a local snippet resolves against its own project's effective
+  configuration.
 - It resolves on every read, never cached.
-- The value replaces the directive as a fenced block.
+- The value replaces the directive as a fenced block, rendered as
+  `instrukt config get` prints it; a structured value prints as YAML.
 - A refusal replaces the directive with a visible notice naming the path and
   the reason; `get` prints the whole output and then exits non-zero.
 

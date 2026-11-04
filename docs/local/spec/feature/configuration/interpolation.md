@@ -1,5 +1,5 @@
 ---
-description: Two-phase interpolation — `instrukt config get` expands cross-key references, environment variables and the active runtime's session id at call time; docs read values through read-time commands.
+description: Two-phase interpolation — `instrukt config get` expands cross-key references, environment variables and the active runtime's session id at call time; docs read values through the in-process `@config` directive.
 delivered_by: [instrukt-first-build]
 ---
 

@@ -131,8 +131,8 @@ recorded by publication.
   `general/spec/snippet-authoring-schema`, which publication relies on to
   derive index entries.
 - **Allowed dependencies** — publication (reads the home it writes and the
-  published commit it records); configuration (the `project` slug; read-time
-  commands may call `instrukt config get`, as any command); work (todo-slug
+  published commit it records); configuration (the `project` slug, and the
+  in-process resolution of `@config` paths); work (todo-slug
   existence through an interface core declares and the CLI wires only when
   `todos` is enabled); workflow (declared flavor roles through a core-declared
   lookup interface wired by the CLI when `todos` is enabled).
