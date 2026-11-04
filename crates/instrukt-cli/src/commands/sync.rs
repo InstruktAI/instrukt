@@ -29,6 +29,7 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         cwd: &ctx.cwd,
         force: args.force,
         wiring: &wiring,
+        now: ctx.clock.now(),
     });
     let SyncReport { outcome, leftovers } = match synced {
         Ok(report) => report,

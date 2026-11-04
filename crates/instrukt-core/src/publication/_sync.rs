@@ -51,6 +51,8 @@ pub struct SyncRequest<'a> {
     /// The optional modules wired for this invocation (validation reads
     /// them).
     pub wiring: &'a CoreWiring,
+    /// The invocation's clock reading: when this publication is recorded.
+    pub now: jiff::Timestamp,
 }
 
 /// Why a sync published nothing although it could run.
@@ -336,7 +338,7 @@ fn publish(
     };
     preflight(home, project, commit, &prepared)?;
     let mut tx = Transaction::begin(home.root())?;
-    match write(home, project, commit, &prepared, &mut tx) {
+    match write(home, project, commit, request.now, &prepared, &mut tx) {
         Ok(()) => {
             leftovers.extend(tx.commit());
             Ok(SyncOutcome::Published {
@@ -510,6 +512,7 @@ fn write(
     home: &Home,
     project: &Project,
     commit: &CommitSha,
+    now: jiff::Timestamp,
     prepared: &Prepared,
     tx: &mut Transaction,
 ) -> Result<(), PublicationError> {
@@ -630,7 +633,7 @@ fn write(
         tx.remove_file(&resolved(user_home, old)?)?;
     }
 
-    let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
+    let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit, now)?;
     for (path, bytes) in _fingerprint::records(home, &fingerprint)? {
         tx.write(&in_home(&path)?, &bytes)?;
     }

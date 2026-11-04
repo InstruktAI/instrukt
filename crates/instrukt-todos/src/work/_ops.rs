@@ -114,6 +114,14 @@ pub struct PrerequisiteView {
     pub status: Option<TodoStatus>,
 }
 
+/// The project's work records available to evaluation.
+#[derive(Debug, Clone)]
+pub struct RecordedWork {
+    pub records: Vec<TodoRecord>,
+    /// Whether GitHub's reflected work was read.
+    pub github: GitHubRead,
+}
+
 /// `instrukt todo list`.
 #[derive(Debug, Clone)]
 pub struct Listing {
@@ -267,6 +275,26 @@ impl Work {
                 Ok(TodoView { issue, ..view })
             }
         }
+    }
+
+    /// Every record of the project's work that is available, for
+    /// evaluation (`eval-report`, "Evidence source"): this computer's
+    /// items, retained ones included, and reflected work GitHub holds that
+    /// is not local. Whether GitHub answered is reported alongside: when it
+    /// did not, work recorded only elsewhere is missing.
+    pub fn recorded_work(&self, project: &ProjectRef) -> Result<RecordedWork, WorkError> {
+        let mut s = Session::open(self, project)?;
+        let mut records: Vec<TodoRecord> = s.items.iter().map(|it| it.record.clone()).collect();
+        let local: BTreeSet<TodoId> = records.iter().map(|r| r.id.clone()).collect();
+        for (record, _) in s.remote_all().unwrap_or_default() {
+            if !local.contains(&record.id) {
+                records.push(record);
+            }
+        }
+        Ok(RecordedWork {
+            records,
+            github: s.github_read(),
+        })
     }
 
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {

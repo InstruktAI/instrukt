@@ -30,6 +30,11 @@ pub struct EvalFingerprint {
     /// The project whose sync computed it, and the commit it published.
     pub project: ProjectSlug,
     pub commit: CommitSha,
+    /// When the publishing sync recorded it, by the invocation's clock;
+    /// `None` in a record written before the time was kept, whose place
+    /// in the order of records is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<jiff::Timestamp>,
 }
 
 impl EvalFingerprint {
@@ -42,6 +47,42 @@ impl EvalFingerprint {
     /// The fingerprint recorded when `commit` was published.
     pub fn for_commit(home: &Home, commit: &CommitSha) -> Result<Option<Self>, PublicationError> {
         read(record_path(home, commit))
+    }
+
+    /// Every per-commit record: the fingerprint each published commit was
+    /// recorded with, in commit order of their names. None before the first
+    /// publishing sync.
+    pub fn recorded(home: &Home) -> Result<Vec<Self>, PublicationError> {
+        let dir = home.eval_fingerprint_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => return Err(PublicationError::Io { path: dir, source }),
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| PublicationError::Io {
+                path: dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let is_commit = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".yaml"))
+                .is_some_and(|stem| CommitSha::parse(stem).is_ok());
+            if is_commit {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        let mut out = Vec::new();
+        for path in paths {
+            if let Some(record) = read(path)? {
+                out.push(record);
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -91,6 +132,7 @@ pub(super) fn compute(
     index: &GlobalIndex,
     project: &ProjectSlug,
     commit: &CommitSha,
+    now: jiff::Timestamp,
 ) -> Result<EvalFingerprint, PublicationError> {
     let docs = home.docs_dir();
     let mut sources = Vec::new();
@@ -138,6 +180,7 @@ pub(super) fn compute(
         snippets: evaluated.len(),
         project: project.clone(),
         commit: commit.clone(),
+        recorded_at: Some(now),
     })
 }
 
@@ -178,5 +221,20 @@ mod tests {
     fn an_empty_corpus_has_its_own_digest() {
         let a = id("sdlc/policy/a");
         assert_ne!(digest(&[]), digest(&[(&a, b"")]));
+    }
+
+    /// A per-commit record as syncs wrote it before the time was kept.
+    const PRE_TIME_RECORD: &str = "\
+fingerprint: sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+snippets: 2
+project: flows
+commit: 0123456789abcdef0123456789abcdef01234567
+";
+
+    #[test]
+    fn a_record_written_before_the_time_was_kept_loads_with_its_time_unknown() {
+        let record: EvalFingerprint = serde_yaml_ng::from_str(PRE_TIME_RECORD).unwrap();
+        assert_eq!(record.recorded_at, None);
+        assert_eq!(record.snippets, 2);
     }
 }
