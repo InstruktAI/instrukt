@@ -78,7 +78,7 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let read: Vec<(ProjectSlug, Vec<TodoRecord>, Vec<String>)> = checkouts
         .into_iter()
         .filter_map(|(slug, checkout)| {
-            let (records, limitations) = project_record(ctx, &work, &checkout)?;
+            let (records, limitations) = project_record(ctx, &work, &slug, &checkout)?;
             Some((slug, records, limitations))
         })
         .collect();
@@ -134,23 +134,59 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The records of the project checked out at `checkout`, through work's
-/// normal read, and what limits them; `None` for a project with work
-/// tracking switched off, which has no record to evaluate. A record that
-/// cannot be read is a limitation, never a reason to drop the project.
+/// The records of project `slug`, checked out at `checkout`, and what
+/// limits them. A project that tracks work is read through work's normal
+/// read. Otherwise its record on this computer is what remains: a project
+/// whose checkout or configuration is not available is listed with that
+/// limitation, and one that switched tracking off keeps its recorded
+/// history. `None` only for a project that tracks no work and never did
+/// here, which has nothing to evaluate.
 fn project_record(
     ctx: &Ctx,
     work: &Work,
+    slug: &ProjectSlug,
     checkout: &Path,
 ) -> Option<(Vec<TodoRecord>, Vec<String>)> {
+    // The record on this computer alone, limited by `why`.
+    let stored = |why: String| -> (Vec<TodoRecord>, Vec<String>) {
+        match work.stored_work(slug) {
+            Ok(records) => (
+                records,
+                vec![format!(
+                    "{why} Only its record on this computer is shown; work reflected only to GitHub is not read."
+                )],
+            ),
+            Err(err) => (
+                Vec::new(),
+                vec![
+                    why,
+                    format!("Its record on this computer cannot be read either: {err}."),
+                ],
+            ),
+        }
+    };
+    if !checkout.is_dir() {
+        return Some(stored(format!(
+            "Its checkout at {} is not available.",
+            checkout.display()
+        )));
+    }
+    if !checkout.join("instrukt.yaml").is_file() {
+        return Some(stored(format!(
+            "Its checkout at {} has no project configuration, so whether it tracks work cannot be read.",
+            checkout.display()
+        )));
+    }
     match config::module_enabled(&ctx.home, Some(checkout), Module::Todos) {
         Ok(true) => {}
-        Ok(false) => return None,
+        Ok(false) => {
+            let (records, limitations) =
+                stored("Work tracking is switched off in this project now.".to_owned());
+            return (!records.is_empty() || limitations.len() > 1)
+                .then_some((records, limitations));
+        }
         Err(err) => {
-            return Some((
-                Vec::new(),
-                vec![format!("Its work record cannot be read: {err}.")],
-            ));
+            return Some(stored(format!("Its configuration cannot be read: {err}.")));
         }
     }
     let recorded = work
@@ -158,19 +194,28 @@ fn project_record(
         .and_then(|project| work.recorded_work(&project));
     Some(match recorded {
         Ok(recorded) => {
-            let limitations = match recorded.github {
-                GitHubRead::Read => Vec::new(),
-                GitHubRead::NotRead(reason) => vec![format!(
+            let mut limitations = Vec::new();
+            if let GitHubRead::NotRead(reason) = recorded.github {
+                limitations.push(format!(
                     "Reflected work on GitHub could not be read ({}); work recorded only on other computers is missing.",
                     describe(&reason)
-                )],
-            };
+                ));
+            }
+            if !recorded.conflicted.is_empty() {
+                let slugs: Vec<String> = recorded
+                    .conflicted
+                    .iter()
+                    .map(|slug| format!("`{slug}`"))
+                    .collect();
+                limitations.push(format!(
+                    "{} conflict{} with a newer GitHub revision, so evidence recorded elsewhere may be missing; refresh with `instrukt todo refresh <slug>`.",
+                    slugs.join(", "),
+                    if slugs.len() == 1 { "s" } else { "" }
+                ));
+            }
             (recorded.records, limitations)
         }
-        Err(err) => (
-            Vec::new(),
-            vec![format!("Its work record cannot be read: {err}.")],
-        ),
+        Err(err) => stored(format!("Its work record cannot be read: {err}.")),
     })
 }
 

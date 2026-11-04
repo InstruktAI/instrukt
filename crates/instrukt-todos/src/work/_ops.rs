@@ -120,6 +120,9 @@ pub struct RecordedWork {
     pub records: Vec<TodoRecord>,
     /// Whether GitHub's reflected work was read.
     pub github: GitHubRead,
+    /// Local items whose newer GitHub revision met a local change: their
+    /// record here may lack evidence recorded elsewhere.
+    pub conflicted: Vec<TodoSlug>,
 }
 
 /// `instrukt todo list`.
@@ -278,12 +281,19 @@ impl Work {
     }
 
     /// Every record of the project's work that is available, for
-    /// evaluation (`eval-report`, "Evidence source"): this computer's
-    /// items, retained ones included, and reflected work GitHub holds that
-    /// is not local. Whether GitHub answered is reported alongside: when it
-    /// did not, work recorded only elsewhere is missing.
+    /// evaluation (`eval-report`, "Evidence source"), read as `show` reads
+    /// it: this computer's items, retained ones included, each pulled
+    /// through from GitHub first so evidence recorded elsewhere is in it,
+    /// and reflected work GitHub holds that is not local. Whether GitHub
+    /// answered, and which items conflict with a newer GitHub revision, are
+    /// reported alongside.
     pub fn recorded_work(&self, project: &ProjectRef) -> Result<RecordedWork, WorkError> {
         let mut s = Session::open(self, project)?;
+        s.pull_all()?;
+        let conflicted: Vec<TodoSlug> = (0..s.items.len())
+            .filter(|&index| s.status(index) == ReflectionStatus::Conflicted)
+            .map(|index| s.items[index].record.slug.clone())
+            .collect();
         let mut records: Vec<TodoRecord> = s.items.iter().map(|it| it.record.clone()).collect();
         let local: BTreeSet<TodoId> = records.iter().map(|r| r.id.clone()).collect();
         for (record, _) in s.remote_all().unwrap_or_default() {
@@ -294,7 +304,22 @@ impl Work {
         Ok(RecordedWork {
             records,
             github: s.github_read(),
+            conflicted,
         })
+    }
+
+    /// The records this computer holds for `project`, read from its local
+    /// record alone: for a project whose checkout or configuration is not
+    /// available, or that no longer tracks work, its recorded history.
+    pub fn stored_work(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+    ) -> Result<Vec<TodoRecord>, WorkError> {
+        Ok(super::_store::Store::open(&self.home, project)?
+            .items()?
+            .into_iter()
+            .map(|item| item.record)
+            .collect())
     }
 
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
