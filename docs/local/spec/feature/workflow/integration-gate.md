@@ -131,8 +131,10 @@ Then the integrator is woken with the exact candidate and told the project has n
 #### UC-IG2: A revert is verified as its own candidate
 
 ```gherkin
-Given a developer's project has a failing canonical branch after a delivery
-When a revert of that delivery is pushed for integration
+Given a developer's project verifies its canonical branch with CI
+When the CI of the canonical branch's latest commit reports a failure
+Then the integrator is woken with that exact commit and its failure
+When a revert of the failing delivery is pushed for integration
 Then the integrator is woken with the revert's own verification result
 And the failing result of the reverted delivery is never reported for the revert
 ```
@@ -151,11 +153,9 @@ And it can read each commit's latest review verdict
 
 - A candidate that introduces CI into a project whose canonical head has none
   is judged `no_ci` when a tick reads it before its CI reports, and is then
-  verified locally. Once its CI reports, that result is delivered as well, and
-  CI governs from the next canonical head on. If the candidate was already
-  promoted on its local verification and its CI then reports red, the
-  canonical branch is failing and recovery applies as for any failing
-  canonical branch.
+  verified locally. Once its CI reports on the canonical branch, a red result
+  is reported as a failing canonical branch (`runner.main_failing`), and CI
+  governs from then on.
 
 ## See Also
 

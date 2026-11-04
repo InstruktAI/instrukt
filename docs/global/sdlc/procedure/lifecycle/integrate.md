@@ -11,6 +11,7 @@ subscriptions:
   - workflow.finalized
   - runner.ci_completed
   - runner.main_ahead
+  - runner.main_failing
 ---
 
 # Integration — Procedure
@@ -32,7 +33,8 @@ failure interpretation, promotion and recovery.
 - Main names the repository's canonical default branch; use its actual ref.
 - `workflow.finalized` identifies a todo and finalized commit, or
   `runner.ci_completed` identifies the submitted candidate and result, or
-  `runner.main_ahead` identifies local main ahead of remote main with no candidate pending.
+  `runner.main_ahead` identifies local main ahead of remote main with no candidate pending, or
+  `runner.main_failing` identifies remote main's head commit whose CI completed red.
 - One standing integrator session is recorded per subscribing procedure and
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
@@ -58,6 +60,8 @@ failure interpretation, promotion and recovery.
 - **`runner.ci_completed`:** reconcile the result with the exact submitted
   candidate and current GitHub check state. Proceed under Step 3 only when
   the required result is complete for that commit.
+- **`runner.main_failing`:** take the recovery path under Step 5: revert the
+  offending delivery first, then repair it in its own todo.
 
 Event delivery retains idempotency keys and per-consumer cursors. A wake-up
 carries a reason to inspect current evidence, not authority to repeat a merge
@@ -186,7 +190,7 @@ Re-run `instrukt todo work <slug>` after delivery: the flavor owes
 worktree never removes the persistent integration worktree.
 
 When all current work is settled, park as the standing integrator. The next
-`workflow.finalized`, `runner.ci_completed` or `runner.main_ahead` resumes this session. Its mandate continues across idle turns under the recorded standing-session
+`workflow.finalized`, `runner.ci_completed`, `runner.main_ahead` or `runner.main_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
 binding.
 
 ## Outputs

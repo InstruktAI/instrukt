@@ -902,8 +902,9 @@ mod tests {
             )],
         )];
         let projects = of(&records);
-        // The timed record may follow the untimed one.
-        let fingerprints = [published("f1", 'a', None), published("f1", 'b', Some(2))];
+        // The timed record precedes the stamp, so only the untimed one —
+        // which may have come first — keeps it from being named.
+        let fingerprints = [published("f1", 'a', None), published("f1", 'b', Some(0))];
         let report = report(Inputs {
             fingerprints: &fingerprints,
             ..inputs(&projects)

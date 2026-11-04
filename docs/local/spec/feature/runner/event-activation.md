@@ -36,6 +36,7 @@ session operations that receive the resulting assignment.
 | Repositories | `git ls-remote` for configured watched upstream refs on each tick | A changed upstream produces `runner.upstream_changed`. |
 | Local repository | Compare local main with remote main using local git on each tick; no API call | When local main is ahead and no candidate is pending, emit `runner.main_ahead` to wake the integrator. |
 | Candidate CI | Conditional requests for the active integrate candidate's CI status per SHA, respecting the source poll interval | A completed result produces `runner.ci_completed` and wakes the integrator. When nothing has reported for the candidate and the canonical head carries no status and no check run, the result is `no_ci`. |
+| Canonical CI | Conditional requests for the CI status of remote canonical main's head commit, respecting the source poll interval | When that commit's CI completes red, produce `runner.main_failing` once for that commit and wake the integrator. |
 
 The active candidate SHA is the fetched `origin/integrate` head not yet
 contained in remote canonical main, under the integration-gate contract.
@@ -43,8 +44,9 @@ An absent ref or an already promoted head means no candidate is pending.
 
 The project layer selects watched refs with `events.watch: [{remote, ref}]`.
 The first build uses this state-reading mechanism for every repository; it
-needs no public address or receiver. Each tick considers watched upstream refs and CI
-status per active candidate SHA, subject to the source poll interval. It does not depend on delivery guarantees: a missed
+needs no public address or receiver. Each tick considers watched upstream refs, CI
+status per active candidate SHA and the CI status of remote canonical main's
+head commit, subject to the source poll interval. It does not depend on delivery guarantees: a missed
 tick is caught by the next tick reading current state.
 
 A runtime's webhook receipt is a later addition, only as a wake-up to tick
@@ -52,8 +54,9 @@ now. The tick still reads state; losing that wake-up loses no state, because
 the next scheduled tick reads it. Agents and standing responsibilities react
 to the resulting events regardless of what prompted the state read.
 
-Polling checks only active subjects: a waiting integrate candidate, local items
-on this computer and configured watched upstreams. API requests reuse
+Polling checks only active subjects: a waiting integrate candidate, remote
+canonical main's head commit, local items on this computer and configured
+watched upstreams. API requests reuse
 the previous ETag; an unchanged `304` does not consume GitHub rate quota.
 Upstream refs use `git ls-remote`, consuming no API quota. Where GitHub sends
 `X-Poll-Interval`, the runner never polls that source faster.

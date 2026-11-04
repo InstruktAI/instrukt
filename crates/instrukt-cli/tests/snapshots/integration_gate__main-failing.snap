@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "project.rt.sent(INTEGRATOR, 1).replace(&delivered, \"<failing head>\")"
+---
+instrukt events:
+{"event":"runner.main_failing","project":"demo","head":"<failing head>"}
