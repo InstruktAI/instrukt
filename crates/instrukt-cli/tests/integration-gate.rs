@@ -323,6 +323,38 @@ fn each_new_failing_head_is_reported_afresh() {
     );
 }
 
+// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+#[test]
+fn the_remotes_current_head_is_judged_even_when_this_checkout_never_fetched_it() {
+    let project = finalized(true);
+    let old_head = project.repo.head();
+    // Another checkout pushes a new head of main; this one never fetches.
+    let other = project
+        .env
+        .clone_repo(&project.env.path("demo-origin.git"), "other-checkout");
+    other.write("OTHER.md", "a delivery from elsewhere\n");
+    let new_head = other.commit("feat: a delivery from another checkout");
+    other.git(["push", "--quiet", "origin", "main"]);
+    project
+        .github
+        .set_status(REPOSITORY, &old_head, "ci", StatusState::Failure);
+    project
+        .github
+        .set_status(REPOSITORY, &new_head, "ci", StatusState::Failure);
+
+    project.tick();
+
+    assert_eq!(project.rt.sent_count(INTEGRATOR), 1);
+    insta::assert_snapshot!(
+        "remote-current-head-failing",
+        project
+            .rt
+            .sent(INTEGRATOR, 1)
+            .replace(&new_head, "<remote's current head>")
+            .replace(&old_head, "<this checkout's stale head>")
+    );
+}
+
 /// A reviewed direct commit on local main, its exemption stamped by
 /// `instrukt repo stamp` and pushed with the review notes; the project has
 /// no candidate pending.

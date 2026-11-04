@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "project.rt.sent(INTEGRATOR,\n1).replace(&new_head,\n\"<remote's current head>\").replace(&old_head, \"<this checkout's stale head>\")"
+---
+instrukt events:
+{"event":"runner.main_failing","project":"demo","head":"<remote's current head>"}
