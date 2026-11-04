@@ -279,14 +279,14 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
             nothing_published: false,
         });
     }
-    // Published snippets resolve configured values against the machine's
-    // configuration, never the caller's working directory; a local snippet
-    // against its own project's.
-    let global = Configuration::load_global(req.home)?;
+    // Configured values resolve as `instrukt config get` would for the
+    // caller: the effective configuration of the project it stands in, the
+    // global layer alone outside one, for every snippet alike.
+    let configuration = Configuration::load(req.home, caller.repo_root.as_deref())?;
     let reader = Reader {
         home: req.home,
         index: &index,
-        values: Values::read(&global),
+        values: Values::read(&configuration),
         lens: req.target.map_or(Lens::Current, Lens::Target),
     };
     let warning = behind_warning(req.home, &caller)?;
@@ -777,16 +777,7 @@ impl<'i> Reader<'i> {
             }
             View::Retired => {}
             View::Visible { version, .. } => {
-                let project = match &loaded.repo_root {
-                    Some(root) => Some(Configuration::load(self.home, Some(root))?),
-                    None => None,
-                };
-                let project_values = project.as_ref().map(Values::read);
-                let cx = RenderContext {
-                    values: project_values.as_ref().unwrap_or(&self.values),
-                    ..self.context(loaded)
-                };
-                let rendered = version.render(self.lens, &cx)?;
+                let rendered = version.render(self.lens, &self.context(loaded))?;
                 failed = !rendered.config_refusals.is_empty();
                 block.push(rendered.text.trim_matches('\n').to_owned());
                 let pending = snippet.superseded_by();

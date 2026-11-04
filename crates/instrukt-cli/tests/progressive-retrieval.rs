@@ -572,6 +572,56 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
 
 // spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
+fn each_agent_reads_the_value_of_the_project_it_stands_in() {
+    let env = TestEnv::new();
+    let procedure = snippet(
+        "procedure",
+        "Verify",
+        "Runs the project's tests.",
+        "",
+        &[],
+        "Run the tests:\n\n<!-- @config: actions.test -->\n",
+    );
+    let demo = project(
+        &env,
+        "demo",
+        &["acme"],
+        &[("docs/global/acme/procedure/verify.md", procedure)],
+    );
+    demo.write(
+        "instrukt.yaml",
+        "schema_version: 1\nproject: demo\npublishes:\n  - slug: acme\n    trigger: When working on acme.\n\
+         actions:\n  test: make test\n",
+    );
+    demo.commit("chore: the test action");
+    sync(&env, &demo);
+    let other = project(&env, "other", &[], &[]);
+    other.write(
+        "instrukt.yaml",
+        "schema_version: 1\nproject: other\nactions:\n  test: cargo test --workspace\n",
+    );
+
+    let in_demo = env
+        .run(demo.path(), ["docs", "get", "acme/procedure/verify"])
+        .success();
+    insta::assert_snapshot!("value-of-demo", stdout(&env, &in_demo));
+    let in_other = env
+        .run(other.path(), ["docs", "get", "acme/procedure/verify"])
+        .success();
+    insta::assert_snapshot!("value-of-other", stdout(&env, &in_other));
+
+    // Outside every project the global layer alone answers, and it has no
+    // test action.
+    let outside = env.path("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+    let refused = env
+        .run(&outside, ["docs", "get", "acme/procedure/verify"])
+        .failure();
+    insta::assert_snapshot!("value-outside-projects", stdout(&env, &refused));
+}
+
+// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+#[test]
 fn a_value_that_cannot_be_resolved_is_named_with_why_and_the_read_fails() {
     let env = TestEnv::new();
     machine(&env);
