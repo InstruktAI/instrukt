@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/integration-gate.rs
+expression: "project.rt.sent(INTEGRATOR, 1).replace(&candidate, \"<candidate>\")"
+---
+instrukt events:
+{"event":"runner.ci_completed","project":"demo","candidate":"<candidate>","result":"success"}

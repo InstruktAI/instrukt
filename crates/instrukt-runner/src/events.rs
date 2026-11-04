@@ -91,6 +91,11 @@ impl Event {
 pub enum CiResult {
     Success,
     Failure,
+    /// The project has no CI: the canonical branch's head carries no
+    /// status and no check run, and the candidate has nothing reported
+    /// either (`integration-gate`, "Project without CI"). The integrator
+    /// verifies the candidate with the project's local test action.
+    NoCi,
 }
 
 /// Whether an append added a new event or met its idempotency key.

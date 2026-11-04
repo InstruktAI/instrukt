@@ -29,7 +29,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum CiState {
     Green,
     Red,
+    /// Something is still running.
     Pending,
+    /// No status and no check run exists for the commit.
+    NothingReported,
 }
 
 impl CiState {
@@ -38,8 +41,19 @@ impl CiState {
         match self {
             CiState::Green => Some(CiResult::Success),
             CiState::Red => Some(CiResult::Failure),
-            CiState::Pending => None,
+            CiState::Pending | CiState::NothingReported => None,
         }
+    }
+}
+
+/// The candidate's result: its own CI's completed result, or — only while
+/// nothing has reported for the candidate — "no CI" when the canonical
+/// head carries no status and no check run either. A candidate with nothing
+/// reported on a project whose canonical head has CI is pending.
+pub fn candidate_result(candidate: CiState, canonical_head: Option<CiState>) -> Option<CiResult> {
+    match (candidate, canonical_head) {
+        (CiState::NothingReported, Some(CiState::NothingReported)) => Some(CiResult::NoCi),
+        (state, _) => state.completed(),
     }
 }
 
@@ -89,7 +103,7 @@ pub fn classify(status: &CombinedStatus, checks: &CheckRuns) -> CiState {
         return CiState::Red;
     }
     if status.statuses.is_empty() && checks.check_runs.is_empty() {
-        return CiState::Pending;
+        return CiState::NothingReported;
     }
     let statuses_green = status.statuses.is_empty() || status.state == "success";
     let checks_green = checks
@@ -121,7 +135,8 @@ pub enum CiError {
 pub enum CiRead {
     /// The source asked not to be polled before this time.
     Deferred(Timestamp),
-    State(CiState),
+    /// The state of each commit asked for, in order.
+    States(Vec<CiState>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -164,8 +179,9 @@ impl<'a> CiClient<'a> {
         }
     }
 
-    /// Reads `commit`'s CI state at `now`, unless the source deferred.
-    pub fn read(&self, commit: &CommitSha, now: Timestamp) -> Result<CiRead, CiError> {
+    /// Reads each of `commits`' CI states at `now`, unless the source
+    /// deferred. One poll interval covers the whole read.
+    pub fn read(&self, commits: &[&CommitSha], now: Timestamp) -> Result<CiRead, CiError> {
         let path = self.state.validators(self.project);
         let mut validators: Validators = state::read_json(&path)?.unwrap_or_default();
         if let Some(not_before) = validators.not_before
@@ -173,31 +189,48 @@ impl<'a> CiClient<'a> {
         {
             return Ok(CiRead::Deferred(not_before));
         }
-        let base = format!(
-            "{}/repos/{}/commits/{commit}",
-            self.api_url, self.repository
-        );
         let mut interval = None;
-        let bodies = self
-            .get(&format!("{base}/status"), &mut validators, &mut interval)
-            .and_then(|status| {
-                self.get(
-                    &format!("{base}/check-runs"),
-                    &mut validators,
-                    &mut interval,
-                )
-                .map(|checks| (status, checks))
-            });
+        let mut bodies = Vec::with_capacity(commits.len());
+        let mut failure = None;
+        for commit in commits {
+            let base = format!(
+                "{}/repos/{}/commits/{commit}",
+                self.api_url, self.repository
+            );
+            let read = self
+                .get(&format!("{base}/status"), &mut validators, &mut interval)
+                .and_then(|status| {
+                    self.get(
+                        &format!("{base}/check-runs"),
+                        &mut validators,
+                        &mut interval,
+                    )
+                    .map(|checks| (base, status, checks))
+                });
+            match read {
+                Ok(read) => bodies.push(read),
+                Err(err) => {
+                    failure = Some(err);
+                    break;
+                }
+            }
+        }
         // A source's poll interval binds whether or not its answer was
         // usable: an error carrying `X-Poll-Interval` still defers the
         // next request.
         validators.not_before =
             interval.and_then(|secs: i64| now.checked_add(SignedDuration::from_secs(secs)).ok());
         state::write_json(&path, &validators)?;
-        let (status_body, checks_body) = bodies?;
-        let status: CombinedStatus = parse(&format!("{base}/status"), &status_body)?;
-        let checks: CheckRuns = parse(&format!("{base}/check-runs"), &checks_body)?;
-        Ok(CiRead::State(classify(&status, &checks)))
+        if let Some(err) = failure {
+            return Err(err);
+        }
+        let mut states = Vec::with_capacity(bodies.len());
+        for (base, status_body, checks_body) in bodies {
+            let status: CombinedStatus = parse(&format!("{base}/status"), &status_body)?;
+            let checks: CheckRuns = parse(&format!("{base}/check-runs"), &checks_body)?;
+            states.push(classify(&status, &checks));
+        }
+        Ok(CiRead::States(states))
     }
 
     fn get(
@@ -314,7 +347,7 @@ mod tests {
     fn nothing_reported_is_pending_not_green() {
         assert_eq!(
             classify(&status("pending", &[]), &checks(&[])),
-            CiState::Pending
+            CiState::NothingReported
         );
     }
 
@@ -367,5 +400,23 @@ mod tests {
         );
         assert_eq!(CiState::Red.completed(), Some(CiResult::Failure));
         assert_eq!(CiState::Pending.completed(), None);
+    }
+
+    #[test]
+    fn no_ci_is_decided_from_the_canonical_head_never_from_the_candidate() {
+        use CiState::{Green, NothingReported, Pending, Red};
+        assert_eq!(
+            candidate_result(NothingReported, Some(NothingReported)),
+            Some(CiResult::NoCi)
+        );
+        assert_eq!(candidate_result(NothingReported, Some(Green)), None);
+        assert_eq!(candidate_result(NothingReported, Some(Pending)), None);
+        assert_eq!(candidate_result(NothingReported, None), None);
+        assert_eq!(candidate_result(Pending, Some(NothingReported)), None);
+        assert_eq!(
+            candidate_result(Green, Some(NothingReported)),
+            Some(CiResult::Success)
+        );
+        assert_eq!(candidate_result(Red, Some(Green)), Some(CiResult::Failure));
     }
 }
