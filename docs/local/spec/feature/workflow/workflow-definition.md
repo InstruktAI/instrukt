@@ -48,7 +48,8 @@ execution is admitted.
 
 The engine loads the domain selected by project key `workflow.domain`
 (default `sdlc`) from `~/.instrukt/docs/<domain>/workflow/`. Its authoring source
-is the publishing project’s `docs/global/<domain>/workflow/`.
+is the owning project’s `docs/domain/<domain>/workflow/`, published with the
+domain.
 `actions.yaml` declares a unique role-name list under `roles:`, alongside the
 action entries and `effects:`. Docs validation checks these files against the
 workflow schema, separately from snippet taxonomy validation.

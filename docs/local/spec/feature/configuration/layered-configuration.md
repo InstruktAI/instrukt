@@ -35,7 +35,6 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `runner.runtime` (default: first entry of `runtimes`) | global only | runner |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
-| `publishes` (domains with their trigger line) | project only | publication |
 | `requires` (modules the flavor needs) | project only | publication |
 | `actions` (name → the project's own command) | project only | the flavor's procedures |
 | `board` (`false`, or the GitHub project `<owner>/<number>` todos are reflected to) | project only | the `todos` module |
@@ -43,7 +42,7 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
-| `workflow.domain` (published domain name, default `sdlc`) | project only | workflow |
+| `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
 
 A runtime mapping is never taken from a project: a cloned repository must not
 decide what runs on a machine, as git ignores machine-level keys in repository
@@ -175,7 +174,12 @@ introduced.
 
 ## Known caveats
 
-- An unknown key is a validation finding.
+- An unknown key is a validation finding. There is no `publishes` key: what a
+  project publishes follows from its `docs/general/` and `docs/domain/<x>/`
+  positions, and a leftover `publishes` is an unknown key, never migrated.
+- The project layer carries the `yaml-language-server` modeline naming its
+  editor schema; it is a comment and never a setting
+  (`local/projects/instrukt/spec/feature/publication/editor-schemas`).
 - `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
