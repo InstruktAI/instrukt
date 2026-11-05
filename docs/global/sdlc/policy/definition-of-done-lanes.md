@@ -244,6 +244,10 @@ Check whether the implementation follows existing codebase paradigms:
    it, even one whose every part reuses an existing module
    (`substrate-anchoring`)? An undeclared parallel is **Critical**. A declared
    divergence whose reason does not hold is **Important**.
+   The existing path can lie outside the repository: a shared repository the
+   project consumes — shared workflows, presets, packages — is part of the
+   system it already has, and a local mechanism reproducing one is a parallel
+   to it.
 
 7. **State placement**: Does every piece of durable state the change
    introduces, relocates or changes live where the reviewed design placed it,
