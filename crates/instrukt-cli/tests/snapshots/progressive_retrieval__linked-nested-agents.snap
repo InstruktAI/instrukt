@@ -3,33 +3,35 @@ source: crates/instrukt-cli/tests/progressive-retrieval.rs
 assertion_line: 894
 expression: "text(&env, agents.as_bytes())"
 ---
-id: acme/principle/care
+# Tools
 
-# Care — Principle
+## Purpose
 
-## Principle
+Tooling.
+
+# Acme
+
+## Care — Principle
+
+### Principle
 
 Care.
 
-## Rationale
+### Rationale
 
 Text.
 
-## Implications
+### Implications
 
 Text.
 
-## Tensions
+### Tensions
 
 Text.
 
----
+## Rules — Policy
 
-id: acme/policy/rules
-
-# Rules — Policy
-
-## Rules
+### Rules
 
 Follow the rules.
 
@@ -39,25 +41,25 @@ A reference is written `@docs/project/design/y.md`, for example:
 - @~/.instrukt/docs/acme/principle/care.md
 ```
 
-## Rationale
+### Rationale
 
 Text.
 
-## Scope
+### Scope
 
 Text.
 
-## Enforcement
+### Enforcement
 
 Text.
 
-## Exceptions
+### Exceptions
 
 Text.
 
 [Guide](https://example.test/guide)
 
-## See Also
+### See Also
 
 - acme/principle/care
 
@@ -67,11 +69,3 @@ Text.
 ```
 
 `- [acme/principle/care](../principle/care.md)`
-
----
-
-# Tools
-
-## Purpose
-
-Tooling.
