@@ -1,5 +1,5 @@
 ---
-description: "Repository — instrukt's git integration in a project: adopting a repository with `instrukt init`, the docs reference filter, instrukt's marked sections in git hooks, and attributed commits through `instrukt repo commit`."
+description: "Repository — instrukt's git integration in a project: adopting a repository with `instrukt init` and reporting its claims, instrukt's marked sections in git hooks, and attributed commits through `instrukt repo commit`."
 delivered_by: [instrukt-first-build]
 ---
 # Repository — Spec
@@ -7,8 +7,11 @@ delivered_by: [instrukt-first-build]
 ## What it is
 
 The repository context is where instrukt meets a project's git repository. It
-adopts a repository (`instrukt init`): the project layer, the docs folders, a
-master, the docs reference filter and the hook sections. It owns instrukt's
+adopts a repository (`instrukt init`): the project layer, `docs/project/`
+with its index and starting schema, a purpose-only root master, the ignore
+lines, the editor schemas with their modelines (generated through
+publication's operation) and the hook sections, and it reports what the
+repository's first sync will claim on the computer. It owns instrukt's
 marked section in each git hook it uses, living beside whatever else the
 project and its tools put there, and routes each hook to the context that
 acts on it — publication after main changes, the blueprint on a push to main
@@ -43,13 +46,16 @@ commands.
 :  A tool that generates the project's hook files itself and may drop
    sections it did not write.
 
-**Docs reference filter**
-:  The git filter `instrukt-docs`: on checkout it expands `@~/.instrukt` to
-   the absolute home path; on commit it restores the tilde form.
-
 **Adoption**
-:  The state `instrukt init` establishes in a repository: project layer, docs
-   folders, master, docs reference filter and hook sections.
+:  The state `instrukt init` establishes in a repository: project layer,
+   `docs/project/` with its `index.yaml` and, when sdlc is published, its
+   `schema.yaml`, the root master, the ignore lines, the editor schemas and
+   modelines publication generates, and the hook sections.
+
+**Claims report**
+:  What `instrukt init` reports in a repository holding `docs/general/` or a
+   `docs/domain/<x>/`: the positions its first sync will claim, their current
+   owners, and whether that sync will render the global agent files.
 
 **Attributed commit**
 :  A commit made through `instrukt repo commit`: authored by the acting
@@ -71,15 +77,19 @@ commands.
 
 ### Ownership boundary
 
-- **Owns** — repository adoption; the docs reference filter and its
-  attribute patterns; instrukt's section in each hook file, its placement,
+- **Owns** — repository adoption and its claims report; the copy of the
+  published `sdlc` `schema.yaml` into a new project; instrukt's section in
+  each hook file, its placement,
   idempotence and removal; the hook status report, including each section's
   last run outcome and refused syncs; which hooks instrukt uses
   and what each hook run starts; composition of attributed commits: author,
   trailers, refusal of caller-written trailers, the paths committed;
   commit-review verdicts and report digests recorded as git notes.
-- **Does not own** — what a sync publishes (publication,
-  `local/projects/instrukt/spec/domain/publication`); graph generation for a
+- **Does not own** — what a sync publishes and the ownership it records
+  (publication, `local/projects/instrukt/spec/domain/publication`); the
+  editor schemas and modelines init asks publication to write (publication,
+  `local/projects/instrukt/spec/feature/publication/editor-schemas`); graph
+  generation for a
   remote-main revision (blueprint, `local/projects/instrukt/spec/domain/blueprint`);
   the project layer's schema, the runtime mapping and the agents' git authors
   (configuration, `local/projects/instrukt/spec/domain/configuration`); a work
@@ -90,9 +100,12 @@ commands.
   `instrukt repo commit`;
   `instrukt repo stamp <sha…> --verdict approve|needs_work --report <file>`;
   `instrukt repo stamp <sha…> --verdict exempt --reason <text>`;
-  `instrukt init --slug <slug>`; the section markers; the trailer keys.
+  `instrukt init --slug <slug>`; the claims report; the section markers;
+  the trailer keys.
 - **Allowed dependencies** — configuration (project slug, runtime mapping,
-  agents' git authors, module switches, as customer); publication and
+  agents' git authors, module switches, as customer); publication (the ownership record the claims report reads, the
+  published `sdlc` `schema.yaml` init copies, and the editor-schema
+  operation init invokes, as customer); publication and
   blueprint (started by hook runs, as customer); work (todo existence through
   the core-declared interface wired by the CLI only when todos is enabled).
 - **Implementation roots** — `crates/instrukt-core/` (repository);
@@ -120,11 +133,13 @@ commands.
 #### Adoption (aggregate)
 
 - **Root:** the adopted repository.
-- **Contains:** the project layer `instrukt.yaml`, `docs/global/`,
-  `docs/local/`, `AGENTS.master.md`, the docs reference filter definition and
-  its attribute patterns, the hook sections.
+- **Contains:** the project layer `instrukt.yaml`, `docs/project/` with its
+  `index.yaml` and `schema.yaml`, the root `AGENTS.master.md`, the ignore
+  lines, `.instrukt/schemas/` and the modelines, the hook sections.
 - **Invariants:**
-  - Adoption never overwrites a file that exists.
+  - Adoption never overwrites a file that exists, apart from the modeline
+    publication keeps at the top of the files it describes.
+  - Adoption publishes and claims nothing; its claims report only reads.
   - Running it again on an adopted repository changes nothing.
 - **Identifier:** the repository.
 - **Lifecycle:** created by `instrukt init`; completed by a later run when a
@@ -159,7 +174,7 @@ None. Git invokes hook files; a developer or agent invokes the commands.
 
 - **hook-sections** — `docs/local/spec/feature/repository/hook-sections.md` — instrukt's hook sections live beside the project's own hooks and keep publication current without blocking git.
 - **attributed-commit** — `docs/local/spec/feature/repository/attributed-commit.md` — an agent's commit names the agent, its session and the human's involvement; outside a session it is the developer's own.
-- **project-initialization** — `docs/local/spec/feature/repository/project-initialization.md` — a developer adopts instrukt in a repository in one idempotent step.
+- **project-initialization** — `docs/local/spec/feature/repository/project-initialization.md` — a developer adopts instrukt in a repository in one idempotent step and sees what it will claim.
 
 ### Governing designs and decisions (index)
 
@@ -172,7 +187,9 @@ None. Git invokes hook files; a developer or agent invokes the commands.
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime mapping, the agents' git authors and the blueprint switch.
 - **publication** — Customer / Supplier. Post-hook runs start
-  `instrukt sync`; publication decides what it does.
+  `instrukt sync`; publication decides what it does. Publication supplies the
+  ownership record and published `sdlc` schema that `init` reads, and the
+  editor-schema operation `init` invokes.
 - **blueprint** — Customer / Supplier. With blueprint enabled, hook runs hand
   a push to main or a pull advancing main to blueprint
   (`local/projects/instrukt/spec/feature/blueprint/graph-generation`).

@@ -64,9 +64,9 @@ which are lost if the home is deleted.
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime mapping, agents' git authors, module switches, runner settings) | the user |
-| `docs/` | published snippets and `workflow/` flavor files per domain, per-domain `publisher.yaml` and `bundle.md` | each project's committed main, by `sync` |
-| `docs/index.yaml` | the global index, every entry carrying its owning project; local entries carry the absolute path of the file in their project | each project's `sync` |
-| `state/publication/` | per project, the commit last published and the project's checkout path | `sync` |
+| `docs/general/`, `docs/<x>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
+| `state/index.yaml` | the global index, every entry carrying its owning project; `docs/project/` entries carry the absolute path of the file in their project | each project's `sync` |
+| `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
 | `state/hooks/<project>/` | each hook section's last run outcome, shown by `instrukt hooks status` | the next hook run |
 | `state/runner/` | the event log with per-consumer cursors, conditional-request validators, standing-agent session bindings, the runner lock, the last wake-up | the runner (events re-derived from the record where possible) |
 | `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
@@ -75,9 +75,25 @@ which are lost if the home is deleted.
 | `state/work/` | the local work record (pull-through of GitHub) | GitHub |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 
-A project carries `instrukt.yaml` (the project layer), `docs/global/` (what it
-publishes), `docs/local/` (its own docs), `AGENTS.master.md`, and instrukt's
-marked sections in its git hooks. No index file lives in a repository.
+A project carries `instrukt.yaml` (the project layer) and documentation in
+three positions:
+
+```
+docs/general/       always on: rendered into every agent CLI's user-scope instruction file   ids general/<type>/…
+docs/domain/<x>/    on demand: one line in the global file; rendered by `instrukt docs get --domain <x>`   ids <x>/<type>/…
+docs/project/       the project: rendered into its root AGENTS.md   ids project/<slug>/<type>/…
+```
+
+Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
+publish it; one project owns each on a computer, and `general` and `project`
+are never a domain's name. Each position may carry an `index.yaml` selecting
+what is rendered and a `schema.yaml` adding sections
+(`local/projects/instrukt/spec/domain/docs`). The project also carries its
+root `AGENTS.master.md` (its purpose only), any nested masters, the generated
+and git-ignored `.instrukt/schemas/` its YAML files' modelines name, and
+instrukt's marked sections in its git hooks. No generated index lives in a
+repository, and no git filter rewrites its files: references are snippet ids
+the CLI resolves when read.
 
 ### Common CLI surface
 
@@ -90,7 +106,7 @@ contract without executing its operation.
 | --- | --- | --- |
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
-| Supported agent CLIs | publication | entrypoint files and the entrypoint-loading settings each requires |
+| Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
 | Configured runtime | runner | the runtime mapping's commands |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
@@ -103,8 +119,8 @@ contract without executing its operation.
 - **Each project publishes only its own part.** Publication never reads
   another project's repository; the global index is patched by owner, never
   rebuilt from all sources. Reading is different: `docs get` reads another
-  project's local doc from the path its index entry carries, because local
-  content stays in its project.
+  project's `docs/project/` snippet from the path its index entry carries,
+  because project content stays in its project.
 - **Committed state is the source.** Publication reads a project's committed
   main, never its working tree; the blueprint is generated for a pushed
   revision.
@@ -131,19 +147,25 @@ flowchart LR
   B --> C[instrukt sync, detached, under lock]
   C --> D{main == published commit?}
   D -- yes --> E[done]
-  D -- no --> F[write project's domains]
+  D -- no --> F[claim and write the project's general and domain positions]
   F --> G[patch global index by owner]
-  G --> H[compile AGENTS.md; global entrypoints if owner of general]
-  H --> I[record published commit]
+  G --> H[render AGENTS.md; global agent files if owner of general]
+  H --> J[refresh editor schemas and modelines]
+  J --> I[record published commit]
 ```
 
 ### Read
 
-`instrukt docs index` shows all domains plus the local docs of the project the
-caller stands in; `instrukt docs get` resolves ids to paths, follows required
-reads, and resolves `@config` directives in-process at read time — which is
-how session-bound values (`<!-- @config: runtime.conversation -->`) reach a
-snippet. No snippet runs a command.
+`instrukt docs index` shows everything published plus the `docs/project/`
+docs of the project the caller stands in, and `--domain <x>` narrows it to one
+domain; `instrukt docs get <id>` reads a snippet naming its required reads,
+`--closure` adds them transitively, each once, and `--domain <x>` renders that
+domain's `index.yaml`. Every reference is a snippet id (or a bare domain name
+in a required read) that the CLI resolves; `get` resolves `@config` directives
+in-process at read time — which is how session-bound values
+(`<!-- @config: runtime.conversation -->`) reach a snippet. No snippet runs a
+command. Authoring reads and edits the source file; `docs get` is for
+knowledge.
 
 ### Push and map
 
@@ -195,8 +217,12 @@ thread; only anomalies are sent through `runner.notify`.
 - **Committed docs fail validation:** `sync` publishes nothing for that commit;
   the previous publication stays, and `instrukt hooks status` shows the
   refusal.
-- **Two projects claim one domain:** the second `sync` is refused and names the
-  owner; the published tree is unchanged.
+- **Two projects claim one domain, or `docs/general/`:** the second `sync` is
+  refused and names the owner; the published tree is unchanged.
+- **A user-scope instruction file instrukt did not write:** the `general`
+  owner's `sync` stops before publishing and names the file; moving its
+  content into docs, or the file out of the way, and syncing again is the
+  door.
 - **A hook manager regenerated a hook file** and dropped instrukt's section:
   `instrukt hooks status` reports it and prints the line to add to that tool.
 - **Graph generation fails or is interrupted:** the previous complete graph

@@ -65,16 +65,16 @@ runtime identifies its sessions (`session_id_env`) and the commands it offers.
 caller's environment; addressed as `runtime`.
 
 **Project slug**
-: The `project` key of a project layer; the identity of the project's local
-documentation and its index entries.
+: The `project` key of a project layer; the identity of the project's
+`docs/project/` documentation (ids `project/<slug>/…`) and of its index entries.
 
 ### Ownership boundary
 
 - **Owns** — the `instrukt.yaml` schema; layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
   revisions and safe patching; interpolation; selection of the active runtime.
-- **Does not own** — what any key does: publication reads `publishes`;
-  docs reads `project`; repository decides when publication runs and its commit
+- **Does not own** — what any key does: docs and publication read
+  `project`; repository decides when publication runs and its commit
   composition reads the runtime mapping and `agents.<name>.git_author` and decides the
   commit author and trailers; blueprint, work, workflow and runner read the
   keys and module switches governing their capabilities; the flavor's
@@ -83,8 +83,11 @@ documentation and its index entries.
 - **Published contracts** — `instrukt config get [<path>] [--global]`,
   `instrukt config patch --revision <rev> [--global]`,
   `instrukt config init [--global]`, `instrukt config validate [--global]`;
-  the migration operation that `init` and publication invoke; the active-runtime
-  selection rule, which commit composition applies to agent-CLI entries.
+  the migration operation that `init` and publication invoke; the
+  configuration schema type the editor schema of `instrukt.yaml` is generated
+  from (`local/projects/instrukt/spec/feature/publication/editor-schemas`); the
+  active-runtime selection rule, which commit composition applies to
+  agent-CLI entries.
 - **Allowed dependencies** — none. Configuration depends on no other context.
 - **Implementation roots** — the configuration module of the `instrukt-core`
   crate; its module layout is set by the architecture design.
@@ -131,10 +134,12 @@ None yet beyond the feature specs above.
 
 - **Docs** — customer / supplier: configuration supplies read-time
   interpolation through the CLI.
-- **Publication** — customer / supplier: configuration supplies published
-  project slug, published domains with triggers and runtime mapping. Publication
-  also invokes configuration’s migration operation; it is a callable contract,
-  not a configuration key.
+- **Publication** — customer / supplier: configuration supplies the project
+  slug, runtime mapping and the configuration schema type the editor schema of
+  `instrukt.yaml` is generated from. Publication also invokes configuration’s
+  migration operation; it is a callable contract, not a configuration key. What a
+  project publishes follows from its `docs/general/` and `docs/domain/<x>/`
+  positions, never from a configuration key.
 - **Repository** — customer / supplier: configuration supplies the project
   slug, runtime mapping and agent author settings.
 - **Specs** — customer / supplier: configuration supplies the project slug

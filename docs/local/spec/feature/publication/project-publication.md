@@ -1,5 +1,5 @@
 ---
-description: A project publishes only its own part, from the committed state of its canonical main — domains, bundles and index entries patched into the global index by owner, with duplicate-id and domain-ownership refusals, retraction of what it no longer owns, and a no-op when main equals the published commit.
+description: A project publishes only its own part, from the committed state of its canonical main — its `docs/general/` and `docs/domain/<x>/` positions claimed by owner, index entries patched into the global index by owner, with duplicate-id, ownership and reserved-name refusals, retraction of what it no longer owns, and a no-op when main equals the published commit.
 delivered_by: [instrukt-first-build]
 ---
 # Project Publication — Spec
@@ -9,15 +9,17 @@ delivered_by: [instrukt-first-build]
 `instrukt sync` makes a project's committed documentation what agents on this
 computer read. It publishes the project the caller stands in, from the
 committed state of the project's canonical main, into the home. Each project
-publishes only its own part: the global index is patched by owner, so two
-projects publishing in turn never take each other's entries, and no command
-reads another project's repository. Unless `--force` is supplied, a sync whose main equals the commit it
-last published does nothing, so it is cheap to trigger as often as git
+publishes only its own part: every position it publishes is claimed by it
+alone, the global index is patched by owner, so two projects publishing in
+turn never take each other's entries, and no command reads another project's
+repository. Unless `--force` is supplied, a sync whose main equals the commit
+it last published does nothing, so it is cheap to trigger as often as git
 changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
 
 ## Canonical fields
 
-`instrukt sync --force` republishes when main is unchanged. Validation findings refuse publication and preserve the previous publication.
+`instrukt sync --force` republishes when main is unchanged. Validation findings
+refuse publication and preserve the previous publication.
 
 ### Source
 
@@ -28,6 +30,10 @@ changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
   it stands in the project's primary worktree. Invoked from a linked worktree,
   sync publishes the same canonical main. Uncommitted and unmerged changes are
   never published.
+- **Which positions.** What the committed tree holds decides what the project
+  publishes: `docs/general/` when it exists, and each directory
+  `docs/domain/<x>/`, published as domain `<x>`. No setting declares them.
+  `docs/project/` is the project's own and is never published.
 - **Configuration first.** Before publishing, sync brings both configuration
   layers to the current schema version
   (`local/projects/instrukt/spec/domain/configuration`).
@@ -37,7 +43,9 @@ changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
 - Every successful sync records the commit it published beside the project's
   checkout path under `~/.instrukt/state/publication/`. The runner consumes
   this existing state (`local/projects/instrukt/spec/domain/runner`).
-- Unless `--force` is supplied, when canonical main equals the published commit, sync changes nothing in the home or the project, except removing leftovers a previous sync reported, and exits zero.
+- Unless `--force` is supplied, when canonical main equals the published
+  commit, sync changes nothing in the home or the project, except removing
+  leftovers a previous sync reported, and exits zero.
 - A sync that is refused or fails records no commit, so the next trigger
   tries again.
 - Concurrent syncs never interleave: every write to the home's publication
@@ -48,68 +56,85 @@ changes main (`local/projects/instrukt/spec/feature/repository/hook-sections`).
 
 | Output | Where | Content |
 | --- | --- | --- |
-| Published domains | `~/.instrukt/docs/<domain>/` | each domain in the project's `publishes` setting: its snippets from `docs/global/<domain>/`, published raw |
-| Workflow flavor | `~/.instrukt/docs/<domain>/workflow/` | the owning project’s `docs/global/<domain>/workflow/` definitions, actions and templates, copied with the published domain and retracted by the same owner rules; not snippet index entries |
-| Publisher record | `~/.instrukt/docs/<domain>/publisher.yaml` | the owning project and the domain's trigger line |
-| Bundle | `~/.instrukt/docs/<domain>/bundle.md` | the domain's baseline manifest compiled, then its progressive baseline index and activatable procedures |
-| Global entries | the global index | one entry per published snippet, owned by the project |
-| Local entries | the global index | one entry per snippet under the project's `docs/local/`, owned by the project, carrying the absolute path of the file in the project's primary worktree |
+| `general` | `~/.instrukt/docs/general/` | the snippets of `docs/general/`, published raw, with its `index.yaml` and `schema.yaml` when present |
+| Domains | `~/.instrukt/docs/<x>/` | for each `docs/domain/<x>/`: its snippets, published raw, with its `index.yaml` and `schema.yaml` when present |
+| Workflow flavor | `~/.instrukt/docs/<x>/workflow/` | the owning project's `docs/domain/<x>/workflow/` definitions, actions and templates, copied with the domain and retracted by the same owner rules; not snippet index entries |
+| Claims | the ownership record under `~/.instrukt/state/publication/` | the project as owner of each position it publishes |
+| Published entries | the global index `~/.instrukt/state/index.yaml` | one entry per published snippet, owned by the project |
+| Project entries | the global index | one entry per snippet under the project's `docs/project/` (ids `project/<slug>/…`), owned by the project, carrying the absolute path of the file in the project's primary worktree |
 | `AGENTS.md` files | the project's primary worktree | `local/projects/instrukt/spec/feature/publication/agent-entrypoints` |
-| Global agent entrypoints | the agent CLIs' user directories | only from the `general` owner (`local/projects/instrukt/spec/feature/publication/agent-entrypoints`) |
-| Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path |
+| Global agent files | the agent CLIs' user directories | only from the owner of `docs/general/` (`local/projects/instrukt/spec/feature/publication/agent-entrypoints`) |
+| Editor schemas and modelines | the project's primary worktree | `local/projects/instrukt/spec/feature/publication/editor-schemas` |
+| Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path, and the written record of every user-scope instruction file it wrote |
 | Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `local/projects/instrukt/spec/feature/publication/eval-fingerprint` |
 
 - Snippets are published raw: their `@config` directives resolve when they are
-  read (`local/projects/instrukt/spec/domain/docs`). Compiled outputs — bundles,
-  `AGENTS.md` files and global agent entrypoints — resolve `@config` at
+  read (`local/projects/instrukt/spec/domain/docs`). Rendered outputs —
+  `AGENTS.md` files and global agent files — resolve `@config` at
   publication, in-process against the publishing project's effective
-  configuration with no runtime session, so no compiled output captures a session. A `runtime.*`
-  path in a compiled output is a validation finding, since publication has no
-  session to resolve it against; any other path that cannot be resolved fails
-  the sync. Publication runs no command: an `@exec` directive in a published
-  snippet, fragment or master is a validation finding, and sync refuses and
-  names the file.
-- Compilation never inlines a pending snippet and drops planned material, so
-  compiled outputs carry the current contract only.
-- Local snippet content stays in the project; only its index entries enter
+  configuration with no runtime session, so no rendered output captures a
+  session. A `runtime.*` path in a rendered output is a validation finding,
+  since publication has no session to resolve it against; any other path that
+  cannot be resolved fails the sync. Publication runs no command: an `@exec`
+  directive in a published snippet or master is a validation finding, and
+  sync refuses and names the file.
+- Rendering never inlines a pending snippet and drops planned material, so
+  rendered outputs carry the current contract only.
+- Project snippet content stays in the project; only its index entries enter
   the home.
 - Pending snippets and their companions are published and indexed with their
   pending ownership; retrieval decides what a reader sees
   (`local/projects/instrukt/spec/domain/docs`).
 
-### Patching the global index
+### Claims and patching
 
-Under the docs lock, sync reads the global index, drops every entry the
-project owns, checks the project's new entries against the entries that
-remain, adds them, writes the result to a temporary file and renames it into
-place. Entries of other projects are carried over unchanged.
+Under the docs lock, sync checks the project's claims against the ownership
+record, reads the global index, drops every entry the project owns, checks
+the project's new entries against the entries that remain, adds them, writes
+the result to a temporary file and renames it into place. Entries and claims
+of other projects are carried over unchanged.
 
 | Refusal | Condition | Outcome |
 | --- | --- | --- |
+| Reserved name | a directory `docs/domain/general/` or `docs/domain/project/` | sync refused, naming the directory and the rule that `general` and `project` are reserved and no domain may take them |
+| Position owned by another project | `docs/general/`, or a `docs/domain/<x>/`, already claimed on this computer by another project | sync refused, naming the position and its current owner |
 | Duplicate id | a new entry's id is already held by another project's entry | sync refused, naming the id and its owner |
-| Domain owned by another project | a domain the project publishes has a publisher record naming another project, or carries another project's global entries | sync refused, naming the domain and its owner |
 
 A refused sync changes nothing in the home or the project, records no
-commit, and exits non-zero. A domain becomes free to claim once its owner's
-sync retracts it.
+commit, and exits non-zero. A position becomes free to claim once its owner's
+sync retracts it. No name is reserved beyond `general` and `project`, and no
+claim is curated.
+
+### What publication renders and refuses by
+
+- The `index.yaml` of each position — its allowed keys, what `expanded`,
+  `listed` and `agents` select and their findings — is the docs context's
+  model (`local/projects/instrukt/spec/domain/docs`). A finding in a
+  published position's `index.yaml`, or in `docs/project/index.yaml`, refuses
+  the sync like any validation finding.
+- A domain without `index.yaml` is published and indexed, and the sync
+  reports a notice naming it: it is absent from the global agent files and
+  found only through `instrukt docs index --domain <x>`. The notice never
+  refuses the sync.
 
 ### Retraction
 
 Everything the project published before and its committed main no longer
-yields is removed by the same sync: a domain it stopped publishing (its
-directory, publisher record and bundle), snippets deleted or moved within a
-published domain, its index entries without a source, and an `AGENTS.md`
-whose master no longer exists. Retraction touches nothing another project
-owns.
+yields is removed by the same sync: a position it stopped publishing (its
+directory under `~/.instrukt/docs/`, its claim, its entries), snippets deleted
+or moved within a published position, its index entries without a source, an
+`AGENTS.md` whose master no longer exists, and, when it stops publishing
+`docs/general/`, the global agent files it wrote. Retraction touches nothing
+another project owns.
 
 ### Failure
 
 A sync that fails after it started writing leaves the project's previous
-publication readable and records no commit. Compilation that cannot resolve a
-required read, or leaves an `@` reference unexpanded, fails the sync and
-names the file and the reference.
+publication readable and records no commit. Rendering that cannot resolve a
+required read, or leaves a reference unresolved, fails the sync and names the
+file and the reference.
 
-A path the project's repository controls (a compiled output's location, or a
+A path the project's repository controls (a rendered output's location, or a
 directory publication writes into) that is a symbolic link refuses the sync
 before anything is written; the link's target, the previous publication and
 the published commit are untouched. Files in the user's own agent-CLI
@@ -120,7 +145,9 @@ Once the new publication is in place and its commit recorded, failing to
 remove the replaced publication's leftover copy does not fail the sync: the
 sync reports the leftover path and succeeds, and a later sync removes it.
 
-A refused or failed sync changes nothing in the home or the project except removing leftovers a previous sync reported. A refused or failed sync still reports the leftovers it could not remove.
+A refused or failed sync changes nothing in the home or the project except
+removing leftovers a previous sync reported. A refused or failed sync still
+reports the leftovers it could not remove.
 
 Listing and reading the published corpus and index belong to
 `local/projects/instrukt/spec/feature/docs/progressive-retrieval`.
@@ -130,8 +157,8 @@ Listing and reading the published corpus and index belong to
 #### UC-PUB1: A developer publishes committed docs on their computer
 
 ```gherkin
-Given a developer's project that publishes a domain
-And the developer commits a new snippet to the project's main
+Given a developer's project with a domain of its own
+And the developer commits a new snippet to that domain on the project's main
 When publication runs for the project
 Then the published corpus contains the snippet as committed and the index contains its entry
 And uncommitted changes are absent from the published corpus
@@ -140,11 +167,11 @@ And uncommitted changes are absent from the published corpus
 #### UC-PUB2: Two projects publish on one computer without taking each other's docs
 
 ```gherkin
-Given a developer with two projects on one computer, each publishing its own domain
+Given a developer with two projects on one computer, each with a domain of its own
 When the developer publishes each project in turn
 Then the documentation index holds the entries of both projects
 And each project's publication changed only its own entries
-When the developer tries to publish from the second project a domain the first project owns
+When the developer adds to the second project a domain the first project owns and publishes it
 Then its publication is refused and names the domain and its owner
 And the documentation of both projects is as it was before
 ```
@@ -153,12 +180,12 @@ And the documentation of both projects is as it was before
 
 ```gherkin
 Given a developer's project whose published documentation includes a snippet and a domain
-And a directory of the project holds agent instructions compiled from a source in that directory
-When the developer deletes the snippet, stops publishing the domain, deletes that instruction source and commits to main
+And a directory of the project holds agent instructions rendered from a master in that directory
+When the developer deletes the snippet, removes the domain, deletes that master and commits to main
 And publication runs for the project
 Then the published corpus and index no longer contain the retired snippet or domain
-And the compiled agent instructions of the deleted source are gone
-And instructions compiled from sources that still exist are unchanged
+And the rendered agent instructions of the deleted master are gone
+And instructions rendered from masters that still exist are unchanged
 And another project's published documentation is unchanged
 ```
 
@@ -183,17 +210,17 @@ And the previously published documentation and index are unchanged
 And the next publication of the project tries that commit again
 ```
 
-#### UC-PUB6: Compilation that cannot complete stops publication
+#### UC-PUB6: Rendering that cannot complete stops publication
 
 ```gherkin
 Given a developer's project whose documentation is published
-When its compiled agent instructions ask for a configured value that cannot be resolved at publication
+When its rendered agent instructions ask for a configured value that cannot be resolved at publication
 And publication runs for the project
 Then publication fails and names the file and the value
 And the previously published documentation is unchanged
-When its documentation passes validation but a compiled bundle would keep an unresolved reference
+When its documentation passes validation but a rendered instruction file would keep an unresolved reference
 And publication runs for the project
-Then publication fails and names the bundle and the reference
+Then publication fails and names the file and the reference
 And the previously published documentation is unchanged
 ```
 
@@ -221,16 +248,31 @@ When the leftover can be removed again and publication runs
 Then the leftover is gone
 ```
 
+#### UC-PUB9: A developer who names a domain after a reserved name is told why it is refused
+
+```gherkin
+Given a developer's project that commits a domain named general or project
+When publication runs for the project
+Then publication is refused and names the domain's directory
+And it says that general and project are reserved and no domain may take them
+And the previously published documentation is unchanged
+```
+
 ## Known caveats
 
-- Local index entries point at the file in the project's primary worktree,
-  while the entries themselves come from committed main; a local snippet edited
-  but not committed is read as edited.
-- The default branch is the remote's default (`origin/HEAD`); without a remote, it is the local repository's current main line as git reports its default.
-- Include fragments and third-party docs are published by their owning project like its domains, with owner-scoped patching.
-- A sync refuses committed docs with structural validation findings, reports the findings, and retains the previous publication.
+- Project index entries point at the file in the project's primary worktree,
+  while the entries themselves come from committed main; a project snippet
+  edited but not committed is read as edited.
+- The default branch is the remote's default (`origin/HEAD`); without a
+  remote, it is the local repository's current main line as git reports its
+  default.
+- Third-party docs are published by their owning project like its positions,
+  with owner-scoped patching.
+- A sync refuses committed docs with structural validation findings, reports
+  the findings, and retains the previous publication.
 
 ## See Also
 
 - docs/local/spec/domain/publication.md — the publication context.
-- docs/local/spec/domain/docs.md — what is read from the home and how.
+- docs/local/spec/domain/docs.md — the `index.yaml` model and what is read from the home and how.
+- docs/local/spec/feature/publication/editor-schemas.md — the editor schemas and modelines a sync refreshes.
