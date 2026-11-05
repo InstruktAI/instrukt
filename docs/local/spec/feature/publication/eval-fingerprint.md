@@ -26,8 +26,9 @@ and the report procedure itself are outside this shipped process set.
 
 ### The fingerprint
 
-- **Input.** Every snippet in the published corpus of the home, of every
-  project, whose frontmatter declares `eval: true`, after this sync's patch.
+- **Input.** Every snippet in the published corpus of the home — published
+  from `docs/general/` or a `docs/domain/<x>/` of any project — whose
+  frontmatter declares `eval: true`, after this sync's patch.
 - **Determinism.** The same set of snippets with the same content yields the
   same fingerprint, whichever project's sync computed it and in whatever
   order the projects published.
@@ -44,7 +45,7 @@ and the report procedure itself are outside this shipped process set.
 
 ## Known caveats
 
-- Only published `docs/global` snippets with `eval: true` enter the fingerprint; local snippets do not.
+- Only published snippets (from `docs/general/` and `docs/domain/<x>/`) with `eval: true` enter the fingerprint; `docs/project/` snippets do not.
 - The digest hashes committed raw snippet content, before read-time expansion.
 
 ## See Also

@@ -52,11 +52,11 @@ not permission for an upstream module to depend on its consumer.
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
-| configuration → publication | Customer / Supplier | Project slug, published domains with triggers, runtime mapping and configuration migration operation |
+| configuration → publication | Customer / Supplier | Project slug, runtime mapping and configuration migration operation |
 | configuration → repository | Customer / Supplier | Project slug, runtime mapping and agent author settings |
 | configuration → blueprint | Customer / Supplier | Module switch and engine selection |
 | configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime mapping and runner settings |
-| docs → publication | Customer / Supplier | Snippet identity, validation, baseline and reference model |
+| docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
 | publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
 | publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
 | publication → repository | Customer / Supplier | Sync invoked by repository hook sections |
@@ -72,7 +72,7 @@ not permission for an upstream module to depend on its consumer.
 | work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
 | runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
-| publication → workflow | Customer / Supplier | Published flavor definitions, roles, actions and templates from the selected domain |
+| publication → workflow | Customer / Supplier | Published flavor definitions, roles, actions and templates from the selected domain's `docs/domain/<x>/workflow/` |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
 | runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits |
