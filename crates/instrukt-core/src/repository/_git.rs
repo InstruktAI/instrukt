@@ -40,13 +40,6 @@ pub(crate) fn config(root: &Path, key: &str) -> Result<Option<String>, Repositor
     Ok(Some(value).filter(|value| !value.is_empty()))
 }
 
-/// The value of `key` in the repository's own configuration; `None` when
-/// unset there.
-pub(crate) fn local_config(root: &Path, key: &str) -> Result<Option<String>, RepositoryError> {
-    let value = git::run(root, ["config", "--local", "--get", "--default", "", key])?;
-    Ok(Some(value).filter(|value| !value.is_empty()))
-}
-
 /// The directory git runs hooks from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HooksDir {

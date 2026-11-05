@@ -1,0 +1,38 @@
+---
+source: crates/instrukt-cli/tests/editor-schemas.rs
+expression: "String::from_utf8(bytes).unwrap()"
+---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The one line saying what the domain is about."
+    },
+    "expanded": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnippetId"
+      }
+    },
+    "listed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnippetId"
+      }
+    }
+  },
+  "description": "`docs/domain/<x>/index.yaml`.",
+  "title": "DomainIndex",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SnippetId": {
+      "type": "string",
+      "description": "A snippet id: `<domain>/<taxonomy>/<rest>` or `project/<slug>/<taxonomy>/<rest>`."
+    }
+  }
+}

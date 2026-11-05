@@ -233,6 +233,20 @@ impl fmt::Display for UseCaseRef {
     }
 }
 
+/// A snippet id in an editor schema: a string, judged by validation.
+impl schemars::JsonSchema for SnippetId {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SnippetId".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "description": "A snippet id: `<domain>/<taxonomy>/<rest>` or `project/<slug>/<taxonomy>/<rest>`.",
+        })
+    }
+}
+
 impl SnippetId {
     /// Whether the id names a project snippet (`project/<slug>/…`).
     pub fn is_project(&self) -> bool {

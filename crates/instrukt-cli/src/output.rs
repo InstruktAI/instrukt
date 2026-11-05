@@ -24,12 +24,6 @@ impl Output {
         self.write(text.as_bytes())
     }
 
-    /// Writes `bytes` as they are, for output that need not be text (a
-    /// filtered blob).
-    pub fn bytes(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
-        self.write(bytes)
-    }
-
     /// Writes `text` followed by a newline.
     pub fn line(&mut self, text: &str) -> anyhow::Result<()> {
         self.write(text.as_bytes())?;

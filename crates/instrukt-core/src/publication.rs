@@ -13,8 +13,10 @@
 //! undoes a failed run stays behind that call. Readers of its state use
 //! [`PublishedRecord`] and [`EvalFingerprint`].
 
+mod _adoption;
 mod _agents;
 mod _compile;
+mod _editor;
 mod _fingerprint;
 mod _patch;
 mod _source;
@@ -26,6 +28,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub use _adoption::{
+    ClaimStatus, ClaimsPreview, GlobalFiles, PublishedSchema, preview_claims, published_schema,
+    wrote_project_file,
+};
+pub use _editor::{EditorChange, EditorChangeKind, OnLink, SCHEMAS_DIR, refresh_editor_schemas};
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
 pub use _sync::{Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest, sync};

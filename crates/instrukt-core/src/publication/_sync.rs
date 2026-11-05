@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::_agents::{MergeRefusal, TARGETS, merge_key};
 use super::_compile::{self, Compiler};
+use super::_editor::{EditorChange, OnLink, refresh_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
@@ -118,6 +119,9 @@ pub struct SyncReport {
     /// every sync removes those it can, and a later sync tries the rest
     /// again. They are not part of the published corpus.
     pub leftovers: Vec<PathBuf>,
+    /// What a publishing sync changed of the editor schemas and modelines
+    /// in the primary worktree.
+    pub editor: Vec<EditorChange>,
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -151,6 +155,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)
         .map_err(PublicationError::from)?;
     let mut leftovers = sweep(request.home.root())?;
+    let mut editor = Vec::new();
     let attempt = (|| {
         let (branch, commit) = _source::canonical_main(&project.primary)?;
         let previous = PublishedRecord::load(request.home, &project.slug)?;
@@ -160,7 +165,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
                 commit: commit.clone(),
             }
         } else {
-            publish(request, &project, &commit, &mut leftovers)?
+            publish(request, &project, &commit, &mut leftovers, &mut editor)?
         };
         Ok::<_, PublicationError>((branch, commit, outcome))
     })();
@@ -188,7 +193,11 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         leftovers = leftovers.len(),
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
-    Ok(SyncReport { outcome, leftovers })
+    Ok(SyncReport {
+        outcome,
+        leftovers,
+        editor,
+    })
 }
 
 /// Everything a sync computed before it writes anything.
@@ -217,6 +226,7 @@ fn publish(
     project: &Project,
     commit: &CommitSha,
     leftovers: &mut Vec<PathBuf>,
+    editor: &mut Vec<EditorChange>,
 ) -> Result<SyncOutcome, PublicationError> {
     let home = request.home;
     config::migrate(home, &Layer::Global)?;
@@ -338,6 +348,9 @@ fn publish(
         settings,
     };
     preflight(home, project, commit, &prepared)?;
+    // Before anything is published: a refresh that cannot write fails the
+    // sync, and no commit is recorded.
+    *editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, request.now, &prepared, &mut tx) {
         Ok(()) => {

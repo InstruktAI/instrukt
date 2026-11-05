@@ -241,7 +241,7 @@ pub fn patch(
     if !findings.is_empty() {
         return Err(ConfigError::Invalid(Findings(findings)));
     }
-    let revision = write(&path, &next)?;
+    let revision = write(&path, &doc.bytes, &next)?;
     tracing::debug!(
         event = "config_patched",
         path = %path.display(),
@@ -296,7 +296,7 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
             let migrated = migrate_value(doc.value, from);
-            let revision = write(&path, &migrated)?;
+            let revision = write(&path, &doc.bytes, &migrated)?;
             tracing::debug!(
                 event = "config_migrated",
                 path = %path.display(),
@@ -361,7 +361,7 @@ pub fn init(
     if path.exists() {
         return Ok(InitOutcome::AlreadyCurrent);
     }
-    let revision = write(&path, &Value::Mapping(doc))?;
+    let revision = write(&path, &[], &Value::Mapping(doc))?;
     tracing::debug!(
         event = "config_initialized",
         path = %path.display(),
@@ -402,13 +402,21 @@ pub(crate) fn normalize_slug(text: &str) -> String {
     out.trim_matches('-').to_owned()
 }
 
-fn write(path: &Path, value: &Value) -> Result<Revision, ConfigError> {
-    let text = super::_render::render_yaml(value).map_err(|source| ConfigError::Render {
+/// Writes `value` at `path`, keeping the editor-schema modeline its
+/// previous bytes `before` open with, if any
+/// (`docs/project/spec/feature/publication/editor-schemas.md`).
+fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigError> {
+    let rendered = super::_render::render_yaml(value).map_err(|source| ConfigError::Render {
         path: path.to_path_buf(),
         source,
     })?;
-    atomic_write(path, text.as_bytes())?;
-    Ok(Revision::of(text.as_bytes()))
+    let mut bytes = match crate::modeline::leading(before) {
+        Some(line) => [line, b"\n"].concat(),
+        None => Vec::new(),
+    };
+    bytes.extend_from_slice(rendered.as_bytes());
+    atomic_write(path, &bytes)?;
+    Ok(Revision::of(&bytes))
 }
 
 /// The lock serializing writers of the document at `path`. It lives in the

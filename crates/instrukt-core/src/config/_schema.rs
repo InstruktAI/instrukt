@@ -1,6 +1,7 @@
 //! The `instrukt.yaml` schema: which key may live in which layer, each
 //! value's shape, and the defaults reads answer when a key is unset.
 
+use serde_json::json;
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_error::FindingKind;
@@ -570,6 +571,121 @@ fn filter_node(node: &Node, value: &Value, layer: LayerKind) -> Option<Value> {
     }
 }
 
+/// The JSON Schema of the project layer for the developer's editor,
+/// generated from the same schema [`check`] validates a project layer
+/// with: a key only the global layer may hold is absent, and every map
+/// admits exactly the keys validation admits.
+pub fn editor_schema() -> serde_json::Value {
+    let mut schema = json_node(&schema(), LayerKind::Project).unwrap_or_else(|| json!({}));
+    if let Some(object) = schema.as_object_mut() {
+        object.insert("required".to_owned(), json!(["schema_version"]));
+        let mut head = serde_json::Map::new();
+        head.insert(
+            "$schema".to_owned(),
+            json!("https://json-schema.org/draft/2020-12/schema"),
+        );
+        head.insert("title".to_owned(), json!("instrukt.yaml (project layer)"));
+        head.extend(std::mem::take(object));
+        *object = head;
+    }
+    schema
+}
+
+/// `node` as JSON Schema for `layer`; `None` when the layer may hold none
+/// of it.
+fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
+    match node {
+        Node::Leaf(Rule::ShippedAdapterInProject, _) if layer == LayerKind::Project => {
+            Some(json!({ "enum": SHIPPED_BLUEPRINT_ENGINES }))
+        }
+        Node::Leaf(rule, shape) => {
+            let permitted = !matches!(
+                (rule, layer),
+                (Rule::GlobalOnly, LayerKind::Project) | (Rule::ProjectOnly, LayerKind::Global)
+            );
+            permitted.then(|| json_shape(*shape))
+        }
+        Node::Map { children, open } => {
+            let properties: serde_json::Map<String, serde_json::Value> = children
+                .iter()
+                .filter_map(|(name, child)| Some(((*name).to_owned(), json_node(child, layer)?)))
+                .collect();
+            let open = open.as_deref().and_then(|open| json_node(open, layer));
+            if properties.is_empty() && open.is_none() {
+                return None;
+            }
+            Some(json!({
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": open.unwrap_or(json!(false)),
+            }))
+        }
+    }
+}
+
+fn json_shape(shape: Shape) -> serde_json::Value {
+    let strings = |names: &[&str]| json!({ "type": "array", "items": { "enum": names } });
+    let record = |required: &[&str], optional: &[(&str, serde_json::Value)]| {
+        let mut properties: serde_json::Map<String, serde_json::Value> = required
+            .iter()
+            .map(|name| ((*name).to_owned(), json!({ "type": "string" })))
+            .collect();
+        properties.extend(
+            optional
+                .iter()
+                .map(|(name, schema)| ((*name).to_owned(), schema.clone())),
+        );
+        json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false,
+        })
+    };
+    match shape {
+        Shape::Version => json!({ "type": "integer", "minimum": 1 }),
+        Shape::Slug | Shape::Domain | Shape::Str | Shape::Identity => json!({ "type": "string" }),
+        Shape::Bool => json!({ "type": "boolean" }),
+        Shape::Board => json!({
+            "anyOf": [{ "const": false }, { "type": "string", "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$" }],
+        }),
+        Shape::OnOff => json!({ "enum": ["on", "off"] }),
+        Shape::Approver => json!({ "enum": ["human", "peer"] }),
+        Shape::ThinkingMode => json!({ "enum": ["fast", "med", "slow"] }),
+        Shape::Autostart => json!({
+            "anyOf": [
+                { "type": "boolean" },
+                { "type": "object", "additionalProperties": { "type": "boolean" } },
+            ],
+        }),
+        Shape::StrList => json!({ "type": "array", "items": { "type": "string" } }),
+        Shape::ModuleList => {
+            let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
+            strings(&names)
+        }
+        Shape::AgentOrder => {
+            json!({ "type": "array", "minItems": 1, "items": { "type": "string" } })
+        }
+        Shape::Actions => json!({
+            "type": "object",
+            "additionalProperties": {
+                "anyOf": [
+                    { "type": "string" },
+                    record(&["command"], &[("takes_files", json!({ "type": "boolean" }))]),
+                ],
+            },
+        }),
+        Shape::WatchList => json!({ "type": "array", "items": record(&["remote", "ref"], &[]) }),
+        Shape::Runtimes => {
+            let optional: Vec<(&str, serde_json::Value)> = OPTIONAL_FIELDS
+                .iter()
+                .map(|name| (*name, json!({ "type": "string" })))
+                .collect();
+            json!({ "type": "array", "items": record(&REQUIRED_FIELDS, &optional) })
+        }
+    }
+}
+
 /// The values reads answer for unset keys of `layer`'s own keys.
 pub(crate) fn defaults(layer: LayerKind) -> Value {
     let mut root = Mapping::new();
@@ -635,6 +751,99 @@ mod tests {
         runner: {autostart: {build: true}}\n";
     const BOTH: &str = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\
         blueprint: {engine: graphify}\n";
+
+    /// Whether `value` fits `schema`, for the JSON Schema keywords
+    /// [`editor_schema`] writes.
+    fn fits(schema: &serde_json::Value, value: &serde_json::Value) -> bool {
+        use serde_json::Value as J;
+        let object = schema.as_object().unwrap();
+        if let Some(options) = object.get("anyOf").and_then(J::as_array) {
+            return options.iter().any(|option| fits(option, value));
+        }
+        if let Some(wanted) = object.get("const") {
+            return wanted == value;
+        }
+        if let Some(names) = object.get("enum").and_then(J::as_array) {
+            return names.contains(value);
+        }
+        match object.get("type").and_then(J::as_str) {
+            Some("string") => {
+                let pattern = object.get("pattern").and_then(J::as_str);
+                value.as_str().is_some_and(|text| {
+                    pattern.is_none_or(|p| regex::Regex::new(p).unwrap().is_match(text))
+                })
+            }
+            Some("boolean") => value.is_boolean(),
+            Some("integer") => value
+                .as_u64()
+                .is_some_and(|n| object["minimum"].as_u64().is_none_or(|min| n >= min)),
+            Some("array") => value.as_array().is_some_and(|items| {
+                object
+                    .get("minItems")
+                    .and_then(J::as_u64)
+                    .is_none_or(|n| items.len() as u64 >= n)
+                    && items.iter().all(|item| fits(&object["items"], item))
+            }),
+            Some("object") => value.as_object().is_some_and(|map| {
+                let required = object.get("required").and_then(J::as_array);
+                required.is_none_or(|names| {
+                    names
+                        .iter()
+                        .all(|name| map.contains_key(name.as_str().unwrap()))
+                }) && map.iter().all(|(key, child)| {
+                    match object.get("properties").and_then(|p| p.get(key)) {
+                        Some(property) => fits(property, child),
+                        None => match &object["additionalProperties"] {
+                            J::Bool(open) => *open,
+                            other => fits(other, child),
+                        },
+                    }
+                })
+            }),
+            other => panic!("a type the editor schema does not write: {other:?}"),
+        }
+    }
+
+    fn as_json(text: &str) -> serde_json::Value {
+        serde_json::to_value(yaml(text)).unwrap()
+    }
+
+    #[test]
+    fn the_editor_schema_admits_every_project_layer_key_validation_admits() {
+        let doc = format!("{BOTH}{PROJECT_ONLY}");
+        assert!(check(&yaml(&doc), LayerKind::Project).is_empty());
+        assert!(fits(&editor_schema(), &as_json(&doc)));
+    }
+
+    #[test]
+    fn the_editor_schema_marks_each_global_only_key_as_validation_does() {
+        for line in GLOBAL_ONLY.lines() {
+            let doc = format!("{BOTH}{line}\n");
+            assert!(!check(&yaml(&doc), LayerKind::Project).is_empty(), "{line}");
+            assert!(!fits(&editor_schema(), &as_json(&doc)), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_editor_schema_marks_an_unknown_key_and_a_wrong_shape() {
+        for extra in [
+            "publishes: [sdlc]\n",
+            "board: true\n",
+            "approvals: {prd: robot}\n",
+        ] {
+            let doc = format!("{BOTH}{extra}");
+            assert!(
+                !check(&yaml(&doc), LayerKind::Project).is_empty(),
+                "{extra}"
+            );
+            assert!(!fits(&editor_schema(), &as_json(&doc)), "{extra}");
+        }
+    }
+
+    #[test]
+    fn the_editor_schema_requires_the_schema_version() {
+        assert!(!fits(&editor_schema(), &as_json("project: demo\n")));
+    }
 
     #[test]
     fn every_key_of_the_layer_table_is_permitted_in_its_layer() {

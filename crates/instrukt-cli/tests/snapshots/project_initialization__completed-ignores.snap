@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "repo.read(\".gitignore\")"
+---
+/build
+*.log
+AGENTS.md
+.instrukt/

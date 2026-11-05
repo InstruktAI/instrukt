@@ -1,5 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/project-initialization.rs
-expression: committed
+expression: "repo.read(\"AGENTS.md\")"
 ---
-Read @~/.instrukt/docs/general/x.md first.
+## Purpose
+
+demo

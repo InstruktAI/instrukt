@@ -1,0 +1,31 @@
+---
+source: crates/instrukt-cli/tests/editor-schemas.rs
+expression: "String::from_utf8(bytes).unwrap()"
+---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "expanded": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnippetId"
+      }
+    },
+    "listed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnippetId"
+      }
+    }
+  },
+  "description": "`docs/project/index.yaml`.",
+  "title": "ProjectIndex",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SnippetId": {
+      "type": "string",
+      "description": "A snippet id: `<domain>/<taxonomy>/<rest>` or `project/<slug>/<taxonomy>/<rest>`."
+    }
+  }
+}

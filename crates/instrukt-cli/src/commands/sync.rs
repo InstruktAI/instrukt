@@ -17,9 +17,10 @@ pub struct SyncArgs {
 
 /// Publishes the project the caller stands in from its canonical main.
 ///
-/// Prints one line naming the outcome, then one line per leftover copy of
-/// an earlier publication that could not be removed (a later sync removes
-/// it; it does not fail this one). A refusal or a failure exits non-zero:
+/// Prints one line naming the outcome, then one line per editor schema or
+/// modeline a publishing sync changed in the primary worktree, then one
+/// line per leftover copy of an earlier publication that could not be
+/// removed (a later sync removes it; it does not fail this one). A refusal or a failure exits non-zero:
 /// validation findings are printed one per line, the leftovers likewise,
 /// then the refusal or failure is reported on stderr.
 pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
@@ -31,7 +32,11 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         wiring: &wiring,
         now: ctx.clock.now(),
     });
-    let SyncReport { outcome, leftovers } = match synced {
+    let SyncReport {
+        outcome,
+        leftovers,
+        editor,
+    } = match synced {
         Ok(report) => report,
         Err(SyncError { error, leftovers }) => {
             report_leftovers(ctx, &leftovers)?;
@@ -61,6 +66,9 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             Some(format!("{project} at {commit} is not published: {refusal}"))
         }
     };
+    for line in crate::commands::repository::editor_lines(&editor) {
+        ctx.out.line(&line)?;
+    }
     report_leftovers(ctx, &leftovers)?;
     match refusal {
         Some(message) => anyhow::bail!(message),
