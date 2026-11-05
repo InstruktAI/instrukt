@@ -50,6 +50,10 @@ pub enum WorkError {
     /// The repository to reflect to cannot be derived.
     #[error(transparent)]
     Repository(#[from] instrukt_core::github::ResolveError),
+    /// Todos need the project's code on GitHub (`github-record`, "Code on
+    /// GitHub").
+    #[error("{}", instrukt_core::github::todos_need_github(reason))]
+    CodeNotOnGitHub { reason: String },
     #[error("{project} has no todo `{todo}`; list the project's work with `instrukt todo list`")]
     UnknownTodo {
         project: ProjectSlug,

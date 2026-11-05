@@ -16,8 +16,11 @@ reactivity. The runner executes the work of enabled modules in one process.
 ### Execution contract
 
 `instrukt run` and `instrukt tick` are entry points to the runner. The OS
-scheduler supplies wake-ups; instrukt has no daemon, socket API, or separate
-state service. Its state is the state database
+scheduler supplies wake-ups. The runner has no consumer daemon or separate state
+service. Enabled project webhook sources use the independent loopback ingress
+receiver under `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`;
+that narrow intake outlives runner invocations and exposes no session-control API.
+The runner's local state is the state database
 (`project/instrukt/spec/feature/work/state-database`), written by
 whichever instrukt process holds the writer lock. A running process can read events and react to them; the
 scheduled tick supplies time-based wake-ups. These are execution forms of the
@@ -47,20 +50,19 @@ claim on a conflict.
 
 A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
-deleting it orphans this computer's live claims until they are released. On
-that computer the holder is a session bound to the todo, or the session that
-claimed it through `instrukt todo prepare|work`; any other caller is refused as
-"claimed elsewhere". After the claim,
-`instrukt todo update <slug> --unclaim` releases it; ending the todo's child
-sessions and then the lane's own are separate operations,
-`instrukt sessions end --todo <slug>` and then `instrukt sessions end self`.
+deleting it orphans this computer's live claims until they are released. On that
+computer the holder is a session bound to the todo, or the session that claimed
+it through `instrukt todo prepare|work`; any other caller is refused as "claimed
+elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
+it. The dispatcher records the handoff and retains conversations needed for
+later rounds or human questions. The runtime owns session ending and cleanup.
 Every tick also polls GitHub for the todos this computer has an interest in,
-with conditional requests: the todos it holds claims on, one pickup listing
-per project with `todos` on, and the prerequisites its own work is blocked
-on (`project/instrukt/spec/feature/work/github-record`). Pickup
-considers the todos of that listing. Every tick flushes pending work-record
-reflection under the per-computer writer lock; commands that write the record
-flush it under that lock too.
+with conditional requests: the todos it holds claims on, one pickup listing per
+project with `todos` on, and the prerequisites its own work is blocked on
+(`project/instrukt/spec/feature/work/github-record`). Pickup considers the todos
+of that listing. Every tick flushes pending work-record reflection under the
+per-computer writer lock; commands that write the record flush it under that
+lock too.
 
 ### Todo pickup
 
@@ -83,13 +85,17 @@ the todo pickup policy. Task timing belongs to
 
 ### Agent selection and intent checks
 
-Dispatch walks the task's optional agent/model preference first, then the procedure's `dispatch` order, or global `agents.order`,
-including the chosen thinking mode, and takes the first agent the configured
-runtime reports available. Runtime entries may declare an `available` check
-template. Without a check, a failed start causes the next agent to be tried.
-Exhausting the order is an anomaly: the runner releases its own claim through
-work's command contract and sends the anomaly through `runner.notify`; it sets
-no hold.
+Dispatch walks the task's optional agent/model preference first, then the
+procedure's `dispatch` order, or global `agents.order`, including the chosen
+thinking mode, and takes the first agent the configured adapter reports
+available when it supports explicit selection. Availability checks are adapter
+code. T3's CLI uses its project's defaults until the adapter can resolve a
+provider/model pair; it reports that limitation rather than claiming to honour
+agent order or thinking mode. Only a rejection proven to precede creation
+permits fallback to another agent; an ambiguous start or failed send preserves
+the existing dispatch for recovery. Exhausting a supported selection order is an
+anomaly: the runner releases its own claim through work's command contract and
+sends the anomaly through `runner.notify`; it sets no hold.
 
 The runner on the computer holding the conversation dispatches its intent
 check, where that conversation is readable; it is not copied to the remote
@@ -143,4 +149,15 @@ Then the command refuses and names both switches that would enable it
 
 ## Known caveats
 
-None.
+- T3's current CLI cannot attach a newly dispatched role to an existing
+  worktree. Work requiring that attachment remains pending with the missing
+  capability named; the adapter does not silently create another worktree.
+- Preferred-agent selection on T3 has the limitation recorded in
+  `project/instrukt/spec/feature/runner/session-continuity`.
+
+## See Also
+
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/runner/task-timing](task-timing.md)
+- [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)

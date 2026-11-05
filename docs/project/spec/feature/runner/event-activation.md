@@ -31,9 +31,9 @@ documentation even when events are disabled. The runner reads an event, resolves
 Todo pickup settings do not govern these activations.
 
 Procedures subscribe to instrukt's vocabulary. Event-source adapters translate
-native deliveries; procedures do not subscribe directly to one runtime's
-native vocabulary. A runtime integration pairs an event source with the
-session operations that receive the resulting assignment.
+native deliveries; procedures do not subscribe directly to one runtime's native
+vocabulary. The runtime adapter receives the resulting assignment; event-source
+translation remains independent of session execution.
 
 ### Sources and reactions
 
@@ -116,6 +116,13 @@ routing itself starts no session. `run` hosts independent readers; `tick` drains
 pending then new entries within a bounded invocation. Scheduled-only execution
 reacts at the next wake while retained entries remain available.
 
+A3's adapter owns per-key runtime discovery and ambiguous-start recovery under
+`project/instrukt/spec/feature/runner/session-continuity`: a failed listing or
+send leaves work pending and starts no replacement, and an uncertain start is
+reconciled by key or explicit resolution. Those primitives do not establish
+hook provenance or eligible delivery while a session is busy. The S6 handoff
+preserves this target delivery contract rather than equating a plain send with it.
+
 ### Use cases
 
 #### UC-EA1: Learn about an upstream change before reconciling a fork
@@ -132,10 +139,11 @@ reacts at the next wake while retained entries remain available.
 
 - Company/person origins and references travel intact, but resolving those homes
   is unsupported in this release and fails visibly. Unknown never means none.
-- Runtime delivery equivalence remains subject to the S6/A3 feasibility gate.
+- Runtime delivery equivalence remains subject to the S6/A3 feasibility gate. Adapter key-title discovery and ambiguous-start limits remain; a lost acknowledgment can repeat a send and requires owner idempotency.
 
 ## See Also
 
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-transport](event-transport.md)

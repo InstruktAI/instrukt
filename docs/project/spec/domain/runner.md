@@ -1,5 +1,5 @@
 ---
-description: Module-aware work dispatch, event activation, session capabilities, task timing and anomaly reporting without a daemon.
+description: Module-aware work dispatch, event activation, session capabilities, task timing and anomaly reporting without a consumer daemon, with opt-in signed ingress.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -8,7 +8,7 @@ delivered_by: [instrukt-first-build]
 ## What it is
 
 The runner bounded context connects eligible work, received events and due
-times to agent sessions. It owns dispatch, the sessions facade, event-source
+times to agent sessions. It owns dispatch, the runtime adapter, the sessions facade, event-source
 translation and time eligibility, including anomaly reporting. It executes
 the enabled modules' work in one process, entered through `instrukt run` or
 `instrukt tick` and woken by the OS scheduler. It has no consumer daemon. A separate opt-in loopback webhook receiver accepts signed external events on the designated ingress computer. The work
@@ -41,18 +41,21 @@ authorization and derived workflow state.
 : Work’s runtime and session id per todo and role, read and written by the
   runner through work’s interface; standing-agent bindings belong to runner.
 
-**Runtime mapping**
-: Global configuration connecting facade operations and declared capabilities
-  to the runtime the developer chose, as verbs. A verb of kind `command` is a
-  template instrukt runs; a verb of kind `agent` is an instruction
-  `instrukt sessions` hands to the calling agent with the "yours to do"
-  status. A feature is available only when the chosen runtime fills every
-  verb it needs. instrukt ships an entry for T3 Code that a developer may
-  choose; no code detects or chooses a runtime.
+**Runtime adapter**
+: A Rust trait implemented in code, selected explicitly by global
+`runner.runtime`. T3 is shipped first over its published host CLI. The
+adapter translates start-or-wake, start, send, state and conversation reads,
+recognises caller identity without runtime I/O,
+and reports optional capabilities. Configuration contains no runtime verbs.
+
+**Singleton key**
+: The standing procedure and project identity carried in its runtime thread
+ title; the database binding is a cache. A per-key database lock admits one
+ starter or deliverer at a time.
 
 **Linked-session input**
 : Human words typed in one session also reaching a linked session with their
-  human attribution, when the runtime mapping supports that capability.
+  human attribution, when the runtime adapter supports that capability.
 
 **Due task**
 : A prepared, authorized task whose recorded schedule makes it eligible for
@@ -72,12 +75,12 @@ authorization and derived workflow state.
 ### Ownership boundary
 
 - **Owns:** Module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the sessions facade and session reuse behavior;
-  runtime capability translation, including linked-session input; time
+  activation from events; the runtime-adapter trait, the sessions facade and session reuse behavior;
+  runtime capability translation, including optional linked-session input; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
-  watched-ref observations, executions, standing-agent bindings and starts,
+  watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
   held task failures and the last wake-up), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
@@ -87,19 +90,18 @@ authorization and derived workflow state.
   blueprint;
   session lifecycle, input delivery, restart, revival, handover,
   transcripts and their search, cleanup and subscriptions to session
-  activity, all owned by the runtime and reached only through the runtime
-  mapping's verbs. Events, schedules and dispatch decisions are the
+  activity, all owned by the runtime; instrukt calls only the adapter's
+  released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
-- **Published contracts:** `instrukt run`, `instrukt tick`, `instrukt sessions
-  run|send|alive|conversation|link|end`, `instrukt sessions end --todo <slug>`,
-  `instrukt sessions end self`, `instrukt sessions history search|show`, the
-  verb kinds `command` and `agent` with the "yours to do" status,
-  `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
-  (procedure required except setup-only `run --worktree <name> --brief <file|->`;
-  the runtime creates/reattaches it and the binding records its path as `worktree.path`), `instrukt sessions link --remove <a> <b>`, `instrukt ticks status`, and the wake-up
-  registration performed by `instrukt install`; the five-state session
-  contract; every sessions facade command accepts `--json`; linked-session input capability; instrukt event vocabulary,
-  including `runner.upstream_changed`, `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
+- **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
+  `instrukt sessions run|send|alive|conversation|link|resolve-start` surface,
+  `instrukt ticks status`, and wake-up registration by `instrukt install`;
+  structured adapter operations, five-state observation, bounded conversation
+  reads, optional linked input and notification; singleton key/title discovery
+  and database locking. Every facade command accepts `--json`.
+  Worktree creation returns the runtime path; reattachment requires a distinct
+  runtime capability. Events include `runner.upstream_changed`,
+  `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and
   project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
@@ -138,12 +140,17 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 - **Contains:** Canonical procedure, exact home, subject when identity is subject,
   and the configured runtime's session identity.
 - **Invariants:** Activation acceptance is distinct from runtime resolution and
-  event delivery. Domain completion requires its owning work record's evidence.
+  event delivery. Exact runtime key-title discovery repairs the cached binding
+  under its per-key database lock; status observation determines reuse. Domain
+  completion requires its owning work record's evidence. Linked input is an
+  optional adapter capability.
 - **Identifier:** Procedure and exact home, plus subject when declared; todo-role
-  bindings remain work-owned.
-- **Lifecycle:** A3/S6 owns serialized resolution and continuation through the
-  runtime adapter. Routing retains pending accepted work and does not infer a
-  replacement session from a failed observation or delivery.
+  bindings remain work-owned. A3's project-keyed adapter mapping is extended at
+  the S6 home/subject-delivery boundary.
+- **Lifecycle:** A3 owns serialized discovery/start-or-wake, pending fixed targets
+  and ambiguous-start recovery. List/send failure leaves work pending and starts
+  no replacement. S6 realizes continuing home/subject responsibility and eligible
+  event delivery; routing itself resolves no session.
 
 #### Event activation
 
@@ -302,11 +309,15 @@ record-backed completion.
 | runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits; `runner.main_failing` wakes it to restore a failing canonical branch |
 
 The runtime adapter and event-source boundary form an **Anti-corruption layer
-(ACL)** translating runtime operations and external observations, rather than
-additional bounded contexts. Event-driven start or wake uses A3's selected Rust
-adapter; runtime lifecycle and delivery remain with the runtime. S6 establishes
-that handoff's delivery feasibility. The wider session facade is owned by
-`project/instrukt/spec/feature/runner/session-continuity`.
+(ACL)** translating session operations and external observations. These are
+external boundaries, not additional bounded contexts. The runtime side is a Rust
+trait and code implementations; T3 is the first, over its host CLI. The explicit
+configuration name selects the implementation
+(`project/instrukt/spec/feature/runner/session-continuity`).
+
+Event activation carries the exact home and optional subject through this seam.
+S6 establishes that handoff's delivery feasibility; runtime lifecycle remains
+runtime-owned.
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract

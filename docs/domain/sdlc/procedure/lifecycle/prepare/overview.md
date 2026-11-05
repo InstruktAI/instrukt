@@ -15,14 +15,14 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/session-lifecycle.md
-- @~/.instrukt/docs/general/procedure/orchestration.md
-- @~/.instrukt/docs/general/concept/agent-characteristics.md
-- @~/.instrukt/docs/general/policy/commits.md
-- @~/.instrukt/docs/sdlc/policy/process-change-authority.md
-- @~/.instrukt/docs/general/policy/human-involvement-recording.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
-- @~/.instrukt/docs/sdlc/policy/peer-invocation.md
+- general/principle/session-lifecycle
+- general/procedure/orchestration
+- general/concept/agent-characteristics
+- general/policy/commits
+- sdlc/policy/process-change-authority
+- general/policy/human-involvement-recording
+- sdlc/policy/todo-creation-discipline
+- sdlc/policy/peer-invocation
 
 ## Goal
 
@@ -356,13 +356,9 @@ binding, or an author's `exempt` note with reason under
 obligation names any remaining work.
 
 Run `instrukt todo update <slug> --unclaim` and confirm release before leaving
-the lane. After confirmed release, end the child sessions with
-`instrukt sessions end --todo <slug>`, then the completed lane with
-`instrukt sessions end self` as its last step. When either command answers
-that the ending is yours to do, carry out the instruction it prints; that is
-the ending. The runner owns later execution dispatch; a derived ready state
-alone releases no claim and ends no session. Report readiness to the human.
-An unfinished human conversation stays in this thread after the lane ends.
+the lane. Record readiness and the handoff; the runner owns later execution
+dispatch. A derived ready state releases no claim. Preserve any unfinished human
+conversation in this thread; the runtime owns session ending and cleanup.
 
 When review continuation stops or drift cannot be resolved, preserve the
 findings and current verdict and record the grounded cause, next contribution
@@ -371,9 +367,10 @@ and owner. Follow `sdlc/procedure/lifecycle/review` for review halts and
 itself make recovery the human's decision.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
-then end the assignment children in `sessions.bound` with
-`instrukt sessions end --todo <slug>`, and end the completed lane with
-`instrukt sessions end self` as its last step.
+then record the handoff and any remaining obligations. Preserve conversations
+needed for later rounds or human input. The runtime owns session ending and
+cleanup. An unfinished human conversation keeps its context and gives up its
+claim.
 
 ## Outputs
 
@@ -428,6 +425,6 @@ then end the assignment children in `sessions.bound` with
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/intake.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/architecture.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/plan-draft.md
+- sdlc/procedure/lifecycle/prepare/intake
+- sdlc/procedure/lifecycle/prepare/architecture
+- sdlc/procedure/lifecycle/prepare/plan-draft

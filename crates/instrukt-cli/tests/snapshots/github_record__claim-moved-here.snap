@@ -1,0 +1,33 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: "redact(&format!(\"{listed}---\\n{shown}---\\n{}\", chain(&project.github)))"
+---
+tidy-imports · change · active · runs on <id 1> · last known <time> · not on this computer
+---
+tidy-imports · change · active
+identity: <id 2>
+record status: active
+created: <time> by Test Developer
+revision: 6
+intent:
+  Sort the imports of every module.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time>
+hold: none
+sessions:
+  prepare-orchestrator: rt:s1
+released holds:
+  the import order is being agreed (released <time> by Other Developer)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+[instrukt record · tidy-imports · rev 1 on rev 0]
+[instrukt record · tidy-imports · rev 2 on rev 1]
+[instrukt record · tidy-imports · rev 3 on rev 2]
+[instrukt record · tidy-imports · rev 4 on rev 3]
+[instrukt record · tidy-imports · rev 5 on rev 4]
+[instrukt record · tidy-imports · rev 6 on rev 5]

@@ -35,8 +35,8 @@ contracts and the designs governing their relationships.
 | --- | --- | --- |
 | core | docs, configuration, publication, repository, specs | Always on; independent of optional modules |
 | blueprint | blueprint | Switchable; uses core repository information and a graph engine |
-| todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime mapping required; runner autostart or manual concerns todos only |
-| events | runner's event sources and standing-agent dispatch | Independently switchable; runtime mapping required; shares the single runner process |
+| todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
+| events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
 
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
@@ -57,10 +57,10 @@ not permission for an upstream module to depend on its consumer.
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
-| configuration → publication | Customer / Supplier | Project slug, runtime mapping and configuration migration operation |
-| configuration → repository | Customer / Supplier | Project slug, runtime mapping and agent author settings |
+| configuration → publication | Customer / Supplier | Project slug, runtime choice and configuration migration operation |
+| configuration → repository | Customer / Supplier | Project slug, runtime choice and agent author settings |
 | configuration → blueprint | Customer / Supplier | Module switch and engine selection |
-| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime mapping and runner settings |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice and runner settings |
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
 | publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
 | publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
@@ -96,10 +96,10 @@ enabled, and blueprint when blueprint is enabled.
 External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
-node-link contract; runner's runtime mapping and event-source boundary translate
-session operations and external notifications. These are boundary locations,
-not additional contexts. Distribution is **Conformist** to the Agent Skills
-format, the `skills` command and GitHub's release assets.
+node-link contract; runner's runtime adapter and event-source boundary translate
+session operations and external notifications. These are boundary locations, not
+additional contexts. Distribution is **Conformist** to the Agent Skills format,
+the `skills` command and GitHub's release assets.
 
 ### Cross-cutting designs and rulings
 

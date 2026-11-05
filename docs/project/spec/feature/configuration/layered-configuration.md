@@ -17,7 +17,9 @@ layers carry `schema_version`, and older documents are migrated.
 
 ## Canonical fields
 
-Runtime entries may declare an `available` check template. `dispatch` agent names validate against agents the configured runtime mapping can start, never a fixed set.
+`runner.runtime` chooses a compiled adapter. Dispatch preferences are checked
+against the selected adapter's declared capabilities, never executable
+configuration.
 
 ### Event enablement
 
@@ -34,7 +36,6 @@ installation contract; these schema rules install nothing.
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
-| `runtimes` (runtime mapping) | global only | configuration (selection); readers of each entry |
 | `agents.order`, `agents.thinking_mode` (ordered agent preferences and their thinking mode) | global only | dispatch |
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
@@ -45,7 +46,7 @@ installation contract; these schema rules install nothing.
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
-| `runner.runtime` (the chosen runtime: an entry of `runtimes` or a shipped entry; default: first entry of `runtimes`) | global only | runner |
+| `runner.runtime` (compiled adapter name, no default; initially `t3`) | global only | runner |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
 | `requires` (modules the flavor needs) | project only | publication |
@@ -57,10 +58,9 @@ installation contract; these schema rules install nothing.
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
 
-A runtime mapping is never taken from a project: a cloned repository must not
-decide what runs on a machine, as git ignores machine-level keys in repository
-configuration. `actions` are called by name from procedures and never run by
-hooks.
+Runtime choice is global-only: a cloned repository does not decide which runtime
+executes on the machine. `actions` are called by name from procedures and never
+run by hooks.
 
 ### Event configuration values and cross-computer agreement
 
@@ -93,72 +93,25 @@ keys remain findings; no direction or `sources` subkey is accepted. The typed
 configuration also generates editor schemas. Schema validation itself starts
 no receiver, Redis or scheduler; infrastructure convergence belongs to S7.
 
-### Runtime choice and shipped entries
+### Runtime choice
 
-The developer chooses the runtime; no configuration default detects or picks
-one. instrukt ships runtime entries the developer may choose by name; today
-that is `t3`, for T3 Code, filled from T3's `t3 thread` commands
-(`project/instrukt/spec/feature/runner/session-continuity`).
+The developer chooses global `runner.runtime` by compiled adapter name. `t3`
+selects the shipped T3 implementation; an unknown name is a validation finding.
+An unset value selects no runtime, even when T3 is installed or a caller is
+inside a T3 session. There is no first-entry default or detection.
 
-- `runner.runtime: <name>` chooses a runtime. It names an entry of `runtimes`
-  or a shipped entry; any other name is a validation finding.
-- A chosen shipped entry joins the effective `runtimes` exactly as shipped,
-  after the declared entries. A declared entry with the same name replaces it.
-  A shipped entry nobody chose is not in the effective mapping.
-- With `runner.runtime` unset, the runtime is the first declared entry of
-  `runtimes`; with neither set there is no runtime.
-- `config get runtimes` prints the effective mapping, shipped entries
-  included, as stored.
+There is no `runtimes` list, shipped YAML entry, verb kind, command template,
+agent instruction or configurable `session_id_env`. These pre-release keys are
+unknown and not migrated. T3 uses the installed host CLI, the registered project
+checkout and the project's own model and permission defaults; this adapter
+requires no additional configuration keys. Its caller-identity recognition
+belongs to code, not configuration.
 
-Shipping an entry adds configuration only: the runner drives it through the
-same verbs as a declared entry.
-
-### Runtime entries
-
-Each entry of `runtimes` is a map:
-
-| Key | Value |
-| --- | --- |
-| `name` | the entry's name, unique in the mapping |
-| `session_id_env` | the environment variable that holds the caller's session id inside this runtime |
-| `agent` | optional: the agent CLI this entry is (`claude`, `codex`, …); its git author comes from `agents.<name>.git_author` |
-| `start`, `send`, `alive`, `conversation`, `notify`, `available`, `model` | optional verbs of kind `command` |
-| `end`, `end_self`, `link` | optional verbs of kind `command` or `agent` |
-| `history` | optional map with the verbs `search` and `show`, each of kind `command` or `agent` |
-
-A verb's value has one of these forms:
-
-| Form | Kind |
-| --- | --- |
-| a string | `command`: the string is the command template |
-| `{kind: command, template: <string>}` | `command` |
-| `{kind: agent, instruction: <string>}` | `agent`: the instruction the calling agent carries out with its own runtime's tools |
-
-An absent verb is empty. A map with another `kind`, with both `template` and
-`instruction`, or with the field its kind does not take, is a validation
-finding; so is a verb of kind `agent` where only `command` is allowed. What
-each verb does and how `instrukt sessions` treats each kind is
-`project/instrukt/spec/feature/runner/session-continuity`.
-
-```yaml
-runtimes:
-  - name: host
-    session_id_env: HOST_SESSION_ID
-    start: host start
-    send: host send {runtime.session_id}
-    alive: host alive {runtime.session_id}
-    conversation: host show {runtime.session_id}
-    end:
-      kind: agent
-      instruction: Close session {runtime.session_id} with your host's close tool.
-    history:
-      show: host show
-```
-
-`instrukt config get runtime.<verb>` and a `<!-- @config: runtime.<verb> -->`
-directive give the active runtime's verb as its expanded template, or its
-expanded instruction for kind `agent`
-(`project/instrukt/spec/feature/configuration/interpolation`).
+Feature enablement is checked against the selected adapter's capabilities
+(`project/instrukt/spec/feature/runner/session-continuity`). Without a selected
+runtime, enabling runtime-dependent features is refused with that reason. A
+missing capability refuses and names the runtime and capability. Configuration
+reads and documentation remain usable without a runtime.
 
 ### Agent preferences and availability
 
@@ -167,17 +120,18 @@ The global layer supplies a non-empty ordered agent preference list,
 `agents.thinking_mode` (`fast`, `med` or `slow`) — the same shape as a
 procedure's `dispatch` (`agent: [<agent>, …]`, `thinking_mode`). Precedence,
 first to last: a task's own preference (`--agent <name> [--thinking …]`, one
-agent with its own mode), then the procedure's `dispatch`, then
-`agents.order` with `agents.thinking_mode`. `agents.thinking_mode` has no
-default: it is required whenever `agents.order` is set, and a missing mode is a
-validation finding, as for `dispatch`. Agent names validate against the
-agents the configured runtime mapping can start, rather than a fixed set or
-the shorter set of agents receiving deployed instructions.
+agent with its own mode), then the procedure's `dispatch`, then `agents.order`
+with `agents.thinking_mode`. `agents.thinking_mode` has no default: it is
+required whenever `agents.order` is set, and a missing mode is a validation
+finding, as for `dispatch`. Agent names validate against the agents the selected
+runtime adapter can start, rather than a fixed set or the shorter set of agents
+receiving deployed instructions.
 
-A runtime entry may declare an `available` check template. Configuration supplies
-the preferences and optional check; dispatch execution belongs to
-`project/instrukt/spec/feature/runner/work-dispatch`. Composing the order
-is agent judgment informed by `general/concept/agent-characteristics`.
+Configuration supplies preferences; the adapter supplies supported selection and
+availability metadata. It exposes unsupported selection explicitly; no command
+template is configured. Dispatch execution belongs to
+`project/instrukt/spec/feature/runner/work-dispatch`. Composing the order is
+agent judgment informed by `general/concept/agent-characteristics`.
 
 ### Locating the layers
 
@@ -201,9 +155,9 @@ with `--global` answers from the global layer alone. Writes address one layer
 - a key in a layer that does not permit it, naming the key and its layer;
 - a value of the wrong type or outside its allowed values;
 - a missing `schema_version`;
-- a feature switched on whose verbs the chosen runtime does not fill, or
-  switched on with no runtime chosen, naming each missing verb and the
-  runtime entry
+- a feature switched on whose required capabilities the chosen adapter lacks,
+  or switched on with no runtime chosen, naming each missing capability and
+  the selected runtime
   (`project/instrukt/spec/feature/runner/session-continuity`). A write
   that would switch such a feature on is refused with the same naming;
 - in a project, `modules.todos` on in the effective configuration while the
@@ -251,10 +205,10 @@ Then it receives the machine's default
 #### UC-CL2: A developer clones a project that tries to decide what runs on their machine
 
 ```gherkin
-Given a developer clones a project whose configuration declares which runtimes the machine runs
+Given a developer clones a project whose configuration chooses the machine runtime
 When the developer validates the project's configuration
 Then the declaration is reported as not permitted in a project
-And reading the runtimes inside that project still answers the machine's own
+And reading the runtime choice inside that project still answers the machine's own
 ```
 
 #### UC-CL3: A developer keeps working after upgrading instrukt
@@ -280,12 +234,12 @@ And the configuration is unchanged
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (the install registers the wake-up; `off` opts out). |
-| `runner.runtime` | name of a `runtimes` entry or a shipped entry (`t3`) | the first entry of `runtimes`; with none, no runtime |
+| `runner.runtime` | compiled runtime adapter name (`t3`) | absent; no runtime is chosen |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | `false` or `<owner>/<number>`; `true` is a finding asking for the project reference | `false` (todos are always issues; the board is opt-in). |
-| `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runtimes`) | the shipped adapter |
+| `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
 
 An action is a command string, which takes no files, or a declaration
@@ -306,7 +260,7 @@ introduced.
 - `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
-- Runtime entries carry `name` and `session_id_env`, and may fill the verbs `start`, `send`, `alive`, `conversation`, `notify`, `link`, `end`, `end_self`, `available`, `model`, `history.search` and `history.show`, each of kind `command` or `agent` (`Runtime entries`); an empty verb leaves the features that need it unavailable. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
+- Runtime capabilities are compiled adapter behavior. Future adapters require code; arbitrary runtime command templates are not supported.
 
 ## See Also
 

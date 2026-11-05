@@ -173,6 +173,130 @@ impl Store {
     }
 }
 
+/// The last known copy of a todo that is not a local item here, as the
+/// latest pickup listing or refresh read it (`state-database`,
+/// `listing_copies`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ListingCopy {
+    pub issue_number: u64,
+    /// The reflected record as read, without artifact contents.
+    pub record: TodoRecord,
+    /// When it was read: the copy's age.
+    pub copied_at: Timestamp,
+}
+
+impl Store {
+    /// The project's listing copies, oldest todo first.
+    pub fn copies(&self) -> Result<Vec<ListingCopy>, WorkError> {
+        load_copies(self.db.conn(), self.db.path(), &self.project)
+    }
+
+    /// Replaces the project's listing copies with `copies`: what one
+    /// pickup listing read.
+    pub fn replace_copies(&mut self, copies: &[ListingCopy]) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        let project = self.project.clone();
+        self.db.write(|tx| {
+            tx.execute(
+                "DELETE FROM listing_copies WHERE project = ?1",
+                params![project.as_str()],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            for copy in copies {
+                save_copy_in(tx, &path, &project, copy)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Replaces the one copy of `copy`'s issue: what a refresh of a todo
+    /// that is not a local item read.
+    pub fn save_copy(&mut self, copy: &ListingCopy) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        let project = self.project.clone();
+        self.db.write(|tx| save_copy_in(tx, &path, &project, copy))
+    }
+
+    /// Removes the copy of issue `number`: its todo became a local item.
+    pub fn drop_copy(&mut self, number: u64) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        let project = self.project.clone();
+        self.db.write(|tx| {
+            tx.execute(
+                "DELETE FROM listing_copies WHERE project = ?1 AND issue_number = ?2",
+                params![project.as_str(), number],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            Ok(())
+        })
+    }
+}
+
+fn save_copy_in(
+    tx: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+    copy: &ListingCopy,
+) -> Result<(), WorkError> {
+    let r = &copy.record;
+    tx.execute(
+        "INSERT INTO listing_copies
+             (project, issue_number, slug, kind, status, remote_revision, claim_machine, record, copied_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT (project, issue_number) DO UPDATE SET
+             slug = excluded.slug, kind = excluded.kind, status = excluded.status,
+             remote_revision = excluded.remote_revision, claim_machine = excluded.claim_machine,
+             record = excluded.record, copied_at = excluded.copied_at",
+        params![
+            project.as_str(),
+            copy.issue_number,
+            r.slug.as_str(),
+            text_of(&r.kind),
+            text_of(&r.status),
+            r.revision,
+            r.claim.as_ref().map(|c| c.machine.to_string()),
+            json_of(&r.without_contents())?,
+            copy.copied_at.to_string(),
+        ],
+    )
+    .map_err(StateDbError::sqlite(path))?;
+    Ok(())
+}
+
+fn load_copies(
+    conn: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+) -> Result<Vec<ListingCopy>, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut statement = conn
+        .prepare(
+            "SELECT issue_number, record, copied_at FROM listing_copies
+             WHERE project = ?1 ORDER BY issue_number",
+        )
+        .map_err(&sql)?;
+    let rows = statement
+        .query_map(params![project.as_str()], |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(&sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&sql)?;
+    rows.into_iter()
+        .map(|(issue_number, record, copied_at)| {
+            Ok(ListingCopy {
+                issue_number,
+                record: parse_json(path, &record)?,
+                copied_at: time(path, &copied_at)?,
+            })
+        })
+        .collect()
+}
+
 /// Every local item of `project`, read without the writer lock; no
 /// database yet is no items.
 pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<LocalItem>, WorkError> {
@@ -189,6 +313,14 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
     let r = &item.record;
     let id = r.id.as_str();
     let sql = StateDbError::sqlite(path);
+    // A todo that is a local item has no listing copy.
+    if let Some(issue) = item.reflection.issue {
+        tx.execute(
+            "DELETE FROM listing_copies WHERE project = ?1 AND issue_number = ?2",
+            params![r.project.as_str(), issue.number],
+        )
+        .map_err(&sql)?;
+    }
     let (agent, thinking) = match &r.agent {
         Some(pref) => (
             Some(pref.agent.clone()),
