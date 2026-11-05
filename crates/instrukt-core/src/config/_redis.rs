@@ -34,21 +34,34 @@ pub struct RedisSettings {
 
 pub(super) fn settings(config: &Configuration, env: &Env) -> Result<RedisSettings, ConfigError> {
     let raw = config.redis_raw();
+    if raw.is_some_and(|value| !value.is_mapping()) {
+        return Err(ConfigError::InvalidValue {
+            key: "redis".into(),
+            message: "expected a mapping".into(),
+        });
+    }
     let endpoint = |scope: &str| -> Result<Option<RedisEndpoint>, ConfigError> {
-        let Some(raw) = raw.and_then(|v| v.get(scope)) else {
-            return Ok(None);
-        };
-        let Some(url) = raw
-            .get("url")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        else {
-            return Ok(None);
-        };
         let invalid = |field: &str, message: &str| ConfigError::InvalidValue {
-            key: format!("redis.{scope}.{field}"),
+            key: if field.is_empty() {
+                format!("redis.{scope}")
+            } else {
+                format!("redis.{scope}.{field}")
+            },
             message: message.into(),
         };
+        let Some(raw) = raw.and_then(|value| value.get(scope)) else {
+            return Ok(None);
+        };
+        if !raw.is_mapping() {
+            return Err(invalid("", "expected a mapping"));
+        }
+        let Some(url) = raw.get("url") else {
+            return Ok(None);
+        };
+        let url = url
+            .as_str()
+            .filter(|url| !url.trim().is_empty())
+            .ok_or_else(|| invalid("url", "expected a nonempty Redis URL string"))?;
         let expanded = config.expand(url, env)?;
         if scope == "local" && !expanded.starts_with("unix://") {
             return Err(invalid("url", "local Redis requires a unix:// socket URL"));

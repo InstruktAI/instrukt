@@ -107,6 +107,20 @@ impl ScopedTransport {
         }
     }
 
+    pub(crate) fn distinct(&self, scopes: &[EventScope]) -> Vec<Arc<Endpoint>> {
+        let mut endpoints = Vec::new();
+        for scope in scopes {
+            let endpoint = self.endpoint(*scope);
+            if !endpoints
+                .iter()
+                .any(|known: &Arc<Endpoint>| known.identity == endpoint.identity)
+            {
+                endpoints.push(Arc::clone(endpoint));
+            }
+        }
+        endpoints
+    }
+
     /// Relay boundaries must pass Cluster regardless of the producer's vocabulary.
     pub fn publish(
         &self,

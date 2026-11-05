@@ -23,6 +23,7 @@
 pub mod agents;
 pub mod anomaly;
 pub mod ci;
+pub mod consumers;
 pub mod dispatch;
 pub mod event_log;
 pub mod events;

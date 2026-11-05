@@ -3,6 +3,10 @@
 mod common;
 #[path = "support/documented.rs"]
 mod documented;
+#[path = "support/flavor.rs"]
+mod flavor;
+#[path = "support/runtime.rs"]
+mod runtime;
 #[path = "support/event_transport.rs"]
 mod support;
 
@@ -62,9 +66,10 @@ fn a_failed_publication_retries_the_committed_occurrence_with_the_same_id() {
     let cluster = RedisServer::new(&computer.env);
     computer.config(&cluster, None);
     computer.tick();
-    redis::cmd("SET")
-        .arg(EVENT_STREAM)
-        .arg("wrong-type")
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("default")
+        .arg("-xadd")
         .query::<()>(&mut cluster.connection())
         .unwrap();
     computer.change();
@@ -78,9 +83,11 @@ fn a_failed_publication_retries_the_committed_occurrence_with_the_same_id() {
         )
         .unwrap();
     assert!(pending && failure);
-    redis::cmd("DEL")
-        .arg(EVENT_STREAM)
-        .query::<u64>(&mut cluster.connection())
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("default")
+        .arg("+xadd")
+        .query::<()>(&mut cluster.connection())
         .unwrap();
     computer.tick();
     let entries: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
@@ -129,4 +136,180 @@ fn a_configured_local_outage_does_not_reroute_to_cluster() {
         )
         .unwrap();
     assert!(pending);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET4
+#[test]
+fn identical_scope_endpoints_are_read_once_per_consumer() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    computer.config(&redis, Some(&redis));
+    computer.tick();
+    computer.change();
+    computer.tick();
+    let sources: u64 = computer
+        .db()
+        .query_row("SELECT count(*) FROM consumer_sources", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let outcomes: u64 = computer
+        .db()
+        .query_row("SELECT count(*) FROM consumer_outcomes", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!((sources, outcomes, computer.handled()), (1, 1, 1));
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET6
+#[test]
+fn cluster_outage_leaves_local_source_acceptance_responsive() {
+    let computer = Computer::new();
+    let mut cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    computer.config(&cluster, Some(&local));
+    computer.subscribe("runner.upstream_changed");
+    computer.tick();
+    // Use an opaque received occurrence so S3's acceptance is the boundary;
+    // subsequent runtime execution is the separate S6 contract.
+    let envelope = serde_json::json!({"id":"local-during-outage", "type":"runner.upstream_changed", "source":computer.computer(), "subject":"commit:fork/current", "time":"2026-11-05T00:00:00Z", "data":{}, "home":"project:fork", "home_owner":"unresolved"});
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg("malformed")
+        .query::<String>(&mut cluster.connection())
+        .unwrap();
+    computer.tick();
+    redis::cmd("SAVE")
+        .query::<()>(&mut cluster.connection())
+        .unwrap();
+    cluster.stop();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(envelope.to_string())
+        .query::<String>(&mut local.connection())
+        .unwrap();
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
+    cluster.restart();
+    computer.tick();
+    computer.tick();
+    let pending: redis::streams::StreamPendingReply = redis::cmd("XPENDING")
+        .arg(EVENT_STREAM)
+        .arg(computer.group())
+        .query(&mut cluster.connection())
+        .unwrap();
+    assert_eq!(
+        pending.count(),
+        0,
+        "the restored source resumed its original pending group"
+    );
+    assert_eq!(computer.accepted(), 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET7
+#[test]
+fn independent_source_positions_are_never_compared_across_scopes() {
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    computer.config(&cluster, Some(&local));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    let envelope = |id: &str| serde_json::json!({"id":id, "type":"erp.invoice.paid", "source":computer.computer(), "subject":"todo:sample", "time":"2026-11-05T00:00:00Z", "data":{}, "home":"project:fork", "home_owner":"unresolved"});
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("9000000000000-0")
+        .arg("event")
+        .arg(envelope("local").to_string())
+        .query::<String>(&mut local.connection())
+        .unwrap();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("1-0")
+        .arg("event")
+        .arg(envelope("cluster-first").to_string())
+        .query::<String>(&mut cluster.connection())
+        .unwrap();
+    computer.tick();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("2-0")
+        .arg("event")
+        .arg(envelope("cluster-next").to_string())
+        .query::<String>(&mut cluster.connection())
+        .unwrap();
+    computer.tick();
+    assert_eq!(computer.accepted(), 3);
+    let positions: u64 = computer.db().query_row("SELECT count(DISTINCT source) FROM consumer_cursors WHERE consumer = 'procedure-activation'", [], |row| row.get(0)).unwrap();
+    assert_eq!(positions, 2);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET5
+#[test]
+fn finalize_ready_keeps_its_stamp_and_occurrence_through_a_publication_failure() {
+    let project = flavor::Tracked::integrating();
+    let client = redis::Client::open(project.env.redis_url()).unwrap();
+    let mut redis = client.get_connection().unwrap();
+    project.tick().success();
+    project.todo([
+        "create",
+        "handoff",
+        "Hand committed work to integration.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    project
+        .repo
+        .git(["checkout", "--quiet", "-b", "handoff/work"]);
+    project
+        .repo
+        .write("handoff.rs", "// ready for integration\n");
+    project.repo.commit("feat: prepare the handoff");
+    project.todo(["stamp", "handoff", "--finalize-ready"]);
+    project.repo.git(["checkout", "--quiet", "main"]);
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("default")
+        .arg("-xadd")
+        .query::<()>(&mut redis)
+        .unwrap();
+    project.tick().success();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        project.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let (id, pending, stamp_count): (String, bool, u64) = db.query_row("SELECT id, publication_state = 'pending', (SELECT count(*) FROM stamps WHERE fact = 'finalize_ready') FROM events WHERE name = 'workflow.finalized'", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+    assert!(pending);
+    assert_eq!((stamp_count, project.rt.started_count()), (1, 0));
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("default")
+        .arg("+xadd")
+        .query::<()>(&mut redis)
+        .unwrap();
+    project.tick().success();
+    let (confirmed, stamp_count): (bool, u64) = db.query_row("SELECT publication_state = 'confirmed', (SELECT count(*) FROM stamps WHERE fact = 'finalize_ready') FROM events WHERE id = ?1", [&id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+    assert!(confirmed);
+    assert_eq!((stamp_count, project.rt.started_count()), (1, 1));
+    let stream: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
+        .arg(EVENT_STREAM)
+        .arg("-")
+        .arg("+")
+        .query(&mut redis)
+        .unwrap();
+    assert_eq!(stream.ids.len(), 1);
+    let encoded: String =
+        redis::from_redis_value_ref(stream.ids[0].map.get("event").unwrap()).unwrap();
+    assert_eq!(
+        instrukt_runner::events::EventEnvelope::decode(&encoded)
+            .unwrap()
+            .id,
+        id
+    );
 }

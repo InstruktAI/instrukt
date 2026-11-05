@@ -31,10 +31,12 @@ impl Computer {
     }
 
     pub fn config(&self, cluster: &RedisServer, local: Option<&RedisServer>) {
-        let local = local.map_or(String::new(), |server| {
-            format!("  local:\n    url: '{}'\n", server.url)
-        });
-        std::fs::write(self.env.instrukt_home().join("instrukt.yaml"), format!("schema_version: 1\nmodules: {{events: true}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: '{}'\n{local}", cluster.url)).unwrap();
+        self.config_urls(&cluster.url, local.map(|server| server.url.as_str()));
+    }
+
+    pub fn config_urls(&self, cluster: &str, local: Option<&str>) {
+        let local = local.map_or(String::new(), |url| format!("  local:\n    url: '{url}'\n"));
+        std::fs::write(self.env.instrukt_home().join("instrukt.yaml"), format!("schema_version: 1\nmodules: {{events: true}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: '{cluster}'\n{local}")).unwrap();
     }
 
     pub fn tick(&self) {
@@ -47,7 +49,93 @@ impl Computer {
         self.upstream.git(["push", "--quiet", "origin", "main"]);
     }
 
+    pub fn subscribe(&self, pattern: &str) {
+        self.project.write(
+            "docs/domain/reactions/procedure/respond.md",
+            &crate::documented::snippet(
+                "procedure",
+                "Respond",
+                "Accept the selected facts.",
+                &format!("subscriptions: ['{pattern}']\nrole: responder\n"),
+                &[],
+                "Accept the selected occurrence.\n",
+            ),
+        );
+        self.project.commit("docs: publish a reaction");
+        crate::documented::sync(&self.env, &self.project);
+    }
+
+    pub fn computer(&self) -> String {
+        std::fs::read_to_string(self.env.instrukt_home().join("state/machine-id"))
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+
+    pub fn accepted(&self) -> u64 {
+        self.db()
+            .query_row("SELECT count(*) FROM procedure_activations", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    pub fn handled(&self) -> u64 {
+        self.db()
+            .query_row(
+                "SELECT count(*) FROM handled_events WHERE consumer = 'procedure-activation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    pub fn group(&self) -> String {
+        format!("consumer-procedure-activation-{}", self.computer())
+    }
+
     pub fn db(&self) -> Connection {
         Connection::open(self.env.instrukt_home().join("state/instrukt.db")).unwrap()
+    }
+}
+
+pub struct Running(std::process::Child);
+
+impl Running {
+    pub fn start(computer: &Computer) -> Self {
+        Self(
+            computer
+                .env
+                .instrukt_process(&computer.env.path(""))
+                .arg("run")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    }
+    pub fn kill(&mut self) {
+        self.0.kill().unwrap();
+        assert!(!self.0.wait().unwrap().success());
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if self.0.try_wait().unwrap().is_none() {
+            self.0.kill().unwrap();
+        }
+        self.0.wait().unwrap();
+    }
+}
+
+pub fn until(mut observed: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !observed() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected boundary was never observed"
+        );
+        std::thread::yield_now();
     }
 }

@@ -17,6 +17,9 @@ use crate::events::{
 use crate::state::{self, RunnerState, StateError};
 use crate::transport::{EventScope, TransportCoordinate};
 
+/// A wake-up publishes a bounded batch from each scope independently.
+const PUBLICATION_BATCH_SIZE: u64 = 50;
+
 /// One logged event with its position in the log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoggedEvent {
@@ -42,8 +45,9 @@ impl DbEventLog {
         self.now
     }
 
-    /// Every logged event after `consumer`'s cursor, not yet handled by it,
-    /// that `wanted` selects, oldest first.
+    /// Locally produced activations accepted for this procedure but still
+    /// awaiting its runtime delivery, oldest first. Retained Redis readers
+    /// never use this local scan as transport replay.
     pub fn pending(
         &self,
         consumer: &str,
@@ -55,7 +59,9 @@ impl DbEventLog {
                 .prepare(
                     "SELECT seq, name, payload FROM events
                      WHERE seq > COALESCE((SELECT seq FROM consumer_cursors WHERE consumer = ?1 AND source = 'local-log'), 0)
-                       AND idempotency_key IS NOT NULL AND seq NOT IN (SELECT seq FROM handled_events WHERE consumer = ?1)
+                       AND idempotency_key IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM procedure_activations a WHERE a.event_id = events.id AND a.procedure || '@' || substr(a.exact_home, 9) = ?1)
+                       AND seq NOT IN (SELECT seq FROM handled_events WHERE consumer = ?1)
                      ORDER BY seq",
                 )
                 .map_err(&sql)?;
@@ -128,14 +134,18 @@ pub struct PendingPublication {
 }
 
 impl DbEventLog {
+    /// Oldest unconfirmed facts, bounded independently for each publication scope.
     pub fn unconfirmed(&self) -> Result<Vec<PendingPublication>, EventLogError> {
         Ok(self.state.read(|conn, path| {
-            let mut stmt = conn.prepare("SELECT publication_scope, envelope FROM events WHERE publication_state = 'pending' ORDER BY seq").map_err(state::sql(path))?;
-            let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))?;
-            rows.into_iter().map(|(scope, envelope)| {
-                let scope = match scope.as_str() { "local" => EventScope::Local, "cluster" => EventScope::Cluster, _ => return Err(state::invalid(path, "invalid publication scope")) };
-                Ok(PendingPublication { scope, envelope: EventEnvelope::decode(&envelope).map_err(|e| state::invalid(path, e))? })
-            }).collect::<Result<Vec<_>, StateError>>()
+            let mut statement = conn.prepare("SELECT envelope FROM events WHERE publication_state = 'pending' AND publication_scope = ?1 ORDER BY seq LIMIT ?2").map_err(state::sql(path))?;
+            let mut pending = Vec::new();
+            for scope in [EventScope::Local, EventScope::Cluster] {
+                let envelopes = statement.query_map(params![scope.as_str(), PUBLICATION_BATCH_SIZE], |row| row.get::<_, String>(0)).map_err(state::sql(path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))?;
+                for envelope in envelopes {
+                    pending.push(PendingPublication { scope, envelope: EventEnvelope::decode(&envelope).map_err(|error| state::invalid(path, error))? });
+                }
+            }
+            Ok(pending)
         })?.unwrap_or_default())
     }
 

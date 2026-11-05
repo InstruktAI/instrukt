@@ -114,9 +114,13 @@ impl Configuration {
     }
 
     /// The value at dotted `path` (the whole configuration when `None`),
-    /// interpolated in `env`. `runtime.*` addresses the active runtime.
+    /// interpolated in `env`. Transport credentials are masked before expansion;
+    /// transport resolves them through its typed accessor. `runtime.*` addresses
+    /// the active runtime.
     pub fn get(&self, path: Option<&str>, env: &Env) -> Result<Value, ConfigError> {
-        Interpolator::new(&self.value, &self.runtimes, Mode::Expand(env)).get(path)
+        let mut value = self.value.clone();
+        super::_redis::redact(&mut value, "");
+        Interpolator::new(&value, &self.runtimes, Mode::Expand(env)).get(path)
     }
 
     /// Read machine-owned Redis settings, resolving credential references for I/O.
@@ -126,13 +130,6 @@ impl Configuration {
 
     pub(super) fn redis_raw(&self) -> Option<&Value> {
         self.value.get("redis")
-    }
-
-    /// A user-facing read masks transport credentials before expansion.
-    pub fn public_get(&self, path: Option<&str>, env: &Env) -> Result<Value, ConfigError> {
-        let mut value = self.value.clone();
-        super::_redis::redact(&mut value, "");
-        Interpolator::new(&value, &self.runtimes, Mode::Expand(env)).get(path)
     }
 
     /// The value at dotted `path` as a string, interpolated in `env`; a

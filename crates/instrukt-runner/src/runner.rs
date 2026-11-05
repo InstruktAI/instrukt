@@ -8,6 +8,7 @@
 //! reads the event sources and delivers pending events to standing agents;
 //! with `todos` on it dispatches eligible todos.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use instrukt_core::config::{ConfigError, Configuration, Env, Module};
@@ -21,6 +22,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
 use crate::ci::{self, CiClient, CiRead};
+use crate::consumers::{self, ConsumerError, ConsumerRuntime};
 use crate::dispatch::{self, DispatchContext};
 use crate::event_log::DbEventLog;
 use crate::events::Event;
@@ -29,7 +31,7 @@ use crate::sources;
 use crate::standing;
 use crate::state::{RunnerState, StateError};
 use crate::ticks;
-use crate::transport::{ScopedTransport, TransportError};
+use crate::transport::{EventScope, ScopedTransport, TransportError};
 
 /// How long `instrukt run` waits for a tick in progress to finish.
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
@@ -37,6 +39,14 @@ const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 /// A runner invocation could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
+    #[error("the event worker panicked; retained entries remain recoverable")]
+    EventWorkerPanicked,
+    #[error(transparent)]
+    Consumer(#[from] ConsumerError),
+    #[error(transparent)]
+    Pattern(#[from] crate::events::TypePatternError),
+    #[error(transparent)]
+    Machine(#[from] instrukt_core::machine::MachineError),
     #[error(transparent)]
     Transport(#[from] TransportError),
     #[error(transparent)]
@@ -114,7 +124,9 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
         tracing::info!(event = "tick_runner_busy");
         return Ok(TickOutcome::Busy);
     };
-    wake(cx, &state, now)?;
+    let considered = considered_projects(cx.home)?;
+    let platform = event_platform(cx, &state, &considered)?;
+    wake(cx, &state, now, &considered, platform.as_ref(), true)?;
     Ok(TickOutcome::Done)
 }
 
@@ -122,31 +134,68 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
 /// stopped, holding the runner lock throughout.
 pub fn run(
     cx: &RunnerContext<'_>,
-    clock: impl Fn() -> Timestamp,
+    clock: impl Fn() -> Timestamp + Send + Sync + 'static,
     interval: Duration,
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
     let _lock = LockGuard::acquire(&state.runner_lock(), RUN_LOCK_WAIT)?;
+    let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);
+    let mut platform: Option<EventPlatform> = None;
+    let mut _readers = None;
     tracing::info!(event = "runner_started");
     loop {
-        if let Err(err) = wake(cx, &state, clock()) {
+        let considered = considered_projects(cx.home)?;
+        if platform.is_none()
+            && let Some(prepared) = event_platform(cx, &state, &considered)?
+        {
+            _readers = Some(prepared.runtime.start(Arc::clone(&clock))?);
+            platform = Some(prepared);
+        }
+        let enabled_platform = platform
+            .as_ref()
+            .filter(|_| considered.iter().any(|project| project.events));
+        if let Err(err) = wake(cx, &state, clock(), &considered, enabled_platform, false) {
             tracing::error!(event = "runner_wakeup_failed", error = %err);
         }
         std::thread::sleep(interval);
     }
 }
 
-fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(), RunnerError> {
+struct EventPlatform {
+    transport: ScopedTransport,
+    runtime: ConsumerRuntime,
+}
+
+fn event_platform(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    projects: &[Considered],
+) -> Result<Option<EventPlatform>, RunnerError> {
+    if !projects.iter().any(|project| project.events) {
+        return Ok(None);
+    }
+    let transport =
+        ScopedTransport::from_config(&Configuration::load_global(cx.home)?, cx.env, state)?;
+    let computer = instrukt_core::machine::machine_id(cx.home)?;
+    let runtime = ConsumerRuntime::new(
+        state.clone(),
+        transport.clone(),
+        computer.as_str(),
+        vec![consumers::activation_consumer(cx.home, state)?],
+    )?;
+    Ok(Some(EventPlatform { transport, runtime }))
+}
+
+fn wake(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    now: Timestamp,
+    considered: &[Considered],
+    platform: Option<&EventPlatform>,
+    drain: bool,
+) -> Result<(), RunnerError> {
     let previous = ticks::last_wakeup(state)?;
     ticks::record_wakeup(state, now)?;
-    let log = DbEventLog::new(state.clone(), now);
-    let index = match GlobalIndex::load(cx.home) {
-        Ok(index) => index.unwrap_or_default(),
-        Err(err) => {
-            tracing::warn!(event = "index_unreadable", error = %err);
-            GlobalIndex::default()
-        }
-    };
     let dispatch_cx = DispatchContext {
         home: cx.home,
         env: cx.env,
@@ -155,43 +204,89 @@ fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(
         previous_wake: previous,
         state,
     };
-    let considered = considered_projects(cx.home)?;
-    let transport = if considered.iter().any(|project| project.events) {
-        Some(ScopedTransport::from_config(
-            &Configuration::load_global(cx.home)?,
-            cx.env,
+    std::thread::scope(|threads| -> Result<(), RunnerError> {
+        let events = threads.spawn(|| {
+            EventWake {
+                cx,
+                state,
+                now,
+                considered,
+                platform,
+                drain,
+            }
+            .run()
+        });
+        for considered in considered {
+            let project = &considered.project;
+            if considered.todos && code_on_github(cx.home, considered) {
+                dispatch::dispatch_project(&dispatch_cx, &considered.config, cx.wiring, project);
+            }
+        }
+        events
+            .join()
+            .map_err(|_| RunnerError::EventWorkerPanicked)?
+    })?;
+    tracing::debug!(event = "runner_wakeup_done", at = %now);
+    Ok(())
+}
+
+struct EventWake<'a, 'cx> {
+    cx: &'a RunnerContext<'cx>,
+    state: &'a RunnerState,
+    now: Timestamp,
+    considered: &'a [Considered],
+    platform: Option<&'a EventPlatform>,
+    drain: bool,
+}
+
+impl EventWake<'_, '_> {
+    fn run(self) -> Result<(), RunnerError> {
+        let Self {
+            cx,
             state,
-        )?)
-    } else {
-        None
-    };
-    for considered in considered {
-        let project = &considered.project;
-        if considered.events {
-            read_sources(cx, state, &log, &considered, now);
-            for procedure in standing::subscribers(&index, &project.slug) {
-                if let Err(err) = standing::deliver(
+            now,
+            considered,
+            platform,
+            drain,
+        } = self;
+        let log = DbEventLog::new(state.clone(), now);
+        let index = match GlobalIndex::load(cx.home) {
+            Ok(index) => index.unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(event = "index_unreadable", error = %error);
+                GlobalIndex::default()
+            }
+        };
+        let ready =
+            platform.is_none_or(|platform| platform.runtime.prepare_scope(EventScope::Local));
+        for project in considered.iter().filter(|project| project.events) {
+            read_sources(cx, state, &log, project, now);
+        }
+        if let Some(platform) = platform {
+            if ready {
+                platform.transport.publish_pending(&log)?;
+            }
+            if drain {
+                platform.runtime.drain(now);
+            }
+        }
+        for project in considered.iter().filter(|project| project.events) {
+            for procedure in standing::subscribers(&index, &project.project.slug) {
+                if let Err(error) = standing::deliver(
                     state,
                     &log,
-                    &considered.config,
+                    &project.config,
                     cx.env,
                     procedure,
-                    &project.slug,
-                    &project.root,
+                    &project.project.slug,
+                    &project.project.root,
                 ) {
-                    tracing::warn!(event = "standing_delivery_failed", project = %project.slug, procedure = %procedure.id, error = %err);
+                    tracing::warn!(event = "standing_delivery_failed", project = %project.project.slug, procedure = %procedure.id, error = %error);
                 }
             }
         }
-        if considered.todos && code_on_github(cx.home, &considered) {
-            dispatch::dispatch_project(&dispatch_cx, &considered.config, cx.wiring, project);
-        }
+        Ok(())
     }
-    if let Some(transport) = transport {
-        transport.publish_pending(&log)?;
-    }
-    tracing::debug!(event = "runner_wakeup_done", at = %now);
-    Ok(())
 }
 
 /// Whether the considered project's code is on GitHub: todos need it

@@ -100,7 +100,7 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     } else {
         Configuration::load_at(&ctx.home, &ctx.cwd)?
     };
-    let value = configuration.public_get(args.path.as_deref(), &Env::from_process())?;
+    let value = configuration.get(args.path.as_deref(), &Env::from_process())?;
     if args.json {
         ctx.out.json(&value)?;
         return Ok(ExitCode::SUCCESS);

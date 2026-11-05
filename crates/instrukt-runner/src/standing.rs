@@ -3,11 +3,10 @@
 //! frontmatter subscribes to events is started or woken for a project's
 //! pending events.
 //!
-//! The consumer of the event log is the pair (subscribing procedure,
-//! project), and so is its session binding, kept in the state database's
-//! `standing_bindings` table. A
-//! published procedure subscribes for every project; a project's local
-//! procedure only for its own project.
+//! The retained procedure matcher accepts occurrence-keyed activations before
+//! this existing project delivery path considers them. Its `(procedure, project)`
+//! bookkeeping records delivery to the runtime, independently of Redis ACK.
+//! Published procedures reach every project; project-local procedures only their own.
 //!
 //! Delivery: `event_delivery: sequential` (the default) hands over the
 //! oldest pending event, `batched` every pending one. A bound session that

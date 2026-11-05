@@ -166,6 +166,9 @@ CREATE TABLE events (
     publication_failure TEXT
 );
 
+CREATE INDEX events_pending_publications ON events (publication_scope, seq)
+WHERE publication_state = 'pending';
+
 CREATE TABLE redis_reachability (
     source TEXT PRIMARY KEY NOT NULL,
     reachable INTEGER NOT NULL
@@ -217,6 +220,36 @@ CREATE TABLE event_attempts (
     last_attempt_at TEXT NOT NULL,
     failure TEXT NOT NULL,
     PRIMARY KEY (consumer, source, stream, entry_id)
+);
+
+CREATE TABLE consumer_sources (
+    consumer TEXT NOT NULL,
+    source TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'retiring', 'retired')),
+    prepared INTEGER NOT NULL,
+    PRIMARY KEY (consumer, source)
+);
+
+CREATE TABLE event_parking (
+    consumer TEXT NOT NULL,
+    source TEXT NOT NULL,
+    stream TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    seq INTEGER REFERENCES events (seq),
+    outcome TEXT NOT NULL,
+    PRIMARY KEY (consumer, source, stream, entry_id)
+);
+
+CREATE TABLE procedure_activations (
+    event_id TEXT NOT NULL REFERENCES events (id),
+    procedure TEXT NOT NULL,
+    exact_home TEXT NOT NULL,
+    envelope TEXT NOT NULL,
+    declaration TEXT NOT NULL,
+    accepted_at TEXT NOT NULL,
+    state TEXT NOT NULL,
+    failure TEXT,
+    PRIMARY KEY (event_id, procedure, exact_home)
 );
 
 CREATE TABLE request_validators (

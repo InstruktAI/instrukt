@@ -161,7 +161,13 @@ impl Endpoint {
         }
         result.map_err(|error| TransportError::Redis {
             source_id: self.identity.clone(),
-            kind: format!("{:?}", error.kind()),
+            kind: format!(
+                "{:?}{}",
+                error.kind(),
+                error
+                    .code()
+                    .map_or(String::new(), |code| format!("/{code}"))
+            ),
         })
     }
 

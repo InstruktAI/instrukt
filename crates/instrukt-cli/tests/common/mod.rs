@@ -27,6 +27,7 @@
 
 pub mod github;
 pub mod redis;
+pub mod redis_proxy;
 
 /// `text` with every published commit a source line names
 /// (`published commit <sha>`) shown as `[SHA]`: commits made in a test
