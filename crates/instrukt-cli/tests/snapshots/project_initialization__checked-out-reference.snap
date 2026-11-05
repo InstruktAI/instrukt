@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/project-initialization.rs
-expression: "shown(&env, &checked_out)"
----
-Read @[TMP]/home/.instrukt/docs/general/x.md first.

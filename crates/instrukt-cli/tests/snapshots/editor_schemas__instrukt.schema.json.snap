@@ -1,0 +1,180 @@
+---
+source: crates/instrukt-cli/tests/editor-schemas.rs
+expression: "String::from_utf8(bytes).unwrap()"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "instrukt.yaml (project layer)",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "project": {
+      "type": "string"
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "blueprint",
+          "todos",
+          "events"
+        ]
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "takes_files": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "board": {
+      "anyOf": [
+        {
+          "const": false
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$"
+        }
+      ]
+    },
+    "github": {
+      "type": "object",
+      "properties": {
+        "approvers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repository": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals": {
+      "type": "object",
+      "properties": {
+        "prd": {
+          "enum": [
+            "human",
+            "peer"
+          ]
+        },
+        "task": {
+          "enum": [
+            "human",
+            "peer"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "modules": {
+      "type": "object",
+      "properties": {
+        "blueprint": {
+          "type": "boolean"
+        },
+        "todos": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "properties": {
+        "watch": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "remote": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "remote",
+              "ref"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "blueprint": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "enum": [
+            "graphify"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runner": {
+      "type": "object",
+      "properties": {
+        "autostart": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ]
+}

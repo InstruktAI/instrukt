@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/snippet-validation.rs
-assertion_line: 332
 expression: run.out
 ---
 AGENTS.master.md: directive-exec: touch ran
@@ -15,14 +14,13 @@ docs/domain/acme/concept/runs.md: directive-exec: touch ran
 docs/domain/acme/notes/idea.md: identity-unknown-taxonomy: notes
 docs/domain/acme/policy/authored.md: identity-classification-authored: id, type
 docs/domain/acme/policy/refs.md: structure-required-reads-not-first
-docs/domain/acme/policy/refs.md: reference-outside-required-reads: ~/.instrukt/docs/acme/principle/care.md
-docs/domain/acme/policy/refs.md: reference-form-invalid: docs/domain/acme/principle/care.md
-docs/domain/acme/policy/refs.md: reference-unresolved: ~/.instrukt/docs/acme/principle/missing.md
-docs/domain/acme/policy/refs.md: reference-local-from-published: docs/project/design/shape.md
+docs/domain/acme/policy/refs.md: reference-by-path: ~/.instrukt/docs/acme/principle/care.md
+docs/domain/acme/policy/refs.md: reference-unresolved: acme/principle/missing
+docs/domain/acme/policy/refs.md: reference-local-from-published: project/demo/design/shape
 docs/domain/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id
 docs/domain/acme/principle/shape.md: structure-h1-not-first
-docs/domain/acme/principle/shape.md: structure-section-missing: Tensions
-docs/domain/acme/principle/shape.md: structure-section-unknown: Extra
+docs/domain/acme/principle/shape.md: structure-section-missing: Tensions, required by instrukt root rules
+docs/domain/acme/principle/shape.md: structure-section-unknown: Extra, outside the schema of docs/domain/acme/principle; see `instrukt docs schema docs/domain/acme/principle`
 docs/domain/acme/principle/shape.md: structure-see-also-not-last
 docs/domain/acme/procedure/both.md: frontmatter-activation-conflict
 docs/domain/acme/procedure/both.md: frontmatter-subscriptions-without-role
@@ -48,3 +46,13 @@ docs/third-party/tool/broken.md: frontmatter-description-missing
 docs/third-party/tool/broken.md: third-party-source-invalid: somewhere on the web
 docs/third-party/tool/broken.md: third-party-field-not-allowed: type
 docs/third-party/tool/broken.md: third-party-field-not-allowed: visibility
+notice: docs/domain/acme/concept/fields.md: unreferenced-snippet: acme/concept/fields
+notice: docs/domain/acme/concept/runs.md: unreferenced-snippet: acme/concept/runs
+notice: docs/domain/acme/policy/authored.md: unreferenced-snippet: acme/policy/authored
+notice: docs/domain/acme/policy/refs.md: unreferenced-snippet: acme/policy/refs
+notice: docs/domain/acme/principle/session.md: unreferenced-snippet: acme/principle/session
+notice: docs/domain/acme/principle/shape.md: unreferenced-snippet: acme/principle/shape
+notice: docs/domain/acme/procedure/both.md: unreferenced-snippet: acme/procedure/both
+notice: docs/domain/acme/procedure/ghostly.md: unreferenced-snippet: acme/procedure/ghostly
+notice: docs/project/adr/0001-choice.md: unreferenced-snippet: project/demo/adr/0001-choice
+notice: docs/project/spec/pending.md: unreferenced-snippet: project/demo/spec/pending

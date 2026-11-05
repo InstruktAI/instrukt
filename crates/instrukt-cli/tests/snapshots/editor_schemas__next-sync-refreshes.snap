@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/editor-schemas.rs
+expression: "stdout(&env, &next).replace(&repo.head(), \"[SHA]\")"
+---
+published demo at [SHA]
+.instrukt/schemas/instrukt.schema.json: schema written

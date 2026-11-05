@@ -1,8 +1,7 @@
 //! Repository commands: `instrukt init`, `instrukt hooks …`, `instrukt repo commit|stamp`.
 //!
-//! Two hidden entries serve git rather than people: `instrukt hooks worker`,
-//! the detached process a hook run starts, and `instrukt repo docs-filter`,
-//! the docs reference filter git runs on checkout and commit.
+//! One hidden entry serves git rather than people: `instrukt hooks worker`,
+//! the detached process a hook run starts.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -11,11 +10,14 @@ use std::process::ExitCode;
 use anyhow::Context as _;
 use instrukt_core::config::Env;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
+use instrukt_core::publication::{
+    ClaimStatus, ClaimsPreview, EditorChange, EditorChangeKind, GlobalFiles, SCHEMAS_DIR,
+};
 use instrukt_core::repository::{
-    self, CommitRequest, FilterDirection, GENERATED_FILE, GenerationOutcome, Hook, HookChange,
-    HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, LOCAL_BASELINE, MASTER_FILE,
-    NotesPush, PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, StampTime,
-    SyncOutcome,
+    self, CommitRequest, GENERATED_FILE, GenerationOutcome, Hook, HookChange, HookInvocation,
+    HookRunRecord, HooksDir, HooksReport, InitPart, KEPT_INSTRUCTIONS, KeptInstructions,
+    MASTER_FILE, NotWritten, NotesPush, PROJECT_DOCS, PartOutcome, PendingReason, SectionChange,
+    SectionStatus, Stamp, StampTime, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -38,10 +40,19 @@ pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             part_label(*part),
             part_outcome(*part, *outcome)
         ))?;
-        if *part == InitPart::HookSections {
-            for line in hooks_report_lines(&report.hooks) {
-                ctx.out.line(&format!("  {line}"))?;
-            }
+        let details = match part {
+            InitPart::EditorSchemas => editor_lines(&report.editor),
+            InitPart::HookSections => hooks_report_lines(&report.hooks),
+            InitPart::KeptInstructions => report.kept.map(kept_lines).unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for line in details {
+            ctx.out.line(&format!("  {line}"))?;
+        }
+    }
+    if let Some(claims) = &report.claims {
+        for line in claims_lines(claims) {
+            ctx.out.line(&line)?;
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -50,31 +61,113 @@ pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 fn part_label(part: InitPart) -> String {
     match part {
         InitPart::ProjectLayer => "project layer (instrukt.yaml)".to_owned(),
-        InitPart::DocsFolders => "docs folders (docs/project/)".to_owned(),
+        InitPart::ProjectDocs => format!("project docs ({PROJECT_DOCS}/)"),
+        InitPart::ProjectIndex => format!("project index ({PROJECT_DOCS}/index.yaml)"),
+        InitPart::ProjectSchema => format!("project schema ({PROJECT_DOCS}/schema.yaml)"),
         InitPart::Master => format!("master ({MASTER_FILE})"),
-        InitPart::LocalBaseline => format!("local baseline ({LOCAL_BASELINE})"),
-        InitPart::DocsFilter => format!(
-            "docs reference filter (git config filter.{})",
-            repository::FILTER_NAME
-        ),
-        InitPart::FilterPatterns => "filter patterns (.gitattributes)".to_owned(),
-        InitPart::GeneratedIgnore => format!("generated {GENERATED_FILE} ignore (.gitignore)"),
+        InitPart::KeptInstructions => format!("kept instructions ({KEPT_INSTRUCTIONS})"),
+        InitPart::EditorSchemas => format!("editor schemas ({SCHEMAS_DIR}/)"),
+        InitPart::Ignores => format!("ignores of {GENERATED_FILE} and .instrukt/ (.gitignore)"),
         InitPart::HookSections => "hook sections".to_owned(),
     }
 }
 
 fn part_outcome(part: InitPart, outcome: PartOutcome) -> String {
-    match outcome {
-        PartOutcome::Created => "created".to_owned(),
-        PartOutcome::Completed => "completed".to_owned(),
-        PartOutcome::AlreadyPresent => "already present".to_owned(),
-        PartOutcome::Withheld => match part {
-            InitPart::Master => format!(
-                "not seeded: {GENERATED_FILE} is hand-written; move its content into a docs/project snippet, remove {GENERATED_FILE} (it becomes generated) and run `instrukt init` again"
-            ),
-            _ => "not written".to_owned(),
-        },
+    match (part, outcome) {
+        (InitPart::ProjectSchema, PartOutcome::Created) => {
+            "created: given the sdlc schema; change it as you see fit".to_owned()
+        }
+        (InitPart::KeptInstructions, PartOutcome::Created) => format!(
+            "created: the hand-written {GENERATED_FILE}, byte for byte, kept until its instructions are placed in {PROJECT_DOCS}/"
+        ),
+        (_, PartOutcome::Created) => "created".to_owned(),
+        (_, PartOutcome::Completed) => "completed".to_owned(),
+        (_, PartOutcome::AlreadyPresent) => "already present".to_owned(),
+        (_, PartOutcome::NotWritten(NotWritten::SchemaDomainNotPublished)) => {
+            "not written: sdlc is not published on this computer, so the project follows the root rules only".to_owned()
+        }
+        (_, PartOutcome::NotWritten(NotWritten::SchemaDomainHasNoSchema)) => {
+            "not written: the published sdlc has no schema.yaml, so the project follows the root rules only".to_owned()
+        }
     }
+}
+
+/// What a refresh of the editor schemas changed, one line per file.
+pub(crate) fn editor_lines(changes: &[EditorChange]) -> Vec<String> {
+    changes
+        .iter()
+        .map(|change| {
+            let what = match change.kind {
+                EditorChangeKind::SchemaWritten => "schema written",
+                EditorChangeKind::ModelineInserted => "modeline inserted",
+                EditorChangeKind::ModelineReplaced => "modeline updated",
+                EditorChangeKind::Linked => "not written: a symbolic link",
+            };
+            format!("{}: {what}", change.path.display())
+        })
+        .collect()
+}
+
+fn kept_lines(kept: KeptInstructions) -> Vec<String> {
+    let mut lines = vec![format!(
+        "{GENERATED_FILE} is generated from now on: the first sync renders it from {MASTER_FILE} and {PROJECT_DOCS}/index.yaml"
+    )];
+    if kept.tracked {
+        lines.push(format!(
+            "stop tracking it in the commit that adds the master: git rm --cached {GENERATED_FILE}"
+        ));
+    }
+    lines
+}
+
+/// The claims report: what the repository's first sync will claim.
+fn claims_lines(claims: &ClaimsPreview) -> Vec<String> {
+    let mut lines =
+        vec!["claims of the first sync (nothing is published until it runs):".to_owned()];
+    for (position, status) in &claims.positions {
+        let what = match status {
+            ClaimStatus::Free => "free; the sync claims it".to_owned(),
+            ClaimStatus::Ours => "already owned by this project".to_owned(),
+            ClaimStatus::OwnedBy(owner) => {
+                format!("owned by project `{owner}`; the sync would be refused")
+            }
+        };
+        lines.push(format!("  {position}: {what}"));
+    }
+    for dir in &claims.reserved {
+        lines.push(format!(
+            "  {dir}: refused: a reserved name; no domain may be called `general`, `project` or `third-party`"
+        ));
+    }
+    match &claims.global_files {
+        GlobalFiles::NotHeld => lines.push(
+            "  global agent files: not written; the repository holds no docs/general/".to_owned(),
+        ),
+        GlobalFiles::OwnedElsewhere(owner) => lines.push(format!(
+            "  global agent files: not written; docs/general/ is owned by project `{owner}`"
+        )),
+        GlobalFiles::Rendered { agents, foreign } => {
+            if agents.is_empty() {
+                lines.push(
+                    "  global agent files: none; no supported agent CLI is installed on this computer"
+                        .to_owned(),
+                );
+            }
+            for (agent, path) in agents {
+                lines.push(format!(
+                    "  global agent file of {agent}: the sync writes {}",
+                    path.display()
+                ));
+            }
+            for path in foreign {
+                lines.push(format!(
+                    "  {}: not written by instrukt; it stops the sync until its content moves into docs or the file moves out of the way",
+                    path.display()
+                ));
+            }
+        }
+    }
+    lines
 }
 
 #[derive(Debug, clap::Args)]
@@ -314,9 +407,6 @@ enum RepoCommand {
     /// exemption with its reason, as a git note on each named commit, and
     /// push the notes to the remote the default branch tracks.
     Stamp(StampArgs),
-    /// The docs reference filter git runs on checkout and commit.
-    #[command(hide = true)]
-    DocsFilter(DocsFilterArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -369,22 +459,10 @@ struct StampArgs {
     reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Direction {
-    Smudge,
-    Clean,
-}
-
-#[derive(Debug, clap::Args)]
-struct DocsFilterArgs {
-    direction: Direction,
-}
-
 pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         RepoCommand::Commit(args) => commit(args, ctx),
         RepoCommand::Stamp(args) => stamp(args, ctx),
-        RepoCommand::DocsFilter(args) => docs_filter(&args, ctx),
     }
 }
 
@@ -450,20 +528,6 @@ fn stamp(args: StampArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         }
     };
     ctx.out.line(&push)?;
-    Ok(ExitCode::SUCCESS)
-}
-
-fn docs_filter(args: &DocsFilterArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let mut input = Vec::new();
-    std::io::stdin()
-        .read_to_end(&mut input)
-        .context("cannot read the blob from standard input")?;
-    let direction = match args.direction {
-        Direction::Smudge => FilterDirection::Smudge,
-        Direction::Clean => FilterDirection::Clean,
-    };
-    let output = repository::apply_docs_filter(&input, &ctx.home, direction);
-    ctx.out.bytes(&output)?;
     Ok(ExitCode::SUCCESS)
 }
 

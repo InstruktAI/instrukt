@@ -1,0 +1,22 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+expression: run.out
+---
+docs/domain/acme/index.yaml: index-key-not-allowed: agents
+docs/domain/acme/index.yaml: index-description-missing: description
+docs/domain/acme/index.yaml: index-id-foreign: expanded: general/policy/top is not of docs/domain/acme/
+docs/domain/acme/policy/index.yaml: index-nested
+docs/general/index.yaml: index-key-not-allowed: bundles
+docs/general/index.yaml: index-shape-invalid: listed: not an id is not a snippet id
+docs/general/index.yaml: index-id-unresolved: expanded: nowhere/policy/x
+docs/general/index.yaml: index-id-pending: expanded: general/spec/coming
+docs/general/index.yaml: index-agent-unsupported: agents: cursor (the supported agent CLIs are claude, codex, gemini, deepseek)
+docs/general/index.yaml: index-listed-in-expanded: listed: general/principle/root is already in the closure of expanded general/policy/top
+docs/project/index.yaml: index-key-not-allowed: description
+docs/project/index.yaml: index-shape-invalid: expanded: not a list of ids
+notice: docs/domain/acme/policy/rules.md: unreferenced-snippet: acme/policy/rules
+notice: docs/domain/acme/procedure/listen.md: unreferenced-snippet: acme/procedure/listen
+notice: docs/domain/acme/procedure/work/overview.md: unreferenced-snippet: acme/procedure/work/overview
+notice: docs/general/policy/top.md: unreferenced-snippet: general/policy/top
+notice: docs/project/adr/0049-choice.md: unreferenced-snippet: project/demo/adr/0049-choice
+notice: docs/project/design/retired.md: unreferenced-snippet: project/demo/design/retired

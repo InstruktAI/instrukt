@@ -98,7 +98,7 @@ Read the full context before writing anything:
   cause, not the investigation.
 - The codebase: files that will be affected, adjacent patterns, existing implementations
   of similar functionality. Use a filtered `instrukt docs index --areas policy,spec` (add
-  `--domains <domain>` to narrow) to surface relevant policies and specs.
+  `--domain <domain>` to narrow) to surface relevant policies and specs.
 - Definition of Done — every plan task must produce output that satisfies DoD gates.
 
 Walk the governing-contracts entry points before drafting begins

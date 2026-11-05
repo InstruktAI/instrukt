@@ -3,12 +3,22 @@ source: crates/instrukt-cli/tests/project-initialization.rs
 expression: "stdout(&env, &first)"
 ---
 project layer (instrukt.yaml): created
-docs folders (docs/project/): created
-master (AGENTS.master.md): not seeded: AGENTS.md is hand-written; move its content into a docs/project snippet, remove AGENTS.md (it becomes generated) and run `instrukt init` again
-local baseline (docs/project/baseline.md): created
-docs reference filter (git config filter.instrukt-docs): created
-filter patterns (.gitattributes): created
-generated AGENTS.md ignore (.gitignore): created
+project docs (docs/project/): created
+project index (docs/project/index.yaml): created
+project schema (docs/project/schema.yaml): not written: sdlc is not published on this computer, so the project follows the root rules only
+master (AGENTS.master.md): created
+kept instructions (.instrukt/adopted/AGENTS.md): created: the hand-written AGENTS.md, byte for byte, kept until its instructions are placed in docs/project/
+  AGENTS.md is generated from now on: the first sync renders it from AGENTS.master.md and docs/project/index.yaml
+  stop tracking it in the commit that adds the master: git rm --cached AGENTS.md
+editor schemas (.instrukt/schemas/): created
+  .instrukt/schemas/general-index.schema.json: schema written
+  .instrukt/schemas/domain-index.schema.json: schema written
+  .instrukt/schemas/project-index.schema.json: schema written
+  .instrukt/schemas/snippet-schema.schema.json: schema written
+  .instrukt/schemas/instrukt.schema.json: schema written
+  instrukt.yaml: modeline inserted
+  docs/project/index.yaml: modeline inserted
+ignores of AGENTS.md and .instrukt/ (.gitignore): created
 hook sections: created
   hooks directory: [TMP]/demo/.git/hooks
   post-commit: written

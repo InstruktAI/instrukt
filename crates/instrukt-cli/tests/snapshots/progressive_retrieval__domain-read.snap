@@ -1,0 +1,96 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &read)"
+---
+# instrukt docs get --domain acme
+
+# Acme
+
+## Care — Principle
+
+### Principle
+
+Care.
+
+### Rationale
+
+Text.
+
+### Implications
+
+Text.
+
+### Tensions
+
+Text.
+
+## Rules — Policy
+
+### Rules
+
+Follow the rules.
+
+A reference is written `@docs/project/design/y.md`, for example:
+
+```
+- @~/.instrukt/docs/acme/principle/care.md
+```
+
+### Rationale
+
+Text.
+
+### Scope
+
+Text.
+
+### Enforcement
+
+Text.
+
+### Exceptions
+
+Text.
+
+# Beta
+
+## Thing — Spec
+
+### What it is
+
+#### Detail
+
+A thing.
+
+### Canonical fields
+
+Text.
+
+# Acme
+
+## Work — Procedure
+
+when: When work arrives. — `instrukt docs get acme/procedure/work --closure`
+
+### Goal
+
+Work.
+
+### Preconditions
+
+Text.
+
+### Steps
+
+Text.
+
+### Outputs
+
+Text.
+
+### Recovery
+
+Text.
+
+- acme/concept/terms: The words used. — `instrukt docs get acme/concept/terms`
+- acme/procedure/greet: Greets a newcomer. — when: When someone arrives. — `instrukt docs get acme/procedure/greet --closure`

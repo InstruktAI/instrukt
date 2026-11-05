@@ -113,7 +113,15 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
         .write("docs/domain/acme/policy/draft.md", &policy("Draft", ""));
 
     let run = sync(&env, &repo).success();
-    insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"published demo at [SHA]");
+    insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"
+    published demo at [SHA]
+    .instrukt/schemas/general-index.schema.json: schema written
+    .instrukt/schemas/domain-index.schema.json: schema written
+    .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/snippet-schema.schema.json: schema written
+    .instrukt/schemas/instrukt.schema.json: schema written
+    instrukt.yaml: modeline inserted
+    ");
 
     let docs = env.instrukt_home().join("docs");
     assert_eq!(
@@ -190,7 +198,15 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     env.git(&linked, ["commit", "--quiet", "-m", "feature"]);
 
     let run = env.run(&linked, ["sync"]).success();
-    insta::assert_snapshot!(text(&run.get_output().stdout, &[&main]), @"published demo at [SHA]");
+    insta::assert_snapshot!(text(&run.get_output().stdout, &[&main]), @"
+    published demo at [SHA]
+    .instrukt/schemas/general-index.schema.json: schema written
+    .instrukt/schemas/domain-index.schema.json: schema written
+    .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/snippet-schema.schema.json: schema written
+    .instrukt/schemas/instrukt.schema.json: schema written
+    instrukt.yaml: modeline inserted
+    ");
     assert!(!ids(&index(&env)).contains(&"acme/policy/feature"));
 }
 
@@ -392,10 +408,10 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
     let refused = sync(&env, &repo).failure();
     insta::assert_snapshot!(text(&refused.get_output().stdout, &[&sha]), @r"
     docs/domain/acme/policy/bare.md: frontmatter-description-missing
-    docs/domain/acme/policy/bare.md: structure-section-missing: Enforcement
-    docs/domain/acme/policy/bare.md: structure-section-missing: Exceptions
-    docs/domain/acme/policy/bare.md: structure-section-missing: Rationale
-    docs/domain/acme/policy/bare.md: structure-section-missing: Scope
+    docs/domain/acme/policy/bare.md: structure-section-missing: Enforcement, required by instrukt root rules
+    docs/domain/acme/policy/bare.md: structure-section-missing: Exceptions, required by instrukt root rules
+    docs/domain/acme/policy/bare.md: structure-section-missing: Rationale, required by instrukt root rules
+    docs/domain/acme/policy/bare.md: structure-section-missing: Scope, required by instrukt root rules
     ");
     insta::assert_snapshot!(text(&refused.get_output().stderr, &[&sha]), @"instrukt: demo at [SHA] is not published: the committed documentation has 5 validation finding(s)");
     assert_eq!(published_tree(&env), before);
@@ -454,7 +470,7 @@ fn an_instruction_file_left_with_a_reference_fails_the_sync() {
     env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile AGENTS.master.md: the compiled text still references `@[TMP]/demo/notes/house.md`");
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile AGENTS.master.md: the compiled text still references `@notes/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
 }

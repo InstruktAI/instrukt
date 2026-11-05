@@ -10,6 +10,7 @@ type: procedure
 domain: acme
 scope: global
 description: Reports into the session.
+source: [TMP]/demo/docs/domain/acme/procedure/report.md
 ---
 # Report — Procedure
 

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/snippet-schema.rs
+expression: on_mine.out
+---
+docs/project/spec/feature/billing.md: structure-section-missing: Use cases, required by docs/project/schema.yaml spec/feature

@@ -1,28 +1,32 @@
 //! Progressive retrieval: `docs index` lists what the home holds, `docs get`
-//! reads it through the read pipeline
+//! reads it through the read pipeline, as one snippet's closure or as one
+//! domain's position index rendered
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 //!
-//! Both read the global index and the publication record; neither writes
+//! All read the global index and the publication record; none writes
 //! anything. A published snippet is read from the home, a local snippet
 //! from the absolute path its index entry carries, with the companions
-//! beside either file.
+//! beside either file. Where a listing or a read names a position or a
+//! snippet, it names its source: the file or folder in the checkout it was
+//! published from.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
-use super::_corpus::{Corpus, Lens, ManifestLine, Snippet, SourceFile, View, manifest_lines};
+use super::_corpus::{Corpus, Lens, Snippet, SourceFile, View};
 use super::_identity::{Scope, Taxonomy, companion_shape, published_source};
-use super::_position::GENERAL;
+use super::_position::{GENERAL, INDEX_FILE, Position, PositionIndex};
 use super::_refs::{RefTarget, Reference};
 use super::_render::{self, RenderContext, Values, read_confined};
+use super::_selection::{InFull, Listing, Selection};
 use super::DocsError;
 use crate::config::Configuration;
 use crate::git;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug, SnippetId, TodoSlug};
 use crate::index::{GlobalIndex, IndexEntry, IndexScope, ThirdPartyEntry};
-use crate::publication::PublishedRecord;
+use crate::publication::{PublishedRecord, position_owners};
 
 /// What `docs index` lists. Every filter only narrows; an empty list is no
 /// filter.
@@ -31,9 +35,10 @@ pub struct IndexRequest<'a> {
     pub home: &'a Home,
     /// The caller's working directory: the project it stands in.
     pub cwd: &'a Path,
-    pub domains: &'a [DomainName],
+    /// Domain names as given (`general` included); an unknown or reserved
+    /// one fails the listing.
+    pub domains: &'a [String],
     pub areas: &'a [Taxonomy],
-    pub baseline_only: bool,
     pub third_party: bool,
     pub target: Option<&'a TodoSlug>,
     pub project: Option<&'a ProjectSlug>,
@@ -49,6 +54,16 @@ pub struct GetRequest<'a> {
     pub ids: &'a [String],
     pub closure: bool,
     pub target: Option<&'a TodoSlug>,
+}
+
+/// What `docs get --domain` reads.
+#[derive(Debug, Clone, Copy)]
+pub struct DomainRequest<'a> {
+    pub home: &'a Home,
+    /// The caller's working directory: the project it stands in.
+    pub cwd: &'a Path,
+    /// The domain name as given (`general` included).
+    pub domain: &'a str,
 }
 
 /// The text `docs get` prints, and whether a configured value in it could
@@ -68,64 +83,74 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
     let Some(index) = GlobalIndex::load(req.home)? else {
         return Ok(nothing_published());
     };
-    let valid: BTreeSet<&str> = index
-        .snippets
-        .iter()
-        .filter(|e| e.scope == IndexScope::Global)
-        .map(|e| e.domain.as_str())
-        .collect();
-    let unknown: Vec<String> = req
-        .domains
-        .iter()
-        .filter(|d| !valid.contains(d.as_str()))
-        .map(|d| d.as_str().to_owned())
-        .collect();
-    if !unknown.is_empty() {
-        return Err(DocsError::UnknownDomains {
-            unknown,
-            valid: valid.iter().map(|d| (*d).to_owned()).collect(),
-        });
-    }
+    let owners = position_owners(req.home)?;
+    let valid = valid_domains(&index, &owners);
+    let domains = named_domains(req.domains, &valid)?;
     let mut out = vec![
         "# instrukt docs index: snippet ids with their descriptions".to_owned(),
         format!(
-            "# Filter with --domains <{}>, --areas <{AREAS}>, --baseline-only, \
-             --third-party, --target <slug>, --project <slug>",
-            valid.iter().copied().collect::<Vec<_>>().join("|")
+            "# Filter with --domain <{}> (repeatable), --areas <{AREAS}>, --third-party, \
+             --target <slug>, --project <slug>",
+            valid
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("|")
         ),
     ];
+    for domain in &domains {
+        let owner = owners.get(domain).cloned().or_else(|| {
+            index
+                .snippets
+                .iter()
+                .find(|e| e.scope == IndexScope::Global && e.domain == domain.as_str())
+                .map(|e| e.source_project.clone())
+        });
+        if let Some(owner) = owner {
+            out.extend(source_line(
+                req.home,
+                domain.as_str(),
+                &owner,
+                &Position::of_domain(domain).dir(),
+            )?);
+        }
+    }
     out.extend(behind_warning(req.home, &caller)?);
-    out.push(String::new());
 
     let local_project = req.project.or(caller.project.as_ref());
     if let Some(project) = req.project
         && !index.snippets.iter().any(|e| &e.source_project == project)
         && PublishedRecord::load(req.home, project)?.is_none()
     {
+        out.push(String::new());
         out.push(format!("# No project `{project}` has published."));
         return Ok(finish(out));
     }
-    let baseline = if req.baseline_only {
-        Some(baseline_ids(req, &valid, &caller)?)
-    } else {
-        None
-    };
+    if domains.is_empty()
+        && let Some(project) = local_project
+    {
+        out.extend(source_line(
+            req.home,
+            &format!("project {project}"),
+            project,
+            &Position::Project.dir(),
+        )?);
+    }
+    out.push(String::new());
     let mut entries: Vec<&IndexEntry> = index
         .snippets
         .iter()
         .filter(|e| match e.scope {
             IndexScope::Global => {
                 req.project.is_none()
-                    && (req.domains.is_empty()
-                        || req.domains.iter().any(|d| d.as_str() == e.domain))
+                    && (domains.is_empty() || domains.iter().any(|d| d.as_str() == e.domain))
             }
-            IndexScope::Local => req.domains.is_empty() && local_project == Some(&e.source_project),
+            IndexScope::Local => domains.is_empty() && local_project == Some(&e.source_project),
         })
         .filter(|e| {
             req.areas.is_empty()
                 || Taxonomy::from_dir(&e.taxonomy).is_some_and(|t| req.areas.contains(&t))
         })
-        .filter(|e| baseline.as_ref().is_none_or(|ids| ids.contains(&e.id)))
         .filter(|e| {
             req.target
                 .is_none_or(|slug| e.delivered_by.contains(slug) || e.superseded_by.contains(slug))
@@ -137,9 +162,8 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
     }
     out.extend(entries.iter().map(|e| entry_line(e)));
 
-    let narrowed = !req.domains.is_empty()
+    let narrowed = !domains.is_empty()
         || !req.areas.is_empty()
-        || req.baseline_only
         || req.target.is_some()
         || req.project.is_some();
     if req.third_party && !narrowed {
@@ -168,6 +192,70 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
         duration_ms = elapsed_ms(started),
     );
     Ok(finish(out))
+}
+
+/// The domain names a listing or a domain read accepts: every claimed
+/// published position and every domain the global index holds.
+fn valid_domains(
+    index: &GlobalIndex,
+    owners: &std::collections::BTreeMap<DomainName, ProjectSlug>,
+) -> BTreeSet<String> {
+    owners
+        .keys()
+        .map(|d| d.as_str().to_owned())
+        .chain(
+            index
+                .snippets
+                .iter()
+                .filter(|e| e.scope == IndexScope::Global)
+                .map(|e| e.domain.clone()),
+        )
+        .collect()
+}
+
+/// `given` as domain names, each one of `valid`; an unknown or reserved
+/// name fails, naming the valid domains.
+fn named_domains(given: &[String], valid: &BTreeSet<String>) -> Result<Vec<DomainName>, DocsError> {
+    let mut named = Vec::new();
+    let mut unknown = Vec::new();
+    for raw in given {
+        match DomainName::parse(raw) {
+            Ok(domain) if valid.contains(raw) => {
+                if !named.contains(&domain) {
+                    named.push(domain);
+                }
+            }
+            _ => unknown.push(raw.clone()),
+        }
+    }
+    if unknown.is_empty() {
+        Ok(named)
+    } else {
+        Err(DocsError::UnknownDomains {
+            unknown,
+            valid: valid.iter().cloned().collect(),
+        })
+    }
+}
+
+/// The line naming where the position `folder` of `owner` is authored: its
+/// folder in the checkout it was published from, the published commit and
+/// the repository's remote. `None` when `owner` has no publication record.
+fn source_line(
+    home: &Home,
+    name: &str,
+    owner: &ProjectSlug,
+    folder: &str,
+) -> Result<Option<String>, DocsError> {
+    let Some(record) = PublishedRecord::load(home, owner)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "# Source of {name}: {}/ — published commit {} — remote {}",
+        record.checkout.join(folder).display(),
+        record.commit.as_str(),
+        record.remote.as_deref().unwrap_or("none")
+    )))
 }
 
 fn nothing_published() -> String {
@@ -207,49 +295,6 @@ fn slugs<'a>(slugs: impl IntoIterator<Item = &'a TodoSlug>) -> String {
         .map(TodoSlug::as_str)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// The ids every baseline manifest in view names: the published domains'
-/// `baseline.md` and `baseline-progressive.md`, and the listed project's
-/// `docs/project/baseline.md`.
-fn baseline_ids(
-    req: &IndexRequest<'_>,
-    domains: &BTreeSet<&str>,
-    caller: &Caller,
-) -> Result<BTreeSet<SnippetId>, DocsError> {
-    let user_home = req.home.user_home();
-    let mut manifests: Vec<(String, Option<ProjectSlug>)> = Vec::new();
-    let docs = req.home.docs_dir();
-    for domain in domains {
-        for name in ["baseline.md", "baseline-progressive.md"] {
-            let text = read_confined(&docs, &Path::new(domain).join(name), outside_home)?;
-            manifests.extend(text.map(|text| (text, None)));
-        }
-    }
-    let local = match req.project {
-        Some(project) => PublishedRecord::load(req.home, project)?
-            .map(|record| (record.checkout, project.clone())),
-        None => caller.repo_root.clone().zip(caller.project.clone()),
-    };
-    if let Some((root, project)) = local {
-        let path = root.join("docs/project/baseline.md");
-        match std::fs::read_to_string(&path) {
-            Ok(text) => manifests.push((text, Some(project))),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => return Err(DocsError::Read { path, source }),
-        }
-    }
-    Ok(manifests
-        .iter()
-        .flat_map(|(text, project)| manifest_lines(text, project.as_ref(), user_home))
-        .filter_map(|line| match line {
-            ManifestLine::Entry(Reference {
-                target: Some(RefTarget::Snippet(id)),
-                ..
-            }) => Some(id),
-            _ => None,
-        })
-        .collect())
 }
 
 /// The `docs get` reading.
@@ -330,7 +375,7 @@ fn plain<'i>(
         .target
         .map_or_else(String::new, |slug| format!(" --target {slug}"));
     let mut out = vec![format!("# instrukt docs get{lens}: {}", req.ids.join(" "))];
-    let not_loaded = graph.names(reader.home);
+    let not_loaded = graph.names(Strictness::List);
     if !not_loaded.is_empty() {
         out.push(format!(
             "# Required reads (not loaded) that must have been read at least once: {}",
@@ -374,17 +419,18 @@ fn closure<'i>(
         ));
     }
     let ([entry], []) = (requested, third_party) else {
-        return Err(refuse(format!(
-            "a closure is read for exactly one procedure; {} ids were given",
-            requested.len() + third_party.len()
-        )));
+        let reason = match (requested, third_party) {
+            ([], [doc]) => format!(
+                "a closure is read for exactly one snippet; {} is a third-party doc",
+                doc.id.as_str()
+            ),
+            _ => format!(
+                "a closure is read for exactly one snippet; {} ids were given",
+                requested.len() + third_party.len()
+            ),
+        };
+        return Err(refuse(reason));
     };
-    if Taxonomy::from_dir(&entry.taxonomy) != Some(Taxonomy::Procedure) {
-        return Err(refuse(format!(
-            "a closure is read for exactly one procedure; this is a {}",
-            entry.taxonomy
-        )));
-    }
     let root = reader.load(entry)?;
     if root.snippet.is_pending() {
         return Err(refuse(format!(
@@ -392,13 +438,17 @@ fn closure<'i>(
             slugs(root.snippet.delivered_by())
         )));
     }
-    let strictness = if root.snippet.current().frontmatter().entry.is_root() {
+    // A procedure an agent is started on cannot run without what it
+    // requires; any other snippet is read with what can be read.
+    let strictness = if root.snippet.taxonomy() == Taxonomy::Procedure
+        && root.snippet.current().frontmatter().entry.is_root()
+    {
         Strictness::Refuse
     } else {
         Strictness::Skip
     };
     let graph = reader.follow(std::slice::from_ref(&root), strictness)?;
-    let included = graph.names(reader.home);
+    let included = graph.names(strictness);
     let mut out = vec![format!(
         "# instrukt docs get --closure: {}",
         entry.id.as_str()
@@ -409,20 +459,21 @@ fn closure<'i>(
             included.join(", ")
         ));
     }
+    if !graph.left_out.is_empty() {
+        out.push(format!(
+            "# Required reads left out: {}",
+            graph.left_out.join(", ")
+        ));
+    }
     out.extend(warning);
     let mut unresolved = false;
-    // Every read in the order it is listed, then the procedure itself.
+    // Every read in the order it is listed, then the snippet itself.
     for item in &graph.items {
-        out.push(String::new());
-        match item {
-            Reached::Bundle(domain) => out.push(reader.render_bundle(domain)?),
-            Reached::Snippet(loaded) => {
-                let (block, failed) = reader.render(loaded)?;
-                out.push(block);
-                unresolved |= failed;
-            }
-            // A closure refuses or leaves out what cannot be read.
-            Reached::Unreadable(_) => {}
+        if let Reached::Snippet(loaded) = item {
+            out.push(String::new());
+            let (block, failed) = reader.render(loaded)?;
+            out.push(block);
+            unresolved |= failed;
         }
     }
     out.push(String::new());
@@ -435,11 +486,135 @@ fn closure<'i>(
     })
 }
 
-fn bundle_path(home: &Home, domain: &DomainName) -> String {
-    home.domain_dir(domain)
-        .join("bundle.md")
-        .display()
-        .to_string()
+/// The `docs get --domain` reading: the domain's position index rendered
+/// as publication renders that domain's group, every body through the
+/// read pipeline.
+pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
+    let started = Instant::now();
+    let caller = Caller::of(req.cwd)?;
+    let index = GlobalIndex::load(req.home)?.unwrap_or_default();
+    let owners = position_owners(req.home)?;
+    let valid = valid_domains(&index, &owners);
+    // One name given, so a successful resolution holds exactly one domain.
+    let Some(domain) = named_domains(&[req.domain.to_owned()], &valid)?
+        .into_iter()
+        .next()
+    else {
+        return Err(DocsError::UnknownDomains {
+            unknown: vec![req.domain.to_owned()],
+            valid: valid.iter().cloned().collect(),
+        });
+    };
+    let configuration = Configuration::load(req.home, caller.repo_root.as_deref())?;
+    let reader = Reader {
+        home: req.home,
+        index: &index,
+        values: Values::read(&configuration),
+        lens: Lens::Current,
+    };
+    let mut out = vec![format!("# instrukt docs get --domain {domain}")];
+    let Some(selection) = reader.domain_index(&domain)? else {
+        out.push(format!(
+            "# The domain `{domain}` has no {INDEX_FILE}: list its snippets with \
+             `instrukt docs index --domain {domain}`."
+        ));
+        out.extend(behind_warning(req.home, &caller)?);
+        return Ok(Reading {
+            text: finish(out),
+            unresolved: false,
+        });
+    };
+    let mut expansion = Expansion::default();
+    reader.expand(selection.expanded(), &mut expansion)?;
+    let mut unresolved = false;
+    let mut in_full = Vec::new();
+    for loaded in &expansion.order {
+        let View::Visible { version, .. } = loaded.snippet.view(Lens::Current) else {
+            continue;
+        };
+        let rendered = version.render(Lens::Current, &reader.context(loaded))?;
+        unresolved |= !rendered.config_refusals.is_empty();
+        in_full.push(InFull {
+            id: loaded.entry.id.clone(),
+            position: position_name(&loaded.entry.id),
+            body: rendered.text,
+            trigger: trigger_of(loaded.entry).map(str::to_owned),
+        });
+    }
+    let mut listed = Vec::new();
+    for id in selection.listed() {
+        match index.snippets.iter().find(|e| &e.id == id) {
+            Some(entry) if entry.delivered_by.is_empty() => listed.push(listing(entry)),
+            Some(_) => expansion.left_out.push(format!("{id} (pending)")),
+            None => expansion
+                .left_out
+                .push(format!("{id} (names no published snippet)")),
+        }
+    }
+    let mut triggered: Vec<Listing> = index
+        .snippets
+        .iter()
+        .filter(|e| {
+            e.scope == IndexScope::Global
+                && e.domain == domain.as_str()
+                && e.delivered_by.is_empty()
+                && trigger_of(e).is_some()
+        })
+        .map(listing)
+        .collect();
+    triggered.sort_by(|a, b| a.id.cmp(&b.id));
+    if !expansion.left_out.is_empty() {
+        out.push(format!(
+            "# Required reads left out: {}",
+            expansion.left_out.join(", ")
+        ));
+    }
+    out.extend(behind_warning(req.home, &caller)?);
+    out.push(String::new());
+    let section = Selection {
+        position: domain.as_str().to_owned(),
+        in_full,
+        listed,
+        triggered,
+    }
+    .render();
+    out.push(section.trim_end().to_owned());
+    tracing::debug!(
+        event = "docs_get_domain_completed",
+        domain = %domain,
+        in_full = expansion.order.len(),
+        left_out = expansion.left_out.len(),
+        unresolved,
+        duration_ms = elapsed_ms(started),
+    );
+    Ok(Reading {
+        text: finish(out),
+        unresolved,
+    })
+}
+
+/// The name of the position a snippet belongs to: its domain, or
+/// `project`.
+fn position_name(id: &SnippetId) -> String {
+    id.domain()
+        .map_or_else(|| "project".to_owned(), |d| d.as_str().to_owned())
+}
+
+/// A delivered procedure's non-empty `activation_trigger`.
+fn trigger_of(entry: &IndexEntry) -> Option<&str> {
+    (Taxonomy::from_dir(&entry.taxonomy) == Some(Taxonomy::Procedure))
+        .then_some(entry.activation_trigger.as_deref())
+        .flatten()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+}
+
+fn listing(entry: &IndexEntry) -> Listing {
+    Listing {
+        id: entry.id.clone(),
+        description: entry.description.clone(),
+        trigger: trigger_of(entry).map(str::to_owned),
+    }
 }
 
 /// What following required reads does with one that is pending or cannot
@@ -448,7 +623,8 @@ fn bundle_path(home: &Home, domain: &DomainName) -> String {
 enum Strictness {
     /// A plain read: everything reached is listed as not loaded.
     List,
-    /// A closure of a supporting procedure: such a read is left out.
+    /// A closure of any snippet but a root procedure: such a read is left
+    /// out and named.
     Skip,
     /// A closure of a procedure with root frontmatter: such a read refuses
     /// the closure.
@@ -456,29 +632,35 @@ enum Strictness {
 }
 
 /// Everything required reads reached beyond the roots, each once, depth
-/// first in declaration order at its first occurrence.
+/// first in declaration order at its first occurrence, and what a closure
+/// left out.
 struct Graph<'i> {
     items: Vec<Reached<'i>>,
+    left_out: Vec<String>,
 }
 
 /// One required read reached.
 enum Reached<'i> {
     Snippet(Box<Loaded<'i>>),
-    /// A published domain's bundle, which has no id: named by its path.
-    Bundle(DomainName),
+    /// A bare-domain read: in a closure, its `expanded` set follows it.
+    Domain(DomainName),
     /// A reference that names nothing readable, as written.
     Unreadable(String),
 }
 
 impl Graph<'_> {
-    /// Each read's name, in order: a snippet's id, a bundle's path, an
-    /// unreadable reference as written.
-    fn names(&self, home: &Home) -> Vec<String> {
+    /// Each read's name, in order: a snippet's id, a domain by its name
+    /// (in a plain read, with the command that reads it), an unreadable
+    /// reference as written.
+    fn names(&self, strictness: Strictness) -> Vec<String> {
         self.items
             .iter()
             .map(|item| match item {
                 Reached::Snippet(loaded) => loaded.entry.id.as_str().to_owned(),
-                Reached::Bundle(domain) => bundle_path(home, domain),
+                Reached::Domain(domain) if strictness == Strictness::List => {
+                    format!("{domain} (`instrukt docs get --domain {domain}`)")
+                }
+                Reached::Domain(domain) => domain.as_str().to_owned(),
                 Reached::Unreadable(raw) => raw.clone(),
             })
             .collect()
@@ -489,8 +671,19 @@ impl Graph<'_> {
 #[derive(Default)]
 struct Walk {
     snippets: BTreeSet<SnippetId>,
-    bundles: BTreeSet<DomainName>,
+    domains: BTreeSet<DomainName>,
     unreadable: BTreeSet<String>,
+    left_out: Vec<String>,
+}
+
+/// A domain read's snippets in full, in traversal order, and what was left
+/// out.
+#[derive(Default)]
+struct Expansion<'i> {
+    order: Vec<Loaded<'i>>,
+    seen: BTreeSet<SnippetId>,
+    domains: BTreeSet<DomainName>,
+    left_out: Vec<String>,
 }
 
 /// A snippet read from its file, with the repository it belongs to when
@@ -498,7 +691,6 @@ struct Walk {
 struct Loaded<'i> {
     entry: &'i IndexEntry,
     snippet: Snippet,
-    repo_root: Option<PathBuf>,
 }
 
 impl Loaded<'_> {
@@ -593,21 +785,33 @@ impl<'i> Reader<'i> {
                     id: entry.id.clone(),
                     path: entry.path.clone(),
                 })?;
-        Ok(Loaded {
-            entry,
-            snippet,
-            repo_root: (entry.scope == IndexScope::Local).then_some(root),
-        })
+        Ok(Loaded { entry, snippet })
     }
 
     /// The required reads of the version the lens reads.
     /// Exactly what rendering it reports ([`super::Rendered::required_reads`]),
-    /// without running its read-time commands.
+    /// without resolving its configured values.
     fn reads_of(&self, loaded: &Loaded<'_>) -> Result<Vec<Reference>, DocsError> {
         let View::Visible { version, .. } = loaded.snippet.view(self.lens) else {
             return Ok(Vec::new());
         };
         _render::dependency_reads(version.body(), self.lens, &self.context(loaded))
+    }
+
+    /// The published index of the position `domain` addresses; `None` when
+    /// it has none.
+    fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, DocsError> {
+        let rel = Path::new(domain.as_str()).join(INDEX_FILE);
+        let docs = self.home.docs_dir();
+        let Some(text) = read_confined(&docs, &rel, outside_home)? else {
+            return Ok(None);
+        };
+        PositionIndex::parse(&Position::of_domain(domain), &text)
+            .map(Some)
+            .map_err(|source| DocsError::PositionIndexInvalid {
+                path: docs.join(rel),
+                source,
+            })
     }
 
     /// Follows required reads from `roots`, transitively, by what each
@@ -627,7 +831,10 @@ impl<'i> Reader<'i> {
             let reads = self.reads_of(loaded)?;
             self.visit(reads, strictness, &root, &mut walk, &mut items)?;
         }
-        Ok(Graph { items })
+        Ok(Graph {
+            items,
+            left_out: walk.left_out,
+        })
     }
 
     fn visit(
@@ -643,9 +850,19 @@ impl<'i> Reader<'i> {
                 id: root.to_owned(),
                 reason: format!("its required read `{}` {reason}", read.raw),
             };
-            let mut unreadable = |items: &mut Vec<Reached<'i>>| {
-                if walk.unreadable.insert(read.raw.clone()) {
-                    items.push(Reached::Unreadable(read.raw.clone()));
+            // What a read that cannot be followed becomes: refused, left out
+            // and named, or named as not loaded.
+            let mut cannot = |reason: &str, items: &mut Vec<Reached<'i>>| match strictness {
+                Strictness::Refuse => Err(refused(reason)),
+                Strictness::Skip => {
+                    walk.left_out.push(format!("{} ({reason})", read.raw));
+                    Ok(())
+                }
+                Strictness::List => {
+                    if walk.unreadable.insert(read.raw.clone()) {
+                        items.push(Reached::Unreadable(read.raw.clone()));
+                    }
+                    Ok(())
                 }
             };
             match &read.target {
@@ -654,13 +871,7 @@ impl<'i> Reader<'i> {
                         continue;
                     }
                     let Some(entry) = self.index.snippets.iter().find(|e| &e.id == id) else {
-                        match strictness {
-                            Strictness::Refuse => {
-                                return Err(refused("names no published snippet"));
-                            }
-                            Strictness::Skip => {}
-                            Strictness::List => unreadable(items),
-                        }
+                        cannot("names no published snippet", items)?;
                         continue;
                     };
                     walk.snippets.insert(id.clone());
@@ -671,63 +882,107 @@ impl<'i> Reader<'i> {
                         Err(
                             err @ (DocsError::MissingLocalFile { .. }
                             | DocsError::MissingPublishedFile { .. }),
-                        ) => match strictness {
-                            Strictness::List => {
-                                unreadable(items);
-                                continue;
-                            }
-                            Strictness::Refuse => {
-                                return Err(refused(&format!("cannot be read: {err}")));
-                            }
-                            Strictness::Skip => return Err(err),
-                        },
+                        ) => {
+                            cannot(&format!("cannot be read: {err}"), items)?;
+                            continue;
+                        }
                         Err(err) => return Err(err),
                     };
-                    if loaded.snippet.is_pending() {
-                        match strictness {
-                            Strictness::Refuse => return Err(refused("is still pending")),
-                            Strictness::Skip => continue,
-                            Strictness::List => {}
-                        }
+                    if loaded.snippet.is_pending() && strictness != Strictness::List {
+                        cannot("is still pending", items)?;
+                        continue;
                     }
                     // A withheld snippet names no reads (`reads_of`).
                     let nested = self.reads_of(&loaded)?;
                     items.push(Reached::Snippet(Box::new(loaded)));
                     self.visit(nested, strictness, root, walk, items)?;
                 }
-                Some(RefTarget::Bundle(domain)) => {
-                    if walk.bundles.contains(domain) {
+                Some(RefTarget::Domain(domain)) => {
+                    if walk.domains.contains(domain) {
                         continue;
                     }
-                    let path = self.home.domain_dir(domain).join("bundle.md");
-                    let readable = read_confined(
-                        &self.home.docs_dir(),
-                        &Path::new(domain.as_str()).join("bundle.md"),
-                        outside_home,
-                    )?
-                    .is_some();
-                    match (readable, strictness) {
-                        (true, _) | (false, Strictness::List) => {
-                            walk.bundles.insert(domain.clone());
-                            items.push(Reached::Bundle(domain.clone()));
-                        }
-                        (false, Strictness::Refuse) => {
-                            return Err(refused(&format!(
-                                "names a bundle that is not published ({})",
-                                path.display()
-                            )));
-                        }
-                        (false, Strictness::Skip) => {}
+                    if strictness == Strictness::List {
+                        // Read on its own with `docs get --domain`.
+                        walk.domains.insert(domain.clone());
+                        items.push(Reached::Domain(domain.clone()));
+                        continue;
                     }
+                    let Some(selection) = self.domain_index(domain)? else {
+                        cannot(&format!("names a domain without {INDEX_FILE}"), items)?;
+                        continue;
+                    };
+                    walk.domains.insert(domain.clone());
+                    items.push(Reached::Domain(domain.clone()));
+                    let expanded = selection
+                        .expanded()
+                        .iter()
+                        .map(|id| Reference {
+                            raw: id.as_str().to_owned(),
+                            target: Some(RefTarget::Snippet(id.clone())),
+                        })
+                        .collect();
+                    self.visit(expanded, strictness, root, walk, items)?;
                 }
-                // A manifest is not a required read; a malformed reference
-                // is validation's finding.
-                Some(RefTarget::LocalFile(_)) | None => {
-                    if strictness == Strictness::Refuse {
-                        return Err(refused("names no published snippet or bundle"));
+                // A path reference or a malformed entry is validation's
+                // finding; it names nothing a read can follow.
+                Some(RefTarget::Bundle(_) | RefTarget::LocalFile(_)) | None => {
+                    cannot("names no snippet or domain", items)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Expands `ids` into `into` in rendering order: each snippet after its
+    /// transitive required reads, each once, a bare-domain read standing
+    /// for that domain's `expanded` set. A read that is pending or cannot
+    /// be read is left out and named.
+    fn expand(&self, ids: &[SnippetId], into: &mut Expansion<'i>) -> Result<(), DocsError> {
+        for id in ids {
+            if !into.seen.insert(id.clone()) {
+                continue;
+            }
+            let Some(entry) = self.index.snippets.iter().find(|e| &e.id == id) else {
+                into.left_out
+                    .push(format!("{id} (names no published snippet)"));
+                continue;
+            };
+            let loaded = match self.load(entry) {
+                Ok(loaded) => loaded,
+                Err(
+                    err @ (DocsError::MissingLocalFile { .. }
+                    | DocsError::MissingPublishedFile { .. }),
+                ) => {
+                    into.left_out.push(format!("{id} (cannot be read: {err})"));
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
+            if loaded.snippet.is_pending() {
+                into.left_out.push(format!("{id} (pending)"));
+                continue;
+            }
+            for read in self.reads_of(&loaded)? {
+                match &read.target {
+                    Some(RefTarget::Snippet(nested)) => {
+                        self.expand(std::slice::from_ref(nested), into)?;
+                    }
+                    Some(RefTarget::Domain(domain)) => {
+                        if !into.domains.insert(domain.clone()) {
+                            continue;
+                        }
+                        match self.domain_index(domain)? {
+                            Some(selection) => self.expand(selection.expanded(), into)?,
+                            None => into.left_out.push(format!("{domain} (no {INDEX_FILE})")),
+                        }
+                    }
+                    Some(RefTarget::Bundle(_) | RefTarget::LocalFile(_)) | None => {
+                        into.left_out
+                            .push(format!("{} (names no snippet or domain)", read.raw));
                     }
                 }
             }
+            into.order.push(loaded);
         }
         Ok(())
     }
@@ -736,9 +991,23 @@ impl<'i> Reader<'i> {
         RenderContext {
             home: self.home,
             values: &self.values,
-            repo_root: loaded.repo_root.as_deref(),
             project: loaded.project(),
         }
+    }
+
+    /// Where `entry`'s snippet is authored: its file in the checkout its
+    /// owner published from, or in its project.
+    fn source(&self, entry: &IndexEntry) -> Result<String, DocsError> {
+        Ok(match entry.scope {
+            IndexScope::Local => entry.path.display().to_string(),
+            IndexScope::Global => {
+                let record = PublishedRecord::load(self.home, &entry.source_project)?;
+                match (record, published_source(&entry.id)) {
+                    (Some(record), Some(rel)) => record.checkout.join(rel).display().to_string(),
+                    _ => NOT_RECORDED.to_owned(),
+                }
+            }
+        })
     }
 
     /// One snippet's block: its header, then its body through the read
@@ -760,6 +1029,7 @@ impl<'i> Reader<'i> {
                 }
             ),
             format!("description: {}", loaded.entry.description),
+            format!("source: {}", self.source(loaded.entry)?),
             "---".to_owned(),
         ];
         let mut failed = false;
@@ -807,7 +1077,6 @@ impl<'i> Reader<'i> {
         let cx = RenderContext {
             home: self.home,
             values: &self.values,
-            repo_root: None,
             project: None,
         };
         let rendered = _render::render(&text, Lens::Current, &cx)?;
@@ -819,34 +1088,33 @@ impl<'i> Reader<'i> {
                 .is_some_and(|owner| owner == entry.source_project),
             Err(_) => false,
         };
+        let source = PublishedRecord::load(self.home, &entry.source_project)?.map_or_else(
+            || NOT_RECORDED.to_owned(),
+            |record| {
+                record
+                    .checkout
+                    .join("docs")
+                    .join(&entry.path)
+                    .display()
+                    .to_string()
+            },
+        );
         let block = [
             "---".to_owned(),
             format!("id: {}", entry.id.as_str()),
             format!("scope: {}", if owns_general { "global" } else { "project" }),
             format!("description: {}", entry.description),
+            format!("source: {source}"),
             "---".to_owned(),
             rendered.text.trim_matches('\n').to_owned(),
         ];
         Ok((block.join("\n"), !rendered.config_refusals.is_empty()))
     }
-
-    fn render_bundle(&self, domain: &DomainName) -> Result<String, DocsError> {
-        let rel = Path::new(domain.as_str()).join("bundle.md");
-        let docs = self.home.docs_dir();
-        let text = read_confined(&docs, &rel, outside_home)?.ok_or_else(|| DocsError::Read {
-            path: docs.join(&rel),
-            source: std::io::ErrorKind::NotFound.into(),
-        })?;
-        Ok([
-            "---".to_owned(),
-            format!("bundle: {domain}"),
-            format!("path: {}", docs.join(&rel).display()),
-            "---".to_owned(),
-            text.trim_matches('\n').to_owned(),
-        ]
-        .join("\n"))
-    }
 }
+
+/// The source a header names when publication recorded no checkout for
+/// the snippet's owner.
+const NOT_RECORDED: &str = "(not recorded)";
 
 fn outside_home(path: PathBuf) -> DocsError {
     DocsError::OutsideHome { path }

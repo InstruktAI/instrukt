@@ -10,6 +10,7 @@ type: spec
 domain: acme
 scope: global
 description: A live contract with pending additions.
+source: [TMP]/demo/docs/domain/acme/spec/live.md
 ---
 # Live — Spec
 
@@ -33,6 +34,7 @@ type: policy
 domain: acme
 scope: global
 description: A live policy with a next version.
+source: [TMP]/demo/docs/domain/acme/policy/reworked.md
 ---
 # Reworked — Policy
 
