@@ -145,11 +145,20 @@ GitHub, so the instrukt skill says so before switching todos on.
 and `gh auth token`, and is never stored. With none, reflection reports
 "pending: no credentials" and the local record continues.
 
-A per-computer writer lock serializes reflection and every write to the
-state database; no separate writer process runs. Every command that writes the record and every runner tick flushes
-pending reflection under that lock. Writes check the item's known
-remote revision before replacing it. A newer remote revision is a conflict,
-not permission to overwrite it with a stale local snapshot. The local change
+A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
+reflection; no separate writer process runs. Every command that writes the
+record and every runner tick flushes pending reflection under that lock,
+held across GitHub requests. The separate writer lock guards only local
+state-database write transactions and is released before each network wait. Reflection
+takes it briefly for each local commit of what it learned. Lock order is always
+reflection → writer; commands finish their local write and release the writer
+lock before acquiring the reflection lock. Local readers take neither lock.
+Confirmation records the revision actually reflected; a newer local revision
+remains pending.
+
+Remote writes check the item's known remote revision before replacing it.
+A newer remote revision is a conflict, not permission to overwrite it with a
+stale local snapshot. The local change
 is not reflected and the item is marked conflicted. Commands on that item
 refuse with the door `instrukt todo refresh <slug>`; after refreshing, the
 agent re-applies its change.
