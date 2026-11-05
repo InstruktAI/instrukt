@@ -15,8 +15,8 @@ use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, ConfigError, Configuration, Layer, Module};
 use crate::docs::{
-    self, Corpus, DomainIndex, FRAGMENT_ROOT, Finding, GENERAL, INDEX_FILE, Position,
-    PositionIndex, ValidationRequest, Values,
+    self, Corpus, DomainIndex, Finding, GENERAL, INDEX_FILE, Position, PositionIndex,
+    ValidationRequest, Values,
 };
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
@@ -275,14 +275,7 @@ fn publish(
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
     let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
-    let fragments: Vec<String> = committed
-        .below(FRAGMENT_ROOT)
-        .filter_map(|(rel, _)| rel.strip_suffix(".md"))
-        .filter(|name| !name.split('/').any(|segment| segment.starts_with('_')))
-        .map(str::to_owned)
-        .collect();
-    let contribution =
-        Contribution::of(&project.slug, &corpus, &held, &fragments, &project.primary);
+    let contribution = Contribution::of(&project.slug, &corpus, &held, &project.primary);
     let owners = _tree::claims(home)?;
     let index = GlobalIndex::load(home)?.unwrap_or_default();
     let patched = match patch(&index, &owners, &contribution) {
@@ -364,7 +357,7 @@ fn publish(
 /// Checks every location the sync will write or remove, before the first
 /// write. A location the repository or instrukt controls — a compiled
 /// output in the project or one recorded for retraction; in the home a
-/// published domain, a fragment, a third-party doc, the index, the eval
+/// published domain, a third-party doc, the index, the eval
 /// fingerprint records, the outputs record or the published record — that
 /// is, or lies behind, a symbolic link refuses the sync. An agent-CLI file
 /// in the user's home whose link leads nowhere does too. The writes check
@@ -411,13 +404,6 @@ fn preflight(
     targets.extend(claimed.iter().map(|d| _tree::claim_path(home, d)));
     let docs = home.docs_dir();
     for index in [&prepared.index, &prepared.patched] {
-        targets.extend(
-            index
-                .fragments
-                .iter()
-                .filter(|f| mine(&f.source_project))
-                .map(|f| docs.join(&f.path)),
-        );
         targets.extend(
             index
                 .third_party
@@ -561,20 +547,9 @@ fn write(
             tx.remove_file(&in_home(&_tree::claim_path(home, domain))?)?;
         }
     }
-    // Fragments and third-party docs: file by file, owner-scoped.
+    // Third-party docs: file by file, owner-scoped.
     let docs = home.docs_dir();
     let mine = |owner: &ProjectSlug| owner == &project.slug;
-    for fragment in prepared
-        .patched
-        .fragments
-        .iter()
-        .filter(|f| mine(&f.source_project))
-    {
-        let source = format!("{FRAGMENT_ROOT}{}.md", fragment.name);
-        if let Some(bytes) = prepared.committed.file(&source) {
-            tx.write(&in_home(&docs.join(&fragment.path))?, bytes)?;
-        }
-    }
     for doc in prepared
         .patched
         .third_party
@@ -584,18 +559,6 @@ fn write(
         let source = Path::new("docs").join(&doc.path);
         if let Some(bytes) = prepared.committed.file(&source.to_string_lossy()) {
             tx.write(&in_home(&docs.join(&doc.path))?, bytes)?;
-        }
-    }
-    let fragments: BTreeSet<&PathBuf> =
-        prepared.patched.fragments.iter().map(|f| &f.path).collect();
-    for old in prepared
-        .index
-        .fragments
-        .iter()
-        .filter(|f| mine(&f.source_project))
-    {
-        if !fragments.contains(&old.path) {
-            tx.remove_file(&in_home(&docs.join(&old.path))?)?;
         }
     }
     let third_party: BTreeSet<&PathBuf> = prepared

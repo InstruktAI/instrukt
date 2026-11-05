@@ -19,6 +19,7 @@ dispatch:
 - @~/.instrukt/docs/sdlc/principle/architectural-defaults.md
 - @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
 - @~/.instrukt/docs/sdlc/procedure/feature-spec-authoring.md
+- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
 
 ## Goal
 
@@ -131,8 +132,6 @@ The human owns final `prd_approved`.
 - Whether a human is in the conversation is read from the conversation itself.
 
 ## Steps
-
-<!-- @include: docs/snippets/step-role-read.md -->
 
 ### 1. Establish mode and orient
 

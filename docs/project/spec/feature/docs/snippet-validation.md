@@ -21,7 +21,7 @@ check documentation before committing, and it changes nothing.
 
 ### Scope of a run
 
-- Without paths: every snippet, fragment, position index, position schema,
+- Without paths: every snippet, position index, position schema,
   companion and third-party doc under the repository's `docs/`.
 - With paths: only the named files, plus the cross-snippet checks those files
   take part in.
@@ -44,7 +44,7 @@ check documentation before committing, and it changes nothing.
 | Schema | a `schema.yaml` finding as `project/instrukt/spec/feature/docs/snippet-schema` lists |
 | Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
 | Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
-| Directives | an `@exec` directive in a snippet, fragment or master; a `@config` directive with a `runtime.*` path in an `AGENTS.master.md` or in a snippet rendered into an agent file — reached through an `index.yaml`'s `expanded` closure or `agents` |
+| Directives | an `@exec` or `@include` directive in a snippet, companion, third-party doc or master, naming its command or path; a `@config` directive with a `runtime.*` path in an `AGENTS.master.md` or in a snippet rendered into an agent file — reached through an `index.yaml`'s `expanded` closure or `agents` |
 
 A todo slug is checked for form only. Whether it names an existing todo is
 checked as well when the `todos` module is on, by asking that module.

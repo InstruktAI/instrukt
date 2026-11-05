@@ -1,5 +1,5 @@
 //! The parsed documentation of one repository: snippets with their
-//! pending material, baseline manifests, fragments and third-party docs.
+//! pending material, baseline manifests and third-party docs.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::_finding::FindingCode;
 use super::_frontmatter::{Frontmatter, parse_mapping};
 use super::_identity::{
-    BaselineOwner, Classification, DocDomain, FRAGMENT_ROOT, Placement, Scope, Taxonomy, Unplaced,
+    BaselineOwner, Classification, DocDomain, Placement, Scope, Taxonomy, Unplaced,
     companion_shape, place,
 };
 use super::_markers::{self, Scan, Side};
@@ -89,8 +89,8 @@ impl Version {
         &self.required_reads
     }
 
-    /// The `@include`, `@config` and leftover `@exec` directives of `body()`, with their spans
-    /// in it.
+    /// The `@config` directives and the leftover `@include` and `@exec`
+    /// ones of `body()`, with their spans in it.
     pub fn directives(&self) -> &[Directive] {
         &self.directives
     }
@@ -492,7 +492,6 @@ pub struct Corpus {
     snippets: Vec<Snippet>,
     by_id: HashMap<SnippetId, usize>,
     baselines: Vec<BaselineManifest>,
-    fragments: BTreeMap<String, String>,
     third_party: Vec<ThirdPartyDoc>,
     owned_domains: BTreeSet<DomainName>,
     paths: BTreeSet<String>,
@@ -528,7 +527,6 @@ impl Corpus {
             snippets: Vec::new(),
             by_id: HashMap::new(),
             baselines: Vec::new(),
-            fragments: BTreeMap::new(),
             third_party: Vec::new(),
             owned_domains: BTreeSet::new(),
             paths: files.keys().cloned().collect(),
@@ -586,10 +584,6 @@ impl Corpus {
                     path: PathBuf::from(path),
                     lines,
                 });
-            }
-            Some(Placement::Fragment(name)) => {
-                let body = _text::split_frontmatter(text).body.to_owned();
-                self.fragments.insert(name, body);
             }
             Some(Placement::ThirdParty(id)) => {
                 let version = Version::parse(path, text, None, self.project.as_ref(), &user_home);
@@ -668,28 +662,10 @@ impl Corpus {
         &self.third_party
     }
 
-    /// The body of the fragment an `@include` path
-    /// (`docs/snippets/<name>.md`) names, from this repository's
-    /// `docs/global/snippets/`.
-    pub fn fragment(&self, include_path: &str) -> Option<&str> {
-        let name = include_path
-            .strip_prefix("docs/snippets/")?
-            .strip_suffix(".md")?;
-        self.fragments.get(name).map(String::as_str)
-    }
-
     /// The domains this repository publishes: `general` when it holds
     /// `docs/general/`, and each `<x>` of a `docs/domain/<x>/` it holds.
     pub fn published_domains(&self) -> &BTreeSet<DomainName> {
         &self.owned_domains
-    }
-
-    /// Every fragment as its repository path (`docs/global/snippets/…`)
-    /// and body.
-    pub(super) fn fragment_files(&self) -> impl Iterator<Item = (String, &str)> {
-        self.fragments
-            .iter()
-            .map(|(name, body)| (format!("{FRAGMENT_ROOT}{name}.md"), body.as_str()))
     }
 
     pub(super) fn strays(&self) -> &[Stray] {
@@ -960,13 +936,6 @@ mod tests {
                 Some(RefTarget::Bundle(DomainName::parse("sdlc").unwrap())),
             ]
         );
-    }
-
-    #[test]
-    fn fragments_are_found_by_their_include_path() {
-        let c = corpus(&[("docs/global/snippets/step.md", "shared text\n")]);
-        assert!(c.fragment("docs/snippets/step.md").is_some());
-        assert_eq!(c.fragment("docs/snippets/none.md"), None);
     }
 
     #[cfg(unix)]

@@ -343,13 +343,12 @@ pub(super) fn references(lines: &[Line<'_>]) -> Vec<RawRef> {
     out
 }
 
-/// A directive in a body: an `@include` of a fragment, a `@config`
-/// configured value, or a leftover `@exec`, which the format does not have:
-/// it is read only so validation can report it, and is never run.
+/// A directive in a body: a `@config` configured value, or a leftover
+/// `@include` or `@exec`, which the format does not have: those are read
+/// only so validation can report them, and are never expanded or run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
-    /// `<!-- @include: <path> -->` — the fragment path as written
-    /// (`docs/snippets/<name>.md`).
+    /// `<!-- @include: <path> -->` — not a directive of the format; inert.
     Include { path: String, span: Range<usize> },
     /// `<!-- @config: <path> -->` — the configuration path as written.
     Config { path: String, span: Range<usize> },

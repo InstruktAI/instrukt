@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
+assertion_line: 439
 expression: "stdout(&env, &closure)"
 ---
 # instrukt docs get --closure: acme/procedure/start
@@ -18,10 +19,6 @@ source: [TMP]/demo/docs/domain/acme/policy/rules.md
 ## Rules
 
 Follow the rules.
-
-Shared text.
-
-<!-- @include: docs/snippets/missing.md -->
 
 A reference is written `@docs/project/design/y.md`, for example:
 

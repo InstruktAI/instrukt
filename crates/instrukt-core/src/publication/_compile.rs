@@ -1,7 +1,6 @@
 //! Compilation: a bundle, a master or a global agent entrypoint expanded
 //! into one self-contained text. Required reads are inlined ahead of the
-//! text that requires them, each once; include fragments are expanded and
-//! `@config` values resolved by the docs read pipeline with no runtime
+//! text that requires them, each once; `@config` values are resolved by the docs read pipeline with no runtime
 //! session; planned material is dropped and pending snippets are never
 //! inlined. A text left with an `@` reference fails compilation.
 
@@ -11,8 +10,8 @@ use std::path::Path;
 use super::_tree::BUNDLE_FILE;
 use super::PublicationError;
 use crate::docs::{
-    self, BaselineOwner, Corpus, Fragments, Lens, Position, RefTarget, Reference, RenderContext,
-    Rendered, SourceFile, Values, View,
+    self, BaselineOwner, Corpus, Lens, Position, RefTarget, Reference, RenderContext, Rendered,
+    SourceFile, Values, View,
 };
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
@@ -72,7 +71,7 @@ impl<'a> Compiler<'a> {
 
     fn project_context(&self) -> RenderContext<'_> {
         RenderContext {
-            fragments: Fragments::CorpusFirst(self.corpus),
+            home: self.home,
             values: self.values,
             project: Some(self.project),
         }
@@ -80,7 +79,7 @@ impl<'a> Compiler<'a> {
 
     fn home_context(&self) -> RenderContext<'_> {
         RenderContext {
-            fragments: Fragments::Home(self.home),
+            home: self.home,
             values: self.values,
             project: None,
         }

@@ -1,24 +1,24 @@
 //! The directive checks of validation: the format has no directive that
-//! runs a command, and what publication compiles has no runtime session
-//! (`project/instrukt/spec/feature/docs/snippet-validation`,
+//! runs a command or includes a file, and what publication compiles has no
+//! runtime session (`project/instrukt/spec/feature/docs/snippet-validation`,
 //! Directives).
 //!
-//! - An `@exec` directive in a snippet, a companion, a fragment, a
+//! - An `@exec` or `@include` directive in a snippet, a companion, a
 //!   third-party doc or a master is a finding.
 //! - A `@config` directive with a `runtime.*` path is a finding in every
 //!   file compiled into a bundle, an `AGENTS.md` or a global entrypoint: the
-//!   masters and the global agent files, the snippets the published
+//!   masters and the global agent files, and the snippets the published
 //!   domains' baselines and the masters require (transitively, as
-//!   compilation reads them), and the fragments those include.
+//!   compilation reads them).
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::_corpus::{Corpus, Lens, Stray, Version, View};
 use super::_finding::{Finding, FindingCode};
 use super::_identity::BaselineOwner;
 use super::_refs::{RefTarget, Reference};
-use super::_render::{self, Fragments, RenderContext, Values, is_runtime};
+use super::_render::{self, RenderContext, Values, is_runtime};
 use super::_text::{self, Directive};
 use super::DocsError;
 use crate::git;
@@ -37,10 +37,10 @@ pub(super) fn check(
     out: &mut Vec<Finding>,
 ) -> Result<(), DocsError> {
     for snippet in corpus.snippets() {
-        exec_in(snippet.current().path(), snippet.current().body(), out);
+        unsupported_in(snippet.current().path(), snippet.current().body(), out);
         for companion in snippet.companions() {
             if let Some(next) = companion.next() {
-                exec_in(next.path(), next.body(), out);
+                unsupported_in(next.path(), next.body(), out);
             }
         }
     }
@@ -50,18 +50,15 @@ pub(super) fn check(
             ..
         } = stray
         {
-            exec_in(version.path(), version.body(), out);
+            unsupported_in(version.path(), version.body(), out);
         }
     }
     for doc in corpus.third_party() {
-        exec_in(doc.path(), doc.body(), out);
-    }
-    for (path, body) in corpus.fragment_files() {
-        exec_in(Path::new(&path), body, out);
+        unsupported_in(doc.path(), doc.body(), out);
     }
 
     let cx = RenderContext {
-        fragments: Fragments::CorpusFirst(corpus),
+        home: corpus.home(),
         values,
         project: corpus.project(),
     };
@@ -73,7 +70,7 @@ pub(super) fn check(
     };
     for (rel, text) in compiled_sources(repo_root)? {
         let body = _text::split_frontmatter(&text).body.to_owned();
-        exec_in(Path::new(&rel), &body, walk.out);
+        unsupported_in(Path::new(&rel), &body, walk.out);
         walk.file(Path::new(&rel), &body)?;
     }
     let owned = corpus.published_domains();
@@ -89,16 +86,16 @@ pub(super) fn check(
     Ok(())
 }
 
-/// An `@exec` finding for each such directive in `body`.
-fn exec_in(path: &Path, body: &str, out: &mut Vec<Finding>) {
+/// A finding for each `@exec` and `@include` directive in `body`, naming
+/// its command or path as written.
+fn unsupported_in(path: &Path, body: &str, out: &mut Vec<Finding>) {
     for directive in _text::directives(&_text::lines(body)) {
-        if let Directive::Exec { command, .. } = directive {
-            out.push(Finding::new(
-                path,
-                FindingCode::DirectiveExec,
-                Some(command),
-            ));
-        }
+        let (code, value) = match directive {
+            Directive::Exec { command, .. } => (FindingCode::DirectiveExec, command),
+            Directive::Include { path: include, .. } => (FindingCode::DirectiveInclude, include),
+            Directive::Config { .. } => continue,
+        };
+        out.push(Finding::new(path, code, Some(value)));
     }
 }
 
@@ -111,18 +108,9 @@ struct Compiled<'w, 'c> {
 }
 
 impl Compiled<'_, '_> {
-    /// Checks one compiled file, its fragments, and then what it requires.
+    /// Checks one compiled file, and then what it requires.
     fn file(&mut self, path: &Path, body: &str) -> Result<(), DocsError> {
-        let lensed = current(body);
-        self.runtime_in(path, &lensed);
-        for directive in _text::directives(&_text::lines(&lensed)) {
-            if let Directive::Include { path: include, .. } = directive
-                && let Some(fragment) = self.corpus.fragment(&include)
-            {
-                let fragment_path = include.replacen("docs/snippets/", "docs/global/snippets/", 1);
-                self.runtime_in(&PathBuf::from(fragment_path), &current(fragment));
-            }
-        }
+        self.runtime_in(path, &current(body));
         for read in _render::dependency_reads(body, Lens::Current, self.cx)? {
             self.reference(&read)?;
         }

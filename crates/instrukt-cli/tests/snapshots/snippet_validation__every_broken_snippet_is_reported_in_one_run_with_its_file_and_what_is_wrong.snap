@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/snippet-validation.rs
+assertion_line: 332
 expression: run.out
 ---
 AGENTS.master.md: directive-exec: touch ran
@@ -28,7 +29,6 @@ docs/domain/acme/procedure/both.md: frontmatter-parameters-without-role
 docs/domain/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
 docs/domain/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
 docs/domain/loose.md: identity-missing-domain: loose
-docs/global/snippets/runs.md: directive-exec: touch ran
 docs/project/adr/0001-choice.md: frontmatter-adr-date-invalid
 docs/project/adr/0001-choice.md: frontmatter-adr-number-invalid
 docs/project/adr/0002-pending.later.md: pending-carrier-on-adr: companion

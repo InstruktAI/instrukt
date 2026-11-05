@@ -34,8 +34,7 @@ const TERMS: &str = "- acme/concept/terms";
 const BETA: &str = "- beta";
 
 /// What project `demo` documents: three domains (`acme` and `beta` with an
-/// index, `gamma` without), fragments (one carrying a required read), a
-/// third-party doc and two local snippets.
+/// index, `gamma` without), a third-party doc and two local snippets.
 fn demo_files() -> Vec<(&'static str, String)> {
     vec![
         (
@@ -50,8 +49,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "The rules of the work.",
                 "",
                 &[CARE],
-                "Follow the rules.\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-                 <!-- @include: docs/snippets/missing.md -->\n\n\
+                "Follow the rules.\n\n\
                  A reference is written `@docs/project/design/y.md`, for example:\n\n\
                  ```\n- @~/.instrukt/docs/acme/principle/care.md\n```\n",
             ),
@@ -85,7 +83,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "Start",
                 "Starts a session.",
                 "role: starter\n",
-                &[RULES, "<!-- @include: docs/snippets/reads.md -->", BETA],
+                &[RULES, TERMS, BETA],
                 "Start.\n",
             ),
         ),
@@ -125,11 +123,6 @@ fn demo_files() -> Vec<(&'static str, String)> {
             "docs/domain/gamma/concept/loose.md",
             snippet("concept", "Loose", "Not on any map.", "", &[], "Loose.\n"),
         ),
-        (
-            "docs/global/snippets/shared.md",
-            "Shared text.\n".to_owned(),
-        ),
-        ("docs/global/snippets/reads.md", format!("{TERMS}\n")),
         (
             "docs/third-party/tool/guide.md",
             "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n".to_owned(),
@@ -186,8 +179,7 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
     insta::assert_snapshot!("procedure-with-reads-not-loaded", stdout(&env, &read));
 
     // A required read that was asked for is loaded, not listed; the
-    // fragment, the missing fragment's directive and the stripped section
-    // show the read pipeline.
+    // stripped section shows the read pipeline.
     let both = env
         .run(
             demo.path(),
@@ -195,12 +187,6 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
         )
         .success();
     insta::assert_snapshot!("policy-with-its-read", stdout(&env, &both));
-
-    // A required read a fragment carries is named like any other.
-    let start = env
-        .run(demo.path(), ["docs", "get", "acme/procedure/start"])
-        .success();
-    insta::assert_snapshot!("fragment-required-read-not-loaded", stdout(&env, &start));
 }
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
@@ -391,9 +377,9 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
 }
 
 /// Procedures with root frontmatter whose closures must refuse: one
-/// requires a pending snippet, one requires through a fragment a pending
-/// snippet, one requires through a fragment what is not published; and an
-/// overview requiring a pending snippet, whose closure leaves it out.
+/// requires a pending snippet, one requires what another project stops
+/// publishing ([`ABSENT`]); and an overview requiring a pending snippet,
+/// whose closure leaves it out.
 fn refused_files() -> Vec<(&'static str, String)> {
     vec![
         (
@@ -408,24 +394,13 @@ fn refused_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/domain/acme/procedure/blocked-through-fragment.md",
-            snippet(
-                "procedure",
-                "Blocked through fragment",
-                "Cannot start yet either.",
-                "role: blocked-too\n",
-                &["<!-- @include: docs/snippets/coming.md -->"],
-                "Wait.\n",
-            ),
-        ),
-        (
             "docs/domain/acme/procedure/broken.md",
             snippet(
                 "procedure",
                 "Broken",
                 "Requires what is not published.",
                 "activation_trigger: When broken.\n",
-                &["<!-- @include: docs/snippets/absent.md -->"],
+                &["- elsewhere/spec/absent"],
                 "No.\n",
             ),
         ),
@@ -451,23 +426,23 @@ fn refused_files() -> Vec<(&'static str, String)> {
                 "Overview.\n",
             ),
         ),
-        (
-            "docs/global/snippets/coming.md",
-            "- acme/spec/coming\n".to_owned(),
-        ),
-        (
-            "docs/global/snippets/absent.md",
-            "- acme/spec/absent\n".to_owned(),
-        ),
     ]
 }
+
+/// The home file of a snippet another project publishes when `demo`
+/// syncs, and no longer publishes when `demo`'s closures are read.
+const ABSENT: &str = "docs/elsewhere/spec/absent.md";
 
 /// Project `demo` with the procedures closures read and refuse, published.
 fn published_closures(env: &TestEnv) -> Repo {
     let mut files = demo_files();
     files.extend(refused_files());
+    let absent = env.instrukt_home().join(ABSENT);
+    std::fs::create_dir_all(absent.parent().unwrap()).unwrap();
+    std::fs::write(&absent, "published elsewhere\n").unwrap();
     let demo = project(env, "demo", &files);
     sync(env, &demo);
+    std::fs::remove_file(&absent).unwrap();
     demo
 }
 
@@ -487,9 +462,9 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     let env = TestEnv::new();
     let demo = published_closures(&env);
 
-    // `start` requires `rules`, through a fragment `terms`, and domain
-    // `beta`; both snippets require `care`, which the closure holds once,
-    // and `beta` brings its expanded `thing`.
+    // `start` requires `rules`, `terms` and domain `beta`; both snippets
+    // require `care`, which the closure holds once, and `beta` brings its
+    // expanded `thing`.
     let closure = env
         .run(
             demo.path(),
@@ -507,17 +482,6 @@ fn a_closure_whose_required_read_is_pending_is_refused_naming_it() {
     insta::assert_snapshot!(
         "closure-refused-pending",
         refused_closure(&env, &demo, "acme/procedure/blocked")
-    );
-}
-
-// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
-#[test]
-fn a_closure_whose_fragment_requires_a_pending_read_is_refused_naming_it() {
-    let env = TestEnv::new();
-    let demo = published_closures(&env);
-    insta::assert_snapshot!(
-        "closure-refused-pending-through-fragment",
-        refused_closure(&env, &demo, "acme/procedure/blocked-through-fragment")
     );
 }
 

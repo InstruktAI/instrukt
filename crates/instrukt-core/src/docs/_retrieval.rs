@@ -18,7 +18,7 @@ use super::_corpus::{Corpus, Lens, Snippet, SourceFile, View};
 use super::_identity::{Scope, Taxonomy, companion_shape, published_source};
 use super::_position::{GENERAL, INDEX_FILE, Position, PositionIndex};
 use super::_refs::{RefTarget, Reference};
-use super::_render::{self, Fragments, RenderContext, Values, read_confined};
+use super::_render::{self, RenderContext, Values, read_confined};
 use super::_selection::{InFull, Listing, Selection};
 use super::DocsError;
 use crate::config::Configuration;
@@ -790,7 +790,7 @@ impl<'i> Reader<'i> {
 
     /// The required reads of the version the lens reads.
     /// Exactly what rendering it reports ([`super::Rendered::required_reads`]),
-    /// fragments included, without resolving its configured values.
+    /// without resolving its configured values.
     fn reads_of(&self, loaded: &Loaded<'_>) -> Result<Vec<Reference>, DocsError> {
         let View::Visible { version, .. } = loaded.snippet.view(self.lens) else {
             return Ok(Vec::new());
@@ -989,7 +989,7 @@ impl<'i> Reader<'i> {
 
     fn context<'c>(&'c self, loaded: &'c Loaded<'_>) -> RenderContext<'c> {
         RenderContext {
-            fragments: Fragments::Home(self.home),
+            home: self.home,
             values: &self.values,
             project: loaded.project(),
         }
@@ -1075,7 +1075,7 @@ impl<'i> Reader<'i> {
             }
         })?;
         let cx = RenderContext {
-            fragments: Fragments::Home(self.home),
+            home: self.home,
             values: &self.values,
             project: None,
         };

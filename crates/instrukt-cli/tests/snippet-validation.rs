@@ -75,8 +75,7 @@ fn project(env: &TestEnv) -> Repo {
 
 /// A documentation tree that keeps the whole contract: a domain and the
 /// project, required reads of every valid form (an id, a bare domain), a
-/// domain index, a baseline, a fragment, a third-party doc and every
-/// pending carrier.
+/// domain index, a baseline, a third-party doc and every pending carrier.
 fn valid_tree(repo: &Repo) {
     repo.write(
         "docs/domain/acme/principle/care.md",
@@ -101,7 +100,7 @@ fn valid_tree(repo: &Repo) {
             "role: worker\nactivation_trigger: When work arrives.\n\
                  parameters:\n  - name: slug\n    required: true\n\
                  dispatch:\n  agent: [claude]\n  thinking_mode: med\n",
-            "\n<!-- @include: docs/snippets/shared.md -->\n",
+            "",
         ),
     )
     .write(
@@ -121,7 +120,6 @@ fn valid_tree(repo: &Repo) {
         "description: The acme way of working.\nexpanded: [acme/policy/rules]\n\
              listed: [acme/procedure/listen]\n",
     )
-    .write("docs/global/snippets/shared.md", "Shared text.\n")
     .write(
         "docs/project/spec/feature/thing.md",
         &snippet(
@@ -216,6 +214,25 @@ fn a_snippet_without_a_description_is_reported_not_left_out() {
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("description_missing", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
+#[test]
+fn an_include_directive_is_reported_naming_what_it_includes() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/acme/concept/shared.md",
+        &snippet(
+            "concept",
+            "",
+            "\n<!-- @include: docs/snippets/step.md -->\n",
+        ),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("include_directive", run.out);
 }
 
 // spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -322,7 +339,6 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             "docs/domain/acme/concept/runs.md",
             &snippet("concept", "", "\n<!-- @exec: touch ran -->\n"),
         )
-        .write("docs/global/snippets/runs.md", "<!-- @exec: touch ran -->\n")
         .write(
             "docs/domain/acme/principle/session.md",
             &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),

@@ -22,6 +22,7 @@ dispatch:
 - @~/.instrukt/docs/general/procedure/doc-snippet-authoring.md
 - @~/.instrukt/docs/general/procedure/scratchpad-workspace.md
 - @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
+- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
 
 ## Goal
 
@@ -35,8 +36,6 @@ express.
 - The topic is supplied as the argument, or is asked for.
 
 ## Steps
-
-<!-- @include: docs/snippets/step-role-read.md -->
 
 1. If a topic was given as the argument, start there; otherwise ask the human
    what area to document.

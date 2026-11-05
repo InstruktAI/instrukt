@@ -21,8 +21,7 @@
 //!   position carries at its root: its [`PositionIndex`] (`index.yaml`)
 //!   and its [`PositionSchema`] (`schema.yaml`), parsed with the keys
 //!   each position allows;
-//! - [`BaselineManifest`]s, [`ThirdPartyDoc`]s, fragments
-//!   ([`Corpus::fragment`]) and whether a reference resolves
+//! - [`BaselineManifest`]s, [`ThirdPartyDoc`]s and whether a reference resolves
 //!   ([`Corpus::resolves`]).
 //!
 //! Rendering — the read pipeline's text steps, shared by `docs get` and by
@@ -37,7 +36,7 @@
 //!     -> Result<Rendered, DocsError>;
 //!
 //! pub struct RenderContext<'a> {
-//!     pub fragments: Fragments<'a>,    // Home(&Home) | CorpusFirst(&Corpus)
+//!     pub home: &'a Home,              // expands `~/` references
 //!     pub values: &'a Values<'a>,      // Values::read(&configuration)
 //!                                      // | Values::publish(&configuration)
 //!     pub project: Option<&'a ProjectSlug>,
@@ -49,19 +48,16 @@
 //! }
 //! ```
 //!
-//! A rendering strips frontmatter, expands `@include` fragments (a missing
-//! one leaves its directive), resolves planned blocks for the lens, replaces
-//! each visible `@config` directive by its configured value and strips the
-//! `Required reads` section, returning its entries. References are ids
-//! and stay as written. It runs no command: a leftover
-//! `@exec` stays exactly as written. The pending gate and the companion are
+//! A rendering strips frontmatter, resolves planned blocks for the lens,
+//! replaces each visible `@config` directive by its configured value and
+//! strips the `Required reads` section, returning its entries. References
+//! are ids and stay as written. It runs no command and includes nothing: a
+//! leftover `@exec` or `@include` stays exactly as written. The pending gate and the companion are
 //! [`Snippet::view`]: render the version a `View::Visible` names.
 //! [`Values::read`] resolves in the reader's session and turns a refusal
 //! into an inline notice listed in [`Rendered::config_refusals`];
 //! [`Values::publish`] resolves with no runtime session and fails the
-//! rendering ([`DocsError::ConfigUnresolved`]). [`Fragments::Home`] reads
-//! the home's published fragments; [`Fragments::CorpusFirst`] reads the
-//! corpus's own `docs/global/snippets/` first, then the home's.
+//! rendering ([`DocsError::ConfigUnresolved`]).
 //!
 //! Retrieval reads what publication wrote into the home: [`index`] lists
 //! the global index's entries for an [`IndexRequest`], [`get`] reads the
@@ -106,8 +102,8 @@ pub use _frontmatter::{
     Dispatch, EventDelivery, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
 };
 pub use _identity::{
-    BaselineOwner, DocDomain, FRAGMENT_ROOT, Scope, Taxonomy, published_destination,
-    published_origin, published_source,
+    BaselineOwner, DocDomain, Scope, Taxonomy, published_destination, published_origin,
+    published_source,
 };
 pub use _position::{
     AgentCli, DomainIndex, FolderSections, GENERAL, GeneralIndex, INDEX_FILE, Position,
@@ -115,7 +111,7 @@ pub use _position::{
     is_reserved_domain_folder,
 };
 pub use _refs::{RefTarget, Reference};
-pub use _render::{ConfigRefusal, Fragments, RenderContext, Rendered, Values, render};
+pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
 pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_domain, index};
 pub use _selection::{InFull, Listing, Selection, closure_command, demote_headings, heading};
 pub use _text::Directive;

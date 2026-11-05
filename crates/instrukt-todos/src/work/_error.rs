@@ -34,8 +34,9 @@ pub enum WorkError {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[error("the work record at {} is not readable: {message}", path.display())]
-    Corrupt { path: PathBuf, message: String },
+    /// The state database could not be opened, read or written.
+    #[error(transparent)]
+    StateDb(#[from] instrukt_core::state_db::StateDbError),
     /// The project's documentation could not be read for grounding.
     #[error(transparent)]
     Docs(#[from] instrukt_core::docs::DocsError),

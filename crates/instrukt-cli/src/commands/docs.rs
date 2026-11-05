@@ -47,12 +47,12 @@ enum DocsCommand {
     /// Read snippets through the read pipeline (phase 2).
     ///
     /// Prints each snippet's header (naming its source file) and body, with
-    /// fragments included and configured values resolved for this session.
-    /// Names the required reads it did not load; `--closure` loads them
-    /// with one snippet instead. `--domain <x>` reads what a domain shows:
-    /// its index's snippets in full with their closures, its listed
-    /// snippets and its triggered procedures. Exits non-zero when an id or
-    /// domain is unknown or a configured value cannot be resolved.
+    /// configured values resolved for this session. Names the required
+    /// reads it did not load; `--closure` loads them with one snippet
+    /// instead. `--domain <x>` reads what a domain shows: its index's
+    /// snippets in full with their closures, its listed snippets and its
+    /// triggered procedures. Exits non-zero when an id or domain is unknown
+    /// or a configured value cannot be resolved.
     Get(GetArgs),
 }
 

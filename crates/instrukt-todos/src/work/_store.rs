@@ -1,252 +1,984 @@
-//! The local work record in `~/.instrukt/state/work/`: one file per todo
-//! of a project, written whole and atomically, under the per-computer
-//! writer lock that also serializes reflection (`github-record`, "Writer
-//! and convergence").
+//! The local work record in the state database's work tables
+//! (`state-database`, "Work tables"): each local item is one `todos` row
+//! with its prerequisites, artifacts and versions, stamps, holds, session
+//! bindings, reflection state and answered inbound commands. Every write
+//! runs under the per-computer writer lock the store holds for as long as
+//! it is open, and one accepted change commits in one transaction.
 
-use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use instrukt_core::fsx::{self, LockGuard};
 use instrukt_core::home::Home;
-use instrukt_core::ids::ProjectSlug;
+use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug};
+use instrukt_core::machine::MachineId;
+use instrukt_core::state_db::rusqlite::{self, Connection, OptionalExtension, Transaction, params};
+use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+use instrukt_runner::interfaces::{AgentPreference, CatchUp, TaskSchedule, Thinking, TodoKind};
 use jiff::Timestamp;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::_error::WorkError;
-use super::_model::{TodoId, TodoRecord};
-
-/// How long a command waits for another instrukt process holding the
-/// writer lock.
-const LOCK_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// The writer lock's file, below `state/work/`.
-const LOCK_FILE: &str = ".writer.lock";
-
-/// A project's reflection bookkeeping file, below its directory.
-const PROVIDER_FILE: &str = "provider.json";
+use super::_model::{
+    Artifact, Binding, Claim, Delivery, ReleasedBranch, ReleasedHold, Removal, SCHEMA, TodoId,
+    TodoRecord, TodoRef, Version,
+};
+use crate::evidence::{
+    Actor, ArtifactName, ContentDigest, HoldRecord, HoldSource, ModelIdentity, ModelProvenance,
+    StampFact, StampRecord, TodoStatus,
+};
 
 /// A local item: the record and what this computer knows of its GitHub
 /// reflection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LocalItem {
     pub record: TodoRecord,
-    #[serde(default)]
     pub reflection: ReflectionState,
 }
 
 /// What this computer knows of one item's reflection.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ReflectionState {
     /// The issue's number and REST id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<IssueRef>,
     /// The comment carrying the committed revision this computer last
     /// wrote or read: the head of the issue's revision chain then.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_comment: Option<u64>,
     /// The issue's `ETag` at the last read, for conditional pulls: a new
     /// revision comment moves it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
     /// The confirmed remote revision: the record revision GitHub holds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_revision: Option<u64>,
     /// Why the linked pull request's creation, reviews or closing are still
     /// outstanding.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_outstanding: Option<String>,
     /// The issue's item on the project board, once added.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_item: Option<String>,
     /// The board (`<owner>/<number>`) that `board_item` belongs to: an item
     /// id means nothing on another board. A membership recorded without
     /// it is owed again.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board: Option<String>,
     /// The `Record status` the board item was last set to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_status: Option<String>,
     /// Why board reflection is still owed; retried on its own.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_failure: Option<String>,
     /// Comment ids of inbound `/instrukt` commands already answered.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands_seen: Vec<u64>,
     /// `/instrukt` command comments the last pull found and no command has
     /// answered yet; never stored.
-    #[serde(skip)]
     pub inbound: Vec<serde_json::Value>,
     /// Local changes not yet reflected.
-    #[serde(default)]
     pub pending: bool,
     /// A newer remote revision met a pending local change.
-    #[serde(default)]
     pub conflicted: bool,
     /// The linked pull request's number.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull: Option<u64>,
     /// How many build-review verdicts the pull request carries.
-    #[serde(default)]
     pub reviews_reflected: usize,
     /// Whether delivery closed the pull request.
-    #[serde(default)]
     pub pull_closed: bool,
     /// The last reflection failure that left the item pending.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IssueRef {
     pub number: u64,
     pub id: u64,
 }
 
 /// A project's provider bookkeeping.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ProviderState {
     /// GitHub deferred requests until then (rate limiting).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_until: Option<Timestamp>,
 }
 
-/// The writer lock, held for a whole command or runner call.
-pub(crate) fn lock(home: &Home) -> Result<LockGuard, WorkError> {
-    let dir = home.work_state_dir();
-    refuse_links(home, &dir)?;
-    LockGuard::acquire(&dir.join(LOCK_FILE), LOCK_TIMEOUT).map_err(WorkError::from)
-}
-
-/// One project's directory of local items.
+/// One project's local items, open for writing: the writer lock is held
+/// while the store lives.
 pub(crate) struct Store {
-    dir: PathBuf,
+    db: StateDb,
+    project: ProjectSlug,
 }
 
 impl Store {
-    /// The project's store; checks that no part of its path inside the
-    /// home is a symbolic link.
+    /// Takes the writer lock and opens the state database for `project`.
     pub fn open(home: &Home, project: &ProjectSlug) -> Result<Self, WorkError> {
-        let dir = home.work_state_dir().join(project.as_str());
-        refuse_links(home, &dir)?;
-        Ok(Self { dir })
+        Ok(Self {
+            db: StateDb::open(home)?,
+            project: project.clone(),
+        })
     }
 
-    /// Every local item, in identity order. A missing directory is an
-    /// empty store.
+    pub fn path(&self) -> &Path {
+        self.db.path()
+    }
+
+    /// Every local item of the project, in identity order.
     pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
-        let entries = match std::fs::read_dir(&self.dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(source) => return Err(io_error(&self.dir, source)),
-        };
-        let mut paths = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|source| io_error(&self.dir, source))?;
-            let path = entry.path();
-            let is_item = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.strip_suffix(".json"))
-                .is_some_and(|stem| TodoId::parse(stem).is_some());
-            if is_item {
-                paths.push(path);
-            }
-        }
-        paths.sort();
-        paths.iter().map(|path| read_item(path)).collect()
+        load_items(self.db.conn(), self.db.path(), &self.project)
     }
 
-    pub fn save(&self, item: &LocalItem) -> Result<(), WorkError> {
-        let path = self.item_path(&item.record.id);
-        refuse_link(&path)?;
-        let text = serde_json::to_vec_pretty(item).map_err(|source| WorkError::Corrupt {
-            path: path.clone(),
-            message: source.to_string(),
-        })?;
-        fsx::atomic_write(&path, &text).map_err(WorkError::from)
+    /// Writes `item` in a transaction of its own.
+    pub fn save(&mut self, item: &LocalItem) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        self.db.write(|tx| save_in(tx, &path, item))
     }
 
-    pub fn delete(&self, id: &TodoId) -> Result<(), WorkError> {
-        let path = self.item_path(id);
-        refuse_link(&path)?;
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(io_error(&path, source)),
-        }
+    /// Removes `id` and every row that belongs to it.
+    pub fn delete(&mut self, id: &TodoId) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        self.db.write(|tx| delete_in(tx, &path, id))
+    }
+
+    /// Begins one transaction for a change spanning several records.
+    pub fn transaction(&mut self) -> Result<Transaction<'_>, WorkError> {
+        Ok(self.db.transaction()?)
     }
 
     pub fn provider(&self) -> Result<ProviderState, WorkError> {
-        let path = self.dir.join(PROVIDER_FILE);
-        refuse_link(&path)?;
-        match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|source| WorkError::Corrupt {
-                path,
-                message: source.to_string(),
-            }),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(ProviderState::default()),
-            Err(source) => Err(io_error(&path, source)),
-        }
+        let path = self.db.path();
+        let until: Option<String> = self
+            .db
+            .conn()
+            .query_row(
+                "SELECT until FROM provider_deferrals WHERE project = ?1",
+                params![self.project.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(path))?;
+        Ok(ProviderState {
+            deferred_until: until.map(|text| time(path, &text)).transpose()?,
+        })
     }
 
-    pub fn save_provider(&self, state: &ProviderState) -> Result<(), WorkError> {
-        let path = self.dir.join(PROVIDER_FILE);
-        refuse_link(&path)?;
-        let text = serde_json::to_vec_pretty(state).map_err(|source| WorkError::Corrupt {
-            path: path.clone(),
-            message: source.to_string(),
-        })?;
-        fsx::atomic_write(&path, &text).map_err(WorkError::from)
-    }
-
-    fn item_path(&self, id: &TodoId) -> PathBuf {
-        self.dir.join(format!("{id}.json"))
+    pub fn save_provider(&mut self, state: &ProviderState) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        let project = self.project.clone();
+        self.db.write(|tx| {
+            let sql = match state.deferred_until {
+                Some(until) => tx.execute(
+                    "INSERT INTO provider_deferrals (project, until) VALUES (?1, ?2)
+                     ON CONFLICT (project) DO UPDATE SET until = excluded.until",
+                    params![project.as_str(), until.to_string()],
+                ),
+                None => tx.execute(
+                    "DELETE FROM provider_deferrals WHERE project = ?1",
+                    params![project.as_str()],
+                ),
+            };
+            sql.map_err(StateDbError::sqlite(&path))?;
+            Ok(())
+        })
     }
 }
 
-fn read_item(path: &Path) -> Result<LocalItem, WorkError> {
-    refuse_link(path)?;
-    let bytes = std::fs::read(path).map_err(|source| io_error(path, source))?;
-    let mut item: LocalItem =
-        serde_json::from_slice(&bytes).map_err(|source| WorkError::Corrupt {
-            path: path.to_path_buf(),
-            message: source.to_string(),
-        })?;
-    item.record.number_unsequenced();
-    Ok(item)
+/// Every local item of `project`, read without the writer lock; no
+/// database yet is no items.
+pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<LocalItem>, WorkError> {
+    match StateRead::open(home)? {
+        Some(read) => load_items(read.conn(), read.path(), project),
+        None => Ok(Vec::new()),
+    }
 }
 
-/// Refuses a symbolic link at `dir` or any of its ancestors inside the
-/// home (the home itself included).
-fn refuse_links(home: &Home, dir: &Path) -> Result<(), WorkError> {
-    let mut current = Some(dir);
-    while let Some(path) = current {
-        refuse_link(path)?;
-        if path == home.root() {
-            break;
-        }
-        current = path
-            .parent()
-            .filter(|parent| parent.starts_with(home.root()));
+/// Writes every row of `item` inside `tx`: the `todos` row first, then the
+/// rows that belong to it. Artifact versions are retained and never
+/// rewritten; only what reflection learns of them changes.
+pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<(), WorkError> {
+    let r = &item.record;
+    let id = r.id.as_str();
+    let sql = StateDbError::sqlite(path);
+    let (agent, thinking) = match &r.agent {
+        Some(pref) => (
+            Some(pref.agent.clone()),
+            pref.thinking.as_ref().map(text_of),
+        ),
+        None => (None, None),
+    };
+    let removal = r
+        .removal
+        .as_ref()
+        .map(|removal| {
+            json_of(&Resources {
+                branch: removal.branch.clone(),
+                worktrees: removal.worktrees.clone(),
+            })
+        })
+        .transpose()?;
+    tx.execute(
+        "INSERT INTO todos (id, project, slug, kind, status, created_at, created_by,
+            human_involved, revision, group_id, group_slug, schedule, catch_up, agent, thinking,
+            claim_machine, claim_session, claim_at, branch, delivered_commit, delivered_at,
+            delivered_by, removed_at, removed_from, removal, sequence)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+         ON CONFLICT (id) DO UPDATE SET project = excluded.project, slug = excluded.slug,
+            kind = excluded.kind, status = excluded.status, created_at = excluded.created_at,
+            created_by = excluded.created_by, human_involved = excluded.human_involved,
+            revision = excluded.revision, group_id = excluded.group_id,
+            group_slug = excluded.group_slug, schedule = excluded.schedule,
+            catch_up = excluded.catch_up, agent = excluded.agent, thinking = excluded.thinking,
+            claim_machine = excluded.claim_machine, claim_session = excluded.claim_session,
+            claim_at = excluded.claim_at, branch = excluded.branch,
+            delivered_commit = excluded.delivered_commit, delivered_at = excluded.delivered_at,
+            delivered_by = excluded.delivered_by, removed_at = excluded.removed_at,
+            removed_from = excluded.removed_from, removal = excluded.removal,
+            sequence = excluded.sequence",
+        params![
+            id,
+            r.project.as_str(),
+            r.slug.as_str(),
+            text_of(&r.kind),
+            text_of(&r.status),
+            r.created.to_string(),
+            actor_text(&r.created_by),
+            r.human_involved,
+            r.revision,
+            r.group.as_ref().map(|g| g.id.as_str()),
+            r.group.as_ref().map(|g| g.slug.as_str()),
+            r.schedule.as_ref().map(schedule_text),
+            text_of(&r.catch_up),
+            agent,
+            thinking,
+            r.claim.as_ref().map(|c| c.machine.to_string()),
+            r.claim
+                .as_ref()
+                .and_then(|c| c.session.as_ref())
+                .map(ToString::to_string),
+            r.claim.as_ref().map(|c| c.at.to_string()),
+            r.branch,
+            r.delivery.as_ref().map(|d| d.commit.as_str()),
+            r.delivery.as_ref().map(|d| d.at.to_string()),
+            r.delivery.as_ref().map(|d| actor_text(&d.by)),
+            r.removal.as_ref().map(|d| d.at.to_string()),
+            r.removal.as_ref().map(|d| text_of(&d.from)),
+            removal,
+            r.sequence,
+        ],
+    )
+    .map_err(&sql)?;
+    for table in [
+        "prerequisites",
+        "stamps",
+        "holds",
+        "session_bindings",
+        "inbound_commands",
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE todo_id = ?1"),
+            params![id],
+        )
+        .map_err(&sql)?;
+    }
+    for prerequisite in &r.after {
+        tx.execute(
+            "INSERT OR IGNORE INTO prerequisites (todo_id, prerequisite_id, slug) VALUES (?1, ?2, ?3)",
+            params![id, prerequisite.id.as_str(), prerequisite.slug.as_str()],
+        )
+        .map_err(&sql)?;
+    }
+    save_artifacts(tx, path, r)?;
+    for stamp in &r.stamps {
+        let (fact, evidence) = split_fact(&stamp.fact)?;
+        tx.execute(
+            "INSERT INTO stamps (todo_id, sequence, fact, at, actor, role, model, model_version,
+                model_provenance, eval_fingerprint, human_involved, evidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                id,
+                stamp.sequence,
+                fact,
+                stamp.at.to_string(),
+                actor_text(&stamp.actor),
+                stamp.role.as_ref().map(RoleName::as_str),
+                stamp.model.as_ref().map(|m| m.model.as_str()),
+                stamp.model.as_ref().map(|m| m.version.as_str()),
+                text_of(&stamp.model_provenance),
+                stamp.eval_fingerprint,
+                stamp.human_involved,
+                evidence,
+            ],
+        )
+        .map_err(&sql)?;
+    }
+    let released = r
+        .hold_history
+        .iter()
+        .map(|h| (&h.hold, Some((h.released, &h.by))));
+    for (hold, release) in released.chain(r.hold.iter().map(|h| (h, None))) {
+        tx.execute(
+            "INSERT INTO holds (todo_id, source, reason, set_by, set_at, released_at, released_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                text_of(&hold.source),
+                hold.reason,
+                actor_text(&hold.by),
+                hold.at.to_string(),
+                release.map(|(at, _)| at.to_string()),
+                release.map(|(_, by)| actor_text(by)),
+            ],
+        )
+        .map_err(&sql)?;
+    }
+    for binding in &r.bindings {
+        tx.execute(
+            "INSERT OR REPLACE INTO session_bindings (todo_id, role, session, worktree)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                binding.role.as_str(),
+                binding.session.to_string(),
+                binding
+                    .worktree
+                    .as_ref()
+                    .map(|w| w.to_string_lossy().into_owned()),
+            ],
+        )
+        .map_err(&sql)?;
+    }
+    let f = &item.reflection;
+    tx.execute(
+        "INSERT OR REPLACE INTO reflections (todo_id, issue_number, remote_revision, pending,
+            conflicted, failure, pull_number, issue_id, record_comment, etag, pull_outstanding,
+            reviews_reflected, pull_closed, board, board_item, board_status, board_failure)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        params![
+            id,
+            f.issue.map(|i| i.number),
+            f.remote_revision,
+            f.pending,
+            f.conflicted,
+            f.failure,
+            f.pull,
+            f.issue.map(|i| i.id),
+            f.record_comment,
+            f.etag,
+            f.pull_outstanding,
+            f.reviews_reflected as u64,
+            f.pull_closed,
+            f.board,
+            f.board_item,
+            f.board_status,
+            f.board_failure,
+        ],
+    )
+    .map_err(&sql)?;
+    for comment in &f.commands_seen {
+        tx.execute(
+            "INSERT OR IGNORE INTO inbound_commands (todo_id, comment_id) VALUES (?1, ?2)",
+            params![id, comment],
+        )
+        .map_err(&sql)?;
     }
     Ok(())
 }
 
-fn refuse_link(path: &Path) -> Result<(), WorkError> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Err(WorkError::Symlink {
-            path: path.to_path_buf(),
+/// Removes `id`'s row; the rows that belong to it go with it.
+pub(crate) fn delete_in(tx: &Connection, path: &Path, id: &TodoId) -> Result<(), WorkError> {
+    tx.execute("DELETE FROM todos WHERE id = ?1", params![id.as_str()])
+        .map_err(StateDbError::sqlite(path))?;
+    Ok(())
+}
+
+fn save_artifacts(tx: &Connection, path: &Path, r: &TodoRecord) -> Result<(), WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let id = r.id.as_str();
+    let names: Vec<&str> = r.artifacts.iter().map(|a| a.name.as_str()).collect();
+    let sequences: Vec<u64> = r
+        .artifacts
+        .iter()
+        .flat_map(|a| a.versions.iter().map(|v| v.sequence))
+        .collect();
+    let kept_names = serde_json::to_string(&names).map_err(|e| invalid(path, e))?;
+    let kept_sequences = serde_json::to_string(&sequences).map_err(|e| invalid(path, e))?;
+    tx.execute(
+        "DELETE FROM artifact_versions WHERE todo_id = ?1
+            AND sequence NOT IN (SELECT value FROM json_each(?2))",
+        params![id, kept_sequences],
+    )
+    .map_err(&sql)?;
+    tx.execute(
+        "DELETE FROM artifacts WHERE todo_id = ?1
+            AND name NOT IN (SELECT value FROM json_each(?2))",
+        params![id, kept_names],
+    )
+    .map_err(&sql)?;
+    for artifact in &r.artifacts {
+        tx.execute(
+            "INSERT INTO artifacts (todo_id, name, address) VALUES (?1, ?2, ?3)
+             ON CONFLICT (todo_id, name) DO UPDATE SET address = excluded.address
+                WHERE address IS NOT excluded.address",
+            params![id, artifact.name.as_str(), artifact.address],
+        )
+        .map_err(&sql)?;
+        for version in &artifact.versions {
+            tx.execute(
+                "INSERT INTO artifact_versions (todo_id, name, sequence, digest, writer,
+                    created_at, content, derived_from, grounding, remote)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT (todo_id, sequence) DO UPDATE SET name = excluded.name,
+                    digest = excluded.digest, writer = excluded.writer,
+                    created_at = excluded.created_at, content = excluded.content,
+                    derived_from = excluded.derived_from, grounding = excluded.grounding,
+                    remote = excluded.remote
+                 WHERE name IS NOT excluded.name OR digest IS NOT excluded.digest
+                    OR remote IS NOT excluded.remote OR content IS NOT excluded.content
+                    OR grounding IS NOT excluded.grounding
+                    OR derived_from IS NOT excluded.derived_from",
+                params![
+                    id,
+                    artifact.name.as_str(),
+                    version.sequence,
+                    version.digest.as_str(),
+                    actor_text(&version.writer),
+                    version.created.to_string(),
+                    version.content,
+                    json_of(&version.derived_from)?,
+                    json_of(&version.grounding)?,
+                    version.remote,
+                ],
+            )
+            .map_err(&sql)?;
+        }
+    }
+    Ok(())
+}
+
+fn load_items(
+    conn: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+) -> Result<Vec<LocalItem>, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut statement = conn
+        .prepare(
+            "SELECT id, project, slug, kind, status, created_at, created_by, human_involved,
+                revision, group_id, group_slug, schedule, catch_up, agent, thinking,
+                claim_machine, claim_session, claim_at, branch, delivered_commit, delivered_at,
+                delivered_by, removed_at, removed_from, removal, sequence
+             FROM todos WHERE project = ?1 ORDER BY id",
+        )
+        .map_err(&sql)?;
+    let rows = statement
+        .query_map(params![project.as_str()], |row| {
+            Ok(TodoRow {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                slug: row.get(2)?,
+                kind: row.get(3)?,
+                status: row.get(4)?,
+                created_at: row.get(5)?,
+                created_by: row.get(6)?,
+                human_involved: row.get(7)?,
+                revision: row.get(8)?,
+                group_id: row.get(9)?,
+                group_slug: row.get(10)?,
+                schedule: row.get(11)?,
+                catch_up: row.get(12)?,
+                agent: row.get(13)?,
+                thinking: row.get(14)?,
+                claim_machine: row.get(15)?,
+                claim_session: row.get(16)?,
+                claim_at: row.get(17)?,
+                branch: row.get(18)?,
+                delivered_commit: row.get(19)?,
+                delivered_at: row.get(20)?,
+                delivered_by: row.get(21)?,
+                removed_at: row.get(22)?,
+                removed_from: row.get(23)?,
+                removal: row.get(24)?,
+                sequence: row.get(25)?,
+            })
+        })
+        .map_err(&sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&sql)?;
+    rows.into_iter()
+        .map(|row| load_item(conn, path, row))
+        .collect()
+}
+
+struct TodoRow {
+    id: String,
+    project: String,
+    slug: String,
+    kind: String,
+    status: String,
+    created_at: String,
+    created_by: String,
+    human_involved: Option<bool>,
+    revision: u64,
+    group_id: Option<String>,
+    group_slug: Option<String>,
+    schedule: Option<String>,
+    catch_up: String,
+    agent: Option<String>,
+    thinking: Option<String>,
+    claim_machine: Option<String>,
+    claim_session: Option<String>,
+    claim_at: Option<String>,
+    branch: Option<String>,
+    delivered_commit: Option<String>,
+    delivered_at: Option<String>,
+    delivered_by: Option<String>,
+    removed_at: Option<String>,
+    removed_from: Option<String>,
+    removal: Option<String>,
+    sequence: u64,
+}
+
+/// The released working resources a withdrawal keeps as evidence, as the
+/// `removal` column holds them.
+#[derive(Serialize, Deserialize)]
+struct Resources {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branch: Option<ReleasedBranch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    worktrees: Vec<PathBuf>,
+}
+
+fn load_item(conn: &Connection, path: &Path, row: TodoRow) -> Result<LocalItem, WorkError> {
+    let id = row.id.clone();
+    let todo_id = TodoId::parse(&row.id).ok_or_else(|| invalid(path, "a todo identity"))?;
+    let group = match (row.group_id, row.group_slug) {
+        (Some(group), Some(slug)) => Some(todo_ref(path, &group, &slug)?),
+        _ => None,
+    };
+    let claim = match (row.claim_machine, row.claim_at) {
+        (Some(machine), Some(at)) => Some(Claim {
+            machine: MachineId::parse(&machine).ok_or_else(|| invalid(path, "a machine id"))?,
+            session: row.claim_session.map(|s| session(path, &s)).transpose()?,
+            at: time(path, &at)?,
         }),
-        Ok(_) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(io_error(path, source)),
+        _ => None,
+    };
+    let delivery = match (row.delivered_commit, row.delivered_at, row.delivered_by) {
+        (Some(commit), Some(at), Some(by)) => Some(Delivery {
+            commit: CommitSha::parse(&commit).map_err(|e| invalid(path, e.to_string()))?,
+            at: time(path, &at)?,
+            by: actor(path, &by)?,
+        }),
+        _ => None,
+    };
+    let removal = match (row.removed_at, row.removed_from) {
+        (Some(at), Some(from)) => {
+            let resources: Resources = match row.removal {
+                Some(text) => parse_json(path, &text)?,
+                None => Resources {
+                    branch: None,
+                    worktrees: Vec::new(),
+                },
+            };
+            Some(Removal {
+                at: time(path, &at)?,
+                from: value_of(path, &from)?,
+                branch: resources.branch,
+                worktrees: resources.worktrees,
+            })
+        }
+        _ => None,
+    };
+    let agent = row
+        .agent
+        .map(|agent| {
+            Ok::<_, WorkError>(AgentPreference {
+                agent,
+                thinking: row
+                    .thinking
+                    .map(|t| value_of::<Thinking>(path, &t))
+                    .transpose()?,
+            })
+        })
+        .transpose()?;
+    let after = query(
+        conn,
+        path,
+        "SELECT prerequisite_id, slug FROM prerequisites WHERE todo_id = ?1 ORDER BY rowid",
+        &id,
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?
+    .into_iter()
+    .map(|(prerequisite, slug)| todo_ref(path, &prerequisite, &slug))
+    .collect::<Result<Vec<_>, _>>()?;
+    let mut record = TodoRecord {
+        schema: SCHEMA,
+        id: todo_id,
+        project: ProjectSlug::parse(&row.project).map_err(|e| invalid(path, e.to_string()))?,
+        slug: TodoSlug::parse(&row.slug).map_err(|e| invalid(path, e.to_string()))?,
+        kind: value_of::<TodoKind>(path, &row.kind)?,
+        status: value_of::<TodoStatus>(path, &row.status)?,
+        created: time(path, &row.created_at)?,
+        created_by: actor(path, &row.created_by)?,
+        human_involved: row.human_involved,
+        revision: row.revision,
+        sequence: row.sequence,
+        artifacts: load_artifacts(conn, path, &id)?,
+        stamps: load_stamps(conn, path, &id)?,
+        claim,
+        bindings: load_bindings(conn, path, &id)?,
+        hold: None,
+        hold_history: Vec::new(),
+        after,
+        group,
+        schedule: row
+            .schedule
+            .map(|s| TaskSchedule::parse(&s).map_err(|e| invalid(path, e.to_string())))
+            .transpose()?,
+        catch_up: value_of::<CatchUp>(path, &row.catch_up)?,
+        agent,
+        branch: row.branch,
+        delivery,
+        removal,
+    };
+    let holds = query(
+        conn,
+        path,
+        "SELECT source, reason, set_by, set_at, released_at, released_by
+         FROM holds WHERE todo_id = ?1 ORDER BY rowid",
+        &id,
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        },
+    )?;
+    for (source, reason, by, at, released_at, released_by) in holds {
+        let hold = HoldRecord {
+            source: value_of::<HoldSource>(path, &source)?,
+            reason,
+            by: actor(path, &by)?,
+            at: time(path, &at)?,
+        };
+        match (released_at, released_by) {
+            (Some(released), Some(by)) => record.hold_history.push(ReleasedHold {
+                hold,
+                released: time(path, &released)?,
+                by: actor(path, &by)?,
+            }),
+            _ => record.hold = Some(hold),
+        }
+    }
+    record.number_unsequenced();
+    let reflection = load_reflection(conn, path, &id)?;
+    Ok(LocalItem { record, reflection })
+}
+
+fn load_artifacts(conn: &Connection, path: &Path, id: &str) -> Result<Vec<Artifact>, WorkError> {
+    let artifacts = query(
+        conn,
+        path,
+        "SELECT name, address FROM artifacts WHERE todo_id = ?1 ORDER BY rowid",
+        id,
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<u64>>(1)?)),
+    )?;
+    let versions = query(
+        conn,
+        path,
+        "SELECT name, sequence, digest, writer, created_at, content, derived_from, grounding,
+            remote
+         FROM artifact_versions WHERE todo_id = ?1 ORDER BY sequence",
+        id,
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<u64>>(8)?,
+            ))
+        },
+    )?;
+    let mut out: Vec<Artifact> = artifacts
+        .into_iter()
+        .map(|(name, address)| Artifact {
+            name: ArtifactName::new(&name),
+            address,
+            versions: Vec::new(),
+        })
+        .collect();
+    for (name, sequence, digest, writer, created, content, derived_from, grounding, remote) in
+        versions
+    {
+        let version = Version {
+            digest: value_of::<ContentDigest>(path, &digest)?,
+            writer: actor(path, &writer)?,
+            created: time(path, &created)?,
+            derived_from: parse_json(path, &derived_from)?,
+            sequence,
+            grounding: parse_json(path, &grounding)?,
+            remote,
+            content,
+        };
+        match out.iter_mut().find(|a| a.name.as_str() == name) {
+            Some(artifact) => artifact.versions.push(version),
+            None => {
+                return Err(invalid(
+                    path,
+                    format!("a version of unknown artifact {name}"),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn load_stamps(conn: &Connection, path: &Path, id: &str) -> Result<Vec<StampRecord>, WorkError> {
+    let rows = query(
+        conn,
+        path,
+        "SELECT sequence, fact, at, actor, role, model, model_version, model_provenance,
+            eval_fingerprint, human_involved, evidence
+         FROM stamps WHERE todo_id = ?1 ORDER BY rowid",
+        id,
+        |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<bool>>(9)?,
+                row.get::<_, String>(10)?,
+            ))
+        },
+    )?;
+    rows.into_iter()
+        .map(
+            |(
+                sequence,
+                fact,
+                at,
+                by,
+                role,
+                model,
+                model_version,
+                provenance,
+                eval_fingerprint,
+                human_involved,
+                evidence,
+            )| {
+                Ok(StampRecord {
+                    fact: join_fact(path, &fact, &evidence)?,
+                    at: time(path, &at)?,
+                    actor: actor(path, &by)?,
+                    model: match (model, model_version) {
+                        (Some(model), Some(version)) => Some(ModelIdentity { model, version }),
+                        _ => None,
+                    },
+                    eval_fingerprint,
+                    role: role
+                        .map(|r| RoleName::parse(&r).map_err(|e| invalid(path, e.to_string())))
+                        .transpose()?,
+                    human_involved,
+                    sequence,
+                    model_provenance: value_of::<ModelProvenance>(path, &provenance)?,
+                })
+            },
+        )
+        .collect()
+}
+
+fn load_bindings(conn: &Connection, path: &Path, id: &str) -> Result<Vec<Binding>, WorkError> {
+    let rows = query(
+        conn,
+        path,
+        "SELECT role, session, worktree FROM session_bindings WHERE todo_id = ?1 ORDER BY rowid",
+        id,
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    )?;
+    rows.into_iter()
+        .map(|(role, bound, worktree)| {
+            Ok(Binding {
+                role: RoleName::parse(&role).map_err(|e| invalid(path, e.to_string()))?,
+                session: session(path, &bound)?,
+                worktree: worktree.map(PathBuf::from),
+            })
+        })
+        .collect()
+}
+
+fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<ReflectionState, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut reflection = conn
+        .query_row(
+            "SELECT issue_number, remote_revision, pending, conflicted, failure, pull_number,
+                issue_id, record_comment, etag, pull_outstanding, reviews_reflected, pull_closed,
+                board, board_item, board_status, board_failure
+             FROM reflections WHERE todo_id = ?1",
+            params![id],
+            |row| {
+                let number: Option<u64> = row.get(0)?;
+                let issue_id: Option<u64> = row.get(6)?;
+                Ok(ReflectionState {
+                    issue: number
+                        .zip(issue_id)
+                        .map(|(number, id)| IssueRef { number, id }),
+                    remote_revision: row.get(1)?,
+                    pending: row.get(2)?,
+                    conflicted: row.get(3)?,
+                    failure: row.get(4)?,
+                    pull: row.get(5)?,
+                    record_comment: row.get(7)?,
+                    etag: row.get(8)?,
+                    pull_outstanding: row.get(9)?,
+                    reviews_reflected: row.get::<_, u64>(10)? as usize,
+                    pull_closed: row.get(11)?,
+                    board: row.get(12)?,
+                    board_item: row.get(13)?,
+                    board_status: row.get(14)?,
+                    board_failure: row.get(15)?,
+                    commands_seen: Vec::new(),
+                    inbound: Vec::new(),
+                })
+            },
+        )
+        .optional()
+        .map_err(&sql)?
+        .unwrap_or_default();
+    reflection.commands_seen = query(
+        conn,
+        path,
+        "SELECT comment_id FROM inbound_commands WHERE todo_id = ?1 ORDER BY rowid",
+        id,
+        |row| row.get::<_, u64>(0),
+    )?;
+    Ok(reflection)
+}
+
+fn query<T>(
+    conn: &Connection,
+    path: &Path,
+    statement: &str,
+    id: &str,
+    map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut prepared = conn.prepare_cached(statement).map_err(&sql)?;
+    let rows = prepared
+        .query_map(params![id], map)
+        .map_err(&sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&sql)?;
+    Ok(rows)
+}
+
+/// A stamp fact as the `fact` column (its snake-case kind) and the
+/// `evidence` column (the rest of its bound evidence, as JSON).
+fn split_fact(fact: &StampFact) -> Result<(String, String), WorkError> {
+    let mut value = serde_json::to_value(fact).map_err(|e| invalid(Path::new(""), e))?;
+    let kind = value
+        .as_object_mut()
+        .and_then(|object| object.remove("fact"))
+        .and_then(|kind| kind.as_str().map(str::to_owned))
+        .ok_or_else(|| invalid(Path::new(""), "a stamp fact without its kind"))?;
+    Ok((kind, value.to_string()))
+}
+
+fn join_fact(path: &Path, kind: &str, evidence: &str) -> Result<StampFact, WorkError> {
+    let mut value: serde_json::Value = parse_json(path, evidence)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| invalid(path, "stamp evidence that is not an object"))?;
+    object.insert("fact".to_owned(), serde_json::Value::from(kind));
+    serde_json::from_value(value).map_err(|e| invalid(path, e))
+}
+
+/// An actor as the database writes it: `{"session": "<runtime>:<id>"}`,
+/// `{"github": "<login>"}` or `{"person": "<name>"}`.
+fn actor_text(actor: &Actor) -> String {
+    let value = match actor {
+        Actor::Session(session) => serde_json::json!({ "session": session.to_string() }),
+        Actor::GitHub { login } => serde_json::json!({ "github": login }),
+        Actor::Person { name } => serde_json::json!({ "person": name }),
+    };
+    value.to_string()
+}
+
+fn actor(path: &Path, text: &str) -> Result<Actor, WorkError> {
+    let value: serde_json::Value = parse_json(path, text)?;
+    let field = |name: &str| value.get(name).and_then(serde_json::Value::as_str);
+    if let Some(bound) = field("session") {
+        return Ok(Actor::Session(session(path, bound)?));
+    }
+    if let Some(login) = field("github") {
+        return Ok(Actor::GitHub {
+            login: login.to_owned(),
+        });
+    }
+    if let Some(name) = field("person") {
+        return Ok(Actor::Person {
+            name: name.to_owned(),
+        });
+    }
+    Err(invalid(path, format!("an actor `{text}`")))
+}
+
+fn schedule_text(schedule: &TaskSchedule) -> String {
+    match schedule {
+        TaskSchedule::At(at) => at.to_string(),
+        TaskSchedule::Cron(cron) => format!("cron:{cron}"),
     }
 }
 
-fn io_error(path: &Path, source: io::Error) -> WorkError {
-    WorkError::Io {
-        path: path.to_path_buf(),
-        source,
+fn todo_ref(path: &Path, id: &str, slug: &str) -> Result<TodoRef, WorkError> {
+    Ok(TodoRef {
+        id: TodoId::parse(id).ok_or_else(|| invalid(path, "a todo identity"))?,
+        slug: TodoSlug::parse(slug).map_err(|e| invalid(path, e.to_string()))?,
+    })
+}
+
+fn session(path: &Path, text: &str) -> Result<SessionRef, WorkError> {
+    SessionRef::parse(text).map_err(|e| invalid(path, e.to_string()))
+}
+
+fn time(path: &Path, text: &str) -> Result<Timestamp, WorkError> {
+    text.parse()
+        .map_err(|e: jiff::Error| invalid(path, e.to_string()))
+}
+
+/// A unit-like or string-like value as its serialized text (`active`,
+/// `feature`, `once`, …).
+fn text_of<T: Serialize>(value: &T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(text)) => text,
+        Ok(other) => other.to_string(),
+        Err(_) => String::new(),
     }
+}
+
+fn value_of<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T, WorkError> {
+    serde_json::from_value(serde_json::Value::from(text)).map_err(|e| invalid(path, e))
+}
+
+fn json_of<T: Serialize + ?Sized>(value: &T) -> Result<String, WorkError> {
+    serde_json::to_string(value).map_err(|e| invalid(Path::new(""), e))
+}
+
+fn parse_json<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T, WorkError> {
+    serde_json::from_str(text).map_err(|e| invalid(path, e))
+}
+
+fn invalid(path: &Path, message: impl std::fmt::Display) -> WorkError {
+    WorkError::StateDb(StateDbError::invalid(path, message.to_string()))
 }

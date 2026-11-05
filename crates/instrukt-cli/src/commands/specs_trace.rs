@@ -1,5 +1,5 @@
 //! Blueprint's `instrukt specs trace <spec_id> <UC-id>` and
-//! `instrukt specs trace --file <path>`
+//! `instrukt specs trace --file <path> [--file <path> …]`
 //! (`docs/project/spec/feature/blueprint/use-case-trace.md`).
 //!
 //! The subcommand's one-line about stays on `SpecsCommand::Trace` in
@@ -24,10 +24,10 @@ pub struct TraceArgs {
     /// The use-case id (`UC-…`) within that spec.
     #[arg(required_unless_present = "file")]
     use_case: Option<String>,
-    /// Trace a file instead: the tests that reach it and the use cases they
-    /// bind. Relative to the repository root.
-    #[arg(long)]
-    file: Option<String>,
+    /// Trace files instead: the use cases at stake when they change, by
+    /// spec folder. Relative to the repository root; repeat for several.
+    #[arg(long = "file", value_name = "PATH")]
+    file: Vec<String>,
 }
 
 pub fn run(args: TraceArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
@@ -38,11 +38,9 @@ pub fn run(args: TraceArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     };
     let coverage = Coverage::measure(&root, &ctx.home)
         .context("cannot read the project's use cases and bindings")?;
-    match (args.file, args.spec_id, args.use_case) {
-        (Some(file), _, _) => trace_file(ctx, &root, &coverage, &file),
-        (None, Some(spec), Some(use_case)) => {
-            trace_use_case(ctx, &root, &coverage, &spec, &use_case)
-        }
+    match (args.spec_id, args.use_case) {
+        _ if !args.file.is_empty() => trace_files(ctx, &root, &coverage, &args.file),
+        (Some(spec), Some(use_case)) => trace_use_case(ctx, &root, &coverage, &spec, &use_case),
         _ => bail!("give a spec id and a use-case id, or --file <path>"),
     }
 }
@@ -109,33 +107,63 @@ fn trace_use_case(
     Ok(ExitCode::SUCCESS)
 }
 
-fn trace_file(
+fn trace_files(
     ctx: &mut Ctx,
     root: &Path,
     coverage: &Coverage,
-    file: &str,
+    files: &[String],
 ) -> anyhow::Result<ExitCode> {
     let Some((root, latest)) = latest_graph(ctx, Some(root))? else {
         ctx.out.line(UNAVAILABLE)?;
         return Ok(ExitCode::SUCCESS);
     };
-    let file = instrukt_blueprint::repo_relative(&root, file);
-    let reaching =
-        instrukt_blueprint::trace_file(&latest.graph, coverage.bindings().bindings(), &file);
+    let files: Vec<String> = files
+        .iter()
+        .map(|file| instrukt_blueprint::repo_relative(&root, file))
+        .collect();
+    let trace = instrukt_blueprint::trace_files(
+        &latest.graph,
+        coverage.bindings().bindings(),
+        coverage.inventory(),
+        &files,
+    );
+    let mut distinct = files.clone();
+    distinct.sort();
+    distinct.dedup();
+    let traced = match distinct.as_slice() {
+        [one] => one.clone(),
+        many => format!("{} files", many.len()),
+    };
     ctx.out.line(&format!(
-        "trace of {file} from the blueprint graph of {}",
+        "trace of {traced} from the blueprint graph of {}",
         latest.sha
     ))?;
-    if reaching.is_empty() {
-        ctx.out.line(&format!("no tests reach {file}"))?;
-        return Ok(ExitCode::SUCCESS);
+    if trace.groups.is_empty() {
+        ctx.out.line("no use case is at stake")?;
+    } else {
+        ctx.out.line("use cases at stake, by spec folder:")?;
+        for group in &trace.groups {
+            ctx.out.line(&format!("  {}", group.folder))?;
+            for at_stake in &group.use_cases {
+                ctx.out.line(&format!("    {}", at_stake.use_case))?;
+                for test in &at_stake.tests {
+                    ctx.out.line(&format!("      {test}"))?;
+                }
+            }
+        }
     }
-    ctx.out
-        .line("tests reaching it, with the use cases they bind:")?;
-    for test in &reaching {
-        let use_cases: Vec<String> = test.use_cases.iter().map(ToString::to_string).collect();
-        ctx.out
-            .line(&format!("  {}: {}", test.test, use_cases.join(", ")))?;
+    if !trace.untraced.is_empty() {
+        ctx.out.line(
+            "files no use-case-binding test reaches (the trace offers no use-case evidence for them):",
+        )?;
+        for untraced in &trace.untraced {
+            if untraced.known {
+                ctx.out.line(&format!("  {}", untraced.file))?;
+            } else {
+                ctx.out
+                    .line(&format!("  {} (the graph does not know it)", untraced.file))?;
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

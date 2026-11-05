@@ -1,7 +1,8 @@
 //! Wake-up accounting (`task-timing`, "Wake-up installation and
-//! visibility"): the last wake-up is kept in `state/runner/`, and status
-//! warns when none arrived for five minutes.
+//! visibility"): the last wake-up is the state database's one `wakeups`
+//! row, and status warns when none arrived for five minutes.
 
+use instrukt_core::state_db::rusqlite::OptionalExtension;
 use jiff::{SignedDuration, Timestamp};
 use serde::Serialize;
 
@@ -21,22 +22,33 @@ pub struct TicksStatus {
 
 /// The last recorded wake-up.
 pub fn last_wakeup(state: &RunnerState) -> Result<Option<Timestamp>, StateError> {
-    let path = state.last_wakeup();
-    let Some(text) = state::read_text(&path)? else {
-        return Ok(None);
-    };
-    text.trim()
-        .parse::<Timestamp>()
-        .map(Some)
-        .map_err(|err| StateError::Corrupt {
-            path,
-            message: err.to_string(),
+    let last = state.read(|conn, path| {
+        let text: Option<String> = conn
+            .query_row("SELECT last_at FROM wakeups", [], |row| row.get(0))
+            .optional()
+            .map_err(state::sql(path))?;
+        text.map(|text| {
+            text.parse::<Timestamp>()
+                .map_err(|e| state::invalid(path, e))
         })
+        .transpose()
+    })?;
+    Ok(last.flatten())
 }
 
 /// Records a wake-up at `now`.
 pub fn record_wakeup(state: &RunnerState, now: Timestamp) -> Result<(), StateError> {
-    state::write_bytes(&state.last_wakeup(), format!("{now}\n").as_bytes())
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        tx.execute("DELETE FROM wakeups", [])
+            .map_err(state::sql(&path))?;
+        tx.execute(
+            "INSERT INTO wakeups (last_at) VALUES (?1)",
+            [now.to_string()],
+        )
+        .map_err(state::sql(&path))?;
+        Ok(())
+    })
 }
 
 /// The status at `now` given the last wake-up.

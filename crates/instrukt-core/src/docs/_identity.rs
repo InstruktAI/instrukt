@@ -171,8 +171,8 @@ pub(super) enum Unplaced {
     /// A project snippet in a repository whose `instrukt.yaml` declares no
     /// `project`.
     UndeclaredProject,
-    /// Not below a position, the third-party root or the fragment root —
-    /// the pre-release layout's `docs/global/` and `docs/local/` among them.
+    /// Not below a position or the third-party root — the pre-release
+    /// layout's `docs/global/` and `docs/local/` among them.
     Outside,
 }
 
@@ -184,9 +184,6 @@ pub(super) enum Placement {
         owner: BaselineOwner,
         progressive: bool,
     },
-    /// A fragment under `docs/global/snippets/`, named by its path below
-    /// that root.
-    Fragment(String),
     /// A third-party doc, identified by its path below `docs/third-party/`
     /// prefixed with `third-party/`.
     ThirdParty(ThirdPartyId),
@@ -195,16 +192,11 @@ pub(super) enum Placement {
     Unplaced(Unplaced),
 }
 
-/// The fragment root: shared include bodies, below `docs/global/snippets/`
-/// until a later migration decides their place.
-pub const FRAGMENT_ROOT: &str = "docs/global/snippets/";
-
 /// Places the Markdown file at `rel` (`/`-separated, relative to the
 /// repository root, beginning `docs/`). `None` for a path that is not a
 /// documentation Markdown file: not below `docs/`, not `.md`, or inside a
 /// directory whose name starts with `_`. A file of the pre-release layout
-/// (`docs/global/…` outside the fragment root, `docs/local/…`) yields no
-/// identity.
+/// (`docs/global/…`, `docs/local/…`) yields no identity.
 pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placement> {
     let stem = rel.strip_suffix(".md")?;
     let parts: Vec<&str> = stem.split('/').collect();
@@ -217,9 +209,6 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
         return None;
     }
     Some(match rest {
-        ["global", "snippets", tail @ ..] if !tail.is_empty() => {
-            Placement::Fragment(tail.join("/"))
-        }
         [GENERAL, tail @ ..] => match DomainName::parse(GENERAL) {
             Ok(general) => place_published(general, tail),
             Err(_) => Placement::Unplaced(Unplaced::Outside),
@@ -439,7 +428,11 @@ mod tests {
     #[test]
     fn the_pre_release_layout_yields_no_identity() {
         let project = slug();
-        for rel in ["docs/global/sdlc/policy/x.md", "docs/local/spec/x.md"] {
+        for rel in [
+            "docs/global/sdlc/policy/x.md",
+            "docs/global/snippets/step.md",
+            "docs/local/spec/x.md",
+        ] {
             assert_eq!(
                 place(rel, Some(&project)),
                 Some(Placement::Unplaced(Unplaced::Outside)),
@@ -449,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn manifests_fragments_workflow_and_skipped_paths_are_recognised() {
+    fn manifests_workflow_and_skipped_paths_are_recognised() {
         assert!(matches!(
             place("docs/domain/sdlc/baseline-progressive.md", None),
             Some(Placement::Baseline {
@@ -464,10 +457,6 @@ mod tests {
                 ..
             })
         ));
-        assert_eq!(
-            place("docs/global/snippets/step.md", None),
-            Some(Placement::Fragment("step".into()))
-        );
         assert_eq!(
             place("docs/domain/sdlc/workflow/templates/a.md", None),
             Some(Placement::Workflow)

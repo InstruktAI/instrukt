@@ -155,12 +155,10 @@ Every body `get` renders passes, in order:
    notice (`project/instrukt/spec/feature/docs/pending-documentation`).
 2. **Companion** — with `--target <slug>`, that slug's companion replaces the
    body when it exists.
-3. **`@include`** — each fragment directive is replaced by the fragment's
-   body; a fragment that cannot be found leaves its directive visible.
-4. **Planned lens** — planned blocks resolved for the lens; hidden content never executes.
-5. **`@config`** — each visible configured-value directive is resolved (below).
-6. **Frontmatter** — stripped.
-7. **Required reads** — the section is stripped from the body.
+3. **Planned lens** — planned blocks resolved for the lens; hidden content never executes.
+4. **`@config`** — each visible configured-value directive is resolved (below).
+5. **Frontmatter** — stripped.
+6. **Required reads** — the section is stripped from the body.
 
 A reference is an id and is left as written; no step rewrites it into a path.
 
@@ -190,9 +188,9 @@ resolves it. Rendered agent files resolve it at publication instead, against
 the publishing project's effective configuration with no runtime session,
 which is publication's contract.
 
-The snippet format has no directive that runs a command. A leftover
-`<!-- @exec: … -->` is never run: `get` shows it as inert text, and
-validation reports it as a finding
+The snippet format has no directive that runs a command or includes another
+file. A leftover `<!-- @exec: … -->` or `<!-- @include: … -->` is never run or
+expanded: `get` shows it as inert text, and validation reports it as a finding
 (`project/instrukt/spec/feature/docs/snippet-validation`).
 
 ### Publication behind main

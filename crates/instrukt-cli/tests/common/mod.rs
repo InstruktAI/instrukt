@@ -210,6 +210,14 @@ impl TestEnv {
         cmd
     }
 
+    /// The built `instrukt` binary as a plain process, for a test that
+    /// runs it in the background and stops it part-way.
+    pub fn instrukt_process(&self, cwd: &Path) -> StdCommand {
+        let mut cmd = StdCommand::new(env!("CARGO_BIN_EXE_instrukt"));
+        cmd.env_clear().envs(&self.vars).current_dir(cwd);
+        cmd
+    }
+
     /// `git` ready to run in `dir` with this test's environment, for a test
     /// that bounds how long git may take (`.timeout(…)`).
     pub fn git_command(&self, dir: &Path) -> Command {

@@ -16,10 +16,11 @@ use std::time::Duration;
 
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use jiff::{SignedDuration, Timestamp};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::events::{CiResult, Event};
 use crate::state::{self, RunnerState, StateError};
+use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 
 /// How long one GitHub request may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -171,15 +172,88 @@ pub enum CiRead {
     States(Vec<CiState>),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// `project`'s conditional-request validators and poll deferral.
+fn load_validators(state: &RunnerState, project: &ProjectSlug) -> Result<Validators, StateError> {
+    let loaded = state.read(|conn, path| {
+        let sql = state::sql(path);
+        let mut statement = conn
+            .prepare("SELECT request, etag, body FROM request_validators WHERE project = ?1")
+            .map_err(&sql)?;
+        let answers = statement
+            .query_map(params![project.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    Cached {
+                        etag: row.get(1)?,
+                        body: row.get(2)?,
+                    },
+                ))
+            })
+            .map_err(&sql)?
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map_err(&sql)?;
+        let not_before: Option<String> = conn
+            .query_row(
+                "SELECT until FROM poll_deferrals WHERE project = ?1",
+                params![project.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(&sql)?;
+        Ok(Validators {
+            answers,
+            not_before: not_before
+                .map(|text| {
+                    text.parse::<Timestamp>()
+                        .map_err(|e| state::invalid(path, e))
+                })
+                .transpose()?,
+        })
+    })?;
+    Ok(loaded.unwrap_or_default())
+}
+
+/// Replaces `project`'s validators and poll deferral in one transaction.
+fn save_validators(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    validators: &Validators,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        let sql = state::sql(&path);
+        for (request, cached) in &validators.answers {
+            tx.execute(
+                "INSERT INTO request_validators (project, request, etag, body) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (project, request) DO UPDATE SET etag = excluded.etag, body = excluded.body
+                 WHERE etag IS NOT excluded.etag OR body IS NOT excluded.body",
+                params![project.as_str(), request, cached.etag, cached.body],
+            )
+            .map_err(&sql)?;
+        }
+        match validators.not_before {
+            Some(until) => tx.execute(
+                "INSERT INTO poll_deferrals (project, until) VALUES (?1, ?2)
+                 ON CONFLICT (project) DO UPDATE SET until = excluded.until",
+                params![project.as_str(), until.to_string()],
+            ),
+            None => tx.execute(
+                "DELETE FROM poll_deferrals WHERE project = ?1",
+                params![project.as_str()],
+            ),
+        }
+        .map_err(&sql)?;
+        Ok(())
+    })
+}
+
+#[derive(Debug, Clone, Default)]
 struct Validators {
-    #[serde(default)]
     answers: BTreeMap<String, Cached>,
-    #[serde(default)]
     not_before: Option<Timestamp>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct Cached {
     etag: String,
     body: String,
@@ -214,8 +288,7 @@ impl<'a> CiClient<'a> {
     /// Reads each of `commits`' CI states at `now`, unless the source
     /// deferred. One poll interval covers the whole read.
     pub fn read(&self, commits: &[&CommitSha], now: Timestamp) -> Result<CiRead, CiError> {
-        let path = self.state.validators(self.project);
-        let mut validators: Validators = state::read_json(&path)?.unwrap_or_default();
+        let mut validators = load_validators(self.state, self.project)?;
         if let Some(not_before) = validators.not_before
             && now < not_before
         {
@@ -252,7 +325,7 @@ impl<'a> CiClient<'a> {
         // next request.
         validators.not_before =
             interval.and_then(|secs: i64| now.checked_add(SignedDuration::from_secs(secs)).ok());
-        state::write_json(&path, &validators)?;
+        save_validators(self.state, self.project, &validators)?;
         if let Some(err) = failure {
             return Err(err);
         }

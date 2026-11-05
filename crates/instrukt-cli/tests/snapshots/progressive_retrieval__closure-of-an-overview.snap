@@ -20,10 +20,6 @@ source: [TMP]/demo/docs/domain/acme/policy/rules.md
 
 Follow the rules.
 
-Shared text.
-
-<!-- @include: docs/snippets/missing.md -->
-
 A reference is written `@docs/project/design/y.md`, for example:
 
 ```
