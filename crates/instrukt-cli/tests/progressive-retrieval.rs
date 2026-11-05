@@ -810,3 +810,86 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
     assert!(!marker.exists(), "the leftover command never ran");
     insta::assert_snapshot!("leftover-command-inert", stdout(&env, &read));
 }
+
+/// Publish linked references in both a domain and the project position.
+fn published_linked_demo(env: &TestEnv) -> Repo {
+    let mut files = demo_files();
+    for (path, content) in &mut files {
+        if *path == "docs/domain/acme/policy/rules.md" {
+            *content = content.replace(
+                "- acme/principle/care\n",
+                "- [acme/principle/care](../principle/care.md)\n",
+            );
+            content.push_str(
+                "\n[Guide](https://example.test/guide)\n\n## See Also\n\n\
+                 - [acme/principle/care](../principle/care.md)\n\n\
+                 ```markdown\n## See Also\n- [acme/principle/care](../principle/care.md)\n```\n\n\
+                 `- [acme/principle/care](../principle/care.md)`\n",
+            );
+        }
+        if *path == "docs/project/spec/feature/x.md" {
+            *content = content.replace(
+                "- project/demo/design/y\n",
+                "- [project/demo/design/y](../../design/y.md)\n",
+            );
+            content.push_str("\n## See Also\n\n- [project/demo/design/y](../../design/y.md)\n");
+        }
+    }
+    files.push((
+        "docs/project/index.yaml",
+        "expanded: [project/demo/spec/feature/x]\n".to_owned(),
+    ));
+    files.push((
+        "tools/AGENTS.master.md",
+        "# Tools\n\n## Required reads\n\n- acme/policy/rules\n\n## Purpose\n\nTooling.\n"
+            .to_owned(),
+    ));
+    let demo = project(env, "demo", &files);
+    sync(env, &demo);
+    demo
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR9
+#[test]
+fn a_snippet_read_shows_linked_references_as_plain_ids() {
+    let env = TestEnv::new();
+    let demo = published_linked_demo(&env);
+    let read = env
+        .run(demo.path(), ["docs", "get", "acme/policy/rules"])
+        .success();
+    insta::assert_snapshot!("linked-snippet", stdout(&env, &read));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR9
+#[test]
+fn a_closure_follows_linked_ids_once() {
+    let env = TestEnv::new();
+    let demo = published_linked_demo(&env);
+    let read = env
+        .run(
+            demo.path(),
+            ["docs", "get", "acme/procedure/start", "--closure"],
+        )
+        .success();
+    insta::assert_snapshot!("linked-closure", stdout(&env, &read));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR9
+#[test]
+fn a_domain_read_shows_reference_links_as_ids() {
+    let env = TestEnv::new();
+    let demo = published_linked_demo(&env);
+    let read = env
+        .run(demo.path(), ["docs", "get", "--domain", "acme"])
+        .success();
+    insta::assert_snapshot!("linked-domain", stdout(&env, &read));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR9
+#[test]
+fn rendered_nested_agent_instructions_show_reference_links_as_ids() {
+    let env = TestEnv::new();
+    let demo = published_linked_demo(&env);
+    let agents = std::fs::read_to_string(demo.path().join("tools/AGENTS.md")).unwrap();
+    insta::assert_snapshot!("linked-nested-agents", text(&env, agents.as_bytes()));
+}

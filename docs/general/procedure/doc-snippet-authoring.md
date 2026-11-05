@@ -64,7 +64,12 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
 5.  **Required reads follow the folder.** Require the overview of the folder
     the snippet sits in, when the folder has one and the snippet is not it. Add a further read only when it is specific to this
     snippet and not already in the overview's closure, naming it by id
-    (`general/policy/referencing-doc-snippets`). What every snippet in an area
+    (`general/policy/referencing-doc-snippets`). In Required reads and See Also,
+    write a same-repository reference as `- [<id>](<relative path>)`, with the
+    id as its exact text and the path relative to this file pointing at that
+    id's file in the working tree. Write another repository's reference as a
+    plain id and a domain read as a bare domain name
+    (`general/spec/snippet-authoring-schema`). What every snippet in an area
     needs goes into that area's overview, never into each snippet. When a
     reader would need "the overview minus a few", split the overview into the
     parts readers need separately and require the parts that apply; never

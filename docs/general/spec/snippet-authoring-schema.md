@@ -183,14 +183,21 @@ this spec does not restate them. Across every type:
 
 - H1 title with type suffix (e.g., `# Session Lifecycle — Design`).
 - `## Required reads` — immediately after the H1, one reference per list item.
-  A reference is a snippet id (`- general/policy/agent-facing-text`), or a bare
-  domain name (`- sdlc`), which stands for that domain's `expanded` set. The
-  CLI resolves every reference; a snippet names no file path or home location.
+  A reference names one snippet id, or a bare domain name (`- sdlc`), which
+  stands for that domain's `expanded` set. A same-repository snippet reference
+  is `- [<id>](<relative path>)`: the text is exactly the id and the target is
+  relative to the referring file, naming that id's file in the working tree.
+  A reference to another repository stays `- <id>`. Resolution and hygiene use
+  only the id; validation accepts plain ids too and checks each link's text,
+  existence, repository confinement and match to that id's file. Agent
+  rendering strips the links to `- <id>`. A snippet path outside these
+  reference entries remains a reference-by-path finding.
   `instrukt docs get <id>` names a snippet's required reads, and `--closure`
   renders them with it.
 - Additional structure inside valid sections is allowed. Use subordinate headings such as `###` when they improve clarity; validation constrains the H2 section names, not the internal organization within them.
 - `## Sources` — third-party docs may include web links or a documentation index service's snippet IDs when authoritative references are available.
-- `## See Also` — optional soft references by id, never rendered into a closure. A code reference stays a repository-relative path.
+- `## See Also` — optional soft references by id, using the same link form for
+  same-repository snippets, never rendered into a closure. A code reference stays a repository-relative path.
 - `<!-- @config: <path> -->` — replaced by the configured value at `<path>` when the snippet is read, resolved in-process through configuration. In compiled outputs — the global agent files and a project's `AGENTS.md` — it is resolved at publication against the publishing project's effective configuration, where a `runtime.*` path is a finding. The format has no directive that runs a command or includes another file: `@exec` and `@include` are validation findings, never run or expanded. Text several snippets need is a snippet of its own, named as a required read.
 
 A procedure's optional `Discipline` section is required once an agent command

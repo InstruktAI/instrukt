@@ -23,7 +23,10 @@ the CLI decides nothing on their behalf:
 
 References are snippet ids everywhere a snippet names another — in
 `## Required reads`, See Also and prose — and these commands resolve them; no
-snippet names another by path.
+snippet names another by path alone. In Required reads and See Also, a
+same-repository id may carry a relative Markdown link to its file; the id is
+still the reference. References to another repository and bare-domain reads
+are plain ids or domain names.
 
 The commands discover snippets through the global index in the home's state
 (`~/.instrukt/state/`), written by publication with the published files. No
@@ -160,7 +163,11 @@ Every body `get` renders passes, in order:
 5. **Frontmatter** — stripped.
 6. **Required reads** — the section is stripped from the body.
 
-A reference is an id and is left as written; no step rewrites it into a path.
+Required-read extraction uses each reference link's id text. Rendering
+reduces links in Required reads and See Also to that text. Agent-facing output carries ids only,
+including closure and domain reads and rendered agent files; link targets
+never participate in resolution. Other Markdown links and code examples stay
+as authored.
 
 ### Configured values
 
@@ -266,6 +273,16 @@ Then the listing opens with the folder in that checkout the domain is authored i
 Given an agent acting for a developer has read a published snippet it wants to improve
 When it reads the snippet
 Then the snippet's header names the file in its publishing checkout that holds it
+```
+
+#### UC-DR9: An agent reads clickable references as ids
+
+```gherkin
+Given a developer's snippets use same-repository links by id in Required reads and See Also
+When an agent acting for the developer reads a snippet, its closure or its domain
+Then references are shown as plain ids and required reads resolve by id, each once
+And the rendered agent instructions carry the same plain-id references
+And other Markdown links and code examples remain as authored
 ```
 
 ## Known caveats

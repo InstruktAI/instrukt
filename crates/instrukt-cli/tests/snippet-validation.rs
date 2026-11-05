@@ -683,3 +683,141 @@ fn a_snippet_a_published_snippet_requires_is_not_unreferenced() {
     assert!(run.success, "{}", run.err);
     insta::assert_snapshot!("referenced_from_the_computer", run.out);
 }
+
+/// Replace the rules snippet with a linked required read and soft references.
+fn linked_rules(repo: &Repo, read: &str, see_also: &str) {
+    repo.write(
+        "docs/domain/acme/policy/rules.md",
+        &snippet("policy", "", &format!("\n## See Also\n\n{see_also}\n")).replace(
+            "# Sample — Policy\n",
+            &format!("# Sample — Policy\n\n## Required reads\n\n- {read}\n"),
+        ),
+    );
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV5
+#[test]
+fn same_repository_links_and_plain_references_validate_together() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    linked_rules(
+        &repo,
+        "[acme/principle/care](../principle/care.md)",
+        "- [acme/procedure/listen](../procedure/listen.md)\n- acme/principle/care",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}{}", run.out, run.err);
+    insta::assert_snapshot!("linked_references_valid", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV5
+#[test]
+fn a_link_to_a_moved_snippet_reports_the_stale_path() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    linked_rules(
+        &repo,
+        "acme/principle/care",
+        "- [acme/principle/care](../principle/old-care.md)",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success);
+    insta::assert_snapshot!("linked_reference_moved", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV5
+#[test]
+fn a_link_to_an_existing_file_of_another_id_is_reported() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    linked_rules(
+        &repo,
+        "[acme/principle/care](../procedure/listen.md)",
+        "- acme/principle/care",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success);
+    insta::assert_snapshot!("linked_reference_wrong_file", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV5
+#[test]
+fn reference_link_text_must_be_exactly_one_snippet_id() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    linked_rules(
+        &repo,
+        "[acme/principle/care and more](../principle/care.md)",
+        "- [Care](../principle/care.md)\n- [acme](../principle/care.md)",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success);
+    insta::assert_snapshot!("linked_reference_text", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV5
+#[test]
+fn a_link_cannot_stand_for_a_reference_to_another_repository() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    let other = env.instrukt_home().join("docs/general/principle");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("elsewhere.md"), "published elsewhere\n").unwrap();
+    linked_rules(
+        &repo,
+        "acme/principle/care",
+        "- [general/principle/elsewhere](../principle/care.md)\n- general/principle/elsewhere",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success);
+    insta::assert_snapshot!("linked_reference_foreign", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV5
+#[test]
+fn reference_links_must_stay_inside_the_working_tree() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    let outside = env.path("outside.md");
+    std::fs::write(&outside, snippet("principle", "", "")).unwrap();
+    std::os::unix::fs::symlink(
+        &outside,
+        repo.path().join("docs/domain/acme/principle/escape.md"),
+    )
+    .unwrap();
+    linked_rules(
+        &repo,
+        "acme/principle/care",
+        "- [acme/principle/care](../../../../../outside.md)\n\
+         - [acme/principle/care](../principle/escape.md)",
+    );
+    let run = validate(&env, &repo, &["docs/domain/acme/policy/rules.md"]);
+    assert!(!run.success);
+    insta::assert_snapshot!("linked_reference_outside", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
+#[test]
+fn linked_required_reads_take_part_in_redundancy_checks_by_id() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/acme/concept/overlap.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n\
+             - [acme/principle/care](../principle/care.md)\n\
+             - [acme/policy/rules](../policy/rules.md)\n",
+        ),
+    );
+    let run = validate(&env, &repo, &["docs/domain/acme/concept/overlap.md"]);
+    assert!(!run.success);
+    insta::assert_snapshot!("linked_required_read_implied", run.out);
+}

@@ -1,8 +1,9 @@
 //! What a reference names.
 //!
 //! A snippet's references are ids: a `## Required reads` entry is one
-//! snippet id or one bare domain name ([`entry`]), and a See Also entry
-//! opens with an id (`project/instrukt/spec/domain/docs`, "Reference").
+//! plain or linked snippet id or one bare domain name ([`entry`]), and a
+//! See Also entry opens with an id or carries a linked id
+//! (`project/instrukt/spec/domain/docs`, "Reference").
 //!
 //! The `@` path forms ([`parse`]) remain only for the non-snippet sources
 //! publication still compiles from paths — masters and baseline manifests:
@@ -12,11 +13,13 @@
 //! `docs/project/<…>` naming material in the project position. In a
 //! snippet, a path reference is a validation finding.
 
+use std::ops::Range;
 use std::path::Path;
 
 use serde::Serialize;
 
 use super::_identity::{Placement, place, published_origin};
+use super::_text;
 use crate::ids::{DomainName, ProjectSlug, SnippetId};
 
 /// What a well-formed reference names.
@@ -46,10 +49,10 @@ impl RefTarget {
     }
 }
 
-/// An `@` reference as written, with what it names.
+/// An id, domain or legacy path reference, with what it names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Reference {
-    /// The reference as written, without its `@`.
+    /// The reference without link markup (or a legacy path's `@`).
     pub raw: String,
     /// What it names; `None` when the reference is not in a valid form.
     pub target: Option<RefTarget>,
@@ -58,9 +61,15 @@ pub struct Reference {
 const HOME_DOCS: &str = ".instrukt/docs/";
 
 /// Reads one `## Required reads` entry of a snippet, as written after its
-/// list marker: a snippet id, or a bare domain name. Anything else names
-/// nothing.
+/// list marker: a plain or linked snippet id, or a bare domain name.
+/// Link targets never participate in resolution.
 pub(super) fn entry(raw: &str) -> Reference {
+    if let Some((id, _)) = link(raw) {
+        return Reference {
+            raw: id.to_owned(),
+            target: SnippetId::parse(id).ok().map(RefTarget::Snippet),
+        };
+    }
     let target = if let Ok(id) = SnippetId::parse(raw) {
         Some(RefTarget::Snippet(id))
     } else if raw.contains('/') {
@@ -72,6 +81,61 @@ pub(super) fn entry(raw: &str) -> Reference {
         raw: raw.to_owned(),
         target,
     }
+}
+
+/// The text and target of a whole inline Markdown link.
+pub(super) fn link(raw: &str) -> Option<(&str, &str)> {
+    let (text, target) = raw.strip_prefix('[')?.split_once("](")?;
+    Some((text, target.strip_suffix(')')?))
+}
+
+/// A link occupying a Required reads or See Also list entry. Its span
+/// covers only the markup, so rendering preserves the rest of the line.
+pub(super) struct ReferenceLink {
+    pub line: usize,
+    pub span: Range<usize>,
+    pub text: String,
+    pub target: String,
+}
+
+pub(super) fn links(lines: &[_text::Line<'_>]) -> Vec<ReferenceLink> {
+    let headings = _text::headings(lines);
+    let mut in_references = false;
+    let mut out = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if let Some(heading) = headings.iter().find(|h| h.line == index && h.level <= 2) {
+            in_references = heading.level == 2
+                && matches!(
+                    _text::normalize_title(&heading.title).as_str(),
+                    "required reads" | "see also"
+                );
+        }
+        if !in_references || line.fenced {
+            continue;
+        }
+        let visible = _text::without_comments(line.text);
+        let Some(item) = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|bullet| visible.trim().strip_prefix(bullet))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        let Some((text, target)) = link(item) else {
+            continue;
+        };
+        let Some(offset) = line.text.find(item) else {
+            continue;
+        };
+        let start = line.span.start + offset;
+        out.push(ReferenceLink {
+            line: index,
+            span: start..start + item.len(),
+            text: text.to_owned(),
+            target: target.to_owned(),
+        });
+    }
+    out
 }
 
 /// Whether `token` names a snippet file by its path: an `@` reference, or
@@ -187,6 +251,13 @@ mod tests {
         ] {
             assert_eq!(entry(raw).target, None, "{raw}");
         }
+    }
+
+    #[test]
+    fn a_link_names_its_id_independently_of_its_path() {
+        let reference = entry("[sdlc/policy/x](a-stale-path.md)");
+        assert_eq!(reference.target, snippet("sdlc/policy/x"));
+        assert_eq!(reference.raw, "sdlc/policy/x");
     }
 
     #[test]

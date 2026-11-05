@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+assertion_line: 727
+expression: run.out
+---
+docs/domain/acme/policy/rules.md: reference-link-target-invalid: [acme/principle/care](../principle/old-care.md)

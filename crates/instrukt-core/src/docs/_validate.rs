@@ -458,10 +458,20 @@ fn check_references(
 ) {
     let path = version.path();
     let lines = _text::lines(version.body());
-    // References are ids: a snippet named by its path is a finding
-    // wherever it stands outside code.
+    let links = super::_refs::links(&lines);
+    let link_lines: BTreeSet<usize> = links.iter().map(|link| link.line).collect();
+    for link in &links {
+        if let Some(finding) = reference_link_finding(corpus, env.repo_root, path, link) {
+            out.push(finding);
+        }
+    }
+    // Link destinations in reference entries are checked above. Other
+    // paths outside code remain reference-by-path findings.
     let mut by_path = BTreeSet::new();
-    for raw in _text::references(&lines) {
+    for raw in _text::references(&lines)
+        .into_iter()
+        .filter(|raw| !link_lines.contains(&raw.line))
+    {
         push(
             out,
             path,
@@ -470,7 +480,7 @@ fn check_references(
         );
         by_path.insert(raw.target);
     }
-    for token in path_tokens(&lines) {
+    for token in path_tokens(&lines, &link_lines) {
         push(out, path, FindingCode::ReferenceByPath, Some(token));
     }
     for id in see_also_ids(&lines) {
@@ -512,6 +522,41 @@ fn check_references(
     }
 }
 
+fn reference_link_finding(
+    corpus: &Corpus,
+    repo_root: &Path,
+    path: &Path,
+    link: &super::_refs::ReferenceLink,
+) -> Option<Finding> {
+    let Ok(id) = SnippetId::parse(&link.text) else {
+        return Some(Finding::new(
+            path,
+            FindingCode::ReferenceForm,
+            Some(link.text.clone()),
+        ));
+    };
+    let target = Path::new(&link.target);
+    let resolved = repo_root
+        .join(path.parent().unwrap_or(Path::new("")))
+        .join(target)
+        .canonicalize();
+    let expected = corpus
+        .snippet(&id)
+        .and_then(|snippet| repo_root.join(snippet.current().path()).canonicalize().ok());
+    let valid = !target.is_absolute()
+        && !link.target.is_empty()
+        && matches!((resolved, expected, repo_root.canonicalize()),
+            (Ok(actual), Some(expected), Ok(root))
+                if actual.starts_with(&root) && actual == expected);
+    (!valid).then(|| {
+        Finding::new(
+            path,
+            FindingCode::ReferenceLinkTarget,
+            Some(format!("[{}]({})", link.text, link.target)),
+        )
+    })
+}
+
 /// A bare-domain required read names `general` or a domain of the
 /// repository or published on the computer, and that domain has an
 /// `index.yaml`, whose `expanded` set it stands for.
@@ -551,9 +596,13 @@ fn check_domain_read(
 /// The tokens of prose, outside code and comments, that are a path to a
 /// snippet file without an `@`: `docs/<position>/…/<x>.md` or
 /// `~/.instrukt/docs/…/<x>.md` naming a snippet's place.
-fn path_tokens(lines: &[_text::Line<'_>]) -> Vec<String> {
+fn path_tokens(lines: &[_text::Line<'_>], link_lines: &BTreeSet<usize>) -> Vec<String> {
     let mut out = Vec::new();
-    for line in lines.iter().filter(|line| !line.fenced) {
+    for (_, line) in lines
+        .iter()
+        .enumerate()
+        .filter(|(index, line)| !line.fenced && !link_lines.contains(index))
+    {
         let visible = _text::without_comments(&_text::mask_inline_code(line.text));
         for word in visible.split_whitespace() {
             let token = word.trim_matches(|c: char| {

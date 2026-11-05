@@ -3,7 +3,7 @@
 //!
 //! One rendering takes a text through, in order: the frontmatter strip, the
 //! planned lens, the `@config` configured values and the `Required reads`
-//! strip; references are ids and stay as written
+//! strip; reference links are reduced to their ids
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`, read
 //! pipeline). The lens goes before `@config`, so hidden content is never
 //! resolved. Nothing runs a command or includes a file: a leftover `@exec`
@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::_corpus::{Lens, Version, required_reads_section};
 use super::_markers::{self, Side};
-use super::_refs::Reference;
+use super::_refs::{self, Reference};
 use super::_text::{self, Directive};
 use super::DocsError;
 use crate::config::{Configuration, Env, render_yaml};
@@ -184,8 +184,11 @@ fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Ren
     let lensed = lensed(body, lens);
     let required_reads = section_reads(&lensed, cx);
     let (resolved, config_refusals) = resolve_values(&lensed, cx.values)?;
-    // References are ids and stay as written: no step rewrites them.
-    let text = strip_required_reads(&resolved);
+    let references = _refs::links(&_text::lines(&resolved))
+        .into_iter()
+        .map(|link| (link.span, link.text))
+        .collect();
+    let text = strip_required_reads(&splice(&resolved, references));
     Ok(Rendered {
         text,
         required_reads,

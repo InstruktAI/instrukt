@@ -115,6 +115,8 @@ codes! {
     /// domain name.
     ReferenceForm => "reference-form-invalid",
     ReferenceUnresolved => "reference-unresolved",
+    /// A reference link does not name its id's file in this working tree.
+    ReferenceLinkTarget => "reference-link-target-invalid",
     /// A bare-domain required read naming a domain without `index.yaml`.
     ReferenceDomainWithoutIndex => "reference-domain-without-index",
     /// A reference into a published domain that no adopted docs

@@ -158,7 +158,7 @@ pub(super) fn required_reads_section(lines: &[_text::Line<'_>]) -> Option<std::o
 /// The entries of the `## Required reads` section of `lines`, in order.
 ///
 /// Outside fenced code and HTML comments, each non-blank line is one entry:
-/// a list item holding one token, read as a snippet id or a bare domain
+/// a list item holding a plain or linked snippet id or a bare domain
 /// name ([`_refs::entry`]); a line holding `@` references, read in the path
 /// forms masters and baseline manifests still use ([`_refs::parse`]), which
 /// validation reports in a snippet; anything else an entry that names
@@ -180,6 +180,16 @@ pub(super) fn section_reads(
         if line.fenced {
             continue;
         }
+        let visible = _text::without_comments(line.text);
+        let text = visible.trim();
+        let item = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|bullet| text.strip_prefix(bullet))
+            .map(str::trim);
+        if let Some(item) = item.filter(|item| _refs::link(item).is_some()) {
+            out.push(_refs::entry(item));
+            continue;
+        }
         let paths: Vec<Reference> = at_refs
             .iter()
             .filter(|r| r.line == index)
@@ -189,21 +199,13 @@ pub(super) fn section_reads(
             out.extend(paths);
             continue;
         }
-        let visible = _text::without_comments(line.text);
-        let text = visible.trim();
         if text.is_empty() {
             continue;
         }
-        let item = ["- ", "* ", "+ "]
-            .iter()
-            .find_map(|bullet| text.strip_prefix(bullet))
-            .map(str::trim);
         out.push(match item {
-            Some(token) if !token.is_empty() && !token.contains(char::is_whitespace) => {
-                _refs::entry(token)
-            }
-            _ => Reference {
-                raw: item.unwrap_or(text).to_owned(),
+            Some(token) => _refs::entry(token),
+            None => Reference {
+                raw: text.to_owned(),
                 target: None,
             },
         });

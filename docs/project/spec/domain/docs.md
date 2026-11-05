@@ -103,7 +103,12 @@ before this snippet.
 
 **Reference**
 : A snippet named by its id in Required reads, See Also or a prose citation;
-the CLI resolves it. Snippets are never referenced by path. Code is referenced
+the CLI resolves the id only. In Required reads and See Also, authors write
+a same-repository reference as `- [<id>](<relative path>)`, with the target
+relative to the referring file and naming that id's file in the working tree.
+References to another repository remain plain ids; bare-domain reads remain
+plain domain names. Validation accepts both plain and linked ids and checks
+link targets. Agent rendering strips reference links to ids. Code is referenced
 by its repository-relative path.
 
 **Configured value**
