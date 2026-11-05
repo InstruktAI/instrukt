@@ -115,6 +115,7 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
     let run = sync(&env, &repo).success();
     insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"
     published demo at [SHA]
+    notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
@@ -200,6 +201,7 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     let run = env.run(&linked, ["sync"]).success();
     insta::assert_snapshot!(text(&run.get_output().stdout, &[&main]), @"
     published demo at [SHA]
+    notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
@@ -386,7 +388,11 @@ fn main_unchanged_since_its_publication_is_a_no_op_until_forced() {
     assert_eq!(project_tree(&repo), project_before);
 
     let forced = env.run(repo.path(), ["sync", "--force"]).success();
-    insta::assert_snapshot!(text(&forced.get_output().stdout, &[&sha]), @"published demo at [SHA]");
+    insta::assert_snapshot!(text(&forced.get_output().stdout, &[&sha]), @r"
+    published demo at [SHA]
+    notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
+    notice: docs/project/index.yaml: project-without-index: the root AGENTS.md holds the purpose and the triggered procedures only; `docs/project/index.yaml` selects what else it includes
+    ");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), sha);
 }
@@ -470,7 +476,7 @@ fn an_instruction_file_left_with_a_reference_fails_the_sync() {
     env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile AGENTS.master.md: the compiled text still references `@notes/house.md`");
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot render AGENTS.master.md: the rendered text still references `@notes/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
 }
@@ -530,6 +536,7 @@ fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
         .replace(&left[0].display().to_string(), "[LEFTOVER]");
     insta::assert_snapshot!(stdout, @r"
     published demo at [SHA]
+    notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
     leftover [LEFTOVER] could not be removed; a later sync removes it
     ");
     assert_eq!(published_commit(&env, "demo"), sha);

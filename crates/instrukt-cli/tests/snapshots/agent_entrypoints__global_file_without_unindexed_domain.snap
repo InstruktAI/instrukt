@@ -1,0 +1,101 @@
+---
+source: crates/instrukt-cli/tests/agent-entrypoints.rs
+expression: "std::fs::read_to_string(env.home().join(\".claude/CLAUDE.md\")).unwrap()"
+---
+# General
+
+## Attention — Principle
+
+### Principle
+
+Attention: Principle.
+
+### Rationale
+
+Attention: Rationale.
+
+### Implications
+
+Attention: Implications.
+
+### Tensions
+
+Attention: Tensions.
+
+## Care — Policy
+
+### Rules
+
+Care: Rules.
+
+### Rationale
+
+Care: Rationale.
+
+### Scope
+
+Care: Scope.
+
+### Enforcement
+
+Care: Enforcement.
+
+### Exceptions
+
+Care: Exceptions.
+
+# Sdlc
+
+## Tests — Policy
+
+### Rules
+
+Tests: Rules.
+
+### Rationale
+
+Tests: Rationale.
+
+### Scope
+
+Tests: Scope.
+
+### Enforcement
+
+Tests: Enforcement.
+
+### Exceptions
+
+Tests: Exceptions.
+
+# General
+
+## Kind — Policy
+
+### Rules
+
+Kind: Rules.
+
+### Rationale
+
+Kind: Rationale.
+
+### Scope
+
+Kind: Scope.
+
+### Enforcement
+
+Kind: Enforcement.
+
+### Exceptions
+
+Kind: Exceptions.
+
+- general/policy/style: About Style. — `instrukt docs get general/policy/style`
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+
+# Sdlc
+
+Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
+- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`

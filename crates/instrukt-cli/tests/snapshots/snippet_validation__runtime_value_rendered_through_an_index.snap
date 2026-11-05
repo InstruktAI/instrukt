@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+expression: run.out
+---
+docs/domain/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id

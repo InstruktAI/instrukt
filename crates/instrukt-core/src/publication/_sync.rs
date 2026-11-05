@@ -6,20 +6,20 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::_agents::{MergeRefusal, TARGETS, merge_key};
-use super::_compile::{self, Compiler};
 use super::_editor::{EditorChange, OnLink, refresh_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
+use super::_render::Renderer;
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
-use super::_tree::{self, BUNDLE_FILE, ClaimRecord, Outputs};
+use super::_tree::{self, ClaimRecord, Outputs, Written};
 use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, ConfigError, Configuration, Layer, Module};
 use crate::docs::{
-    self, Corpus, DomainIndex, Finding, GENERAL, INDEX_FILE, Position, PositionIndex,
+    self, Corpus, Finding, INDEX_FILE, Notice, NoticeCode, Position, PositionIndex,
     ValidationRequest, Values,
 };
-use crate::fsx::{LockGuard, atomic_write};
+use crate::fsx::LockGuard;
 use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, DomainName, ProjectSlug};
@@ -32,10 +32,7 @@ const DOCS_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
 /// The docs lock's file name below the home's lock directory.
 const DOCS_LOCK: &str = "docs.lock";
 
-/// The `general` owner's global master.
-const GLOBAL_MASTER: &str = "agents/AGENTS.global.md";
-
-/// The compiled file beside a master.
+/// The rendered file beside a master.
 const AGENTS_FILE: &str = "AGENTS.md";
 
 /// What one sync is asked to do.
@@ -66,6 +63,10 @@ pub enum Refusal {
     /// The committed tree holds a domain folder with a reserved name, by
     /// its repository directory (`docs/domain/general/`).
     ReservedDomain(Vec<String>),
+    /// User-scope instruction files the sync would write hold content
+    /// instrukt did not leave there: a file it never wrote, or one changed
+    /// since.
+    ForeignInstructions(Vec<PathBuf>),
 }
 
 impl fmt::Display for Refusal {
@@ -83,6 +84,20 @@ impl fmt::Display for Refusal {
                 write!(
                     f,
                     "{} {verb} named after a reserved name: `general` and `project` are reserved and `third-party` keeps its special case, so no domain may take them",
+                    named.join(" and ")
+                )
+            }
+            Refusal::ForeignInstructions(paths) => {
+                let named: Vec<String> = paths
+                    .iter()
+                    .map(|path| format!("`{}`", path.display()))
+                    .collect();
+                let verb = if named.len() == 1 { "holds" } else { "hold" };
+                write!(
+                    f,
+                    "{} {verb} instructions instrukt did not write; move that content into documentation \
+                     (a snippet `docs/general/index.yaml` selects, or an `agents` snippet for that agent CLI) \
+                     or move the file out of the way, then sync again",
                     named.join(" and ")
                 )
             }
@@ -122,6 +137,12 @@ pub struct SyncReport {
     /// What a publishing sync changed of the editor schemas and modelines
     /// in the primary worktree.
     pub editor: Vec<EditorChange>,
+    /// What a publishing sync reports without refusing: a domain without
+    /// `index.yaml`, a root master without `docs/project/index.yaml`.
+    pub notices: Vec<Notice>,
+    /// Global agent files a retraction left in place because their content
+    /// is no longer what instrukt wrote.
+    pub kept: Vec<PathBuf>,
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -156,6 +177,8 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         .map_err(PublicationError::from)?;
     let mut leftovers = sweep(request.home.root())?;
     let mut editor = Vec::new();
+    let mut notices = Vec::new();
+    let mut kept = Vec::new();
     let attempt = (|| {
         let (branch, commit) = _source::canonical_main(&project.primary)?;
         let previous = PublishedRecord::load(request.home, &project.slug)?;
@@ -165,7 +188,13 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
                 commit: commit.clone(),
             }
         } else {
-            publish(request, &project, &commit, &mut leftovers, &mut editor)?
+            let mut report = Reported {
+                leftovers: &mut leftovers,
+                editor: &mut editor,
+                notices: &mut notices,
+                kept: &mut kept,
+            };
+            publish(request, &project, &commit, &mut report)?
         };
         Ok::<_, PublicationError>((branch, commit, outcome))
     })();
@@ -197,7 +226,17 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         outcome,
         leftovers,
         editor,
+        notices,
+        kept,
     })
+}
+
+/// What a publishing sync reports besides its outcome, filled as it runs.
+struct Reported<'r> {
+    leftovers: &'r mut Vec<PathBuf>,
+    editor: &'r mut Vec<EditorChange>,
+    notices: &'r mut Vec<Notice>,
+    kept: &'r mut Vec<PathBuf>,
 }
 
 /// Everything a sync computed before it writes anything.
@@ -211,11 +250,9 @@ struct Prepared {
     patched: GlobalIndex,
     /// Every claimed position's owner before this sync.
     owners: BTreeMap<DomainName, ProjectSlug>,
-    /// Each published domain's compiled bundle.
-    bundles: BTreeMap<DomainName, String>,
-    /// Compiled `AGENTS.md` files, relative to the primary worktree.
+    /// Rendered `AGENTS.md` files, relative to the primary worktree.
     agents: Vec<(PathBuf, String)>,
-    /// Global agent entrypoints, relative to the user's home directory.
+    /// Global agent files, relative to the user's home directory.
     entrypoints: Vec<(PathBuf, String)>,
     /// Merged settings files, relative to the user's home directory.
     settings: Vec<(PathBuf, Vec<u8>)>,
@@ -225,8 +262,7 @@ fn publish(
     request: &SyncRequest<'_>,
     project: &Project,
     commit: &CommitSha,
-    leftovers: &mut Vec<PathBuf>,
-    editor: &mut Vec<EditorChange>,
+    report: &mut Reported<'_>,
 ) -> Result<SyncOutcome, PublicationError> {
     let home = request.home;
     config::migrate(home, &Layer::Global)?;
@@ -272,16 +308,16 @@ fn publish(
         flavor_roles: request.wiring.flavor_roles.clone().filter(|_| todos),
         ..request.wiring.clone()
     };
-    let findings = docs::validate(&ValidationRequest {
+    let validation = docs::validate(&ValidationRequest {
         repo_root: checkout.path(),
         home,
         paths: &[],
         wiring: &wiring,
-    })?
-    .findings;
-    if !findings.is_empty() {
-        return Ok(refused(Refusal::Findings(findings)));
+    })?;
+    if !validation.findings.is_empty() {
+        return Ok(refused(Refusal::Findings(validation.findings)));
     }
+    let mut notices = validation.notices;
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
     let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
@@ -293,48 +329,62 @@ fn publish(
         Err(claim) => return Ok(refused(Refusal::Claim(claim))),
     };
 
-    // Compilation reads the committed tree and the home as it stands; it
+    // Rendering reads the committed tree and the home as it stands; it
     // writes nothing, so a failure here leaves everything as it was.
     let owned: BTreeSet<DomainName> = held.iter().cloned().collect();
     let values = Values::publish(&config);
-    let events = config.module_enabled(Module::Events)?;
-    let mut compiler = Compiler::new(
+    let indexes = position_indexes(home, &committed, &held, &owners, &project.slug)?;
+    let project_index = committed_index(&committed, &Position::Project)?;
+    let renderer = Renderer {
         home,
-        &project.slug,
-        &corpus,
-        &owned,
-        &patched,
-        events,
-        &values,
-    );
-    let mut bundles = BTreeMap::new();
-    for domain in &held {
-        bundles.insert(domain.clone(), compiler.bundle(domain)?);
-    }
+        project: &project.slug,
+        corpus: &corpus,
+        owned: &owned,
+        index: &patched,
+        indexes: &indexes,
+        events: config.module_enabled(Module::Events)?,
+        values: &values,
+    };
     let mut agents = Vec::new();
     for master in committed.masters() {
         let text = String::from_utf8_lossy(committed.file(master).unwrap_or_default()).into_owned();
-        let compiled = compiler.master(master, &text)?;
         let dir = Path::new(master).parent().unwrap_or(Path::new(""));
-        if master == MASTER_FILE_NAME {
-            agents.extend(project_overrides(home, &compiled)?);
-        }
-        agents.push((dir.join(AGENTS_FILE), compiled));
-    }
-    let (entrypoints, settings) = if owned.iter().any(|d| d.as_str() == GENERAL) {
-        let mut descriptions = BTreeMap::new();
-        for (domain, owner) in &owners {
-            if owner != &project.slug {
-                descriptions.insert(domain.clone(), published_description(home, domain)?);
+        let rendered = if master == MASTER_FILE_NAME {
+            if project_index.is_none() {
+                notices.push(Notice {
+                    path: PathBuf::from(format!("{}/{INDEX_FILE}", Position::Project.dir())),
+                    code: NoticeCode::ProjectWithoutIndex,
+                    value: Some(format!(
+                        "the root AGENTS.md holds the purpose and the triggered procedures only; \
+                         `docs/project/{INDEX_FILE}` selects what else it includes"
+                    )),
+                });
             }
-        }
-        for domain in &held {
-            descriptions.insert(domain.clone(), committed_description(&committed, domain)?);
-        }
-        global_entrypoints(home, &committed, &mut compiler, &patched, &descriptions)?
+            let rendered = renderer.root_agents(master, &text, project_index.as_ref())?;
+            agents.extend(project_overrides(home, &rendered)?);
+            rendered
+        } else {
+            renderer.nested(master, &text)?
+        };
+        agents.push((dir.join(AGENTS_FILE), rendered));
+    }
+    let (entrypoints, settings) = if held
+        .iter()
+        .any(|d| Position::of_domain(d) == Position::General)
+    {
+        global_files(home, &renderer)?
     } else {
         (Vec::new(), Vec::new())
     };
+    // Before anything is written: a destination holding content instrukt
+    // did not leave there stops the sync.
+    let foreign = foreign_files(home, &Outputs::load(home, &project.slug)?, &entrypoints)?;
+    if !foreign.is_empty() {
+        return Ok(refused(Refusal::ForeignInstructions(foreign)));
+    }
+    notices.sort();
+    notices.dedup();
+    *report.notices = notices;
 
     let prepared = Prepared {
         committed,
@@ -342,7 +392,6 @@ fn publish(
         index,
         patched,
         owners,
-        bundles,
         agents,
         entrypoints,
         settings,
@@ -350,11 +399,12 @@ fn publish(
     preflight(home, project, commit, &prepared)?;
     // Before anything is published: a refresh that cannot write fails the
     // sync, and no commit is recorded.
-    *editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
+    *report.editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, request.now, &prepared, &mut tx) {
-        Ok(()) => {
-            leftovers.extend(tx.commit());
+        Ok(kept) => {
+            report.leftovers.extend(tx.commit());
+            *report.kept = kept;
             Ok(SyncOutcome::Published {
                 project: project.slug.clone(),
                 commit: commit.clone(),
@@ -368,7 +418,7 @@ fn publish(
 }
 
 /// Checks every location the sync will write or remove, before the first
-/// write. A location the repository or instrukt controls — a compiled
+/// write. A location the repository or instrukt controls — a rendered
 /// output in the project or one recorded for retraction; in the home a
 /// published domain, a third-party doc, the index, the eval
 /// fingerprint records, the outputs record or the published record — that
@@ -396,7 +446,7 @@ fn preflight(
         .iter()
         .map(|(rel, _)| rel)
         .chain(prepared.settings.iter().map(|(rel, _)| rel))
-        .chain(&previous.entrypoints)
+        .chain(previous.entrypoints.iter().map(|w| &w.path))
     {
         resolved(user_home, rel)?;
     }
@@ -437,7 +487,7 @@ fn preflight(
 
 /// The project override instruction files of the supported agent CLIs
 /// installed here that read one, each holding the root `AGENTS.md`'s
-/// compiled text, relative to the primary worktree.
+/// rendered text, relative to the primary worktree.
 fn project_overrides(home: &Home, root_agents: &str) -> Result<Files<String>, PublicationError> {
     let mut overrides = Vec::new();
     for target in TARGETS {
@@ -454,23 +504,64 @@ fn project_overrides(home: &Home, root_agents: &str) -> Result<Files<String>, Pu
 /// `(path, content)` pairs of files a sync writes, relative to a root.
 type Files<T> = Vec<(PathBuf, T)>;
 
-/// The compiled global entrypoint of every supported agent CLI installed
-/// here, and the settings files that take its entrypoint-loading key. A
-/// settings file that cannot take the key fails the sync before anything
-/// is written.
-fn global_entrypoints(
+/// Every published position's `index.yaml` as this sync leaves the
+/// computer: the committed ones of the positions the project holds, the
+/// published ones of the positions other projects own.
+fn position_indexes(
     home: &Home,
     committed: &Committed,
-    compiler: &mut Compiler<'_>,
-    index: &GlobalIndex,
-    descriptions: &BTreeMap<DomainName, Option<String>>,
-) -> Result<(Files<String>, Files<Vec<u8>>), PublicationError> {
-    let Some(master) = committed.file(GLOBAL_MASTER) else {
-        return Ok((Vec::new(), Vec::new()));
+    held: &[DomainName],
+    owners: &BTreeMap<DomainName, ProjectSlug>,
+    project: &ProjectSlug,
+) -> Result<BTreeMap<DomainName, PositionIndex>, PublicationError> {
+    let mut indexes = BTreeMap::new();
+    for (domain, owner) in owners {
+        if owner == project {
+            continue;
+        }
+        let position = Position::of_domain(domain);
+        let path = home.domain_dir(domain).join(INDEX_FILE);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(PublicationError::Io { path, source }),
+        };
+        let index = PositionIndex::parse(&position, &text)
+            .map_err(|source| PublicationError::Parse { path, source })?;
+        indexes.insert(domain.clone(), index);
+    }
+    for domain in held {
+        if let Some(index) = committed_index(committed, &Position::of_domain(domain))? {
+            indexes.insert(domain.clone(), index);
+        }
+    }
+    Ok(indexes)
+}
+
+/// The committed `index.yaml` of `position`; `None` without one.
+fn committed_index(
+    committed: &Committed,
+    position: &Position,
+) -> Result<Option<PositionIndex>, PublicationError> {
+    let rel = format!("{}/{INDEX_FILE}", position.dir());
+    let Some(bytes) = committed.file(&rel) else {
+        return Ok(None);
     };
-    let master = String::from_utf8_lossy(master).into_owned();
-    let inlined = compiler.inlined_bundles(GLOBAL_MASTER, &master)?;
-    let roster = _compile::roster(index, descriptions, &inlined)?;
+    PositionIndex::parse(position, &String::from_utf8_lossy(bytes))
+        .map(Some)
+        .map_err(|source| PublicationError::Parse {
+            path: PathBuf::from(rel),
+            source,
+        })
+}
+
+/// The global agent file of every supported agent CLI installed here, and
+/// the settings files that take its entrypoint-loading key. A settings file
+/// that cannot take the key fails the sync before anything is written.
+fn global_files(
+    home: &Home,
+    renderer: &Renderer<'_>,
+) -> Result<(Files<String>, Files<Vec<u8>>), PublicationError> {
     let user_home = home.user_home();
     let mut entrypoints = Vec::new();
     let mut settings = Vec::new();
@@ -480,18 +571,8 @@ fn global_entrypoints(
             tracing::debug!(event = "sync_agent_skipped", agent = target.name, dir = %dir.display());
             continue;
         }
-        let addendum_file = target.addendum();
-        let addendum = committed
-            .file(&addendum_file)
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
-        let compiled = compiler.entrypoint(
-            (GLOBAL_MASTER, &master),
-            addendum
-                .as_deref()
-                .map(|text| (addendum_file.as_str(), text)),
-            &roster,
-        )?;
-        entrypoints.push((Path::new(target.dir).join(target.entrypoint), compiled));
+        let rendered = renderer.global_file(target.cli)?;
+        entrypoints.push((Path::new(target.dir).join(target.entrypoint), rendered));
         if let Some(loading) = target.loading {
             let path = resolved(user_home, Path::new(loading.settings))?;
             let existing = match std::fs::read(&path) {
@@ -519,6 +600,23 @@ fn global_entrypoints(
     Ok((entrypoints, settings))
 }
 
+/// The destinations among `entrypoints` that exist holding content other
+/// than what `written` records instrukt left there, by their path.
+fn foreign_files(
+    home: &Home,
+    written: &Outputs,
+    entrypoints: &Files<String>,
+) -> Result<Vec<PathBuf>, PublicationError> {
+    let user_home = home.user_home();
+    let mut foreign = Vec::new();
+    for (rel, _) in entrypoints {
+        if written.foreign(user_home, rel)? {
+            foreign.push(user_home.join(rel));
+        }
+    }
+    Ok(foreign)
+}
+
 /// The writes of a publishing sync, all through `tx`.
 fn write(
     home: &Home,
@@ -527,7 +625,7 @@ fn write(
     now: jiff::Timestamp,
     prepared: &Prepared,
     tx: &mut Transaction,
-) -> Result<(), PublicationError> {
+) -> Result<Vec<PathBuf>, PublicationError> {
     let root = home.root();
     let in_home = |path: &Path| confined(root, &relative_to(root, path)?);
     let staging = tempfile::Builder::new()
@@ -537,15 +635,12 @@ fn write(
             path: root.to_path_buf(),
             source,
         })?;
-    // Positions: staged whole with their bundle, then swapped in, each
-    // claimed in the ownership record.
+    // Positions: staged whole, then swapped in, each claimed in the
+    // ownership record.
     let published: BTreeSet<&DomainName> = prepared.held.iter().collect();
     for domain in &prepared.held {
         let staged = staging.path().join(domain.as_str());
         _tree::stage_domain(&prepared.committed, domain, &staged)?;
-        if let Some(bundle) = prepared.bundles.get(domain) {
-            atomic_write(&staged.join(BUNDLE_FILE), bundle.as_bytes())?;
-        }
         tx.replace_dir(&staged, &in_home(&home.domain_dir(domain))?)?;
         let claim = ClaimRecord {
             position: domain.clone(),
@@ -595,7 +690,8 @@ fn write(
     tx.write(&in_home(&home.index_file())?, index_text.as_bytes())?;
 
     // Outside the home: the project's AGENTS.md files and, from the owner
-    // of `general`, the global agent entrypoints with their settings keys.
+    // of `docs/general/`, the global agent files with their settings keys,
+    // each recorded with the content it left there.
     let previous = Outputs::load(home, &project.slug)?;
     let mut outputs = Outputs::default();
     for (rel, text) in &prepared.agents {
@@ -612,17 +708,24 @@ fn write(
     let user_home = home.user_home();
     for (rel, text) in &prepared.entrypoints {
         tx.write(&resolved(user_home, rel)?, text.as_bytes())?;
-        outputs.entrypoints.push(rel.clone());
+        outputs.entrypoints.push(Written::of(rel, text.as_bytes()));
     }
     for (rel, bytes) in &prepared.settings {
         tx.write(&resolved(user_home, rel)?, bytes)?;
     }
+    // A retracted global file whose content is no longer what instrukt
+    // wrote is left in place and named.
+    let mut kept = Vec::new();
     for old in previous
         .entrypoints
         .iter()
-        .filter(|old| !outputs.entrypoints.contains(old))
+        .filter(|old| !outputs.entrypoints.iter().any(|w| w.path == old.path))
     {
-        tx.remove_file(&resolved(user_home, old)?)?;
+        if previous.foreign(user_home, &old.path)? {
+            kept.push(user_home.join(&old.path));
+        } else {
+            tx.remove_file(&resolved(user_home, &old.path)?)?;
+        }
     }
 
     let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit, now)?;
@@ -642,7 +745,7 @@ fn write(
         &in_home(&record_path(home, &project.slug))?,
         text.as_bytes(),
     )?;
-    Ok(())
+    Ok(kept)
 }
 
 /// The URL of the `origin` remote of the repository at `dir`; `None` when
@@ -651,49 +754,6 @@ fn remote_url(dir: &Path) -> Result<Option<String>, PublicationError> {
     let output = git::run_output(dir, ["config", "--get", "remote.origin.url"])?;
     let url = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     Ok((output.status.success() && !url.is_empty()).then_some(url))
-}
-
-/// The `description` of the committed `docs/domain/<x>/index.yaml` of
-/// `domain`; `None` without one, or for `general`, whose index carries
-/// none.
-fn committed_description(
-    committed: &Committed,
-    domain: &DomainName,
-) -> Result<Option<String>, PublicationError> {
-    let rel = format!("{}/{INDEX_FILE}", Position::of_domain(domain).dir());
-    match committed.file(&rel) {
-        Some(bytes) => description(domain, &String::from_utf8_lossy(bytes), Path::new(&rel)),
-        None => Ok(None),
-    }
-}
-
-/// The `description` of another project's published `index.yaml` of
-/// `domain` in the home; `None` without one.
-fn published_description(
-    home: &Home,
-    domain: &DomainName,
-) -> Result<Option<String>, PublicationError> {
-    let path = home.domain_dir(domain).join(INDEX_FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => description(domain, &text, &path),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(PublicationError::Io { path, source }),
-    }
-}
-
-fn description(
-    domain: &DomainName,
-    text: &str,
-    path: &Path,
-) -> Result<Option<String>, PublicationError> {
-    match PositionIndex::parse(&Position::of_domain(domain), text) {
-        Ok(PositionIndex::Domain(DomainIndex { description, .. })) => Ok(description),
-        Ok(_) => Ok(None),
-        Err(source) => Err(PublicationError::Parse {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
 }
 
 /// `path` relative to `root`, which contains it.
