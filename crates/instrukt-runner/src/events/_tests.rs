@@ -71,12 +71,12 @@ fn a_typed_occurrence_encodes_its_core_facts() {
 fn producer_names_keep_their_vocabulary_owner() {
     let event = finalized();
     assert_eq!(
-        event.declaration().name,
-        event.envelope(&context()).unwrap().event_type
+        event.envelope(&context()).unwrap().event_type,
+        "workflow.finalized"
     );
-    assert_ne!(
-        event.name().split('.').next(),
-        DeadLettered::declaration().name.split('.').next()
+    assert_eq!(
+        DeadLettered::declaration().name,
+        "instrukt.system.event.dead_lettered"
     );
 }
 
@@ -114,9 +114,11 @@ fn ownerless_is_not_an_unresolved_lookup() {
     let mut ctx = context();
     ctx.project_owner = EventHomeOwner::Ownerless;
     let event = finalized().envelope(&ctx).unwrap();
-    assert_ne!(
-        event.home_owner,
-        finalized().envelope(&context()).unwrap().home_owner
+    assert_eq!(
+        EventEnvelope::decode(&event.encode().unwrap())
+            .unwrap()
+            .home_owner,
+        EventHomeOwner::Ownerless
     );
 }
 
@@ -632,4 +634,34 @@ fn encoding_refuses_extensions_that_duplicate_canonical_attributes() {
         .extensions
         .insert("id".into(), json!("another-occurrence"));
     assert!(envelope.encode().is_err());
+}
+
+#[test]
+fn a_producer_without_an_id_uses_the_boundary_generator() {
+    let event = finalized();
+    let envelope = event.envelope(&context()).unwrap();
+    let producer = ProducerEvent::new(
+        event.declaration(),
+        envelope.subject,
+        envelope.home,
+        envelope.data,
+    );
+    let generated = occurrence_id(&["a fresh boundary occurrence"]);
+    let emitted = producer.emit(&context(), || generated.clone()).unwrap();
+    assert_eq!(emitted.id, generated);
+}
+
+#[test]
+fn ci_subjects_name_the_candidate_commit() {
+    let project = ProjectSlug::parse("demo").unwrap();
+    let candidate = CommitSha::parse(&"c".repeat(40)).unwrap();
+    let event = Event::CiCompleted {
+        project: project.clone(),
+        candidate: candidate.clone(),
+        result: CiResult::Success,
+    };
+    assert_eq!(
+        event.envelope(&context()).unwrap().subject,
+        EventRef::new(ReferenceKind::Commit, &format!("{project}/{candidate}")).unwrap()
+    );
 }
