@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use serde_yaml_ng::Value;
 
 use super::_error::ConfigError;
+use super::_features::{self, Feature, Unavailable};
 use super::_interpolate::{Interpolator, Mode};
 use super::_layer::{Layer, read_usable};
 use super::_merge::overlay;
 use super::_module::Module;
 use super::_runtime::{self, Env, RuntimeEntry};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
+use super::_shipped;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 
@@ -154,8 +156,9 @@ impl Configuration {
         _runtime::active_agent(&self.runtimes, env)
     }
 
-    /// The runtime the runner uses: `runner.runtime`, defaulting to the
-    /// first entry of the mapping; `None` without a mapping.
+    /// The runtime the developer chose, which an OS-started runner uses:
+    /// `runner.runtime` (a declared or shipped entry), defaulting to the
+    /// first declared entry; `None` with neither. Nothing is detected.
     pub fn runner_runtime(&self) -> Result<Option<&RuntimeEntry>, ConfigError> {
         match self.str_at(&["runner", "runtime"])? {
             Some(name) => self
@@ -168,6 +171,12 @@ impl Configuration {
                 }),
             None => Ok(self.runtimes.first()),
         }
+    }
+
+    /// Whether `features` are available on the chosen runtime; `None` when
+    /// they are.
+    pub fn unavailable(&self, features: &[Feature]) -> Result<Option<Unavailable>, ConfigError> {
+        Ok(_features::availability(self.runner_runtime()?, features))
     }
 
     /// Whether `module` is switched on (off by default).
@@ -425,6 +434,7 @@ pub(crate) fn effective_value(global: Option<&Value>, project: Option<&Value>) -
         overlay(&mut value, &_schema::defaults(LayerKind::Project));
         overlay(&mut value, &_schema::permitted(project, LayerKind::Project));
     }
+    _shipped::join_chosen(&mut value);
     value
 }
 

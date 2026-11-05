@@ -13,7 +13,9 @@
 use serde_yaml_ng::Value;
 
 use super::_error::ConfigError;
-use super::_runtime::{self, Env, OPTIONAL_FIELDS, REQUIRED_FIELDS, RuntimeEntry, SESSION_ID};
+use super::_runtime::{
+    self, AGENT_FIELD, Env, REQUIRED_FIELDS, RuntimeEntry, SESSION_ID, VerbName, verb_text_field,
+};
 
 /// What the interpolator resolves `${VAR}` and `runtime.*` against.
 #[derive(Debug, Clone, Copy)]
@@ -182,19 +184,15 @@ impl<'a> Interpolator<'a> {
         if !is_runtime_field(field) {
             return Err(missing(path, field, "runtime"));
         }
-        let value = active.and_then(|index| {
-            self.root
-                .get("runtimes")
-                .and_then(|r| r.get(index))
-                .and_then(|entry| entry.get(field))
+        let located = active.and_then(|index| {
+            let entry = self.root.get("runtimes")?.get(index)?;
+            let (suffix, value) = runtime_field(entry, field)?;
+            Some((format!("runtimes.{index}.{suffix}"), value))
         });
-        match (active, value) {
-            (Some(index), Some(value)) => {
-                self.follow(format!("runtimes.{index}.{field}"), value, stack)?;
-                Ok(String::new())
-            }
-            _ => Ok(String::new()),
+        if let Some((path, value)) = located {
+            self.follow(path, value, stack)?;
         }
+        Ok(String::new())
     }
 
     /// Resolves a dotted path to its canonical location.
@@ -232,27 +230,26 @@ impl<'a> Interpolator<'a> {
             };
             return Ok(Located::Derived(value.to_owned()));
         }
-        if let [field, ..] = fields
-            && !self.entry_has(entry, field)
-        {
-            return Err(ConfigError::MissingRuntimeField {
-                runtime: entry.name.clone(),
-                field: (*field).to_owned(),
-            });
+        if fields.is_empty() {
+            let segments: Vec<&str> = entry_path.split('.').collect();
+            return self.walk(&segments, path);
         }
-        let segments: Vec<&str> = entry_path
-            .split('.')
-            .chain(fields.iter().copied())
-            .collect();
-        self.walk(&segments, path)
-    }
-
-    fn entry_has(&self, entry: &RuntimeEntry, field: &str) -> bool {
-        self.root
+        let field = fields.join(".");
+        let stored = self
+            .root
             .get("runtimes")
             .and_then(|r| r.get(entry.index))
-            .and_then(|e| e.get(field))
-            .is_some()
+            .and_then(|e| runtime_field(e, &field));
+        let Some((suffix, value)) = stored else {
+            return Err(ConfigError::MissingRuntimeField {
+                runtime: entry.name.clone(),
+                field,
+            });
+        };
+        Ok(Located::Value {
+            path: format!("{entry_path}.{suffix}"),
+            value,
+        })
     }
 
     fn walk(&self, segments: &[&str], asked: &str) -> Result<Located<'a>, ConfigError> {
@@ -356,7 +353,27 @@ fn is_stored_mapping(path: &str) -> bool {
 }
 
 fn is_runtime_field(field: &str) -> bool {
-    field == SESSION_ID || REQUIRED_FIELDS.contains(&field) || OPTIONAL_FIELDS.contains(&field)
+    field == SESSION_ID
+        || field == AGENT_FIELD
+        || REQUIRED_FIELDS.contains(&field)
+        || VerbName::from_key(field).is_some()
+}
+
+/// The stored value `runtime.<field>` addresses in one entry, with its
+/// path under the entry: a plain field as stored, a verb as its command
+/// template or instruction (`layered-configuration`, "Runtime entries").
+fn runtime_field<'v>(entry: &'v Value, field: &str) -> Option<(String, &'v Value)> {
+    if let Some(verb) = VerbName::from_key(field) {
+        let value = _runtime::verb_value(entry, verb)?;
+        return Some(match verb_text_field(value) {
+            Some(text) => (format!("{field}.{text}"), value.get(text)?),
+            None => (field.to_owned(), value),
+        });
+    }
+    if !is_runtime_field(field) {
+        return None;
+    }
+    entry.get(field).map(|value| (field.to_owned(), value))
 }
 
 pub(crate) fn join(path: &str, segment: &str) -> String {
@@ -542,6 +559,40 @@ mod tests {
         assert!(matches!(err, ConfigError::NoActiveRuntime));
         let err = get(&doc, &both, "runtime.start").unwrap_err();
         assert!(matches!(err, ConfigError::MissingRuntimeField { .. }));
+    }
+
+    #[test]
+    fn the_runtime_view_gives_a_verbs_template_or_instruction_whatever_its_form() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "who: me\nruntimes:\n\
+             \x20 - name: host\n    session_id_env: HOST_ID\n\
+             \x20   end: {kind: agent, instruction: 'close {runtime.session_id} for {who}'}\n\
+             \x20   send: {kind: command, template: 'host send {who}'}\n\
+             \x20   history: {show: 'host show {who}'}\n",
+        )
+        .unwrap();
+        let env = Env::from_pairs([("HOST_ID", "h-1")]);
+        for (path, stored_at) in [
+            (
+                "runtime.end",
+                ["runtimes", "0", "end", "instruction"].as_slice(),
+            ),
+            ("runtime.send", &["runtimes", "0", "send", "template"]),
+            (
+                "runtime.history.show",
+                &["runtimes", "0", "history", "show"],
+            ),
+        ] {
+            assert_eq!(
+                get(&doc, &env, path).unwrap(),
+                expand(&doc, &env, stored(&doc, stored_at)),
+                "{path}"
+            );
+        }
+        assert!(matches!(
+            get(&doc, &env, "runtime.history.search").unwrap_err(),
+            ConfigError::MissingRuntimeField { .. }
+        ));
     }
 
     #[test]
