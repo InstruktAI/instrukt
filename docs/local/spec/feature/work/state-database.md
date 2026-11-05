@@ -1,5 +1,5 @@
 ---
-description: The one SQLite database holding a computer's work record and runner state — its tables, the columns readers may rely on, migrations, the single writer and read-only access while instrukt writes.
+description: The one SQLite database holding a computer's work record and runner state — its tables, its migrations, and instrukt as its single, transactional writer.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -9,12 +9,11 @@ delivered_by: [instrukt-first-build]
 
 A computer keeps instrukt's operational state in one SQLite database: the
 local work record that stands in front of its GitHub reflection, and the
-runner's state. instrukt is its only writer. A developer, or an agent acting
-for one, reads it with `sqlite3` at any time, including while instrukt
-writes, and a write interrupted part-way leaves the state as the last
-completed change left it.
+runner's state. instrukt is its only writer and its only interface: agents
+work with the record through instrukt's commands. A write interrupted
+part-way leaves the state as the last completed change left it.
 
-The schema below is a published contract. The work context owns the file,
+The schema below is instrukt's own contract, versioned by its migrations. The work context owns the file,
 its migrations, the writer rules and the work tables; the runner context owns
 the meaning and the writes of the runner tables.
 
@@ -56,20 +55,11 @@ the meaning and the writes of the runner tables.
 - The runner lock `~/.instrukt/state/runner.lock` still serializes runner
   invocations. It guards no data.
 
-### Reading
+### Scope of what is stored
 
-- Open the database read-only: `sqlite3 -readonly ~/.instrukt/state/instrukt.db`,
-  or a `file:` URI with `mode=ro`. Under WAL a read sees the last committed
-  transaction, never waits for instrukt's writer and never delays it.
-- Never open it with `immutable=1`: that ignores the WAL and can return
-  stale or inconsistent rows.
-- Keep each read transaction short. An open read transaction holds back
-  checkpointing, and the WAL grows while it stays open.
-- Check `PRAGMA user_version` before relying on a column; the stable columns
-  of that version are the ones marked below.
-- The database holds this computer's local items only. Work that a listing
-  reads through from GitHub is not stored, and a workflow phase is derived,
-  never stored: `instrukt todo list` and `instrukt todo show` give both.
+The database holds this computer's local items only. Work that a listing
+reads through from GitHub is not stored, and a workflow phase is derived,
+never stored: `instrukt todo list` and `instrukt todo show` give both.
 
 Values are stored as follows: timestamps as RFC 3339 text in UTC; booleans as
 `0` or `1`; a session as `<runtime>:<id>`; an actor as JSON text, one of
@@ -87,10 +77,6 @@ Values are stored as follows: timestamps as RFC 3339 text in UTC; booleans as
 - A database whose version is newer than the running instrukt knows is
   refused for reading and writing; the refusal names both versions and the
   door: install the newer instrukt.
-- A stable column keeps its name, type and meaning from one version to the
-  next. A migration that changes one is a breaking schema change and is named
-  in the release notes. A column not marked stable is instrukt's own and may
-  change in any migration.
 
 ### Work tables
 
@@ -103,90 +89,90 @@ command contract.
 **`todos`** — one row per local item. Key: `id`. Unique while live:
 `(project, slug)` among `active`, `iceboxed` and `structural_holder` rows.
 
-| Column | Meaning | Stable |
-| --- | --- | --- |
-| `id` | Durable identity: 32 lowercase hex characters. | yes |
-| `project` | The project's slug. | yes |
-| `slug` | Project-local address. | yes |
-| `kind` | `feature`, `change`, `bug` or `task`. | yes |
-| `status` | Record status: `active`, `iceboxed`, `structural_holder`, `delivered` or `removed`. Never a workflow phase. | yes |
-| `created_at`, `created_by` | Creation time and actor. | yes |
-| `human_involved` | The audit-only creation declaration, or `NULL`. | yes |
-| `revision` | Incremented by every accepted change; the revision reflection writes. | yes |
-| `group_id` | The structural holder this todo is grouped under (`todos.id`), or `NULL`. | yes |
-| `schedule` | A task's schedule: an ISO-8601 instant with offset, or `cron:<five fields>`; `NULL` for none. | yes |
-| `catch_up` | `once` or `skip`. | yes |
-| `agent`, `thinking` | A task's agent preference and thinking mode, or `NULL`. | yes |
-| `claim_machine`, `claim_session`, `claim_at` | The execution claim: holding computer, claiming session, time; `NULL` when unclaimed. `claim.held` is `claim_machine IS NOT NULL`. | yes |
-| `branch` | The work branch recorded at build start. | yes |
-| `delivered_commit`, `delivered_at`, `delivered_by` | Completion evidence. | yes |
-| `removed_at`, `removed_from` | Withdrawal time, starting the recovery window, and the status restoration returns to. | yes |
-| `removal` | Released working resources kept as recovery evidence (branch and head, worktrees). | no |
-| `sequence` | The last record-order number given to a version or stamp. | no |
+| Column | Meaning |
+| --- | --- |
+| `id` | Durable identity: 32 lowercase hex characters. |
+| `project` | The project's slug. |
+| `slug` | Project-local address. |
+| `kind` | `feature`, `change`, `bug` or `task`. |
+| `status` | Record status: `active`, `iceboxed`, `structural_holder`, `delivered` or `removed`. Never a workflow phase. |
+| `created_at`, `created_by` | Creation time and actor. |
+| `human_involved` | The audit-only creation declaration, or `NULL`. |
+| `revision` | Incremented by every accepted change; the revision reflection writes. |
+| `group_id` | The structural holder this todo is grouped under (`todos.id`), or `NULL`. |
+| `schedule` | A task's schedule: an ISO-8601 instant with offset, or `cron:<five fields>`; `NULL` for none. |
+| `catch_up` | `once` or `skip`. |
+| `agent`, `thinking` | A task's agent preference and thinking mode, or `NULL`. |
+| `claim_machine`, `claim_session`, `claim_at` | The execution claim: holding computer, claiming session, time; `NULL` when unclaimed. `claim.held` is `claim_machine IS NOT NULL`. |
+| `branch` | The work branch recorded at build start. |
+| `delivered_commit`, `delivered_at`, `delivered_by` | Completion evidence. |
+| `removed_at`, `removed_from` | Withdrawal time, starting the recovery window, and the status restoration returns to. |
+| `removal` | Released working resources kept as recovery evidence (branch and head, worktrees). |
+| `sequence` | The last record-order number given to a version or stamp. |
 
 **`prerequisites`** — the dependency edges. Key: `(todo_id, prerequisite_id)`,
 both `todos.id`; `prerequisite_id` may name a retained delivered todo.
 
 **`artifacts`** — one row per named artifact. Key: `(todo_id, name)`.
-Stable: `todo_id`, `name`. Not stable: `address` (the provider address once
+Columns: `todo_id`, `name`, `address` (the provider address once
 reflected; the artifact's identity on GitHub).
 
 **`artifact_versions`** — retained versions, never rewritten. Key:
 `(todo_id, sequence)`; `(todo_id, name)` references `artifacts`.
 
-| Column | Meaning | Stable |
-| --- | --- | --- |
-| `todo_id`, `name` | The artifact. | yes |
-| `sequence` | Place in the todo's record order, shared with stamps. | yes |
-| `digest` | `sha256:<hex>` of the content. | yes |
-| `writer`, `created_at` | Writing actor and time. | yes |
-| `content` | The content, where this computer holds it; else `NULL`. | yes |
-| `derived_from`, `grounding` | Upstream digests and grounding at write time. | no |
-| `remote` | The provider's version number once uploaded. | no |
+| Column | Meaning |
+| --- | --- |
+| `todo_id`, `name` | The artifact. |
+| `sequence` | Place in the todo's record order, shared with stamps. |
+| `digest` | `sha256:<hex>` of the content. |
+| `writer`, `created_at` | Writing actor and time. |
+| `content` | The content, where this computer holds it; else `NULL`. |
+| `derived_from`, `grounding` | Upstream digests and grounding at write time. |
+| `remote` | The provider's version number once uploaded. |
 
 **`stamps`** — the stamp ledger, oldest first. Key: `(todo_id, sequence)`.
 Approvals and intent checks are stamps: `fact = 'approval'` and
 `fact = 'intent_checked'`.
 
-| Column | Meaning | Stable |
-| --- | --- | --- |
-| `todo_id`, `sequence` | The todo and record order. | yes |
-| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). | yes |
-| `at`, `actor` | Time and acting session, GitHub account or person. | yes |
-| `role` | The role the acting session played, or `NULL`. | yes |
-| `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. | yes |
-| `eval_fingerprint` | The published fingerprint copied at write time. | yes |
-| `human_involved` | The audit-only declaration, or `NULL`. | yes |
-| `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp). | no |
+| Column | Meaning |
+| --- | --- |
+| `todo_id`, `sequence` | The todo and record order. |
+| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
+| `at`, `actor` | Time and acting session, GitHub account or person. |
+| `role` | The role the acting session played, or `NULL`. |
+| `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
+| `eval_fingerprint` | The published fingerprint copied at write time. |
+| `human_involved` | The audit-only declaration, or `NULL`. |
+| `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp). |
 
 **`holds`** — the current dispatch hold and the hold audit. Key:
-`(todo_id, set_at)`. Stable: `todo_id`, `source` (`manual` or `automatic`),
+`(todo_id, set_at)`. Columns: `todo_id`, `source` (`manual` or `automatic`),
 `reason`, `set_by`, `set_at`, `released_at`, `released_by`. The current hold
 is the row with `released_at IS NULL`; at most one per todo.
 
 **`session_bindings`** — started sessions per todo and role. Key:
-`(todo_id, role)`. Stable: `todo_id`, `role`, `session`, `worktree` (the
+`(todo_id, role)`. Columns: `todo_id`, `role`, `session`, `worktree` (the
 returned worktree path, kept after the session ends).
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
 
-| Column | Meaning | Stable |
-| --- | --- | --- |
-| `todo_id` | The item. | yes |
-| `issue_number` | The reflected issue. | yes |
-| `remote_revision` | The confirmed remote revision: the record revision GitHub holds. | yes |
-| `pending` | Local changes not yet reflected: the pending revision is `todos.revision`. | yes |
-| `conflicted` | A newer remote revision met a pending local change; commands refuse until `instrukt todo refresh`. | yes |
-| `failure` | The last failure that left reflection pending. | yes |
-| `pull_number` | The linked pull request. | yes |
-| `issue_id`, `record_comment`, `etag`, `pull_outstanding`, `reviews_reflected`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. | no |
+| Column | Meaning |
+| --- | --- |
+| `todo_id` | The item. |
+| `issue_number` | The reflected issue. |
+| `remote_revision` | The confirmed remote revision: the record revision GitHub holds. |
+| `pending` | Local changes not yet reflected: the pending revision is `todos.revision`. |
+| `conflicted` | A newer remote revision met a pending local change; commands refuse until `instrukt todo refresh`. |
+| `failure` | The last failure that left reflection pending. |
+| `pull_number` | The linked pull request. |
+| `issue_id`, `record_comment`, `etag`, `pull_outstanding`, `reviews_reflected`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
 
 **`inbound_commands`** — `/instrukt` comment commands already answered. Key:
-`(todo_id, comment_id)`. Not stable.
+`(todo_id, comment_id)`.
 
 **`provider_deferrals`** — per project, the time until which GitHub deferred
-requests (rate limiting). Key: `project`. Not stable.
+requests (rate limiting). Key: `project`.
 
 ### Runner tables
 
@@ -195,52 +181,52 @@ reactions they record.
 
 **`events`** — the event log, oldest first.
 
-| Column | Meaning | Stable |
-| --- | --- | --- |
-| `seq` | Position in the log, from 1, increasing by one per appended event. Key. | yes |
-| `name` | The event's vocabulary name, such as `runner.upstream_changed`. | yes |
-| `project` | The project it concerns. | yes |
-| `payload` | The event's payload, as the runner domain defines it. | yes |
-| `idempotency_key` | The event's key; unique, so appending an event already logged changes nothing. | yes |
-| `logged_at` | When it was appended. | yes |
+| Column | Meaning |
+| --- | --- |
+| `seq` | Position in the log, from 1, increasing by one per appended event. Key. |
+| `name` | The event's vocabulary name, such as `runner.upstream_changed`. |
+| `project` | The project it concerns. |
+| `payload` | The event's payload, as the runner domain defines it. |
+| `idempotency_key` | The event's key; unique, so appending an event already logged changes nothing. |
+| `logged_at` | When it was appended. |
 
 **`consumer_cursors`** — per consumer (`<procedure>@<project>`), the highest
 `seq` up to which every event the consumer selects is handled. Key:
-`consumer`. A cursor never moves back. Stable: `consumer`, `seq`.
+`consumer`. A cursor never moves back. Columns: `consumer`, `seq`.
 
 **`handled_events`** — per consumer, each event it was handed. Key:
-`(consumer, seq)`. Stable: `consumer`, `seq`, `handled_at`. The mark commits
+`(consumer, seq)`. Columns: `consumer`, `seq`, `handled_at`. The mark commits
 with the delivery's outcome and the consumer's cursor, in one transaction;
 an event with a mark is never handed to that consumer again.
 
 **`request_validators`** — conditional-request validators. Key:
-`(project, request)`. Not stable: `etag`, `body` (the cached answer an
+`(project, request)`, `etag`, `body` (the cached answer an
 unchanged `304` reuses).
 
 **`poll_deferrals`** — per project, the earliest time the next poll of a
-source may run, from `X-Poll-Interval`. Key: `project`. Not stable.
+source may run, from `X-Poll-Interval`. Key: `project`.
 
 **`watched_refs`** — the last observation of each watched ref. Key:
-`(project, remote, ref)`. Stable: `project`, `remote`, `ref`, `revision`,
+`(project, remote, ref)`. Columns: `project`, `remote`, `ref`, `revision`,
 `observed_at`.
 
 **`executions`** — dispatched executions the runner watches until their todo
-is released. Key: `(project, todo_id, role)`. Stable: `project`, `todo_id`,
-`role`, `session`. Not stable: `workflow_state` (the state at the last look),
+is released. Key: `(project, todo_id, role)`. Columns: `project`, `todo_id`,
+`role`, `session`, `workflow_state` (the state at the last look),
 `recovery_sent`, `anomaly_raised`.
 
 **`standing_bindings`** — standing-agent sessions. Key:
-`(procedure, project)`. Stable: `procedure`, `project`, `session`.
+`(procedure, project)`. Columns: `procedure`, `project`, `session`.
 
 **`standing_starts`** — standing-agent starts recorded before the runtime
 was asked and not yet bound or resolved. Key: `(procedure, project)`.
-Stable: `procedure`, `project`, `begun_at`. Not stable: `reported`.
+Columns: `procedure`, `project`, `begun_at`, `reported`.
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
-the developer was notified. Key: `(project, todo_id)`. Stable: `project`,
+the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
 `todo_id`, `session`, `notified`.
 
-**`wakeups`** — one row: `last_at`, the last wake-up. Stable.
+**`wakeups`** — one row: `last_at`, the last wake-up.
 
 ### Retention
 
@@ -252,17 +238,6 @@ and handled marks are kept.
 
 ### Use cases
 
-#### UC-SD1: An agent lists the todos in a status while instrukt is writing
-
-```gherkin
-  Given a developer's computer holds local todos in several record statuses
-  And instrukt is part-way through writing a change to one of them
-  When an agent lists the todos in one status with a read-only sqlite3 query
-  Then the query answers without waiting for the write
-  And it shows the todos as the last completed change left them
-  And the write completes unaffected by the read
-```
-
 #### UC-SD2: A write interrupted part-way leaves the last completed state
 
 ```gherkin
@@ -273,6 +248,8 @@ and handled marks are kept.
 ```
 
 ## Known caveats
+
+- UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The event log and its handled marks grow without a retention rule; each
   row is one distinct observation (a ref revision, a candidate result, a
