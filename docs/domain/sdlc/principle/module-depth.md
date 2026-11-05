@@ -106,6 +106,6 @@ whether a test is admitted is a separate, evidence-gated decision.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/principle/design-fundamentals.md — the vocabulary this principle arbitrates.
-- ~/.instrukt/docs/sdlc/principle/architectural-defaults.md — the boundaries and state ownership settled before depth applies.
-- ~/.instrukt/docs/sdlc/policy/substrate-anchoring.md — naming the existing module before building a new one.
+- [sdlc/principle/design-fundamentals](design-fundamentals.md) — the vocabulary this principle arbitrates.
+- [sdlc/principle/architectural-defaults](architectural-defaults.md) — the boundaries and state ownership settled before depth applies.
+- [sdlc/policy/substrate-anchoring](../policy/substrate-anchoring.md) — naming the existing module before building a new one.

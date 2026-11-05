@@ -143,9 +143,9 @@ return the delivered workspace-removal obligation from retained evidence; it
 changes no delivered record. The integrator executes removal outside evaluation.
 Claim release and session cleanup belong to the work lane before handoff.
 
-### Use cases
+## Use cases
 
-#### UC-TD1: Record a piece of project work
+### UC-TD1: Record a piece of project work
 
 ```gherkin
   Given a developer has a request for their project
@@ -153,7 +153,7 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the project retains the request as a todo with a durable identity
 ```
 
-#### UC-TD2: Recover withdrawn work
+### UC-TD2: Recover withdrawn work
 
 ```gherkin
   Given a developer withdrew a todo that remains within its recovery window
@@ -164,7 +164,7 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the withdrawn todo is gone and can no longer be restored
 ```
 
-#### UC-TD3: A developer is told how to enable work tracking
+### UC-TD3: A developer is told how to enable work tracking
 
 ```gherkin
   Given a developer's project has work tracking switched off
@@ -172,7 +172,7 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the command refuses and names the switch that would enable it
 ```
 
-#### UC-TD4: A developer reaches earlier work whose name was reused
+### UC-TD4: A developer reaches earlier work whose name was reused
 
 ```gherkin
   Given a developer delivered a todo and later filed new work under the same name
@@ -183,7 +183,7 @@ Claim release and session cleanup belong to the work lane before handoff.
   And asking for one of those addresses shows its retained record
 ```
 
-#### UC-TD5: A developer withdraws work without losing what it produced
+### UC-TD5: A developer withdraws work without losing what it produced
 
 ```gherkin
   Given a developer has a todo with work committed on its own branch
@@ -200,6 +200,6 @@ None.
 
 ## See Also
 
-- project/instrukt/spec/domain/work
-- project/instrukt/spec/feature/runner/session-continuity
-- project/instrukt/spec/feature/work/state-database
+- [project/instrukt/spec/domain/work](../../domain/work.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+- [project/instrukt/spec/feature/work/state-database](state-database.md)

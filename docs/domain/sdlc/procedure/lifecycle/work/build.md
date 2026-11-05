@@ -15,11 +15,11 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/bundle.md
-- @~/.instrukt/docs/sdlc/policy/quality-predicate-registry.md
-- @~/.instrukt/docs/sdlc/principle/module-depth.md
-- @~/.instrukt/docs/sdlc/policy/substrate-anchoring.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
+- sdlc
+- [sdlc/policy/quality-predicate-registry](../../../policy/quality-predicate-registry.md)
+- [sdlc/principle/module-depth](../../../principle/module-depth.md)
+- [sdlc/policy/substrate-anchoring](../../../policy/substrate-anchoring.md)
+- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 
 ## Goal
 

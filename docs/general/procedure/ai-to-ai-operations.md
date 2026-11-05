@@ -8,7 +8,7 @@ activation_trigger: When dispatching a session, collaborating with a peer, or re
 
 ## Required reads
 
-- general/policy/agent-facing-text
+- [general/policy/agent-facing-text](../policy/agent-facing-text.md)
 
 ## Goal
 
@@ -94,8 +94,8 @@ It does not administer the session that dispatched it.
 
 ## See Also
 
-- general/policy/human-contract
-- general/principle/session-lifecycle
-- general/principle/grounding
-- general/principle/intelligence-boundaries
-- general/procedure/orchestration
+- [general/policy/human-contract](../policy/human-contract.md)
+- [general/principle/session-lifecycle](../principle/session-lifecycle.md)
+- [general/principle/grounding](../principle/grounding.md)
+- [general/principle/intelligence-boundaries](../principle/intelligence-boundaries.md)
+- [general/procedure/orchestration](orchestration.md)

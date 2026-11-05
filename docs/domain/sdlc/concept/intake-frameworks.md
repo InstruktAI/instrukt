@@ -38,5 +38,5 @@ domain intelligence already present in the model.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/intake.md
-- ~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
+- [sdlc/procedure/lifecycle/prepare/intake](../procedure/lifecycle/prepare/intake.md)
+- [sdlc/policy/preparation-artifact-quality](../policy/preparation-artifact-quality.md)

@@ -147,7 +147,7 @@ Build-review rounds are counted from verdict stamps, each releasing its own
 attempt. There is no review-occurrence admission write; repeated evaluation
 alone counts no round.
 
-### Use cases
+## Use cases
 
 Stamp capture and validation support the goals in the approval, GitHub-record
 and evaluation-report specs. They introduce no separate stakeholder goal.
@@ -160,6 +160,6 @@ and evaluation-report specs. They introduce no separate stakeholder goal.
 
 ## See Also
 
-- project/instrukt/spec/domain/work
-- project/instrukt/spec/feature/workflow/delivery-cycle
-- project/instrukt/spec/feature/work/state-database
+- [project/instrukt/spec/domain/work](../../domain/work.md)
+- [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)
+- [project/instrukt/spec/feature/work/state-database](state-database.md)

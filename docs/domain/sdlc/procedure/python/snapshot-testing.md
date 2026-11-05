@@ -7,9 +7,9 @@ description: Python snapshot assertion and migration mechanics using syrupy and 
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/procedure/snapshot-testing.md
-@~/.instrukt/docs/sdlc/policy/python/testing.md
-@~/.instrukt/docs/sdlc/policy/python/core.md
+- [sdlc/procedure/snapshot-testing](../snapshot-testing.md)
+- [sdlc/policy/python/testing](../../policy/python/testing.md)
+- [sdlc/policy/python/core](../../policy/python/core.md)
 
 ## Goal
 

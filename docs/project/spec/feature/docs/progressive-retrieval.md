@@ -206,9 +206,9 @@ When the caller stands in a project whose canonical main is ahead of the
 commit publication last published for it, `index` and `get` print a warning
 naming both commits alongside their normal output. They publish nothing.
 
-### Use cases
+## Use cases
 
-#### UC-DR1: An agent loads the documentation a task needs
+### UC-DR1: An agent loads the documentation a task needs
 
 ```gherkin
 Given an agent acting for a developer works in a project that has published its documentation
@@ -219,7 +219,7 @@ And it is told, by id, which required reads it has not yet loaded
 And nothing it did not ask for is loaded
 ```
 
-#### UC-DR2: An agent reads a snippet with everything it requires
+### UC-DR2: An agent reads a snippet with everything it requires
 
 ```gherkin
 Given an agent acting for a developer needs a snippet whose required reads name other snippets by id and domains by name
@@ -233,7 +233,7 @@ But when it asks for a closure of several items at once
 Then the read is refused and says a closure is read for exactly one snippet
 ```
 
-#### UC-DR3: An agent reads instructions that carry values from its own session
+### UC-DR3: An agent reads instructions that carry values from its own session
 
 ```gherkin
 Given a published procedure whose text asks for a configured value
@@ -248,7 +248,7 @@ Then publication refuses it and names the file
 And reading such a snippet runs nothing
 ```
 
-#### UC-DR4: An agent reads a domain on demand
+### UC-DR4: An agent reads a domain on demand
 
 ```gherkin
 Given an agent's global instructions carry one line for a published domain, naming the command that reads it
@@ -259,7 +259,7 @@ But when the domain has no index
 Then it is told the domain has no index and how to list the domain's snippets instead
 ```
 
-#### UC-DR7: An agent finds where a domain's doctrine is authored
+### UC-DR7: An agent finds where a domain's doctrine is authored
 
 ```gherkin
 Given a domain is published on a developer's computer from a checkout of its docs repository
@@ -267,7 +267,7 @@ When an agent acting for the developer lists that domain's snippets
 Then the listing opens with the folder in that checkout the domain is authored in, the commit that was published, and the repository's remote
 ```
 
-#### UC-DR8: An agent finds the file behind a snippet it read
+### UC-DR8: An agent finds the file behind a snippet it read
 
 ```gherkin
 Given an agent acting for a developer has read a published snippet it wants to improve
@@ -275,7 +275,7 @@ When it reads the snippet
 Then the snippet's header names the file in its publishing checkout that holds it
 ```
 
-#### UC-DR9: An agent reads clickable references as ids
+### UC-DR9: An agent reads clickable references as ids
 
 ```gherkin
 Given a developer's snippets use same-repository links by id in Required reads and See Also
@@ -297,8 +297,8 @@ And other Markdown links and code examples remain as authored
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/position-index
-- project/instrukt/spec/feature/docs/pending-documentation
-- project/instrukt/spec/feature/configuration/interpolation
-- project/instrukt/spec/feature/publication/agent-entrypoints
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/position-index](position-index.md)
+- [project/instrukt/spec/feature/docs/pending-documentation](pending-documentation.md)
+- [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)
+- [project/instrukt/spec/feature/publication/agent-entrypoints](../publication/agent-entrypoints.md)

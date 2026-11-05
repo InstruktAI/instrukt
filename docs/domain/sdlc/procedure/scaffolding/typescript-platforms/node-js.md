@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/scaffolding/typescript.md
+- [sdlc/procedure/scaffolding/typescript](../typescript.md)
 
 ## Goal
 
@@ -39,4 +39,4 @@ Scaffold a framework-neutral Node.js service or CLI with native ESM.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
+- [sdlc/concept/delivery-portfolio](../../../concept/delivery-portfolio.md)

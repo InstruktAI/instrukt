@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/policy/python/core.md
+- [sdlc/policy/python/core](core.md)
 
 ## Rationale
 
@@ -89,4 +89,4 @@ Level assignment, observation-record admissibility, structured-field discipline,
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/observability.md
+- [sdlc/policy/observability](../observability.md)

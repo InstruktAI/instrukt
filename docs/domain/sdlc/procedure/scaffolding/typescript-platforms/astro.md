@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/scaffolding/typescript.md
+- [sdlc/procedure/scaffolding/typescript](../typescript.md)
 
 ## Goal
 
@@ -48,4 +48,4 @@ server moments only where a route demands one.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/frontend-production-baseline.md
+- [sdlc/policy/frontend-production-baseline](../../../policy/frontend-production-baseline.md)

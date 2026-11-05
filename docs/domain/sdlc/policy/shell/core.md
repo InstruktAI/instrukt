@@ -7,7 +7,7 @@ description: Shell-script safety, portability, linting, and invocation rules for
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/policy/no-inline-logic.md
+- [sdlc/policy/no-inline-logic](../no-inline-logic.md)
 
 ## Rules
 

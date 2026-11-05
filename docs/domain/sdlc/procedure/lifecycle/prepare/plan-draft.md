@@ -15,11 +15,11 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/bundle.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
-- @~/.instrukt/docs/sdlc/policy/quality-predicate-registry.md
-- @~/.instrukt/docs/sdlc/policy/substrate-anchoring.md
-- @~/.instrukt/docs/sdlc/principle/module-depth.md
+- sdlc
+- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
+- [sdlc/policy/quality-predicate-registry](../../../policy/quality-predicate-registry.md)
+- [sdlc/policy/substrate-anchoring](../../../policy/substrate-anchoring.md)
+- [sdlc/principle/module-depth](../../../principle/module-depth.md)
 
 ## Goal
 
@@ -283,9 +283,9 @@ the reservation.
 For each scenario the plan will bind:
 
 - **A scenario this todo authors** carries the claim as its own `planned:<slug>`
-  block under the feature spec's `### Use cases`; the delivering todo is its binder.
+  block under the feature spec's `## Use cases`; the delivering todo is its binder.
 - **An existing live-and-unbound scenario this todo will bind** is claimed by
-  wrapping its `#### UC-…` block in a `planned-change:<slug>` that restates the
+  wrapping its `### UC-…` block in a `planned-change:<slug>` that restates the
   scenario unchanged; the delivery fold clears the wrap and the test binding becomes
   the permanent record.
 - **A scenario already reserved by another in-flight todo** — enclosed by that todo's
@@ -489,7 +489,7 @@ phase authors the pending snippets that describe the work's intended state. A
   plan and draft the replacement text directly beneath it. The holding slug
   must already be in this todo's `after` set. The snippet reference must use the
   validator-accepted inline form from `general/policy/referencing-doc-snippets`
-  (`@docs/...` for a project snippet); it becomes referenced-snippet provenance,
+  (`project/<slug>/<taxonomy>/...` for a project snippet); it becomes referenced-snippet provenance,
   so the holder's fold raises upstream-snippet drift and routes this todo back
   to plan drafting. An undeclared holder is a collision to resolve, not a
   deferral, and no nested marker is authored.

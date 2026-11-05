@@ -123,5 +123,5 @@ scripts may omit it.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/design/project-toolchain.md — the project actions this extends.
-- ~/.instrukt/docs/sdlc/policy/frontend-production-baseline.md — the frontend script buttons behind the shim.
+- [sdlc/design/project-toolchain](../design/project-toolchain.md) — the project actions this extends.
+- [sdlc/policy/frontend-production-baseline](frontend-production-baseline.md) — the frontend script buttons behind the shim.

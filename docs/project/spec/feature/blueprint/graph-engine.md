@@ -55,9 +55,9 @@ project layer is a validation finding and is ignored, as project-layer
 
 - The configured command receives the path of a checkout of the revision as its argument and writes contract JSON to stdout. A non-zero exit is a failed generation.
 
-### Use cases
+## Use cases
 
-#### UC-BE1: A developer maps their project with an engine of their own
+### UC-BE1: A developer maps their project with an engine of their own
 
 ```gherkin
 Given a developer whose own tool describes their project's structure in the node-link form instrukt reads
@@ -77,4 +77,4 @@ map; agents continue receiving answers from the previous complete map.
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.

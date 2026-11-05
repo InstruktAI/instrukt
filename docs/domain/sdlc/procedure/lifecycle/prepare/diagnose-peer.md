@@ -15,8 +15,8 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/policy/human-involvement-recording.md
-- @~/.instrukt/docs/sdlc/procedure/debugging.md
+- [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
+- [sdlc/procedure/debugging](../../debugging.md)
 
 ## Goal
 

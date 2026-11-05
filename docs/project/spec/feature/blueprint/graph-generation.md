@@ -54,9 +54,9 @@ A pull moving remote main also starts generation through post-merge/post-rewrite
 - The store is a cache: deleting it loses nothing the next push cannot
   re-create.
 
-### Use cases
+## Use cases
 
-#### UC-BG1: A developer pushes to main without waiting and the revision gets mapped
+### UC-BG1: A developer pushes to main without waiting and the revision gets mapped
 
 ```gherkin
 Given a project with the blueprint module on
@@ -77,5 +77,5 @@ receiving answers from the last complete map, naming that map's revision.
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
-- docs/project/spec/domain/repository.md — the pre-push section.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.
+- [project/instrukt/spec/domain/repository](../../domain/repository.md) — the pre-push section.

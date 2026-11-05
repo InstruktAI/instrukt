@@ -14,8 +14,8 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/review.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
+- [sdlc/procedure/lifecycle/review](../review.md)
+- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 
 ## Goal
 

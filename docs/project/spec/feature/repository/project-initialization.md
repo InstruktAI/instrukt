@@ -87,9 +87,9 @@ In a repository whose working tree holds `docs/general/` or any
 The report claims nothing and writes nothing; ownership is taken by the sync
 (`project/instrukt/spec/feature/publication/project-publication`).
 
-### Use cases
+## Use cases
 
-#### UC-IN1: A developer adopts instrukt in their repository in one step
+### UC-IN1: A developer adopts instrukt in their repository in one step
 
 ```gherkin
 Given a developer's existing git repository with no instrukt configuration
@@ -100,7 +100,7 @@ And instrukt's hooks are installed beside any hooks the repository had
 And nothing has been committed
 ```
 
-#### UC-IN5: A developer adopting a repository with its own agent instructions keeps what they wrote
+### UC-IN5: A developer adopting a repository with its own agent instructions keeps what they wrote
 
 ```gherkin
 Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
@@ -112,7 +112,7 @@ When their agent goes through the kept instructions with them
 Then each lands in the project's documentation and index, and the published instruction file carries them
 ```
 
-#### UC-IN2: Initializing again completes an adoption without touching the developer's files
+### UC-IN2: Initializing again completes an adoption without touching the developer's files
 
 ```gherkin
 Given a developer's repository that already has its own master, project index and ignore file
@@ -124,7 +124,7 @@ When the developer initializes instrukt once more
 Then nothing in the repository changes
 ```
 
-#### UC-IN3: A developer adopting a docs repository sees what it will claim before it is published
+### UC-IN3: A developer adopting a docs repository sees what it will claim before it is published
 
 ```gherkin
 Given a developer's computer where another project already owns one domain
@@ -136,7 +136,7 @@ And whether publication will write the global agent instructions of the agent CL
 And nothing has been published
 ```
 
-#### UC-IN4: A developer's new project starts with the shape of the computer's sdlc doctrine
+### UC-IN4: A developer's new project starts with the shape of the computer's sdlc doctrine
 
 ```gherkin
 Given a developer's computer publishes the sdlc domain with its snippet schema
@@ -161,6 +161,6 @@ Then no project schema is written and the developer is told why
 
 ## See Also
 
-- docs/project/spec/domain/repository.md — the repository context.
-- docs/project/spec/feature/repository/hook-sections.md — the hook sections init installs.
-- docs/project/spec/feature/publication/editor-schemas.md — the editor schemas and modelines init writes.
+- [project/instrukt/spec/domain/repository](../../domain/repository.md) — the repository context.
+- [project/instrukt/spec/feature/repository/hook-sections](hook-sections.md) — the hook sections init installs.
+- [project/instrukt/spec/feature/publication/editor-schemas](../publication/editor-schemas.md) — the editor schemas and modelines init writes.

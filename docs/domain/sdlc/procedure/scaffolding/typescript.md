@@ -61,7 +61,7 @@ the files.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md
+- [sdlc/concept/delivery-portfolio](../../concept/delivery-portfolio.md)
+- [sdlc/policy/ci-pipeline-conventions](../../policy/ci-pipeline-conventions.md)
 
 - The chosen framework generator's current documentation and source — verify its rules for pre-existing files against the version in use.

@@ -39,9 +39,9 @@ is `inbound_source:github:project:<slug>` and source is ingress. A derived provi
 view names the repository and retains source provenance; it does not replace the
 platform origin with the repository or enable property-based procedure routing.
 
-### Use cases
+## Use cases
 
-#### UC-GH1: Read the canonical facts of a GitHub push
+### UC-GH1: Read the canonical facts of a GitHub push
 
 ```gherkin
 Given a developer receives a verified push document
@@ -49,7 +49,7 @@ When their reaction reads its normalized provider view
 Then source is github, type is push, repo, sender, action and ref are extracted and the full payload remains available
 ```
 
-#### UC-GH2: Read the canonical facts of a GitHub release
+### UC-GH2: Read the canonical facts of a GitHub release
 
 ```gherkin
 Given a developer receives a verified release document
@@ -57,7 +57,7 @@ When their reaction reads the normalized view
 Then type is release and its repo, sender, action and nullable ref follow the same extraction as other events
 ```
 
-#### UC-GH3: Receive GitHub registration metadata without a built-in reaction
+### UC-GH3: Receive GitHub registration metadata without a built-in reaction
 
 ```gherkin
 Given a developer receives a verified ping with zen and hook_id
@@ -65,7 +65,7 @@ When it is normalized
 Then those metadata are retained with the common properties and no built-in ping handler is invoked
 ```
 
-#### UC-GH4: Keep an absent or malformed type explicit
+### UC-GH4: Keep an absent or malformed type explicit
 
 ```gherkin
 Given a developer receives a verified delivery with no valid event-type header
@@ -73,7 +73,7 @@ When it is normalized
 Then its type is unknown rather than inferred from the body
 ```
 
-#### UC-GH5: Accept GitHub header casing variants
+### UC-GH5: Accept GitHub header casing variants
 
 ```gherkin
 Given a developer receives equivalent deliveries with differently cased header names and event values
@@ -81,7 +81,7 @@ When they are normalized
 Then both yield the same lowercased GitHub event type
 ```
 
-#### UC-GH6: Handle incomplete repository and sender facts
+### UC-GH6: Handle incomplete repository and sender facts
 
 ```gherkin
 Given a developer receives a valid delivery with malformed repository or sender structures and absent action or ref
@@ -89,7 +89,7 @@ When it is normalized
 Then all four property slots exist and unavailable string facts are explicit nulls
 ```
 
-#### UC-GH8: Retain the project source of a verified GitHub delivery
+### UC-GH8: Retain the project source of a verified GitHub delivery
 
 ```gherkin
 Given a developer has declared a project GitHub source

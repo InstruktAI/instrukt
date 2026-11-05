@@ -137,9 +137,9 @@ publishes.
 - **No other agent configuration.** Skills, MCP servers, hooks and every other
   agent setting are outside instrukt and never written.
 
-### Use cases
+## Use cases
 
-#### UC-AE1: An agent opened in a developer's project starts with what the project selected
+### UC-AE1: An agent opened in a developer's project starts with what the project selected
 
 ```gherkin
 Given a developer's project whose master states its purpose
@@ -151,7 +151,7 @@ And it lists the other snippet and the triggered procedure, each with the comman
 And it holds no reference left for the agent to resolve
 ```
 
-#### UC-AE2: Every supported agent on a developer's computer starts with the always-on doctrine and a map of the rest
+### UC-AE2: Every supported agent on a developer's computer starts with the always-on doctrine and a map of the rest
 
 ```gherkin
 Given a developer's computer with several supported agent CLIs installed
@@ -166,7 +166,7 @@ And each agent CLI that needs it is set to load project instruction files
 And every other setting the developer had is unchanged
 ```
 
-#### UC-AE3: A developer gives one agent CLI rules of its own
+### UC-AE3: A developer gives one agent CLI rules of its own
 
 ```gherkin
 Given a developer's computer with two supported agent CLIs installed
@@ -178,7 +178,7 @@ When the developer maps a policy to an agent CLI instrukt does not support
 Then publication is refused and names the CLI and the supported ones
 ```
 
-#### UC-AE4: Publication never overwrites global agent instructions the developer wrote
+### UC-AE4: Publication never overwrites global agent instructions the developer wrote
 
 ```gherkin
 Given a developer's computer where an agent CLI's global instruction file holds the developer's own text
@@ -190,7 +190,7 @@ When the developer moves the file out of the way and publication runs again
 Then that agent CLI starts with the rendered global instructions
 ```
 
-#### UC-AE5: A developer learns that a domain without an index is not on the agents' map
+### UC-AE5: A developer learns that a domain without an index is not on the agents' map
 
 ```gherkin
 Given a developer's project with a domain that has no index
@@ -211,6 +211,6 @@ And the domain's snippets are still found by listing that domain
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/feature/publication/project-publication.md — the sync these outputs are part of.
-- docs/project/spec/domain/docs.md — the `index.yaml` model these renderings follow.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync these outputs are part of.
+- [project/instrukt/spec/domain/docs](../../domain/docs.md) — the `index.yaml` model these renderings follow.

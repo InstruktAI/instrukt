@@ -15,14 +15,12 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/principle/design-fundamentals.md
+- [sdlc/principle/design-fundamentals](../../../principle/design-fundamentals.md)
 
-- @~/.instrukt/docs/sdlc/principle/architectural-defaults.md
-- @~/.instrukt/docs/general/principle/intelligence-boundaries.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
-- @~/.instrukt/docs/sdlc/policy/state-storage.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/review-build.md
-- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
+- [sdlc/principle/architectural-defaults](../../../principle/architectural-defaults.md)
+- [sdlc/policy/state-storage](../../../policy/state-storage.md)
+- [sdlc/procedure/lifecycle/work/review-build](../work/review-build.md)
+- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
 
 ## Goal
 
@@ -188,4 +186,4 @@ boundaries from `sdlc/procedure/lifecycle/review`.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/architecture.md
+- [sdlc/procedure/lifecycle/prepare/architecture](architecture.md)

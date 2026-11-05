@@ -19,7 +19,7 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
+- [sdlc/policy/command-contract-read](../../policy/command-contract-read.md)
 
 ## Goal
 

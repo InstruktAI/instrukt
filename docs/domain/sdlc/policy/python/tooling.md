@@ -64,4 +64,4 @@ None by default.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/python/core.md
+- [sdlc/policy/python/core](core.md)

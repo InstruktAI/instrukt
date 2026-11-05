@@ -10,9 +10,9 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/principle-violation-hunt.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/silent-failure-audit.md
-- @~/.instrukt/docs/sdlc/policy/quality-predicate-registry.md
+- [sdlc/procedure/lifecycle/work/principle-violation-hunt](../procedure/lifecycle/work/principle-violation-hunt.md)
+- [sdlc/procedure/lifecycle/work/silent-failure-audit](../procedure/lifecycle/work/silent-failure-audit.md)
+- [sdlc/policy/quality-predicate-registry](quality-predicate-registry.md)
 
 ## Rules
 

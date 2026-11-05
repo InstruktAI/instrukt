@@ -15,11 +15,7 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/review-build.md
-- @~/.instrukt/docs/sdlc/policy/process-change-authority.md
-- @~/.instrukt/docs/general/policy/human-involvement-recording.md
-- @~/.instrukt/docs/sdlc/policy/quality-predicate-registry.md
+- [sdlc/procedure/lifecycle/work/review-build](../work/review-build.md)
 
 ## Goal
 

@@ -15,8 +15,8 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/concept/defect-evidence.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
+- [sdlc/concept/defect-evidence](../../../concept/defect-evidence.md)
+- [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
 
 ## Goal
 

@@ -105,4 +105,4 @@ manual exploration contract above. Failure visibility follows
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/blast-radius-discovery.md — when and how to consult the Blueprint before editing.
+- [sdlc/procedure/blast-radius-discovery](../procedure/blast-radius-discovery.md) — when and how to consult the Blueprint before editing.

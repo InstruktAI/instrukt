@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/design/lifecycle/overview.md
+- [sdlc/design/lifecycle/overview](overview.md)
 
 ## Purpose
 
@@ -154,5 +154,5 @@ Human/AI touchpoint:
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/integrate.md —
+- [sdlc/procedure/lifecycle/integrate](../../procedure/lifecycle/integrate.md) —
   operational steps for executing the integration phase

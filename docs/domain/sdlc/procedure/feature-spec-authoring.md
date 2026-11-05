@@ -181,5 +181,5 @@ if not this one, the clause goes and the owner is cited.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/principle/documentation-first-development.md — hub-and-spoke placement and concept naming.
-- ~/.instrukt/docs/general/procedure/doc-snippet-authoring.md — planned-marker mechanics for pending scenarios.
+- [sdlc/principle/documentation-first-development](../principle/documentation-first-development.md) — hub-and-spoke placement and concept naming.
+- [general/procedure/doc-snippet-authoring](../../../general/procedure/doc-snippet-authoring.md) — planned-marker mechanics for pending scenarios.

@@ -61,6 +61,6 @@ None.
 
 ## See Also
 
-- ~/.instrukt/docs/general/principle/stewardship.md
-- ~/.instrukt/docs/general/principle/autonomy.md
-- ~/.instrukt/docs/general/policy/leadership.md
+- [general/principle/stewardship](../principle/stewardship.md)
+- [general/principle/autonomy](../principle/autonomy.md)
+- [general/policy/leadership](leadership.md)

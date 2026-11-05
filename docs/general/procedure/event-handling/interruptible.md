@@ -8,8 +8,8 @@ description: Incorporate activation events interjected during a running procedur
 
 ## Required reads
 
-- @~/.instrukt/docs/general/procedure/event-handling/overview.md
-- @~/.instrukt/docs/general/principle/attunement.md
+- [general/procedure/event-handling/overview](overview.md)
+- [general/principle/attunement](../../principle/attunement.md)
 
 ## Goal
 

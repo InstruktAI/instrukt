@@ -28,9 +28,9 @@ Neither shows notification rules, consumer actions, audiences or routing scope.
 External vocabularies remain discoverable from their producing domain's docs;
 relaying an undeclared external name needs no new catalog entry.
 
-### Use cases
+## Use cases
 
-#### UC-ED1: Find the events available to consume
+### UC-ED1: Find the events available to consume
 
 ```gherkin
 Given a developer wants to make a procedure responsive to instrukt events
@@ -38,7 +38,7 @@ When their agent lists the event catalog
 Then every declared type is listed with version, description and subject information and a way to inspect its schema
 ```
 
-#### UC-ED2: Understand a type before consuming it
+### UC-ED2: Understand a type before consuming it
 
 ```gherkin
 Given a developer needs the shape of a listed type
@@ -46,7 +46,7 @@ When their agent inspects its schema
 Then the full producer declaration identifies subject, origins, data kinds and nullability, related kinds and any lifecycle state
 ```
 
-#### UC-ED3: Find the events published by one owner
+### UC-ED3: Find the events published by one owner
 
 ```gherkin
 Given a developer needs events of one vocabulary owner

@@ -52,9 +52,9 @@ marker the todo authors.
 - The slug is checked for form only; whether it names an existing todo is
   checked only when the `todos` module is on.
 
-### Use cases
+## Use cases
 
-#### UC-SR1: An agent preparing work for a person confirms its planned use cases are free
+### UC-SR1: An agent preparing work for a person confirms its planned use cases are free
 
 ```gherkin
 Given an agent preparing a todo for a person, whose plan will bind several use cases
@@ -74,5 +74,5 @@ existing use case, it is refused as unknown and is never reported as free.
 
 ## See Also
 
-- docs/project/spec/domain/specs.md — the specs context.
-- ~/.instrukt/docs/sdlc/policy/testing.md — reservation at prepare, on main, before the build binds.
+- [project/instrukt/spec/domain/specs](../../domain/specs.md) — the specs context.
+- [sdlc/policy/testing](../../../../domain/sdlc/policy/testing.md) — reservation at prepare, on main, before the build binds.

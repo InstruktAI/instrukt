@@ -113,7 +113,7 @@ never blesses a diff its own change produced.
    Every scenario a plan will bind is reserved at prepare, on `main`, before the build-time binding
    act — the claim is that the scenario is enclosed by a pending marker owning the binding for the
    drafting todo. A newly authored scenario carries the claim as its own `planned:<slug>` block; an
-   existing live-and-unbound scenario is claimed by wrapping its `#### UC-…` block in a
+   existing live-and-unbound scenario is claimed by wrapping its `### UC-…` block in a
    `planned-change:<slug>` that restates the scenario unchanged, which the delivery fold clears so the
    scenario stays live and the test binding becomes its permanent record. A scenario enclosed by no
    pending marker is unclaimed. Because prepare authors directly to `main`, a concurrent prepare reads
@@ -144,10 +144,10 @@ never blesses a diff its own change produced.
 
 11. Spec structure and use-case identity are owned by
     `sdlc/procedure/feature-spec-authoring`, which applies in every project
-    regardless of test authorship: scenarios live under `### Use cases`, each identified scenario
-    is a `#### UC-<area><n>:` subsection with exactly one fenced Gherkin block, ids are unique,
+    regardless of test authorship: scenarios live under `## Use cases`, each identified scenario
+    is a `### UC-<area><n>:` subsection with exactly one fenced Gherkin block, ids are unique,
     immutable, never renumbered or reused. A
-    Gherkin block not yet under a `#### UC-` header is an **anonymous scenario** — the
+    Gherkin block not yet under a `### UC-` header is an **anonymous scenario** — the
     id-assignment backlog. Bindings reference `spec_id + UC-id`.
 
 ### Assertion craft (all languages)
@@ -234,7 +234,7 @@ never blesses a diff its own change produced.
 
 - Binding completeness — bound / unbound / duplicate / orphan against the scenario inventory — is
   enforced; bindings are expressed and checked per-language.
-- Spec structure (the `### Use cases` section, well-formed unique `#### UC-` ids, one Gherkin block
+- Spec structure (the `## Use cases` section, well-formed unique `### UC-` ids, one Gherkin block
   per id) and binding completeness are upheld at review.
 - Per-language checks enforce the unit-test stance for each language.
 - The reviewer judges binding honesty: does the test drive the real system for its scenario without

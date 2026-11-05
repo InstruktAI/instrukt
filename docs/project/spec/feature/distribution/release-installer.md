@@ -99,9 +99,9 @@ newer. When the binary in the install directory already reports the target
 version, the installer says so and changes nothing. A failed upgrade leaves
 the previous binary in place.
 
-### Use cases
+## Use cases
 
-#### UC-RI1: A developer installs instrukt with one command
+### UC-RI1: A developer installs instrukt with one command
 
 ```gherkin
 Given a developer on a supported computer without instrukt
@@ -112,7 +112,7 @@ And no other file on the computer has changed
 And they are told the path, how to put it on their PATH when it is not, and that `instrukt -h` lists the commands
 ```
 
-#### UC-RI2: A developer upgrades instrukt or pins a version
+### UC-RI2: A developer upgrades instrukt or pins a version
 
 ```gherkin
 Given a developer has an older instrukt installed by the installer
@@ -124,7 +124,7 @@ When they run it naming an earlier release
 Then that release replaces it
 ```
 
-#### UC-RI3: A download that does not match the release is refused
+### UC-RI3: A download that does not match the release is refused
 
 ```gherkin
 Given a developer has instrukt installed
@@ -134,7 +134,7 @@ Then it refuses, naming the archive whose checksum failed
 And their installed instrukt is unchanged
 ```
 
-#### UC-RI4: A computer the release is not built for is refused
+### UC-RI4: A computer the release is not built for is refused
 
 ```gherkin
 Given a developer on a computer none of the release's targets supports
@@ -153,6 +153,6 @@ And nothing is downloaded or written
 
 ## See Also
 
-- project/instrukt/spec/domain/distribution
-- project/instrukt/spec/feature/distribution/agent-skill
-- project/instrukt/design/architecture/overview
+- [project/instrukt/spec/domain/distribution](../../domain/distribution.md)
+- [project/instrukt/spec/feature/distribution/agent-skill](agent-skill.md)
+- [project/instrukt/design/architecture/overview](../../../design/architecture/overview.md)

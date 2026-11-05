@@ -99,9 +99,9 @@ does not retain historical document generations. Shared handling instructions
 apply duties to the actual invocation and fixed settings, including when the
 current publication differs or the procedure is read inline.
 
-### Use cases
+## Use cases
 
-#### UC-PED1: Load the assignment before handling its first event
+### UC-PED1: Load the assignment before handling its first event
 
 ```gherkin
 Given a developer's subscribed responsibility has no initialized agent
@@ -111,7 +111,7 @@ And the initial event arrives through the hook associated with that actual entry
 And the event body is absent from ordinary conversational input
 ```
 
-#### UC-PED2: Finish a non-interruptible run before receiving later events
+### UC-PED2: Finish a non-interruptible run before receiving later events
 
 ```gherkin
 Given a non-interruptible procedure agent is working
@@ -121,7 +121,7 @@ And after the run ends a content-free wake delivers it through the next eligible
 And no unrelated input is required
 ```
 
-#### UC-PED3: Receive new attention during an interruptible run
+### UC-PED3: Receive new attention during an interruptible run
 
 ```gherkin
 Given an interruptible procedure agent is working under its loaded handling contract
@@ -130,7 +130,7 @@ Then it receives the event at the next runtime-supported in-turn hook boundary
 And the event body is absent from terminal or conversational input
 ```
 
-#### UC-PED4: Handle the oldest pending event first
+### UC-PED4: Handle the oldest pending event first
 
 ```gherkin
 Given a developer's procedure uses sequential delivery with several pending events
@@ -140,7 +140,7 @@ And the others remain pending for later eligible boundaries
 And a non-interruptible run receives no additional event through repeated entry hooks
 ```
 
-#### UC-PED5: Receive the pending batch without losing later arrivals
+### UC-PED5: Receive the pending batch without losing later arrivals
 
 ```gherkin
 Given a developer's procedure uses batched delivery
@@ -149,7 +149,7 @@ Then it receives that ordered snapshot with each activation identity preserved
 And events arriving after selection remain pending without delaying the selected batch
 ```
 
-#### UC-PED6: Keep external facts separate from instructions
+### UC-PED6: Keep external facts separate from instructions
 
 ```gherkin
 Given an activation event contains text claiming to be a human or platform instruction
@@ -158,7 +158,7 @@ Then it remains identifiable as untrusted event data
 And the canonical procedure assignment retains its separate provenance in the transcript
 ```
 
-#### UC-PED7: Recognize startup failure without consuming unbriefed work
+### UC-PED7: Recognize startup failure without consuming unbriefed work
 
 ```gherkin
 Given an agent's canonical initial brief cannot be delivered
@@ -168,7 +168,7 @@ And its retained event is distinguishable from delivered work
 And no event was consumed by an agent lacking its assignment
 ```
 
-#### UC-PED8: Retain a responsibility's work across session replacement
+### UC-PED8: Retain a responsibility's work across session replacement
 
 ```gherkin
 Given accepted events belong to a continuing procedure responsibility
@@ -178,7 +178,7 @@ And the next eligible continuation reconciles that work before newer events unde
 And terminal inability to continue is a visible failure
 ```
 
-#### UC-PED9: Keep a queued wake out of an already running turn
+### UC-PED9: Keep a queued wake out of an already running turn
 
 ```gherkin
 Given a non-interruptible agent has a wake queued for pending events
@@ -188,7 +188,7 @@ Then delivery checks eligibility again and does not inject those events into tha
 And pending events receive a later eligible wake without unrelated input
 ```
 
-#### UC-PED10: Preserve initialized delivery settings through publication edits
+### UC-PED10: Preserve initialized delivery settings through publication edits
 
 ```gherkin
 Scenario Outline: Continue with fixed settings
@@ -205,7 +205,7 @@ Scenario Outline: Continue with fixed settings
     | a newly created successor | the current published settings |
 ```
 
-#### UC-PED11: Apply handling duties to the session's actual entry facts
+### UC-PED11: Apply handling duties to the session's actual entry facts
 
 ```gherkin
 Given a continuing agent's fixed delivery settings differ from current publication

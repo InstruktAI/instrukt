@@ -103,9 +103,9 @@ one, and never fails the run.
 - The exit status is non-zero when there is at least one finding, zero
   otherwise; notices never change it.
 
-### Use cases
+## Use cases
 
-#### UC-SV1: A developer learns which snippets break the contract before committing
+### UC-SV1: A developer learns which snippets break the contract before committing
 
 ```gherkin
 Given a developer has written and changed snippets in their project
@@ -117,7 +117,7 @@ But when no snippet breaks the contract
 Then the run reports success
 ```
 
-#### UC-SV2: A developer learns which required reads are already implied
+### UC-SV2: A developer learns which required reads are already implied
 
 ```gherkin
 Given a developer's snippet requires an overview and also a snippet that overview already requires
@@ -126,7 +126,7 @@ Then the redundant required read is reported, naming the read whose closure alre
 And the run reports failure while it remains
 ```
 
-#### UC-SV3: A developer sees which snippets nothing brings to an agent
+### UC-SV3: A developer sees which snippets nothing brings to an agent
 
 ```gherkin
 Given a developer's project has a snippet that no index names and no snippet requires
@@ -135,7 +135,7 @@ Then they are told that the snippet is reachable only by listing the documentati
 And the run does not fail on that alone
 ```
 
-#### UC-SV4: A developer learns where a snippet still names another by path
+### UC-SV4: A developer learns where a snippet still names another by path
 
 ```gherkin
 Given a developer's snippet names another snippet by its file path instead of its id
@@ -144,7 +144,7 @@ Then the reference is reported with the file and the path it names
 And a required read whose id names no snippet is reported the same way
 ```
 
-#### UC-SV5: A developer's link to a moved snippet is reported
+### UC-SV5: A developer's link to a moved snippet is reported
 
 ```gherkin
 Given a developer links a snippet by id in Required reads or See Also using its relative path in the same repository

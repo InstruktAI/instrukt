@@ -8,7 +8,7 @@ visibility: public
 
 ## Required reads
 
-- general/spec/scratchpad-workspaces
+- [general/spec/scratchpad-workspaces](../spec/scratchpad-workspaces.md)
 
 ## Goal
 

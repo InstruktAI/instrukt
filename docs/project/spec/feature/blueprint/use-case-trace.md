@@ -57,9 +57,9 @@ blueprint module is on.
   the caller explores by hand. With the blueprint module off, the command says
   the module is off.
 
-### Use cases
+## Use cases
 
-#### UC-ST1: An agent changing a use case for a person finds the code its tests reach
+### UC-ST1: An agent changing a use case for a person finds the code its tests reach
 
 ```gherkin
 Given a project whose tests bind a use case and whose structure has been mapped
@@ -68,7 +68,7 @@ Then it sees the tests that bind the use case and the code they reach
 And it sees which revision the answer reflects
 ```
 
-#### UC-ST2: An agent changing files for a person finds the use cases at stake
+### UC-ST2: An agent changing files for a person finds the use cases at stake
 
 ```gherkin
 Given a project whose tests bind use cases and whose structure has been mapped
@@ -87,6 +87,6 @@ And it sees which revision the answer reflects
 
 ## See Also
 
-- docs/project/spec/domain/specs.md — the specs context.
-- docs/project/spec/domain/blueprint.md — the graph and its traversals.
-- docs/project/spec/feature/blueprint/blast-radius.md — the structural dependents of the same changed files.
+- [project/instrukt/spec/domain/specs](../../domain/specs.md) — the specs context.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the graph and its traversals.
+- [project/instrukt/spec/feature/blueprint/blast-radius](blast-radius.md) — the structural dependents of the same changed files.

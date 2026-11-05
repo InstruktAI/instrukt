@@ -15,14 +15,14 @@ dispatch:
 
 ## Required reads
 
-- general/principle/session-lifecycle
-- general/procedure/orchestration
-- general/concept/agent-characteristics
-- general/policy/commits
-- sdlc/policy/process-change-authority
-- general/policy/human-involvement-recording
-- sdlc/policy/todo-creation-discipline
-- sdlc/policy/peer-invocation
+- [general/principle/session-lifecycle](../../../../../general/principle/session-lifecycle.md)
+- [general/procedure/orchestration](../../../../../general/procedure/orchestration.md)
+- [general/concept/agent-characteristics](../../../../../general/concept/agent-characteristics.md)
+- [general/policy/commits](../../../../../general/policy/commits.md)
+- [sdlc/policy/process-change-authority](../../../policy/process-change-authority.md)
+- [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
+- [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
+- [sdlc/policy/peer-invocation](../../../policy/peer-invocation.md)
 
 ## Goal
 
@@ -425,6 +425,6 @@ claim.
 
 ## See Also
 
-- sdlc/procedure/lifecycle/prepare/intake
-- sdlc/procedure/lifecycle/prepare/architecture
-- sdlc/procedure/lifecycle/prepare/plan-draft
+- [sdlc/procedure/lifecycle/prepare/intake](intake.md)
+- [sdlc/procedure/lifecycle/prepare/architecture](architecture.md)
+- [sdlc/procedure/lifecycle/prepare/plan-draft](plan-draft.md)

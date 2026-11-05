@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/policy/domain-ownership.md
+- [sdlc/policy/domain-ownership](domain-ownership.md)
 
 ## Rules
 

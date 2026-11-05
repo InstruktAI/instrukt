@@ -7,8 +7,8 @@ description: Language-neutral decision and review flow for snapshotting emitted 
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/policy/testing.md
-@~/.instrukt/docs/sdlc/policy/language-policy-ownership.md
+- [sdlc/policy/testing](../policy/testing.md)
+- [sdlc/policy/language-policy-ownership](../policy/language-policy-ownership.md)
 
 ## Goal
 
@@ -41,6 +41,6 @@ Choose the correct semantic assertion for emitted string content, route its impl
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/python/snapshot-testing.md
-- ~/.instrukt/docs/sdlc/procedure/typescript/snapshot-testing.md
-- ~/.instrukt/docs/sdlc/policy/rust/testing.md — Rust snapshot mechanics are owned by the Rust testing policy.
+- [sdlc/procedure/python/snapshot-testing](python/snapshot-testing.md)
+- [sdlc/procedure/typescript/snapshot-testing](typescript/snapshot-testing.md)
+- [sdlc/policy/rust/testing](../policy/rust/testing.md) — Rust snapshot mechanics are owned by the Rust testing policy.

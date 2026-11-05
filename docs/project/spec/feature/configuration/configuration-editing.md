@@ -89,9 +89,9 @@ computers and local agents; these CLI commands act only on their own computer.
 A revision is an opaque digest of the layer document's content. Two reads of
 an unchanged document give the same revision; any change gives another.
 
-### Use cases
+## Use cases
 
-#### UC-CE1: An agent changes a setting for a developer without losing anyone else's change
+### UC-CE1: An agent changes a setting for a developer without losing anyone else's change
 
 ```gherkin
 Given an agent acting for a developer has read the project's configuration
@@ -103,7 +103,7 @@ But when the change would leave the configuration invalid
 Then the change is refused, nothing is written, and the agent is told what is wrong
 ```
 
-#### UC-CE2: A developer sets up configuration for a machine or a project
+### UC-CE2: A developer sets up configuration for a machine or a project
 
 ```gherkin
 Given a developer starts using instrukt on a machine or in a project without configuration
@@ -121,7 +121,7 @@ But when existing configuration has a newer schema
 Then initialization is refused and the developer is directed to upgrade instrukt
 ```
 
-#### UC-CE3: Know whether a module's infrastructure is ready
+### UC-CE3: Know whether a module's infrastructure is ready
 
 ```gherkin
 Given an agent has recorded a developer's valid module enablement

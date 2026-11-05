@@ -16,11 +16,7 @@ engine stays underneath. The context is a switchable module. It does not own
 the git hook that starts generation, the module switch or engine setting, the
 use-case bindings that trace joins with the graph, or the engine's extraction.
 
-## Canonical fields
-
-“Main” means the repository default branch. The machine generates graphs on pushes and pulls advancing that branch, never per local commit. The user installs the engine; a missing engine reports what to install and instrukt installs nothing. `instrukt blueprint status` shows the last generation outcome.
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Graph**
 :  A node-link structure of one revision of a project: nodes and links that
@@ -63,7 +59,7 @@ use-case bindings that trace joins with the graph, or the engine's extraction.
    over dependency links from the nodes those files define, outside those
    files.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns** — the graph contract and the dependency relations; adapter
   selection and contract validation of engine output; generation per remote-main revision obtained by push or pull, its serialization and supersession; storage per SHA and the choice
@@ -84,6 +80,10 @@ use-case bindings that trace joins with the graph, or the engine's extraction.
   its adapter (anti-corruption layer).
 - **Implementation roots** — `crates/instrukt-blueprint/`;
   `crates/instrukt-cli/` (command surface).
+
+## Canonical fields
+
+“Main” means the repository default branch. The machine generates graphs on pushes and pulls advancing that branch, never per local commit. The user installs the engine; a missing engine reports what to install and instrukt installs nothing. `instrukt blueprint status` shows the last generation outcome.
 
 ### Aggregates
 
@@ -125,20 +125,24 @@ None. Generation runs detached; answers are command output.
 None. Generation is started by the repository context's pre-push or main-advancing post-merge/post-rewrite section
 through this context's generation entry, not by an event.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
 
-- **graph-engine** — `docs/project/spec/feature/blueprint/graph-engine.md` — the graph contract, the shipped adapter and a project's own engine command.
-- **graph-generation** — `docs/project/spec/feature/blueprint/graph-generation.md` — a graph per push- or pull-obtained revision of main, detached from the push, stored per SHA, one at a time, never replaced by an interrupted run.
-- **blast-radius** — `docs/project/spec/feature/blueprint/blast-radius.md` — the dependents of changed files from the latest graph, naming its SHA.
-- **graph-navigation** — `docs/project/spec/feature/blueprint/graph-navigation.md` — path between two parts, and query and explain where the engine offers them.
+This context emits no events.
 
-- **use-case-trace** — `docs/project/spec/feature/blueprint/use-case-trace.md` — joins the specs inventory and bindings to graph traversal: a use case to the code its tests reach, and a change's files to the use cases at stake, grouped by spec folder.
+## Use cases
 
-### Governing designs and decisions (index)
+- **graph-engine** — `project/instrukt/spec/feature/blueprint/graph-engine` — the graph contract, the shipped adapter and a project's own engine command.
+- **graph-generation** — `project/instrukt/spec/feature/blueprint/graph-generation` — a graph per push- or pull-obtained revision of main, detached from the push, stored per SHA, one at a time, never replaced by an interrupted run.
+- **blast-radius** — `project/instrukt/spec/feature/blueprint/blast-radius` — the dependents of changed files from the latest graph, naming its SHA.
+- **graph-navigation** — `project/instrukt/spec/feature/blueprint/graph-navigation` — path between two parts, and query and explain where the engine offers them.
+
+- **use-case-trace** — `project/instrukt/spec/feature/blueprint/use-case-trace` — joins the specs inventory and bindings to graph traversal: a use case to the code its tests reach, and a change's files to the use cases at stake, grouped by spec folder.
+
+## Governing designs and decisions
 
 - **`project/instrukt/design/architecture/overview`** — the blueprint module, the home's per-SHA store and the push-and-map flow.
 
-### Context map position
+## Context map position
 
 - **configuration** — Customer / Supplier. Configuration supplies the module switch and the engine setting.
 - **repository** — Customer / Supplier. Blueprint supplies generation to repository hooks for push and pull advances of main; the CLI wires the core-declared handoff interface.

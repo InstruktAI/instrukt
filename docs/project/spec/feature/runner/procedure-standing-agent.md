@@ -129,9 +129,9 @@ different outcomes. Missing home, missing subject, unusable procedure, failed
 continuation and delivery failure stay observable with the activation and
 responsibility identity. No failure silently disposes of retained work.
 
-### Use cases
+## Use cases
 
-#### UC-PSA1: Establish an agent for a new responsibility
+### UC-PSA1: Establish an agent for a new responsibility
 
 ```gherkin
 Given a developer has enabled a published project responsibility with no standing agent
@@ -140,7 +140,7 @@ Then one agent starts in that project's registered checkout with its procedure a
 And its event was durably retained before startup
 ```
 
-#### UC-PSA2: Continue an established responsibility
+### UC-PSA2: Continue an established responsibility
 
 ```gherkin
 Given a developer's responsibility already has an open standing agent
@@ -149,7 +149,7 @@ Then it is queued for that agent at the procedure's eligible delivery boundary
 And no second agent starts
 ```
 
-#### UC-PSA3: Every declared event reaches the one standing agent
+### UC-PSA3: Every declared event reaches the one standing agent
 
 ```gherkin
 Given a developer's procedure answers several event types
@@ -157,7 +157,7 @@ When distinct events of those types activate the same home
 Then each event reaches that home's same procedure agent
 ```
 
-#### UC-PSA4: Edit event membership without changing the agent
+### UC-PSA4: Edit event membership without changing the agent
 
 ```gherkin
 Given a developer has a standing agent for a procedure and home
@@ -165,7 +165,7 @@ When the developer publishes changed subscription patterns and a newly matching 
 Then the existing agent answers it without a new standing identity
 ```
 
-#### UC-PSA5: Keep overlapping responsibilities distinct
+### UC-PSA5: Keep overlapping responsibilities distinct
 
 ```gherkin
 Given a developer publishes two procedures with overlapping event patterns
@@ -173,7 +173,7 @@ When an event matches both in one home
 Then each procedure has its own agent and receives one activation
 ```
 
-#### UC-PSA6: Keep procedure and home identities distinct
+### UC-PSA6: Keep procedure and home identities distinct
 
 ```gherkin
 Given a developer has two procedures answering two registered projects
@@ -181,7 +181,7 @@ When each procedure receives events in both projects
 Then each procedure and exact home pair has its own continuing agent
 ```
 
-#### UC-PSA7: Avoid duplicate agents during concurrent activation
+### UC-PSA7: Avoid duplicate agents during concurrent activation
 
 ```gherkin
 Given two instrukt invocations encounter first events for one procedure and home
@@ -190,7 +190,7 @@ Then serialized resolution establishes only one standing session
 And both events remain accounted for
 ```
 
-#### UC-PSA9: See why a responsibility could not be activated
+### UC-PSA9: See why a responsibility could not be activated
 
 ```gherkin
 Given a developer has accepted work whose procedure entry or runtime continuation cannot be fulfilled
@@ -199,7 +199,7 @@ Then its failure and cause are visible beside the activation identity
 And undelivered work is distinguishable from delivered work
 ```
 
-#### UC-PSA10: Reuse a qualifying system-origin assignment
+### UC-PSA10: Reuse a qualifying system-origin assignment
 
 ```gherkin
 Given the runtime holds one keyed system-origin agent assigned the same procedure and home
@@ -208,7 +208,7 @@ When a matching event arrives
 Then keyed discovery recovers that agent without creating another
 ```
 
-#### UC-PSA11: Start a home's agent deliberately without duplicating it
+### UC-PSA11: Start a home's agent deliberately without duplicating it
 
 ```gherkin
 Given a developer is in a registered project with an enabled home-identity subscribed procedure
@@ -218,7 +218,7 @@ But when that agent already stands
 Then the start is refused naming that agent
 ```
 
-#### UC-PSA12: Keep a human conversation separate from standing work
+### UC-PSA12: Keep a human conversation separate from standing work
 
 ```gherkin
 Given a developer's human-lineage conversation reads the same procedure in its project
@@ -226,7 +226,7 @@ When an event needs the procedure's standing agent
 Then that human conversation is not adopted as the standing assignment
 ```
 
-#### UC-PSA13: Work in the stated project or platform home
+### UC-PSA13: Work in the stated project or platform home
 
 ```gherkin
 Given a developer enables project and platform responsibilities
@@ -235,7 +235,7 @@ Then each agent works in its corresponding registered home on the emitting compu
 And neither gains company context from its location
 ```
 
-#### UC-PSA14: Report a missing home without moving the work
+### UC-PSA14: Report a missing home without moving the work
 
 ```gherkin
 Given an external event's project checkout is absent on ingress
@@ -243,7 +243,7 @@ When its accepted activation resolves the home
 Then the missing home fails visibly and no other checkout or computer substitutes
 ```
 
-#### UC-PSA15: Avoid handing off a recognized activation twice
+### UC-PSA15: Avoid handing off a recognized activation twice
 
 ```gherkin
 Given an activation's successful event handoff is retained
@@ -251,7 +251,7 @@ When the same event, procedure and home activation is submitted again
 Then its existing outcome is returned and no second handoff is scheduled
 ```
 
-#### UC-PSA16: Keep one agent for each subject
+### UC-PSA16: Keep one agent for each subject
 
 ```gherkin
 Given a developer's procedure declares subject identity
@@ -259,7 +259,7 @@ When events concern two different typed subjects in one home
 Then each subject has its own procedure agent
 ```
 
-#### UC-PSA17: Continue the open agent for the same subject
+### UC-PSA17: Continue the open agent for the same subject
 
 ```gherkin
 Given a subject-bound agent is open
@@ -267,7 +267,7 @@ When a later event concerns that same typed subject and home
 Then its event reaches that same agent
 ```
 
-#### UC-PSA18: Resume a subject's own conversation
+### UC-PSA18: Resume a subject's own conversation
 
 ```gherkin
 Given an attended subject-bound agent has closed and the runtime can resume its context
@@ -275,7 +275,7 @@ When a later activation concerns that subject
 Then the runtime resumes that same agent with its own context before delivering the event
 ```
 
-#### UC-PSA19: Continue when the earlier context cannot be resumed
+### UC-PSA19: Continue when the earlier context cannot be resumed
 
 ```gherkin
 Given the runtime has confirmed a subject-bound agent closed and its context cannot resume
@@ -285,7 +285,7 @@ And retained older work is reconciled before newer work
 But a failed observation or revival attempt never authorizes that successor
 ```
 
-#### UC-PSA20: Avoid concurrent agents for one subject
+### UC-PSA20: Avoid concurrent agents for one subject
 
 ```gherkin
 Given concurrent activations concern one subject in one procedure home
@@ -293,7 +293,7 @@ When their responsibility is resolved
 Then one current session answers that subject and every activation remains accounted for
 ```
 
-#### UC-PSA21: Report a subject-bound event that names no subject
+### UC-PSA21: Report a subject-bound event that names no subject
 
 ```gherkin
 Given a developer's procedure declares subject identity
@@ -301,7 +301,7 @@ When an activation's event names no subject
 Then the activation fails visibly and no agent starts or wakes for an invented subject
 ```
 
-#### UC-PSA22: Answer every subject through one home agent
+### UC-PSA22: Answer every subject through one home agent
 
 ```gherkin
 Given a developer's procedure declares home identity
@@ -309,7 +309,7 @@ When events about different subjects concern the same home
 Then they reach one procedure agent for that home
 ```
 
-#### UC-PSA25: Keep an open unattended responsibility responsive
+### UC-PSA25: Keep an open unattended responsibility responsive
 
 ```gherkin
 Given an unattended procedure agent is still open
@@ -317,7 +317,7 @@ When another event concerns its responsibility
 Then it receives that event under the same declared delivery rules as an attended agent
 ```
 
-#### UC-PSA26: Attend an agent started deliberately
+### UC-PSA26: Attend an agent started deliberately
 
 ```gherkin
 Given a developer deliberately starts a home-identity procedure declaring unattended event activation
@@ -325,7 +325,7 @@ When its standing session is initialized
 Then that manually started session is attended
 ```
 
-#### UC-PSA27: Continue unattended work without reviving a closed run
+### UC-PSA27: Continue unattended work without reviving a closed run
 
 ```gherkin
 Given an unattended agent has closed
@@ -333,7 +333,7 @@ When a later activation needs its responsibility
 Then the closed run is not revived and a new successor uses the current declaration
 ```
 
-#### UC-PSA29: Refuse an assignment without a declared role
+### UC-PSA29: Refuse an assignment without a declared role
 
 ```gherkin
 Given a procedure has no usable declared role

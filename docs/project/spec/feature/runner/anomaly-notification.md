@@ -44,9 +44,9 @@ operation, so its default is unavailable; an explicit `runner.notify` command
 can provide it. The project layer does not supply this machine-level
 notification command.
 
-### Use cases
+## Use cases
 
-#### UC-AN1: Notice a failed task that is not waiting in a conversation
+### UC-AN1: Notice a failed task that is not waiting in a conversation
 
 ```gherkin
   Given a developer has adopted instrukt with an available runtime notification facility
@@ -66,6 +66,6 @@ notification command.
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/session-continuity
-- project/instrukt/spec/feature/configuration/layered-configuration
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)

@@ -181,9 +181,9 @@ or foreign services, and never uninstalls a shared Redis executable. Re-enable
 reuses retained resources and progress within transport retention. Pending
 delivery is suspended while disabled, not silently settled.
 
-### Use cases
+## Use cases
 
-#### UC-MI1: Adopt core without background infrastructure
+### UC-MI1: Adopt core without background infrastructure
 
 ```gherkin
 Given a developer adopts instrukt with todos and events off
@@ -192,7 +192,7 @@ Then no wake-up, Redis or webhook receiver is installed for that project
 And documentation and configuration remain usable without a runtime
 ```
 
-#### UC-MI2: Install only the dependencies of enabled todos
+### UC-MI2: Install only the dependencies of enabled todos
 
 ```gherkin
 Given a developer enables todos in a GitHub-backed project with a capable selected runtime
@@ -202,7 +202,7 @@ Then one shared minute wake-up is registered unless ticks are off
 And no Redis or receiver is installed solely for todos
 ```
 
-#### UC-MI3: Enable event responses without an inbound listener
+### UC-MI3: Enable event responses without an inbound listener
 
 ```gherkin
 Given a developer enables events with no webhook sources or an empty source map
@@ -212,7 +212,7 @@ And the shared wake-up follows tick policy
 And no receiver is installed
 ```
 
-#### UC-MI4: Receive project webhooks only on the designated ingress
+### UC-MI4: Receive project webhooks only on the designated ingress
 
 ```gherkin
 Given a developer enables events and configures a valid project source on the designated ingress
@@ -222,7 +222,7 @@ And other computers receive no listener
 And sources with events off are reported without enabling events or installing their receiver
 ```
 
-#### UC-MI5: Reuse a working setup and repair only drift
+### UC-MI5: Reuse a working setup and repair only drift
 
 ```gherkin
 Given a developer has working instrukt infrastructure and a configured operator-owned local Redis
@@ -233,7 +233,7 @@ But when an instrukt-owned definition is missing or stale
 Then installation repairs that difference and a subsequent check passes
 ```
 
-#### UC-MI6: Understand an unavailable local Redis prerequisite
+### UC-MI6: Understand an unavailable local Redis prerequisite
 
 ```gherkin
 Given local Redis setup fails before any local transport endpoint is established
@@ -244,7 +244,7 @@ But when an established local endpoint fails
 Then its pending progress is retained and never silently rerouted
 ```
 
-#### UC-MI7: Keep infrastructure still needed by another project
+### UC-MI7: Keep infrastructure still needed by another project
 
 ```gherkin
 Given two enabled projects share a wake-up or receiver
@@ -253,7 +253,7 @@ Then resources still required by the other project remain available
 And an unreadable project's demand prevents unsafe shared withdrawal
 ```
 
-#### UC-MI8: Keep intake available across receiver and runner restarts
+### UC-MI8: Keep intake available across receiver and runner restarts
 
 ```gherkin
 Given an enabled ingress has its service-manager-owned loopback socket
@@ -263,7 +263,7 @@ And the receiver resumes verified cluster publication independently of the runne
 And existing consumer positions are not reset
 ```
 
-#### UC-MI9: See receiver placement and manager limits before binding
+### UC-MI9: See receiver placement and manager limits before binding
 
 ```gherkin
 Given a computer is not ingress or lacks a supported socket-holding service manager
@@ -272,7 +272,7 @@ Then it refuses the unsupported operation before binding and names the placement
 And cron scheduling is not reported as receiver socket support
 ```
 
-#### UC-MI10: Supply wake-ups through an operator scheduler
+### UC-MI10: Supply wake-ups through an operator scheduler
 
 ```gherkin
 Given a developer enables work and sets ticks off
@@ -281,7 +281,7 @@ Then instrukt installs no periodic registration and status identifies operator s
 And normal task timing and event draining still run on those wake-ups
 ```
 
-#### UC-MI11: Withdraw unused units without losing retained work
+### UC-MI11: Withdraw unused units without losing retained work
 
 ```gherkin
 Given a developer disables the last enabled user of instrukt-owned infrastructure

@@ -112,7 +112,7 @@ analyzer solely because the same provenance remains unavailable. Changes to
 the artifact, evidence or unresolved-reference condition require a new
 assessment; cosmetic settlement is not a timeless waiver.
 
-### Use cases
+## Use cases
 
 Currency is a supporting contract for preparation and delivery. Its
 comparisons, invalidation and settlement steps introduce no separate user
@@ -120,6 +120,7 @@ goal.
 
 ## See Also
 
-- `general/principle/grounding` — decisions bind the evidence actually assessed.
-- `general/principle/intelligence-boundaries` — agents judge substantive meaning.
-- `sdlc/principle/documentation-first-development` — preparation derives work against governing contracts.
+- [general/principle/grounding](../../../../general/principle/grounding.md) — decisions bind the evidence actually assessed.
+- [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md) — agents judge substantive meaning.
+- [sdlc/principle/documentation-first-development](../../../../domain/sdlc/principle/documentation-first-development.md) — preparation derives work against governing contracts.
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

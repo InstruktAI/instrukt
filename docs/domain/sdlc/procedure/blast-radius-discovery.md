@@ -8,7 +8,7 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/spec/codebase-blueprint.md
+- [sdlc/spec/codebase-blueprint](../spec/codebase-blueprint.md)
 
 ## Goal
 

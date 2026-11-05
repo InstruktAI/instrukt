@@ -93,9 +93,9 @@ Task execution records its result with
 `instrukt todo stamp <slug> --task-outcome success|error [--reason <text>]`,
 bound to the particular task execution; the reason records failure evidence.
 
-### Use cases
+## Use cases
 
-#### UC-TT1: Arrange a prepared task for a future time
+### UC-TT1: Arrange a prepared task for a future time
 
 ```gherkin
 Scenario: Execute an authorized instruction when its time arrives
@@ -105,7 +105,7 @@ Scenario: Execute an authorized instruction when its time arrives
   Then the task is dispatched for execution
 ```
 
-#### UC-TT2: Recover recurring work according to its missed-run policy
+### UC-TT2: Recover recurring work according to its missed-run policy
 
 ```gherkin
 Scenario Outline: Resume after several scheduled occurrences were missed
@@ -123,7 +123,7 @@ Scenario Outline: Resume after several scheduled occurrences were missed
 
 
 
-#### UC-TT3: A developer enables unattended scheduled work
+### UC-TT3: A developer enables unattended scheduled work
 
 ```gherkin
 Given a developer has enabled todos and authorized scheduled work for their project
@@ -132,7 +132,7 @@ Then due work can run without an interactive runner
 And missed-run decisions remain governed by each task’s policy
 ```
 
-#### UC-TT4: Recurring work continues after each run
+### UC-TT4: Recurring work continues after each run
 
 ```gherkin
 Given a developer has an authorized recurring task
@@ -144,7 +144,7 @@ Then the task is held with that reason and the developer is notified
 And no further occurrence runs until the developer resolves it
 ```
 
-#### UC-TT5: Recover scheduled work after an interrupted start
+### UC-TT5: Recover scheduled work after an interrupted start
 
 ```gherkin
 Given a developer's scheduled task was started but instrukt lost the reply

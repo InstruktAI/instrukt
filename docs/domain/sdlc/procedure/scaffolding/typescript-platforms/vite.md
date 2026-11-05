@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/scaffolding/typescript.md
+- [sdlc/procedure/scaffolding/typescript](../typescript.md)
 
 ## Goal
 
@@ -42,4 +42,4 @@ SEO story and is **never chosen for anything public-facing**.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
+- [sdlc/concept/delivery-portfolio](../../../concept/delivery-portfolio.md)

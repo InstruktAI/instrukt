@@ -7,8 +7,8 @@ description: Decide whether a todo should exist, audit that decision at preparat
 
 ## Required reads
 
-- general/policy/documentation-discipline
-- general/policy/human-contract
+- [general/policy/documentation-discipline](../../../general/policy/documentation-discipline.md)
+- [general/policy/human-contract](../../../general/policy/human-contract.md)
 
 ## Rules
 

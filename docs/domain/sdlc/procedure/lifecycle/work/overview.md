@@ -16,11 +16,10 @@ dispatch:
 
 ## Required reads
 
-- general/principle/session-lifecycle
-- general/concept/agent-characteristics
-- general/procedure/orchestration
-- sdlc/procedure/lifecycle/overview
-- sdlc/policy/preparation-artifact-quality
+- [general/principle/session-lifecycle](../../../../../general/principle/session-lifecycle.md)
+- [general/concept/agent-characteristics](../../../../../general/concept/agent-characteristics.md)
+- [general/procedure/orchestration](../../../../../general/procedure/orchestration.md)
+- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 
 ## Goal
 
@@ -266,8 +265,8 @@ claim.
 
 ## See also
 
-- sdlc/procedure/lifecycle/work/build
-- sdlc/procedure/lifecycle/work/review-build
-- sdlc/procedure/lifecycle/fix-review-findings
-- sdlc/procedure/lifecycle/work/finalize
-- sdlc/procedure/lifecycle/work/deferrals
+- [sdlc/procedure/lifecycle/work/build](build.md)
+- [sdlc/procedure/lifecycle/work/review-build](review-build.md)
+- [sdlc/procedure/lifecycle/fix-review-findings](../fix-review-findings.md)
+- [sdlc/procedure/lifecycle/work/finalize](finalize.md)
+- [sdlc/procedure/lifecycle/work/deferrals](deferrals.md)

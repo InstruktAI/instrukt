@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-@~/.instrukt/docs/general/principle/communication-compression.md
+- [general/principle/communication-compression](../principle/communication-compression.md)
 
 ## What it is
 

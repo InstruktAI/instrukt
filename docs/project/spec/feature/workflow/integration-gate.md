@@ -116,9 +116,9 @@ that can require notification. Ordinary approval and new-intent requests
 remain in the responsible agent's thread. The runner owns whether and how an
 anomaly is notified; the integration gate reports the unresolved failure.
 
-### Use cases
+## Use cases
 
-#### UC-IG1: A developer's integrator learns each candidate's own verification result
+### UC-IG1: A developer's integrator learns each candidate's own verification result
 
 ```gherkin
 Given a developer has finalized work ready for integration
@@ -133,7 +133,7 @@ But when the project has no CI
 Then the integrator is woken with the exact candidate and told the project has no CI
 ```
 
-#### UC-IG2: A revert is verified as its own candidate
+### UC-IG2: A revert is verified as its own candidate
 
 ```gherkin
 Given a developer's project verifies its canonical branch with CI
@@ -144,7 +144,7 @@ Then the integrator is woken with the revert's own verification result
 And the failing result of the reverted delivery is never reported for the revert
 ```
 
-#### UC-IG3: Direct commits on local main wake the integrator
+### UC-IG3: Direct commits on local main wake the integrator
 
 ```gherkin
 Given a developer committed reviewed work directly on their local main
@@ -164,5 +164,6 @@ And it can read each commit's latest review verdict
 
 ## See Also
 
-- `general/principle/trust-and-guardrails` — admission protects the shared work object.
-- `general/principle/intelligence-boundaries` — the integrator interprets failures and selects remediation.
+- [general/principle/trust-and-guardrails](../../../../general/principle/trust-and-guardrails.md) — admission protects the shared work object.
+- [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md) — the integrator interprets failures and selects remediation.
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

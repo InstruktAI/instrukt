@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-- sdlc/procedure/lifecycle/overview
+- [sdlc/procedure/lifecycle/overview](../../domain/sdlc/procedure/lifecycle/overview.md)
 
 ## Goal
 
@@ -246,5 +246,5 @@ cleanup.
 
 ## See Also
 
-- general/procedure/ai-to-ai-operations
-- general/policy/orchestrator-jurisdiction
+- [general/procedure/ai-to-ai-operations](ai-to-ai-operations.md)
+- [general/policy/orchestrator-jurisdiction](../policy/orchestrator-jurisdiction.md)

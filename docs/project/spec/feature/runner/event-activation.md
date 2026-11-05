@@ -126,9 +126,9 @@ reconciled by key or explicit resolution. Those primitives do not establish
 hook provenance or eligible delivery while a session is busy. The procedure-event handoff
 preserves this target delivery contract rather than equating a plain send with it.
 
-### Use cases
+## Use cases
 
-#### UC-EA1: Learn about an upstream change before reconciling a fork
+### UC-EA1: Learn about an upstream change before reconciling a fork
 
 ```gherkin
   Given a developer has adopted instrukt for a fork with local modifications

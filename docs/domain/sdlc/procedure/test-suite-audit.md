@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/review-build.md
+- [sdlc/procedure/lifecycle/work/review-build](lifecycle/work/review-build.md)
 
 ## Goal
 

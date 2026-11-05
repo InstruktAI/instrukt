@@ -7,9 +7,9 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/breath.md
-- @~/.instrukt/docs/general/spec/agent-shorthand.md
-- @~/.instrukt/docs/general/procedure/scratchpad-workspace.md
+- [general/principle/breath](../principle/breath.md)
+- [general/spec/agent-shorthand](../spec/agent-shorthand.md)
+- [general/procedure/scratchpad-workspace](../procedure/scratchpad-workspace.md)
 
 ## Purpose
 

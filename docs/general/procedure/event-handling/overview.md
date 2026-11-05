@@ -7,8 +7,8 @@ description: Execute each supplied activation event under the loaded procedure, 
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/grounding.md
-- @~/.instrukt/docs/general/policy/human-contract.md
+- [general/principle/grounding](../../principle/grounding.md)
+- [general/policy/human-contract](../../policy/human-contract.md)
 
 ## Goal
 

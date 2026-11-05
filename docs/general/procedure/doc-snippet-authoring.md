@@ -10,14 +10,10 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/general/concept/documentation-snippets.md
-- @~/.instrukt/docs/general/policy/artifact-scope.md
-- @~/.instrukt/docs/general/policy/agent-facing-text.md
-- @~/.instrukt/docs/general/principle/intent-first-documentation.md
-- @~/.instrukt/docs/sdlc/principle/documentation-first-development.md
-- @~/.instrukt/docs/general/policy/referencing-doc-snippets.md
-- @~/.instrukt/docs/general/policy/snippet-value-contract.md
-- @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
+- [general/policy/agent-facing-text](../policy/agent-facing-text.md)
+- [sdlc/principle/documentation-first-development](../../domain/sdlc/principle/documentation-first-development.md)
+- [general/policy/snippet-value-contract](../policy/snippet-value-contract.md)
+- [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
 
 ## Goal
 
@@ -134,7 +130,7 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
               <!-- /planned:<slug> -->
               ```
 
-              Gherkin appends as more `#### UC-…` blocks; never reshuffle. On delivery the two marker lines are removed and the content stays exactly where it is, now live.
+              Gherkin appends as more `### UC-…` blocks; never reshuffle. On delivery the two marker lines are removed and the content stays exactly where it is, now live.
 
             - **CHANGE / REMOVE** (bounded replacement or localized removal). Author the current text and its replacement in place, wrapped in a planned-change marker that names the slug:
 

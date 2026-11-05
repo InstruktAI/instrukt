@@ -14,9 +14,7 @@ one way in. Nothing in it is part of the `instrukt` binary or one of its
 modules. It adds no daemon, no plugin, no hook and no agent configuration
 beyond the skill the `skills` command installs.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Release**
 : The published GitHub release of a tag `v<version>`: an archive per target,
@@ -43,7 +41,7 @@ beyond the skill the `skills` command installs.
   the `skills` command (`skills.sh`) installing the cockpit of one release
   into every agent CLI on the computer.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns:** the release workflow and its assets; the installer's platform
   selection, verification, install directory and upgrade; the cockpit
@@ -65,6 +63,8 @@ beyond the skill the `skills` command installs.
 - **Implementation roots:** `.github/workflows/release.yml`,
   `scripts/package-release.sh`, `scripts/install.sh`,
   `skills/instrukt/`.
+
+## Canonical fields
 
 ### Aggregates
 
@@ -99,17 +99,21 @@ None.
 
 None.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+This context emits no events.
+
+## Use cases
 
 - **release-installer** — `project/instrukt/spec/feature/distribution/release-installer` — install, upgrade or pin the instrukt binary with one verified command.
 - **agent-skill** — `project/instrukt/spec/feature/distribution/agent-skill` — install instrukt into every agent CLI with one sentence, and set it up or change it through the cockpit.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — the install flow
   and the external surfaces it uses.
 
-### Context map position
+## Context map position
 
 - **publication → distribution — Published language:** `instrukt status`
   (and the CLI's `-h`) is the state the cockpit reads.

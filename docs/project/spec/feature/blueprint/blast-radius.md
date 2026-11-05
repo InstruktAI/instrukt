@@ -44,9 +44,9 @@ command says so and the agent explores by hand.
   unavailable answer.
 - **Module off:** the command says the blueprint module is off.
 
-### Use cases
+## Use cases
 
-#### UC-BA1: An agent changing files for a person learns what depends on them
+### UC-BA1: An agent changing files for a person learns what depends on them
 
 ```gherkin
 Given a project whose latest pushed revision has been mapped
@@ -69,6 +69,6 @@ available and to explore by hand; no dependents are presented as an answer.
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
-- docs/project/spec/feature/blueprint/use-case-trace.md — the use cases the same changed files put at stake.
-- ~/.instrukt/docs/sdlc/procedure/blast-radius-discovery.md — how agents use the answer.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.
+- [project/instrukt/spec/feature/blueprint/use-case-trace](use-case-trace.md) — the use cases the same changed files put at stake.
+- [sdlc/procedure/blast-radius-discovery](../../../../domain/sdlc/procedure/blast-radius-discovery.md) — how agents use the answer.

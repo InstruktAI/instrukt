@@ -57,5 +57,5 @@ buttons so agents and CI push them blindly.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/frontend-production-baseline.md
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md
+- [sdlc/policy/frontend-production-baseline](../policy/frontend-production-baseline.md)
+- [sdlc/policy/ci-pipeline-conventions](../policy/ci-pipeline-conventions.md)

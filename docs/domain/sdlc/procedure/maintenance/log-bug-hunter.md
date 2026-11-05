@@ -11,9 +11,9 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/concept/defect-evidence.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
-- @~/.instrukt/docs/sdlc/spec/todo-kind-task.md
+- [sdlc/concept/defect-evidence](../../concept/defect-evidence.md)
+- [sdlc/policy/todo-creation-discipline](../../policy/todo-creation-discipline.md)
+- [sdlc/spec/todo-kind-task](../../spec/todo-kind-task.md)
 
 ## Goal
 
@@ -193,6 +193,6 @@ schedule and project context.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/observability.md
-- ~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
-- ~/.instrukt/docs/general/policy/human-contract.md
+- [sdlc/policy/observability](../../policy/observability.md)
+- [sdlc/policy/todo-creation-discipline](../../policy/todo-creation-discipline.md)
+- [general/policy/human-contract](../../../../general/policy/human-contract.md)

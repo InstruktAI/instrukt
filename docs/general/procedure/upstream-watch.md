@@ -10,9 +10,8 @@ subscription_home: project
 
 ## Required reads
 
-- @~/.instrukt/docs/general/policy/human-contract.md
-- @~/.instrukt/docs/general/procedure/event-handling/overview.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
+- [general/procedure/event-handling/overview](event-handling/overview.md)
+- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
 
 ## Goal
 

@@ -148,4 +148,4 @@ doc-hygiene commit-review catches self-reviewed and stale snippets.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md — owns whether work executes in context or through a todo.
+- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md) — owns whether work executes in context or through a todo.
