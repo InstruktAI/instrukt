@@ -66,7 +66,8 @@ lifecycle contract.
    `instrukt todo update <slug> --unclaim`. Remove a completed discussion link with
    `instrukt sessions link --remove <a> <b>` and have the dispatcher end the
    session with `instrukt sessions end <id>` once its outcome is recorded.
-   A runtime without the end template reports the missing capability.
+   When the command answers that the ending is yours to do, carry out the
+   instruction it prints; that is the ending.
 
 A focused worker's outputs belong in its assigned artifacts and its own turn.
 It messages or links other sessions only where its brief authorizes that

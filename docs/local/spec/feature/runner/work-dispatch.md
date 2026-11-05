@@ -34,12 +34,16 @@ One runner lock per machine, `~/.instrukt/state/runner.lock`, serializes
 invocations. A tick exits at once while `instrukt run` holds the lock. Publication state supplies each project's
 checkout path beside its published commit; the runner considers projects
 whose effective configuration (project over global) enables `todos` or
-`events`, without a separate registry.
-Before starting a session for a todo, the runner commits a claim on the item
-and reflects it to GitHub; a revision conflict means another computer claimed
-it first, and this runner leaves the item. When GitHub cannot be reached, the
-claim stays local and pending and no session starts; the next tick reflects
-it, then dispatches, or drops the claim on a conflict.
+`events`, without a separate registry. A project whose code is not on GitHub
+gets no todo pickup: todos need the project's code on GitHub
+(`local/projects/instrukt/spec/feature/work/github-record`).
+Before starting a session for a todo, the runner refreshes the todo from
+GitHub, so work starts from its current state, then commits a claim on the
+item and reflects it to GitHub; a revision conflict means another computer
+claimed it first, and this runner leaves the item. When GitHub cannot be
+reached, the claim stays local and pending and no session starts; the next
+tick refreshes the todo and reflects the claim, then dispatches, or drops the
+claim on a conflict.
 
 A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
@@ -47,10 +51,16 @@ deleting it orphans this computer's live claims until they are released. On
 that computer the holder is a session bound to the todo, or the session that
 claimed it through `instrukt todo prepare|work`; any other caller is refused as
 "claimed elsewhere". After the claim,
-`instrukt todo update <slug> --unclaim` releases it; ending the lane session is a
-separate `instrukt sessions end <id>` operation. Every tick also pulls GitHub changes
-for local items with conditional requests, and flushes pending work-record
-reflection under the per-computer writer lock; commands that write the record flush it under that lock too.
+`instrukt todo update <slug> --unclaim` releases it; ending the todo's child
+sessions and then the lane's own are separate operations,
+`instrukt sessions end --todo <slug>` and then `instrukt sessions end self`.
+Every tick also polls GitHub for the todos this computer has an interest in,
+with conditional requests: the todos it holds claims on, one pickup listing
+per project with `todos` on, and the prerequisites its own work is blocked
+on (`local/projects/instrukt/spec/feature/work/github-record`). Pickup
+considers the todos of that listing. Every tick flushes pending work-record
+reflection under the per-computer writer lock; commands that write the record
+flush it under that lock too.
 
 ### Todo pickup
 

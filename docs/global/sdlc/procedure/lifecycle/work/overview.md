@@ -220,8 +220,11 @@ owns work dispatch under the project's pickup policy; reconcile the existing
 build with the re-approved plan under Step 2.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
-then end each assignment child from `sessions.bound` with
-`instrukt sessions end <id>` before ending the completed lane.
+then end the assignment children in `sessions.bound` with
+`instrukt sessions end --todo <slug>`, and end the completed lane with
+`instrukt sessions end self` as its last step. When either command answers
+that the ending is yours to do, carry out the instruction it prints; that is
+the ending.
 
 ## Outputs
 

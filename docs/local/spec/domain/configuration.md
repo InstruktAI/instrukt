@@ -58,7 +58,9 @@ the derived `runtime.session_id`.
 
 **Runtime mapping**
 : The ordered `runtimes` list in the global layer: each entry says how one
-runtime identifies its sessions (`session_id_env`) and the commands it offers.
+runtime identifies its sessions (`session_id_env`) and the verbs it fills,
+each a `command` template instrukt runs or an `agent` instruction the calling
+agent carries out.
 
 **Active runtime**
 : The first runtime-mapping entry whose `session_id_env` is set in the

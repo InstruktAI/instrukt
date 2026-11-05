@@ -1,1 +1,1 @@
-When this procedure is your session's launch assignment, read the contract of each command it uses with `instrukt <command> --help` before starting the assigned work. When reading it inline, keep your current session's tool context.
+When this procedure is your session's launch assignment, read the contract of each command it uses with `instrukt <command> -h` before starting the assigned work. When reading it inline, keep your current session's tool context.

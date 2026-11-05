@@ -49,7 +49,7 @@ it without guessing and a reviewer finds no surprises.
 
 ## Steps
 
-Use `instrukt <command> --help` for individual commands.
+Use `instrukt <command> -h` for individual commands.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
 

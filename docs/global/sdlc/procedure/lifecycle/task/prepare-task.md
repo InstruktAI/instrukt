@@ -39,7 +39,7 @@ verdict applies.
 
 ## Steps
 
-Use `instrukt <command> --help` for individual commands.
+Use `instrukt <command> -h` for individual commands.
 
 0. **Audit the handoff.** Read `instrukt todo show {slug}` and the `input`.
    Apply the entry audit in `sdlc/policy/todo-creation-discipline`. Take a

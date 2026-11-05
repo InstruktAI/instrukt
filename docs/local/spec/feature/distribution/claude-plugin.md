@@ -104,9 +104,12 @@ whatever was done before:
      publication, to the human's word.
    - **Adopt another repository.** The same, in the repository the human
      names.
-   - **Switch on a module.** When status reports a feature the module needs
-     unavailable on the configured runtime, name the missing templates and go
-     no further than the reconfiguration that would fill them. Otherwise ask
+   - **Switch on a module.** For todos, when status reports that this
+     repository's code is not on GitHub, say first that todos need the
+     project's code on GitHub, and go no further. When status reports a
+     feature the module needs unavailable on the configured runtime, name the
+     missing verbs and go no further than the reconfiguration that would fill
+     them. Otherwise ask
      what the module needs and only the human can say, write it with
      `instrukt config patch`, check it with `instrukt config validate`, and
      register the wake-up with `instrukt install` when the module runs
@@ -171,11 +174,11 @@ Then Claude says it is adopted and what it publishes, and changes nothing
 ```gherkin
 Given a developer's computer is configured with a runtime
 When they ask Claude to switch on standing agents
-And the runtime fills every template standing agents need
+And the runtime fills every verb standing agents need
 Then Claude asks only what the module needs from them and instrukt switches it on
 And the state Claude reports afterwards shows the module on
-But when the runtime leaves a needed template empty
-Then Claude names the empty template, and the module stays off
+But when the runtime leaves a needed verb empty
+Then Claude names the empty verb, and the module stays off
 ```
 
 #### UC-CP5: A developer changes their setup later through the same skill

@@ -94,8 +94,9 @@ Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
 conversation needs the child, the dispatcher ends it with
 `instrukt sessions end <id>`. Close discussion links with
-`instrukt sessions link --remove <a> <b>`. A runtime without the end template
-reports the missing capability; keep the failed operation unresolved.
+`instrukt sessions link --remove <a> <b>`. When `instrukt sessions end`
+answers that the ending is yours to do, carry out the instruction it prints;
+that is the ending. A failed ending stays unresolved.
 
 ### Container Slug Handling
 
@@ -168,9 +169,8 @@ to the runtime checks and ordered dispatch contract; it supplies no manual
 provider-status mutation, restart or quota timer. Distinguish a start failure
 from a failed observation and from execution that began and remains incomplete.
 When evidence establishes unusable startup with no delivered work, end the
-undelivered dispatch with `instrukt sessions end <id>`, confirm it ended, then
-repeat the dispatch through the ordered availability selection. A runtime
-without the end template reports the missing capability. If recovery cannot
+undelivered dispatch with `instrukt sessions end <id>`, confirm its outcome,
+then repeat the dispatch through the ordered availability selection. If recovery cannot
 complete, preserve the pending step and report the anomaly rather than
 silently duplicating it.
 
@@ -227,8 +227,9 @@ tier blocks the verdict — there is no fourth tier and no deferral path.
 4. Confirm terminal handoff and claim release; retain other live obligations.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
-then end each assignment child from `sessions.bound` with
-`instrukt sessions end <id>` before ending the completed lane.
+then end the assignment children in `sessions.bound` with
+`instrukt sessions end --todo <slug>`, and end the completed lane with
+`instrukt sessions end self` as its last step.
 
 ## Outputs
 

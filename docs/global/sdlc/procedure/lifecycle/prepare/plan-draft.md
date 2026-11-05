@@ -58,7 +58,7 @@ one todo is the scope-and-size gate's decision
 
 ## Steps
 
-Use `instrukt <command> --help` for individual commands.
+Use `instrukt <command> -h` for individual commands.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
 

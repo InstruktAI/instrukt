@@ -68,7 +68,54 @@ that is `t3`, for T3 Code, filled from T3's `t3 thread` commands
   included, as stored.
 
 Shipping an entry adds configuration only: the runner drives it through the
-same templates as a declared entry.
+same verbs as a declared entry.
+
+### Runtime entries
+
+Each entry of `runtimes` is a map:
+
+| Key | Value |
+| --- | --- |
+| `name` | the entry's name, unique in the mapping |
+| `session_id_env` | the environment variable that holds the caller's session id inside this runtime |
+| `agent` | optional: the agent CLI this entry is (`claude`, `codex`, …); its git author comes from `agents.<name>.git_author` |
+| `start`, `send`, `alive`, `conversation`, `notify`, `available`, `model` | optional verbs of kind `command` |
+| `end`, `end_self`, `link` | optional verbs of kind `command` or `agent` |
+| `history` | optional map with the verbs `search` and `show`, each of kind `command` or `agent` |
+
+A verb's value has one of these forms:
+
+| Form | Kind |
+| --- | --- |
+| a string | `command`: the string is the command template |
+| `{kind: command, template: <string>}` | `command` |
+| `{kind: agent, instruction: <string>}` | `agent`: the instruction the calling agent carries out with its own runtime's tools |
+
+An absent verb is empty. A map with another `kind`, with both `template` and
+`instruction`, or with the field its kind does not take, is a validation
+finding; so is a verb of kind `agent` where only `command` is allowed. What
+each verb does and how `instrukt sessions` treats each kind is
+`local/projects/instrukt/spec/feature/runner/session-continuity`.
+
+```yaml
+runtimes:
+  - name: host
+    session_id_env: HOST_SESSION_ID
+    start: host start
+    send: host send {runtime.session_id}
+    alive: host alive {runtime.session_id}
+    conversation: host show {runtime.session_id}
+    end:
+      kind: agent
+      instruction: Close session {runtime.session_id} with your host's close tool.
+    history:
+      show: host show
+```
+
+`instrukt config get runtime.<verb>` and a `<!-- @config: runtime.<verb> -->`
+directive give the active runtime's verb as its expanded template, or its
+expanded instruction for kind `agent`
+(`local/projects/instrukt/spec/feature/configuration/interpolation`).
 
 ### Agent preferences and availability
 
@@ -111,11 +158,17 @@ with `--global` answers from the global layer alone. Writes address one layer
 - a key in a layer that does not permit it, naming the key and its layer;
 - a value of the wrong type or outside its allowed values;
 - a missing `schema_version`;
-- a feature switched on whose templates the chosen runtime does not fill, or
-  switched on with no runtime chosen, naming each missing template and the
+- a feature switched on whose verbs the chosen runtime does not fill, or
+  switched on with no runtime chosen, naming each missing verb and the
   runtime entry
   (`local/projects/instrukt/spec/feature/runner/session-continuity`). A write
-  that would switch such a feature on is refused with the same naming.
+  that would switch such a feature on is refused with the same naming;
+- in a project, `modules.todos` on in the effective configuration while the
+  project's code is not on GitHub, saying in plain words that todos need the
+  project's code on GitHub
+  (`local/projects/instrukt/spec/feature/work/github-record`). A write to the
+  project layer that would switch todos on there is refused with the same
+  reason.
 
 Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
@@ -211,7 +264,7 @@ introduced.
 - `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
-- Runtime entries carry `name` and `session_id_env`, and may fill the command templates `start`, `send`, `alive`, `conversation`, `notify`, `link`, `end`, `available` and `model` and the agent-facing templates `history.search` and `history.show`; an empty template leaves the features that need it unavailable. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
+- Runtime entries carry `name` and `session_id_env`, and may fill the verbs `start`, `send`, `alive`, `conversation`, `notify`, `link`, `end`, `end_self`, `available`, `model`, `history.search` and `history.show`, each of kind `command` or `agent` (`Runtime entries`); an empty verb leaves the features that need it unavailable. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
 
 ## See Also
 

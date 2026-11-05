@@ -11,7 +11,9 @@ Sessions are ephemeral expressions; artifacts carry continuity. A session
 exists for an outcome, and the work record carries that outcome beyond the
 conversation. Once the outcome is recorded, whoever dispatched the work ends
 the session with `instrukt sessions end <id>`. Retain it while later review
-rounds or a pending human conversation still needs its context.
+rounds or a pending human conversation still needs its context. When the
+command answers that the ending is yours to do, carry out the instruction it
+prints; that is the ending.
 
 Completion of a workflow assignment, release of its claim, end of an execution
 and loss of a session are separate facts. A step is done when the record carries
@@ -59,7 +61,12 @@ view: whoever dispatched the work knows when the mission is complete.
   and waits for its dispatcher, which accounts for later rounds and pending
   human conversation before ending it with `instrukt sessions end <id>`.
   Starting a peer alone confers no authority over that peer's other obligations.
-  A runtime without the end template reports the missing capability.
+- **A lane ends its todo's sessions, then itself, last.** After confirmed
+  release, a lane ends the todo's bound sessions with
+  `instrukt sessions end --todo <slug>` and, once its own obligations are
+  complete, itself with `instrukt sessions end self` as its final step.
+- **Ending is optional.** It frees what a runtime holds per session; a runtime
+  that holds nothing needs none, and `instrukt sessions end` says so.
 - **Standing roles persist under their mandate.** The standing integrator
   parks after current work settles and is woken by its subscribed events.
   Task recurrence is governed by its record and runner, not an improvised timer.
@@ -82,6 +89,6 @@ view: whoever dispatched the work knows when the mission is complete.
   only the required record writes establish completion.
 - **Autonomy vs. lifecycle control.** A worker owns its contribution while the
   governing role owns the wider handoff. Neither supplies runtime capabilities
-  the mapping does not declare.
+  the mapping does not fill.
 - **Iteration cost vs. human attention.** Agents resolve what they can; the
   human supplies only decisions and intent that are theirs.

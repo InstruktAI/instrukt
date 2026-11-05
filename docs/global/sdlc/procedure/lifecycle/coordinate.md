@@ -87,7 +87,8 @@ including whether any residue is human-owned or safety-gated, with
 `instrukt sessions link --remove <a> <b>`. At most one peer is live at a time;
 end a failed peer with `instrukt sessions end <id>` before replacing it, with
 no overlap. The coordinator ends its peer with the same command when its own
-session ends. A runtime without the end template reports the missing capability.
+session ends. When the command answers that the ending is yours to do, carry
+out the instruction it prints; that is the ending.
 A peer objection is a claim answered by evidence, never an order. Agreement
 follows evidence, not rank.
 

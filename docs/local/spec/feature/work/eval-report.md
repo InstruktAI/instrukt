@@ -26,9 +26,11 @@ With no recorded work, the report says so.
 
 One report covers every project known to this home's publication state,
 grouped by project, with the current project first. Each project's record is
-read through work's normal read, which takes items that are not on this
-computer from GitHub, so work done on another computer is reported here as
-well; that is the record reconstructed from GitHub. A project whose record
+read from this computer's local record and, for items that are not on this
+computer, from GitHub, so work done on another computer is reported here as
+well; that is the record reconstructed from GitHub. The report is not a
+listing: the developer asking for it is the interest that reads GitHub
+(`local/projects/instrukt/spec/feature/work/github-record`). A project whose record
 cannot be read, for example without credentials or with GitHub unreachable,
 is listed with that limitation rather than dropped. The report takes no
 options beyond `--since` and `--out`.

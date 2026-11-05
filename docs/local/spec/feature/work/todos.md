@@ -76,12 +76,15 @@ dependencies. `instrukt todo show <slug>` exposes the record, current evidence,
 holds, prerequisites, group context, execution claim and per-role session
 bindings (runtime, id and returned worktree path). These bindings form the
 assignment child set exposed as `sessions.bound`; `claim.held` exposes whether
-the execution claim remains held. Work that is not a local item is read directly from GitHub without local retention;
-local items follow the pull-through contract in
+the execution claim remains held. `instrukt todo list` reads only this
+computer's state database and fetches nothing: todos held elsewhere show as
+last known, labelled with where they run and how old the copy is.
+`instrukt todo show <slug>` refreshes that one todo first. When and what is
+read from GitHub is the interest-driven refresh contract in
 `local/projects/instrukt/spec/feature/work/github-record`.
 
-`instrukt todo refresh <slug>` refreshes a conflicted item before the agent
-re-applies its change.
+`instrukt todo refresh <slug>` resolves a conflicted item: it takes the
+todo as GitHub holds it, and the agent re-applies its change.
 
 `instrukt todo update <slug>` changes supported metadata. A rename preserves
 durable identity and updates references. A kind change reroutes preparation
@@ -93,8 +96,9 @@ A lifecycle phase is derived from evidence by the workflow engine. Editing a
 displayed phase does not establish approval, readiness or delivery.
 
 `instrukt todo update <slug> --unclaim` releases the execution claim, the counterpart
-of the claim recorded before dispatch. Ending a lane session is a separate
-operation through `instrukt sessions end <id>`.
+of the claim recorded before dispatch. Ending the todo's child sessions and
+the lane's own is separate: `instrukt sessions end --todo <slug>`, then
+`instrukt sessions end self`.
 
 ### Supported metadata and listing selections
 

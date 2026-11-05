@@ -119,7 +119,9 @@ does not create a new logical handoff. Integration is governed by
 - `instrukt todo stamp <slug> --finalize-ready` records the handoff and appends
   `workflow.finalized` idempotently by project/todo/SHA.
 - Release with `instrukt todo update <slug> --unclaim`; confirm `claim.held`
-  is false, then end each child in `sessions.bound` through `instrukt sessions end <id>`.
+  is false, then end the children in `sessions.bound` with
+  `instrukt sessions end --todo <slug>`, and the lane last with
+  `instrukt sessions end self`.
 - The integrator runs `instrukt docs fold <slug>` before candidate verification,
   then `instrukt todo deliver <slug> --commit <sha>` after confirmed promotion.
   Delivered worktree cleanup is `git worktree remove <path>` with `done_when`

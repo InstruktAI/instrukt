@@ -32,7 +32,7 @@ worker; it reads the pending classes per artifact and stamps verdicts.
 
 ## Steps
 
-Use `instrukt <command> --help` for individual commands.
+Use `instrukt <command> -h` for individual commands.
 
 ### 1. Identify pending artifacts and pending classes
 

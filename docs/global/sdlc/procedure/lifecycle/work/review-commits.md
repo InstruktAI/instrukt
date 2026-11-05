@@ -32,7 +32,7 @@ review context; the shared review procedure supplies the review judgment.
 
 ## Steps
 
-Use `instrukt <command> --help` for individual commands.
+Use `instrukt <command> -h` for individual commands.
 
 ### 1. Validate the discrete SHA list
 

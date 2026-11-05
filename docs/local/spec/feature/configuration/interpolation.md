@@ -37,6 +37,9 @@ runner fills per session, not values: reading the mapping (`config get
 runtimes`, or any path under it) prints the entries as stored, with every
 template unexpanded, `{…}` and `${VAR}` alike. `{runtime.*}` references
 expand only through the active-runtime view, `config get runtime.<field>`.
+Through that view a verb gives its expanded command template, or, for a verb
+of kind `agent`, its expanded instruction
+(`local/projects/instrukt/spec/feature/configuration/layered-configuration`).
 Every other value expands on every `get`.
 
 ### Active runtime

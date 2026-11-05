@@ -72,7 +72,7 @@ triage without a peer (`sdlc/procedure/lifecycle/prepare/diagnose`).
 
 ## Steps
 
-Use `instrukt <command> --help` for individual commands.
+Use `instrukt <command> -h` for individual commands.
 
 ### 0. Resolve the entry mode
 
@@ -356,8 +356,11 @@ binding, or an author's `exempt` note with reason under
 obligation names any remaining work.
 
 Run `instrukt todo update <slug> --unclaim` and confirm release before leaving
-the lane. End completed lane and child sessions with `instrukt sessions end <id>`
-after confirmed release. The runner owns later execution dispatch; a derived ready state
+the lane. After confirmed release, end the child sessions with
+`instrukt sessions end --todo <slug>`, then the completed lane with
+`instrukt sessions end self` as its last step. When either command answers
+that the ending is yours to do, carry out the instruction it prints; that is
+the ending. The runner owns later execution dispatch; a derived ready state
 alone releases no claim and ends no session. Report readiness to the human.
 An unfinished human conversation stays in this thread after the lane ends.
 
@@ -368,8 +371,9 @@ and owner. Follow `sdlc/procedure/lifecycle/review` for review halts and
 itself make recovery the human's decision.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
-then end each assignment child from `sessions.bound` with
-`instrukt sessions end <id>` before ending the completed lane.
+then end the assignment children in `sessions.bound` with
+`instrukt sessions end --todo <slug>`, and end the completed lane with
+`instrukt sessions end self` as its last step.
 
 ## Outputs
 

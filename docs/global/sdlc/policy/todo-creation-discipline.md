@@ -309,23 +309,24 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     recorded sessions. Before releasing
     the claim, make the todo tell the truth by either holding it with the log
     entry above or amending `input` to carry the reconciliation. Only then run `instrukt todo update <slug> --unclaim` and confirm
-    its outcome, then end the settled child and lane sessions with
-    `instrukt sessions end <id>`. A bare release is forbidden: it
+    its outcome, then end the settled child sessions with
+    `instrukt sessions end --todo <slug>` and the lane last with
+    `instrukt sessions end self`. A bare release is forbidden: it
     returns the suspect premise to the runner with less context and recreates
     the same preparation waste.
   - **Retract.** For work that is truly invalid — including doc-only work,
     process work defensible from neither authorized intent nor applicable
     principles, or a confirmed duplicate — settle the claimant's children, run
     `instrukt todo update <slug> --unclaim` and confirm release, then end the settled
-    child sessions with `instrukt sessions end <id>`. Run
+    child sessions with `instrukt sessions end --todo <slug>`. Run
     `instrukt todo remove <slug>`. Inspect the command outcome and record;
     a refusal leaves the work unwithdrawn. Removal retains the item and its
     evidence during the work record's recovery window and releases working
     resources. The withdrawing agent removes that slug's pending markers in a doc commit;
     nothing removes them automatically. Record unresolved cleanup rather than
     claiming it complete. End the settled lane session with
-    `instrukt sessions end <id>` after confirmed release; removal alone ends
-    no runtime conversation.
+    `instrukt sessions end self` as its last step; removal alone ends no
+    runtime conversation.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —

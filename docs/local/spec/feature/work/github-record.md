@@ -1,5 +1,5 @@
 ---
-description: Local-leading work records reflected to required GitHub issues with versioned native artifacts and revision checks.
+description: Local-leading work records reflected to required GitHub issues with versioned native artifacts and revision checks; todos need the project's code on GitHub, and GitHub is read only for the todos this computer has an interest in.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -18,23 +18,53 @@ needing the conversation that produced them.
 
 The local record is the work tables of this computer's state database
 (`local/projects/instrukt/spec/feature/work/state-database`): the local store
-in front of the GitHub reflection. A *local item* is a todo present in it. Reads and
-listings of work not in this computer's local record read GitHub directly
-and store nothing. An item enters the local record when dispatched here or
-when a command changes it here. Reads and writes of local items use that local
-record. A write commits there
-and is reflected to GitHub when reachable. Failure to reflect does not undo a
-locally accepted write. The record distinguishes pending reflection from a
-confirmed remote revision; local success does not claim remote completion. While GitHub is unreachable, listings show local items only and say that
-GitHub is unreachable.
+in front of the GitHub reflection. A *local item* is a todo present in it. An
+item enters the local record when dispatched here or when a command changes
+it here. Reads and writes of local items use that local record. A write
+commits there and is reflected to GitHub when reachable. Failure to reflect
+does not undo a locally accepted write. The record distinguishes pending
+reflection from a confirmed remote revision; local success does not claim
+remote completion.
 
 GitHub is required, rather than a selectable storage backend: it is the
 reflected store from which work is recovered and through which it moves
-between computers. For local items, GitHub changes
-are pulled with a conditional request on every runner tick and before any
-command on that item, committed to the state database before readers consume them. Rebuilding
+between computers. What instrukt reads from GitHub is committed to the state
+database before readers consume it (`Interest-driven refresh`). Rebuilding
 from GitHub recovers reflected work, subject to the artifact history GitHub
 still serves. Unreflected local writes have no remote recovery guarantee.
+
+### Interest-driven refresh
+
+A computer reads GitHub only for the todos it has an interest in. No listing
+ever fetches, and no command has a `--refresh` flag.
+
+On each runner tick, each computer polls, with conditional requests:
+
+- the todos it holds claims on, so that what a human does on GitHub (an
+  approval, a change request, a record comment) reaches the worker holding
+  the claim;
+- one pickup listing per project whose effective configuration enables
+  `todos`: the project's todo issues, whose result replaces that project's
+  listing copies;
+- the prerequisites its own claimed work is blocked on.
+
+Beyond that, a todo is refreshed implicitly, one at a time, with a
+conditional request:
+
+- on `instrukt todo show <slug>`;
+- when its claim moves to this computer, before the claim is committed;
+- before any command acts on it.
+
+A refreshed todo that is not a local item replaces its listing copy and does
+not become a local item. A refresh that cannot reach GitHub does not block
+the command: it proceeds on what the state database holds, says so, and the
+revision check at reflection catches any change it missed.
+
+Listings, `instrukt todo list` among them, read only the state database. The
+todos this computer holds claims on are shown from the local record. Every
+other todo is shown as its last known copy, the local record's or the pickup
+listing's, whichever was read later, labelled with the computer its claim
+names, or unclaimed, and how old the copy is.
 
 ### Issues and visible work
 
@@ -95,9 +125,21 @@ owned by `local/projects/instrukt/spec/feature/work/stamps`.
 **Repository.** Reflection writes to the GitHub repository derived from the
 URL of the remote the default branch tracks (the default branch is the
 remote's `HEAD`, then `init.defaultBranch`, then `main`). The project-layer key
-`github.repository: owner/repo` overrides it; when the remote is not a GitHub
-repository of `github.api_url`'s host and the key is absent, todo commands
-refuse and name that key.
+`github.repository: owner/repo` overrides it, for a remote that reaches that
+GitHub repository through an address that does not read as one, such as an
+SSH host alias.
+
+**Code on GitHub.** Todos need the project's code on GitHub: the pull request
+of each build, the delivered commit and the record live in the same
+repository. The code is on GitHub when the remote the default branch tracks
+is a repository on `github.api_url`'s host, or when `github.repository` names
+the repository that remote reaches. Turning todos on for a project whose code
+is not on GitHub is refused with a plain reason, that todos need the
+project's code on GitHub, naming the remote and `github.repository`; the
+configuration is unchanged. When todos are on from the global layer, such a
+project's todo commands refuse with the same reason and the runner picks up
+nothing for it. `instrukt status` reports whether the repository's code is on
+GitHub, so the instrukt skill says so before switching todos on.
 
 **Credentials.** The token is read, in order, from `GITHUB_TOKEN`, `GH_TOKEN`
 and `gh auth token`, and is never stored. With none, reflection reports
@@ -170,9 +212,10 @@ the remote record before creating duplicate evidence.
 #### UC-GR3: A developer whose todo changed elsewhere is told to refresh first
 
 ```gherkin
-  Given a developer's todo was changed on GitHub since their computer last read it
-  When they record progress on that todo
-  Then the change is refused and they are told how to refresh the todo
+  Given a developer recorded progress on a todo while another computer recorded a change to the same todo
+  And the other computer's change reached GitHub first
+  When the developer's progress is reflected
+  Then it does not overwrite the other change, and they are told how to refresh the todo
   And after refreshing they can record their progress against the current todo
 ```
 
@@ -197,8 +240,31 @@ the remote record before creating duplicate evidence.
   Then their work appears on the new board with its current record status
 ```
 
+#### UC-GR6: A developer whose code is not on GitHub is told todos need it there
+
+```gherkin
+  Given a developer's project keeps its code on a host other than GitHub
+  When they switch todos on for that project
+  Then the change is refused, telling them in plain words that todos need the project's code on GitHub
+  And their configuration is unchanged
+```
+
+#### UC-GR7: A todo whose claim moves to a developer's computer is current when work starts
+
+```gherkin
+  Given a collaborator changed a todo on GitHub while another computer held it
+  When the todo's claim moves to the developer's computer
+  Then the work starts from the todo as GitHub holds it now
+  And each later command on that todo acts on its current state
+```
+
 ## Known caveats
 
+- Code hosted anywhere but GitHub is not supported for todos.
+- Whether `github.repository` names the repository the remote reaches is
+  taken as written; instrukt does not check it.
+- A listing's copy of a todo held elsewhere is as old as the last pickup
+  listing; the label says how old.
 - instrukt does not create the board project, its views or its readme; the
   predecessor's board setup is out of scope.
 - Records written by the predecessor's GitHub store are not read; the envelope

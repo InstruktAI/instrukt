@@ -1,5 +1,5 @@
 ---
-description: Runtime-mapped session operations, the runtime boundary, template-gated features and the shipped T3 Code entry, agent-facing history templates, recorded-session reuse, five-state observation and record-backed step completion.
+description: Runtime-mapped session operations, command and agent verb kinds with the "yours to do" status, the runtime boundary, verb-gated features and the shipped T3 Code entry, optional session ending, agent-facing history verbs, recorded-session reuse, five-state observation and record-backed step completion.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -14,11 +14,15 @@ stay in the machine's runtime mapping.
 The runtime owns sessions. Session lifecycle, input delivery, restart,
 revival, handover, transcripts, cleanup and subscriptions to session activity
 belong to the runtime; instrukt builds none of them. Events, schedules and
-dispatch are instrukt's own. instrukt calls the runtime only through the
-command templates of the runtime mapping, and records the session ids those
-calls return. A feature is available only when the chosen runtime fills the
-templates it needs. instrukt ships a mapping entry for T3 Code, which a
-developer chooses as their runtime.
+dispatch are instrukt's own. instrukt reaches the runtime only through the
+verbs of the runtime mapping, and records the session ids those calls return.
+Each verb is a `command`, which instrukt runs, or an `agent` instruction,
+which the calling agent carries out with its own runtime's tools;
+`instrukt sessions <verb>` is the one place that decides which. A feature is
+available only when the chosen runtime fills the verbs it needs. instrukt
+ships a mapping entry for T3 Code, which a developer chooses as their runtime.
+Doctrine names only `instrukt sessions …` and `@config` values, never a
+runtime or its tools; runtime-specific text lives in the mapping entry alone.
 
 ## Canonical fields
 
@@ -29,17 +33,22 @@ developer chooses as their runtime.
 | `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]` | Start a session through the runtime mapping and obtain its runtime-native id. With `--todo`, record the session as that todo's binding for the started procedure's `role`; without it, nothing is bound. |
 | `instrukt sessions send <id> <text>` | Send work to an identified session through that mapping. |
 | `instrukt sessions alive <id>` | Observe whether the recorded session remains available for reuse and its status. |
-| `instrukt sessions link <a> <b>` | Link sessions when the runtime entry declares a `link` template; otherwise report that the runtime lacks the capability. |
-| `instrukt sessions end <id>` | End the identified session through the optional `end` template; otherwise report that the runtime lacks the capability. |
+| `instrukt sessions link <a> <b>` | Link sessions when the runtime entry fills the `link` verb; otherwise report that the runtime lacks the capability. |
+| `instrukt sessions end <id>` | End the identified session through the runtime's `end` verb (`Ending sessions`). |
+| `instrukt sessions end --todo <slug>` | End each session bound to the todo in instrukt's own session bindings, one `end` per bound session, except the caller's own. |
+| `instrukt sessions end self` | End the caller's own session, identified by the active runtime's `session_id_env`, through `end_self`, or `end` with the caller's id when `end_self` is empty. Always the caller's last step. |
+| `instrukt sessions history search <text>` | Find earlier conversations by text through the `history.search` verb. |
+| `instrukt sessions history show <id>` | Show one conversation's messages through the `history.show` verb. |
 | `instrukt sessions link --remove <a> <b>` | Remove the link through the runtime mapping; report a missing capability when unsupported. |
 | `instrukt sessions resolve-start <procedure>@<project> --session <runtime:id> \| --none` | Resolve a standing agent's start whose result never arrived: bind the session the runtime did create, or declare that none was, allowing a fresh start. |
 | `instrukt sessions conversation <id>` | Read the identified session's conversation through that mapping. |
 
-Runtime command templates receive per-call input as follows:
+Runtime verbs receive per-call input as follows:
 
 - Per-call inputs (the opening message, sent text, another session's id) are
-  appended to the command as separate arguments, never spliced into the
-  command text; their content may be anything.
+  appended to a `command` as separate arguments, never spliced into the
+  command text; their content may be anything. An `agent` instruction is
+  printed with those inputs after it, one per line.
 - `start` also receives `INSTRUKT_WORKTREE`, `INSTRUKT_AGENT` and
   `INSTRUKT_THINKING` in its environment.
 - `start` prints the session id, then the worktree path when one was
@@ -49,8 +58,9 @@ Runtime command templates receive per-call input as follows:
   run, `occurrence: <RFC 3339>` naming the scheduled occurrence, then the brief.
 
 The mapping is global configuration, not executable instructions supplied by
-a cloned project's configuration. Configuration interpolation expands command
-templates at call time. The active runtime inside an agent is the first
+a cloned project's configuration. Configuration interpolation expands each
+verb's template or instruction at call time; `{runtime.session_id}` in a verb
+is the session the call names. The active runtime inside an agent is the first
 configured entry whose `session_id_env` is set. A containing runtime precedes
 the agent runtime it hosts when both identify the caller. With no matching
 entry, a caller-relative `runtime.*` lookup fails clearly.
@@ -60,27 +70,49 @@ An OS-started runner uses the runtime the developer chose: global
 and defaulting to the first entry in `runtimes`. No code detects or chooses a
 runtime: with neither set there is no runtime, and every feature that needs
 one is unavailable. Each runtime entry declares `name` and `session_id_env`,
-and fills any of the templates `start`, `send`, `alive`, `conversation`,
-`notify`, `link`, `end`, `available` and `model`, and the agent-facing
-`history.search` and `history.show`. An entry with `agent: <name>` is an
-agent CLI; its git author comes from `agents.<name>.git_author`.
+and fills any of the verbs `start`, `send`, `alive`, `conversation`,
+`notify`, `link`, `end`, `end_self`, `available`, `model`, `history.search`
+and `history.show`, each with its kind
+(`local/projects/instrukt/spec/feature/configuration/layered-configuration`).
+An entry with `agent: <name>` is an agent CLI; its git author comes from
+`agents.<name>.git_author`.
 One runner per computer uses its own runtime; targeting another computer's
 sessions is outside this contract.
 
-Every runtime is reached through its mapping entry's templates alone. instrukt
+Every runtime is reached through its mapping entry's verbs alone. instrukt
 has no code path for a particular runtime: an entry instrukt ships is driven
-by the same facade, through the same templates, as one a developer maps
+by the same facade, through the same verbs, as one a developer maps
 themselves.
 
-### Template-gated features
+### Verb kinds
+
+Each verb a runtime entry fills has one of two kinds:
+
+| Kind | What `instrukt sessions <verb>` does |
+| --- | --- |
+| `command` | Runs the command template with the call's inputs and reports its result. |
+| `agent` | Prints the instruction, with the call's inputs, for the calling agent to carry out with its own runtime's tools, and exits with the distinct "yours to do" status, which `instrukt sessions -h` names. instrukt runs nothing. |
+
+The "yours to do" status is neither success nor failure: the call is complete
+once the agent has carried out the instruction it printed. With `--json`, the
+result names its kind and, for `agent`, the instruction. A call that expands
+to several verbs, as `end --todo` does, prints every instruction and exits
+with "yours to do" when any of them is `agent`.
+
+`start`, `send`, `alive`, `conversation`, `notify`, `available` and `model`
+are run by instrukt itself, including by an OS-started runner with no agent
+to hand an instruction to, so they take kind `command` only. `end`,
+`end_self`, `link`, `history.search` and `history.show` take either kind.
+
+### Verb-gated features
 
 A feature is available only when the runtime the developer chose fills every
-template it needs. Switching a feature on otherwise is refused, naming each
-missing template and the runtime entry it is missing from; the setting is left
+verb it needs. Switching a feature on otherwise is refused, naming each
+missing verb and the runtime entry it is missing from; the setting is left
 unchanged. `instrukt config validate` reports an enabled feature whose
-templates the chosen runtime does not fill, with the same naming.
+verbs the chosen runtime does not fill, with the same naming.
 
-| Feature | Switched on by | Templates it needs |
+| Feature | Switched on by | Verbs it needs |
 | --- | --- | --- |
 | Standing agents | `modules.events: true` | `start`, `send`, `conversation`, `alive` |
 | Todo dispatch | `modules.todos: true` | `start` with worktree support, `send`, `conversation`, `alive` |
@@ -88,14 +120,35 @@ templates the chosen runtime does not fill, with the same naming.
 | Anomaly notification | `runner.notify` unset (the runtime's notification) | `notify` |
 | Session status | always on; `instrukt sessions alive` | `alive` |
 | Linked-session input | always on; `instrukt sessions link` | `link` |
-| Ending a session | always on; `instrukt sessions end` | `end` |
-| History lookup by agents | always on; `runtime.history.search`, `runtime.history.show` | `history.search`, `history.show` respectively |
+| History lookup by agents | always on; `instrukt sessions history search`, `instrukt sessions history show` | `history.search`, `history.show` respectively |
 
 Standing agents, todo dispatch and recurring tasks observe their sessions'
 status for reuse and completion, so they need `alive` as well as the read.
-An always-on command whose template is missing refuses with the missing
-capability, as `link` and `end` already do. `runner.notify` set to a command
-makes anomaly notification available without the runtime's `notify`.
+An always-on command whose verb is missing refuses with the missing verb, as
+`link` does. `runner.notify` set to a command makes anomaly notification
+available without the runtime's `notify`. Ending a session is not a gated
+feature (`Ending sessions`).
+
+### Ending sessions
+
+Ending is optional: it matters only for a runtime that holds resources per
+session. A runtime entry that leaves `end` empty needs no ending:
+`instrukt sessions end` reports that the runtime needs no ending, does
+nothing and succeeds.
+
+- `instrukt sessions end <id>` ends one session through `end`.
+- `instrukt sessions end --todo <slug>` expands the todo's child list from
+  instrukt's own session bindings (`sessions.bound`) and calls `end` once per
+  bound session, leaving out the caller's own session. It checks no claim;
+  the procedure that calls it confirms release first.
+- `instrukt sessions end self` resolves the caller from the active runtime's
+  `session_id_env` and ends it through `end_self`, or through `end` with the
+  caller's id when `end_self` is empty. Outside any mapped runtime it fails,
+  as every caller-relative lookup does. Ending itself is always the caller's
+  last step.
+
+Every ending goes through `instrukt sessions end`; doctrine names that
+command and nothing the runtime offers.
 
 ### Runtime boundary
 
@@ -111,30 +164,31 @@ makes anomaly notification available without the runtime's `notify`.
 | When a session is started, sent work or ended, and what its opening message carries | instrukt, through the facade |
 | Whether a step is complete | instrukt, from the work record's artifact and stamp |
 
-instrukt calls the runtime only through the mapping's templates. A template
-the chosen runtime does not fill leaves its features unavailable
-(`Template-gated features`); the capability is never rebuilt in instrukt.
+instrukt calls the runtime only through the mapping's verbs. A verb the
+chosen runtime does not fill leaves its features unavailable
+(`Verb-gated features`); the capability is never rebuilt in instrukt.
 
-### Agent-facing history templates
+### Agent-facing history verbs
 
-`history.search` and `history.show` are templates an agent carries out
-itself; the runner never runs them. An agent reads them with
-`instrukt config get runtime.history.search` and `runtime.history.show`, or
-through a snippet's `<!-- @config: runtime.history.search -->` directive,
-resolved for the runtime the agent is running in
-(`local/projects/instrukt/spec/feature/configuration/interpolation`).
+`history.search` and `history.show` serve agents; the runner never calls
+them. An agent calls them through `instrukt sessions history search <text>`
+and `instrukt sessions history show <id>`, resolved for the runtime the agent
+is running in. A snippet may also name the value through a
+`<!-- @config: runtime.history.show -->` directive
+(`local/projects/instrukt/spec/feature/configuration/interpolation`), which
+renders the verb's command or instruction.
 
 - `history.search` finds earlier conversations by text and names their
   session ids; the agent supplies the text.
 - `history.show` shows one conversation's messages; the agent supplies the
   session id, as a search named it or a record carries it.
 
-Each value is a command the agent runs with its input appended, filled from
-that runtime's own search and show commands. Doctrine never names a runtime's
-command or tool for history; it names these two paths. A runtime entry that
-leaves one empty makes its lookup a refusal naming the missing template.
-`instrukt sessions conversation <id>` stays the facade's read of a recorded
-session through the entry's `conversation` template.
+Each is filled from that runtime's own search and show, as a `command` or as
+an `agent` instruction. Doctrine never names a runtime's command or tool for
+history; it names these calls. A runtime entry that leaves one empty makes its
+lookup a refusal naming the missing verb. `instrukt sessions conversation <id>`
+stays the facade's read of a recorded session through the entry's
+`conversation` verb.
 
 ### Shipped T3 Code entry
 
@@ -144,9 +198,11 @@ the effective `runtimes` as shipped, after any declared entries, unless the
 global layer declares an entry named `t3`, which then replaces it
 (`local/projects/instrukt/spec/feature/configuration/layered-configuration`).
 
-The entry is filled from T3's host command `t3 thread`, whose subcommands are
-`start`, `send`, `show` and `list`. They reach the T3 server running on the
-same computer without a sign-in.
+The entry's `command` verbs are filled from T3's host command `t3 thread`,
+whose subcommands are `start`, `send`, `show` and `list`. They reach the T3
+server running on the same computer without a sign-in. Its `agent` verbs are
+instructions for an agent running in a T3 thread, carried out with T3's
+thread tools.
 
 | Key | Filled with |
 | --- | --- |
@@ -155,19 +211,23 @@ same computer without a sign-in.
 | `send` | `t3 thread send {runtime.session_id}`, with the text appended. A busy thread receives it as its next turn; nothing is interrupted. |
 | `alive` | `t3 thread show --json --messages 0 {runtime.session_id}`, translated into the five states (below). |
 | `conversation` | `t3 thread show --messages 100 {runtime.session_id}` |
-| `history.show` | `t3 thread show --messages 100`, with the session id appended |
-| `end`, `notify`, `link`, `history.search`, `available`, `model` | empty: `t3 thread` has no command that ends a thread, raises a notification, links threads, searches conversations, checks a provider, or reports a model and version |
+| `history.show` | `command`: `t3 thread show --messages 100`, with the session id appended |
+| `history.search` | `agent`: search T3's threads for the supplied text with the T3 thread search tool (`t3_thread_search`) and read the thread ids it names |
+| `end` | `agent`: settle thread `{runtime.session_id}` with the T3 thread organize tool (`t3_thread_organize`, action `settle`) |
+| `end_self` | `agent`: settle this thread with `t3_thread_organize`, action `settle`, naming no thread; T3 applies it when this turn ends, so it is the last thing done |
+| `notify`, `link`, `available`, `model` | empty: T3 offers nothing that raises a notification, links threads, checks a provider, or reports a model and version |
 
-So on T3 standing agents, todo dispatch, recurring tasks and session status
-are available. These are unavailable:
+Every other verb in the table is `command`. On T3 ending is implicit: T3
+stops an idle thread's provider process itself, and only a live thread holds
+one. The shipped `end` and `end_self` settle the thread, so the developer's
+thread list shows the work as done; neither frees anything T3 would keep.
 
-- ending a session: `instrukt sessions end` refuses naming `end`; what happens
-  to a thread after its work is T3's;
+So on T3 standing agents, todo dispatch, recurring tasks, session status,
+ending and history lookup are available. These are unavailable:
+
 - anomaly notification through the runtime: unavailable unless `runner.notify`
   is set to a command;
-- linked-session input;
-- history search by agents: `runtime.history.search` refuses naming the
-  missing template; `runtime.history.show` is available.
+- linked-session input.
 
 Without an `available` check, a failed start tries the next agent. A thread
 runs on the T3 project's default model and permission mode; agent access
@@ -211,7 +271,7 @@ Runtime execution status and workflow completion are separate observations.
 | `ended failed` | The observed run ended unsuccessfully. |
 | `gone` | The identified session is no longer available in the runtime. |
 
-The runtime entry's `alive` template returns one of these five states. A
+The runtime entry's `alive` verb returns one of these five states. A
 failed observation is not `gone`; the runner retries observation next tick.
 A step is done only when the work record carries its required artifact and
 stamp. If execution ended without the required artifact or without the required
@@ -244,8 +304,9 @@ through the session started into the build procedure with `--worktree` and
 
 The todo's session bindings are its assignment child set (`sessions.bound`).
 Release with `instrukt todo update <slug> --unclaim`, confirm `claim.held` is
-false, then call `instrukt sessions end <id>` for each binding. End the lane
-only after its obligations finish; preserve an unfinished human conversation.
+false, then call `instrukt sessions end --todo <slug>`. End the lane with
+`instrukt sessions end self` only after its obligations finish, as its last
+step; preserve an unfinished human conversation.
 
 `instrukt sessions alive <id>` prints one of the five statuses; `run` and
 `send` print the session id they used; every facade command accepts
@@ -253,7 +314,7 @@ only after its obligations finish; preserve an unfinished human conversation.
 `gone`. A procedure launch with `run` loads the named procedure, binds `--args` according to its declared
 parameters, and carries `--brief <file|->` as additional briefing content
 (from the file or standard input). These flags also apply when `--worktree`
-is supplied. Worktree support is a capability of the runtime start template,
+is supplied. Worktree support is a capability of the runtime's `start` verb,
 not a separate runtime-entry key.
 
 `--procedure` is required for work dispatch. The sole exception is a setup-only
@@ -304,19 +365,20 @@ interpolating unescaped prose into shell command text.
 ```gherkin
   Given a developer's runtime mapping fills how their runtime searches and shows past conversations
   When an agent following doctrine needs what an earlier conversation said about a subject
-  Then the doctrine it reads gives it that runtime's search, and the show for a conversation it finds
+  Then instrukt searches that runtime for it, or tells the agent how to search with its own runtime's tools
+  And shows a conversation the search finds
   But when the runtime it is running in leaves history search empty
-  Then it is told which template is missing, and no command is given
+  Then it is told which verb is missing, and no search is made
 ```
 
 #### UC-SS5: A developer switches on a feature their runtime cannot carry
 
 ```gherkin
-  Given a developer's chosen runtime leaves empty a template a feature needs
+  Given a developer's chosen runtime leaves empty a verb a feature needs
   When they switch that feature on
-  Then the change is refused, naming each missing template and the runtime it is missing from
+  Then the change is refused, naming each missing verb and the runtime it is missing from
   And their configuration is unchanged
-  But when their runtime fills every template that feature needs
+  But when their runtime fills every verb that feature needs
   Then the feature is switched on
 ```
 
@@ -329,6 +391,18 @@ interpolating unescaped prose into shell command text.
   And no runtime is picked for them
 ```
 
+#### UC-SS7: An agent told that an ending is its to do ends the sessions itself
+
+```gherkin
+  Given a developer's runtime fills ending as an instruction for the agent
+  And an agent has released a todo whose child sessions are bound to it
+  When the agent ends the todo's sessions and then its own through instrukt
+  Then instrukt tells it, for each session, what to do with its own runtime's tools, and that doing it is the agent's
+  And once the agent has done so, the child sessions and its own are ended in the runtime
+  But when the developer's runtime needs no ending
+  Then instrukt says so and nothing more is owed
+```
+
 ## Known caveats
 
 - T3 selects a provider only together with a model slug, and instrukt's agent
@@ -338,6 +412,6 @@ interpolating unescaped prose into shell command text.
 
 ## See Also
 
-- local/projects/instrukt/spec/feature/configuration/layered-configuration — choosing the runtime and the shipped entry
-- local/projects/instrukt/spec/feature/configuration/interpolation — the active-runtime view agents read templates through
+- local/projects/instrukt/spec/feature/configuration/layered-configuration — choosing the runtime, the shipped entry and the runtime entry's verb shape
+- local/projects/instrukt/spec/feature/configuration/interpolation — the active-runtime view agents read verbs through
 - local/projects/instrukt/spec/feature/runner/anomaly-notification — `runner.notify` when the runtime offers no notification

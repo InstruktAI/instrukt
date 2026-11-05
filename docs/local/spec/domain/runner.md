@@ -1,5 +1,5 @@
 ---
-description: Module-aware work dispatch, event activation, session capabilities, task timing and anomaly reporting without a daemon.
+description: Module-aware work dispatch, event activation, session capabilities, task timing, the disk-headroom standing job and anomaly reporting without a daemon.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -9,7 +9,8 @@ delivered_by: [instrukt-first-build]
 
 The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the sessions facade, event-source
-translation and time eligibility, including anomaly reporting. It executes
+translation and time eligibility, including anomaly reporting, and its own
+standing jobs. It executes
 the enabled modules' work in one process, entered through `instrukt run` or
 `instrukt tick` and woken by the OS scheduler. It has no daemon. The work
 context owns work content, artifacts and stamps; workflow owns
@@ -43,11 +44,17 @@ authorization and derived workflow state.
 
 **Runtime mapping**
 : Global configuration connecting facade operations and declared capabilities
-  to the runtime the developer chose, as command templates instrukt fills
-  for the calls it makes, plus agent-facing history templates. A feature is
-  available only when the chosen runtime fills every template it needs.
-  instrukt ships an entry for T3 Code that a developer may choose; no code
-  detects or chooses a runtime.
+  to the runtime the developer chose, as verbs. A verb of kind `command` is a
+  template instrukt runs; a verb of kind `agent` is an instruction
+  `instrukt sessions` hands to the calling agent with the "yours to do"
+  status. A feature is available only when the chosen runtime fills every
+  verb it needs. instrukt ships an entry for T3 Code that a developer may
+  choose; no code detects or chooses a runtime.
+
+**Standing job**
+: Work the runner performs itself on its wake-ups, on its own cadence, with
+  no todo, task record, authorization or agent session; the disk-headroom
+  guard is one.
 
 **Linked-session input**
 : Human words typed in one session also reaching a linked session with their
@@ -74,10 +81,12 @@ authorization and derived workflow state.
   activation from events; the sessions facade and session reuse behavior;
   runtime capability translation, including linked-session input; time
   eligibility and missed-run decisions; anomaly-notification routing; the
-  meaning and writes of its tables in the state database (the event log,
-  consumer cursors and handled marks, request validators, watched-ref
-  observations, executions, standing-agent bindings and starts, held task
-  failures and the last wake-up), whose schema is published in
+  disk-headroom standing job, which keeps the shared volume above its
+  headroom; the meaning and writes of its tables in the state database (the
+  event log, consumer cursors and handled marks, request validators,
+  watched-ref observations, executions, standing-agent bindings and starts,
+  held task failures, the last wake-up, and the disk guard's last level and
+  last report), whose schema is published in
   `local/projects/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -87,13 +96,17 @@ authorization and derived workflow state.
   session lifecycle, input delivery, restart, revival, handover,
   transcripts and their search, cleanup and subscriptions to session
   activity, all owned by the runtime and reached only through the runtime
-  mapping's templates. Events, schedules and dispatch decisions are the
+  mapping's verbs. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, `instrukt sessions
-  run|send|alive|conversation|link|end`, `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
+  run|send|alive|conversation|link|end`, `instrukt sessions end --todo <slug>`,
+  `instrukt sessions end self`, `instrukt sessions history search|show`, the
+  verb kinds `command` and `agent` with the "yours to do" status,
+  `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
   (procedure required except setup-only `run --worktree <name> --brief <file|->`;
   the runtime creates/reattaches it and the binding records its path as `worktree.path`), `instrukt sessions link --remove <a> <b>`, `instrukt ticks status`, and the wake-up
-  registration performed by `instrukt install`; the five-state session
+  registration performed by `instrukt install`; `runner.disk_headroom` and the
+  guard's last run in `instrukt ticks status`; the five-state session
   contract; every sessions facade command accepts `--json`; linked-session input capability; instrukt event vocabulary,
   including `runner.upstream_changed`, `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
   `workflow.finalized`.
@@ -206,14 +219,17 @@ record-backed completion.
 - **Session continuity** — `local/projects/instrukt/spec/feature/runner/session-continuity`
   — session reuse, five-state observation, sharing a human clarification
   with linked collaborators, working on T3 Code once it is chosen, looking up
-  earlier conversations, and refusing a feature the chosen runtime cannot
-  carry.
+  earlier conversations, refusing a feature the chosen runtime cannot
+  carry, and an agent carrying out an ending handed to it as its to do.
 - **Event activation** — `local/projects/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `local/projects/instrukt/spec/feature/runner/task-timing`
   — arrange future work and recover missed recurring occurrences.
 - **Anomaly notification** — `local/projects/instrukt/spec/feature/runner/anomaly-notification`
   — notice unattended failures while keeping questions in their threads.
+- **Disk headroom** — `local/projects/instrukt/spec/feature/runner/disk-headroom`
+  — learn the shared volume runs low before builds fail, and reclaim
+  regenerable output from idle checkouts at the floor.
 
 ### Governing designs and decisions (index)
 
@@ -237,7 +253,7 @@ The runtime mapping and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are
 external boundaries, not additional bounded contexts. The runtime side of the
 ACL is configuration only: each runtime, including the T3 Code entry instrukt
-ships, is reached through its mapping entry's templates, never through a code
+ships, is reached through its mapping entry's verbs, never through a code
 path of its own
 (`local/projects/instrukt/spec/feature/runner/session-continuity`).
 

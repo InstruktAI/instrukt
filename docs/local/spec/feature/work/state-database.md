@@ -57,9 +57,11 @@ the meaning and the writes of the runner tables.
 
 ### Scope of what is stored
 
-The database holds this computer's local items only. Work that a listing
-reads through from GitHub is not stored, and a workflow phase is derived,
-never stored: `instrukt todo list` and `instrukt todo show` give both.
+The database holds this computer's local items, and the last known copy of
+each other todo of its projects as the runner's pickup listing last read it
+(`local/projects/instrukt/spec/feature/work/github-record`). A workflow phase
+is derived, never stored: `instrukt todo list` and `instrukt todo show` give
+it.
 
 Values are stored as follows: timestamps as RFC 3339 text in UTC; booleans as
 `0` or `1`; a session as `<runtime>:<id>`; an actor as JSON text, one of
@@ -82,9 +84,9 @@ Values are stored as follows: timestamps as RFC 3339 text in UTC; booleans as
 
 Owned and written by work through its command contract. Reflection to
 GitHub reads from these tables; the runner writes the rows it is entitled to
-(claims, reflection flushes, last-fired stamps, automatic holds, the purge of
-expired retained records and per-role session bindings) only through work's
-command contract.
+(claims, reflection flushes, pickup-listing copies, last-fired stamps,
+automatic holds, the purge of expired retained records and per-role session
+bindings) only through work's command contract.
 
 **`todos`** — one row per local item. Key: `id`. Unique while live:
 `(project, slug)` among `active`, `iceboxed` and `structural_holder` rows.
@@ -174,6 +176,22 @@ reflection. Key: `todo_id`.
 **`provider_deferrals`** — per project, the time until which GitHub deferred
 requests (rate limiting). Key: `project`.
 
+**`listing_copies`** — the last known copy of each todo of a project that is
+not a local item here, as the latest pickup listing read it. Key:
+`(project, issue_number)`.
+
+| Column | Meaning |
+| --- | --- |
+| `project`, `issue_number` | The project and the todo's reflected issue. |
+| `slug`, `kind`, `status` | The todo's address, kind and record status, as reflected. |
+| `remote_revision` | The record revision the copy was read at. |
+| `claim_machine` | The computer its reflected claim names, or `NULL` when unclaimed. |
+| `record` | The reflected record as read, as JSON. |
+| `copied_at` | When the pickup listing read it: the copy's age. |
+
+A copy is replaced by each later pickup listing and removed when its todo
+becomes a local item or no longer appears in the listing.
+
 ### Runner tables
 
 Owned by the runner and written only by it, in the same transactions as the
@@ -228,13 +246,24 @@ the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
 
 **`wakeups`** — one row: `last_at`, the last wake-up.
 
+**`disk_headroom`** — one row: the disk-headroom guard's last run
+(`local/projects/instrukt/spec/feature/runner/disk-headroom`).
+
+| Column | Meaning |
+| --- | --- |
+| `run_at` | When the guard last ran; with the five-minute cadence it decides whether a wake-up runs it. |
+| `level` | The last level: `ok`, `warn`, `floor`, or `unmeasured` when free space could not be measured. A report fires on a change of level. |
+| `free_bytes` | Free space at the last run, or `NULL` when unmeasured. |
+| `report` | The last report the guard made, as JSON (level, free space, candidates, removals, skips, failures, and whether headroom was restored), or `NULL` before the first. |
+| `reported_at` | When that report was made. |
+
 ### Retention
 
 A removed todo's rows are purged with it when its recovery window expires.
 An execution's row goes when its todo is released; a standing start's when it
 is bound or resolved; a task failure's when its hold is released. Validators,
-deferrals and watched-ref observations are replaced in place. Events, cursors
-and handled marks are kept.
+deferrals, watched-ref observations, listing copies and the disk guard's row
+are replaced in place. Events, cursors and handled marks are kept.
 
 ### Use cases
 

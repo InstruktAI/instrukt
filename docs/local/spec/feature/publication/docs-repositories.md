@@ -66,7 +66,7 @@ published doctrine but never publishes into it.
   instrukt — is refused at sync with its findings, and the previous
   publication stays.
 - Docs name instrukt's commands; an agent reads a command's contract from the
-  installed binary with `instrukt <command> --help`. instrukt reads a docs
+  installed binary with `instrukt <command> -h`. instrukt reads a docs
   repository only through its declared formats — frontmatter, required reads,
   `index.yaml`, `schema.yaml`, configured-value directives and workflow files
   — never through its prose.

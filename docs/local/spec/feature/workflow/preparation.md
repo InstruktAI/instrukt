@@ -93,8 +93,9 @@ settled, and commits authored on the canonical branch under the preparation
 claim have their required approving commit-review stamps.
 
 The orchestrator releases the claim with `instrukt todo update <slug> --unclaim` and
-ends its lane and child sessions with `instrukt sessions end <id>` only
-after the release is confirmed. The runner owns subsequent execution dispatch.
+ends its child sessions with `instrukt sessions end --todo <slug>`, then its
+lane with `instrukt sessions end self` as its last step, only after the
+release is confirmed. The runner owns subsequent execution dispatch.
 Manual preparation does not itself require dependency delivery; work admission
 does. Entry claims and holds are work-record and runner concerns, distinct
 from the derived preparation state.
