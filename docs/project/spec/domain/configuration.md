@@ -138,7 +138,7 @@ This context emits no events.
 
 ## Governing designs and decisions
 
-None yet beyond the feature specs above.
+- `project/instrukt/design/architecture/overview` — the module boundaries and shared publication, retrieval and integration flows.
 
 ## Context map position
 

@@ -128,3 +128,6 @@ holders carry no dispatch hold; each child carries its own.
 
 - Readiness does not grant a session a claim. A claim does not satisfy an
   approval, prerequisite or integration gate.
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

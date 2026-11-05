@@ -94,3 +94,6 @@ separate logging service.
   Then they receive a readable report comparing the available outcomes over time
   And can distinguish process-document changes from changes in the model used
 ```
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

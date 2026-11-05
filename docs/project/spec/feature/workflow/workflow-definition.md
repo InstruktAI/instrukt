@@ -161,3 +161,4 @@ And changing those choices requires no change to the evaluation engine
 
 - [sdlc/principle/design-fundamentals](../../../../domain/sdlc/principle/design-fundamentals.md) — separation of evaluation, evidence and execution responsibilities.
 - [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md) — agent judgment supplies semantic classifications.
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

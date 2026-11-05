@@ -135,3 +135,6 @@ reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
 ## Known caveats
 
 None.
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

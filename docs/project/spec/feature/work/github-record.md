@@ -276,3 +276,6 @@ the remote record before creating duplicate evidence.
   on a replacement computer. Native artifact availability and accepted
   content size also bound remote reflection; failure leaves the local evidence
   and pending reflection visible.
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

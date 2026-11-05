@@ -156,3 +156,4 @@ And findings requiring changes return to implementation before that handoff
 - [sdlc/principle/design-fundamentals](../../../../domain/sdlc/principle/design-fundamentals.md)
 - [general/principle/trust-and-guardrails](../../../../general/principle/trust-and-guardrails.md)
 - [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md)
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

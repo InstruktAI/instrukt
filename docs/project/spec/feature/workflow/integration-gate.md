@@ -161,3 +161,4 @@ And it can read each commit's latest review verdict
 
 - [general/principle/trust-and-guardrails](../../../../general/principle/trust-and-guardrails.md) — admission protects the shared work object.
 - [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md) — the integrator interprets failures and selects remediation.
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

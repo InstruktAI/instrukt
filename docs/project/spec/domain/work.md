@@ -179,6 +179,8 @@ Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
 The feature contracts above carry this context's settled design. No separate
 owning design snippet or decision record is declared.
 
+- `project/instrukt/design/architecture/overview` — the module boundaries and shared publication, retrieval and integration flows.
+
 ## Context map position
 
 - **Configuration → work** — customer-supplier. Work consumes project settings.

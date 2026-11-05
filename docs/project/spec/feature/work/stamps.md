@@ -126,3 +126,6 @@ evaluation alone counts no round.
 
 Stamp capture and validation support the goals in the approval, GitHub-record
 and evaluation-report specs. They introduce no separate stakeholder goal.
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

@@ -301,6 +301,8 @@ This context emits no events.
 - **`general/procedure/doc-snippet-authoring`** — how authors use the pending carriers this context reads.
 - **`general/policy/context-retrieval`** — how agents are directed to retrieve documentation.
 
+- `project/instrukt/design/architecture/overview` — the module boundaries and shared publication, retrieval and integration flows.
+
 ## Context map position
 
 - **Publication** — customer / supplier. Publication supplies the home's

@@ -290,6 +290,8 @@ names the finalized commit (`project/instrukt/spec/feature/runner/event-envelope
 
 The context map indexes the cross-cutting architecture design.
 
+- `project/instrukt/design/architecture/overview` — the module boundaries and shared publication, retrieval and integration flows.
+
 ## Context map position
 
 - **Work → workflow — Customer / Supplier:** work supplies artifacts, stamps,
