@@ -86,6 +86,21 @@ codes! {
     SeeAlsoNotLast => "structure-see-also-not-last",
     RequiredReadsNotFirst => "structure-required-reads-not-first",
 
+    // Schema
+    /// A `schema.yaml` that cannot be parsed, or whose value carries a key
+    /// other than `required` and `optional`.
+    SchemaInvalid => "schema-invalid",
+    /// A `schema.yaml` anywhere but at a position root.
+    SchemaMisplaced => "schema-misplaced",
+    /// A path key not starting with a taxonomy directory, or not in whole
+    /// segments.
+    SchemaKeyInvalid => "schema-key-invalid",
+    /// One key listing a section both as required and as optional.
+    SchemaSectionConflict => "schema-section-required-and-optional",
+    /// A key making optional a section the root rules or a shorter path
+    /// require.
+    SchemaSectionDropped => "schema-section-dropped",
+
     // References
     ReferenceOutsideRequiredReads => "reference-outside-required-reads",
     RequiredReadsLevel => "reference-required-reads-not-h2",
@@ -96,6 +111,11 @@ codes! {
     ReferenceDomainUnpublished => "reference-domain-unpublished",
     /// A published snippet referencing local material.
     ReferenceLocalFromPublished => "reference-local-from-published",
+
+    // Required-reads hygiene
+    /// A required read the closure of another required read of the same
+    /// snippet already brings.
+    RequiredReadImplied => "hygiene-required-read-implied",
 
     // Baselines
     BaselineLineInvalid => "baseline-line-invalid",
@@ -195,4 +215,61 @@ impl fmt::Display for Finding {
         }
         Ok(())
     }
+}
+
+/// A stable notice code. Like a finding code, its text form never changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NoticeCode {
+    /// A delivered snippet no `index.yaml` names and no snippet requires:
+    /// reachable only through `instrukt docs index`.
+    UnreferencedSnippet,
+}
+
+impl NoticeCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NoticeCode::UnreferencedSnippet => "unreferenced-snippet",
+        }
+    }
+}
+
+impl fmt::Display for NoticeCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for NoticeCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Something worth knowing about a file that never fails a run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Notice {
+    /// The file, relative to the repository root.
+    pub path: PathBuf,
+    pub code: NoticeCode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+impl fmt::Display for Notice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.code)?;
+        if let Some(value) = &self.value {
+            write!(f, ": {value}")?;
+        }
+        Ok(())
+    }
+}
+
+/// What one validation run found: findings fail it, notices never do.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Validation {
+    /// Ordered by file.
+    pub findings: Vec<Finding>,
+    /// Ordered by file.
+    pub notices: Vec<Notice>,
 }

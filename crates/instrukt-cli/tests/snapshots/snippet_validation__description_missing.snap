@@ -3,3 +3,4 @@ source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: run.out
 ---
 docs/domain/acme/concept/bare.md: frontmatter-description-missing
+notice: docs/domain/acme/concept/bare.md: unreferenced-snippet: acme/concept/bare

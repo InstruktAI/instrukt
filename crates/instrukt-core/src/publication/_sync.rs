@@ -266,7 +266,8 @@ fn publish(
         home,
         paths: &[],
         wiring: &wiring,
-    })?;
+    })?
+    .findings;
     if !findings.is_empty() {
         return Ok(refused(Refusal::Findings(findings)));
     }

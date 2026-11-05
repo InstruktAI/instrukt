@@ -75,8 +75,24 @@ fn project(env: &TestEnv) -> Repo {
 
 /// A documentation tree that keeps the whole contract: both halves,
 /// required reads of every valid form, a baseline, a third-party doc and
-/// every pending carrier.
+/// every pending carrier. Every delivered snippet is named by an index or
+/// a required read, so the run carries no notice.
 fn valid_tree(repo: &Repo) {
+    let slug = repo
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    repo.write(
+        "docs/domain/acme/index.yaml",
+        "description: Acme work.\n\
+         listed: [acme/policy/rules, acme/procedure/listen, acme/procedure/work/overview]\n",
+    )
+    .write(
+        "docs/project/index.yaml",
+        &format!("listed: [project/{slug}/adr/0049-choice, project/{slug}/design/retired]\n"),
+    );
     repo.write("docs/domain/acme/principle/care.md", &snippet("principle", "", ""))
         .write(
             "docs/domain/acme/policy/rules.md",
@@ -503,4 +519,70 @@ fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_report
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("undeclared_flavor_role", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
+#[test]
+fn a_required_read_another_required_read_already_brings_is_reported() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    // `rules` already requires `care`; `overlap` requires both, and also
+    // `listen`, which nothing else brings.
+    repo.write(
+        "docs/domain/acme/concept/overlap.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- @~/.instrukt/docs/acme/principle/care.md\n\
+             - @~/.instrukt/docs/acme/policy/rules.md\n- @~/.instrukt/docs/acme/procedure/listen.md\n",
+        ),
+    )
+    .write(
+        "docs/domain/acme/index.yaml",
+        "description: Acme work.\nlisted: [acme/policy/rules, acme/procedure/listen, \
+         acme/procedure/work/overview, acme/concept/overlap]\n",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("required_read_implied", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV3
+#[test]
+fn a_snippet_nothing_names_is_a_notice_that_does_not_fail_the_run() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/project/concept/orphan.md",
+        &snippet("concept", "", ""),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}", run.err);
+    insta::assert_snapshot!("unreferenced_snippet", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV3
+#[test]
+fn a_snippet_a_published_snippet_requires_is_not_unreferenced() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/acme/concept/borrowed.md",
+        &snippet("concept", "", ""),
+    );
+    let crew = env.instrukt_home().join("docs/crew/concept");
+    std::fs::create_dir_all(&crew).unwrap();
+    std::fs::write(
+        crew.join("uses.md"),
+        snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- @~/.instrukt/docs/acme/concept/borrowed.md\n",
+        ),
+    )
+    .unwrap();
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}", run.err);
+    insta::assert_snapshot!("referenced_from_the_computer", run.out);
 }

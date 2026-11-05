@@ -298,12 +298,17 @@ fn publishing_reads_the_todos_switch_from_committed_main_not_the_working_tree() 
 /// repository on the computer publishes.
 fn dependent_consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
-    app.write("instrukt.yaml", &layer("app", "")).write(
-        "docs/project/concept/flow.md",
-        "---\ndescription: How work flows here.\n---\n\n# Flow — Concept\n\n\
+    app.write("instrukt.yaml", &layer("app", ""))
+        .write(
+            "docs/project/concept/flow.md",
+            "---\ndescription: How work flows here.\n---\n\n# Flow — Concept\n\n\
          ## Required reads\n\n- @~/.instrukt/docs/flows/policy/rules.md\n\n\
          ## What\n\nOur flow.\n\n## Why\n\nTo ship.\n",
-    );
+        )
+        .write(
+            "docs/project/index.yaml",
+            "listed: [project/app/concept/flow]\n",
+        );
     app.commit("app");
     app
 }

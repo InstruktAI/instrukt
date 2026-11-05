@@ -3,7 +3,8 @@
 //!
 //! Callers ask for the parsed documentation of a repository
 //! ([`Corpus::load`], or [`Corpus::from_sources`] for a committed
-//! revision), for its findings ([`validate`]), for one delivery's fold
+//! revision), for its findings and notices ([`validate`]), for the
+//! effective schema of a folder ([`schema`]), for one delivery's fold
 //! ([`fold`]), or for moving one todo's pending documentation to another
 //! ([`transfer_pending`]); identity derivation, frontmatter reading, reference forms
 //! and the pending-marker grammar stay behind those calls.
@@ -20,7 +21,8 @@
 //! - the [`Position`]s documentation lives in, and the documents a
 //!   position carries at its root: its [`PositionIndex`] (`index.yaml`)
 //!   and its [`PositionSchema`] (`schema.yaml`), parsed with the keys
-//!   each position allows;
+//!   each position allows; the root rules and a position's schema
+//!   resolve to the [`EffectiveSchema`] each snippet is held to;
 //! - [`BaselineManifest`]s, [`ThirdPartyDoc`]s and whether a reference resolves
 //!   ([`Corpus::resolves`]).
 //!
@@ -78,6 +80,7 @@ mod _position;
 mod _refs;
 mod _render;
 mod _retrieval;
+mod _schema;
 mod _text;
 mod _transfer;
 mod _validate;
@@ -88,7 +91,7 @@ pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
     Version, View,
 };
-pub use _finding::{Finding, FindingCode};
+pub use _finding::{Finding, FindingCode, Notice, NoticeCode, Validation};
 pub use _fold::{FoldOutcome, fold};
 pub use _frontmatter::{
     Dispatch, EventDelivery, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
@@ -105,6 +108,9 @@ pub use _position::{
 pub use _refs::{RefTarget, Reference};
 pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
 pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
+pub use _schema::{
+    EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,
+};
 pub use _text::Directive;
 pub use _transfer::{TransferOutcome, transfer_pending};
 pub use _validate::{ValidationRequest, validate};
@@ -181,6 +187,16 @@ pub enum DocsError {
         path.display()
     )]
     OutsideRepository { path: PathBuf },
+    #[error(
+        "{} lies outside every documentation position; the positions are docs/general/, docs/domain/<domain>/ and docs/project/",
+        path.display()
+    )]
+    OutsidePositions { path: PathBuf },
+    #[error(
+        "{} is not inside a taxonomy directory: `{dir}` is not one of principle, concept, policy, procedure, design, spec, adr",
+        path.display()
+    )]
+    NotATaxonomyFolder { path: PathBuf, dir: String },
     #[error("cannot transfer pending documentation at {}: {reason}", path.display())]
     TransferRefused { path: PathBuf, reason: String },
     #[error(

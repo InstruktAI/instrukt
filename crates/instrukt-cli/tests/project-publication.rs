@@ -392,10 +392,10 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
     let refused = sync(&env, &repo).failure();
     insta::assert_snapshot!(text(&refused.get_output().stdout, &[&sha]), @r"
     docs/domain/acme/policy/bare.md: frontmatter-description-missing
-    docs/domain/acme/policy/bare.md: structure-section-missing: Enforcement
-    docs/domain/acme/policy/bare.md: structure-section-missing: Exceptions
-    docs/domain/acme/policy/bare.md: structure-section-missing: Rationale
-    docs/domain/acme/policy/bare.md: structure-section-missing: Scope
+    docs/domain/acme/policy/bare.md: structure-section-missing: Enforcement, required by instrukt root rules
+    docs/domain/acme/policy/bare.md: structure-section-missing: Exceptions, required by instrukt root rules
+    docs/domain/acme/policy/bare.md: structure-section-missing: Rationale, required by instrukt root rules
+    docs/domain/acme/policy/bare.md: structure-section-missing: Scope, required by instrukt root rules
     ");
     insta::assert_snapshot!(text(&refused.get_output().stderr, &[&sha]), @"instrukt: demo at [SHA] is not published: the committed documentation has 5 validation finding(s)");
     assert_eq!(published_tree(&env), before);

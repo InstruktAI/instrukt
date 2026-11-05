@@ -16,15 +16,16 @@ use super::_corpus::{
     BaselineManifest, Corpus, ManifestLine, Stray, Version, confined_docs, manifest_lines,
     relative, required_reads_section, unplaced_code,
 };
-use super::_finding::{Finding, FindingCode};
+use super::_finding::{Finding, FindingCode, Notice, NoticeCode, Validation};
 use super::_frontmatter;
 use super::_identity::{
     BaselineOwner, Classification, Placement, Scope, Taxonomy, companion_shape, place,
     published_origin, published_source,
 };
 use super::_markers::Problem;
-use super::_position::{GENERAL, Position, is_reserved_domain_folder};
+use super::_position::{GENERAL, INDEX_FILE, Position, PositionIndex, is_reserved_domain_folder};
 use super::_refs::RefTarget;
+use super::_schema::{self, EffectiveSchema, Schemas};
 use super::_text;
 use super::DocsError;
 use crate::config::{CONFIG_FILE_NAME, Configuration};
@@ -46,11 +47,12 @@ pub struct ValidationRequest<'a> {
 }
 
 /// Validates the documentation of `request.repo_root`'s working tree and
-/// returns every finding, ordered by file. Changes nothing.
-pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsError> {
+/// returns every finding and notice, each ordered by file. Changes nothing.
+pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError> {
     let started = Instant::now();
     let scope = scope_of(request.repo_root, request.paths)?;
     let corpus = Corpus::load(request.repo_root, request.home)?;
+    let schemas = Schemas::load(request.repo_root)?;
     let config = Configuration::load(request.home, Some(request.repo_root))?;
     // The flavor-role lookup is wired exactly when the configuration being
     // validated switches `todos` on: the working tree's for `docs
@@ -79,8 +81,10 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
         repo_root: request.repo_root,
         wiring: request.wiring,
         agents: &agents,
+        schemas: &schemas,
     };
     let mut findings = check(&corpus, &env)?;
+    let mut notices = unreferenced(&corpus, request.repo_root)?;
     super::_directives::check(
         &corpus,
         request.repo_root,
@@ -102,9 +106,11 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
                 .chain(&finding.involves)
                 .any(|path| scope.iter().any(|s| path.starts_with(s)))
         });
+        notices.retain(|notice| scope.iter().any(|s| notice.path.starts_with(s)));
     }
     findings.sort_by(|a, b| (&a.path, a.code, &a.value).cmp(&(&b.path, b.code, &b.value)));
     findings.dedup();
+    notices.sort_by(|a, b| (&a.path, a.code, &a.value).cmp(&(&b.path, b.code, &b.value)));
     let mut by_code: BTreeMap<&str, usize> = BTreeMap::new();
     for finding in &findings {
         *by_code.entry(finding.code.as_str()).or_default() += 1;
@@ -119,10 +125,11 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
         repo_root = %request.repo_root.display(),
         scoped = !scope.is_empty(),
         findings = findings.len(),
+        notices = notices.len(),
         by_code = %by_code,
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
-    Ok(findings)
+    Ok(Validation { findings, notices })
 }
 
 /// The scope paths, repository-relative. A path that does not exist is an
@@ -163,6 +170,8 @@ pub(super) struct CheckEnv<'a> {
     pub wiring: &'a CoreWiring,
     /// The agents the configured runtime mapping can start.
     pub agents: &'a BTreeSet<String>,
+    /// The working tree's position schemas.
+    pub schemas: &'a Schemas,
 }
 
 /// Every finding of `corpus`, unscoped and unordered.
@@ -219,7 +228,14 @@ pub(super) fn check(corpus: &Corpus, env: &CheckEnv<'_>) -> Result<Vec<Finding>,
     for doc in corpus.third_party() {
         check_third_party(doc.version(), doc.sources(), &mut out);
     }
+    out.extend(env.schemas.findings());
     let mut reads = RequiredReads::new(corpus);
+    for snippet in corpus.snippets() {
+        check_implied(snippet.current(), &mut reads, &mut out)?;
+        for next in snippet.companions().iter().filter_map(|c| c.next()) {
+            check_implied(next, &mut reads, &mut out)?;
+        }
+    }
     for manifest in corpus.baselines() {
         check_baseline(corpus, manifest, &mut reads, &mut out)?;
     }
@@ -286,7 +302,11 @@ fn check_version(
             );
         }
     }
-    check_structure(class.taxonomy, version, out);
+    let effective = match _schema::folder_of(path) {
+        Some((position, folder)) => env.schemas.effective(&position, class.taxonomy, &folder),
+        None => Schemas::default().effective(&Position::Project, class.taxonomy, ""),
+    };
+    check_structure(class.taxonomy, &effective, version, out);
     check_references(corpus, class, version, out);
     for problem in &version.markers().problems {
         let (code, value) = match problem {
@@ -300,7 +320,12 @@ fn check_version(
     }
 }
 
-fn check_structure(taxonomy: Taxonomy, version: &Version, out: &mut Vec<Finding>) {
+fn check_structure(
+    taxonomy: Taxonomy,
+    effective: &EffectiveSchema,
+    version: &Version,
+    out: &mut Vec<Finding>,
+) {
     let path = version.path();
     let lines = _text::lines(version.body());
     let headings = _text::headings(&lines);
@@ -330,26 +355,33 @@ fn check_structure(taxonomy: Taxonomy, version: &Version, out: &mut Vec<Finding>
         .map(|h| h.title.clone())
         .collect();
     let normalized: Vec<String> = h2.iter().map(|t| _text::normalize_title(t)).collect();
-    for required in taxonomy.required_sections() {
-        if !normalized.contains(&_text::normalize_title(required)) {
+    for required in &effective.required {
+        if !normalized.contains(&_text::normalize_title(&required.title)) {
             push(
                 out,
                 path,
                 FindingCode::SectionMissing,
-                Some((*required).to_owned()),
+                Some(format!(
+                    "{}, required by {}",
+                    required.title, required.imposed_by
+                )),
             );
         }
     }
-    let allowed: BTreeSet<String> = taxonomy
-        .required_sections()
-        .iter()
-        .chain(taxonomy.optional_sections())
-        .chain(&["Required reads", "See also"])
-        .map(|s| _text::normalize_title(s))
-        .collect();
-    for (title, norm) in h2.iter().zip(&normalized) {
-        if !allowed.contains(norm) {
-            push(out, path, FindingCode::SectionUnknown, Some(title.clone()));
+    let folder = path
+        .parent()
+        .map(|p| super::_corpus::relative(Path::new(""), p))
+        .unwrap_or_default();
+    for title in &h2 {
+        if !effective.allows(title) {
+            push(
+                out,
+                path,
+                FindingCode::SectionUnknown,
+                Some(format!(
+                    "{title}, outside the schema of {folder}; see `instrukt docs schema {folder}`"
+                )),
+            );
         }
     }
     if normalized.iter().any(|t| t == "see also")
@@ -530,6 +562,167 @@ fn check_third_party(version: &Version, sources: Vec<String>, out: &mut Vec<Find
 }
 
 /// The taxonomy an identity spells.
+/// A finding for each required read of `version` that the closure of
+/// another of its required reads already brings, naming that read.
+fn check_implied(
+    version: &Version,
+    reads: &mut RequiredReads<'_>,
+    out: &mut Vec<Finding>,
+) -> Result<(), DocsError> {
+    let named: Vec<(&str, RefTarget)> = version
+        .required_reads()
+        .iter()
+        .filter_map(|r| match &r.target {
+            Some(t @ (RefTarget::Snippet(_) | RefTarget::Bundle(_))) => {
+                Some((r.raw.as_str(), t.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut closures: Vec<Option<BTreeSet<SnippetId>>> = vec![None; named.len()];
+    for (index, (raw, target)) in named.iter().enumerate() {
+        let RefTarget::Snippet(id) = target else {
+            continue;
+        };
+        for other in 0..named.len() {
+            if other == index || named[other].1 == *target {
+                continue;
+            }
+            if closures[other].is_none() {
+                let start = match &named[other].1 {
+                    RefTarget::Snippet(of) => reads.of(of)?,
+                    bundle => vec![bundle.clone()],
+                };
+                closures[other] = Some(reads.reach(start)?);
+            }
+            if closures[other].as_ref().is_some_and(|c| c.contains(id)) {
+                push(
+                    out,
+                    version.path(),
+                    FindingCode::RequiredReadImplied,
+                    Some(format!("{raw}, implied by {}", named[other].0)),
+                );
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A notice for each delivered snippet of the repository that no
+/// `index.yaml` names and no snippet names as a required read — in the
+/// working tree, or published on the computer for a domain the repository
+/// does not publish.
+fn unreferenced(corpus: &Corpus, repo_root: &Path) -> Result<Vec<Notice>, DocsError> {
+    let mut named: BTreeSet<SnippetId> = BTreeSet::new();
+    let owned = corpus.published_domains();
+    let mut positions: Vec<Position> = owned.iter().map(Position::of_domain).collect();
+    positions.push(Position::Project);
+    for position in &positions {
+        let file = repo_root.join(position.dir()).join(INDEX_FILE);
+        if let Some(text) = read_home(&file)? {
+            named.extend(index_ids(position, &text));
+        }
+    }
+    for snippet in corpus.snippets() {
+        named.extend(snippet_targets(snippet.current()));
+        for next in snippet.companions().iter().filter_map(|c| c.next()) {
+            named.extend(snippet_targets(next));
+        }
+    }
+    let mut candidates: Vec<&super::Snippet> = corpus
+        .snippets()
+        .iter()
+        .filter(|s| !s.is_pending() && !named.contains(s.id()))
+        .collect();
+    if !candidates.is_empty() {
+        let published = published_references(corpus, owned)?;
+        candidates.retain(|s| !published.contains(s.id()));
+    }
+    Ok(candidates
+        .into_iter()
+        .map(|s| Notice {
+            path: s.path().to_path_buf(),
+            code: NoticeCode::UnreferencedSnippet,
+            value: Some(s.id().to_string()),
+        })
+        .collect())
+}
+
+/// The ids an `index.yaml` names, through `expanded`, `listed` or
+/// `agents`; nothing for one that cannot be parsed.
+fn index_ids(position: &Position, text: &str) -> Vec<SnippetId> {
+    let Ok(index) = PositionIndex::parse(position, text) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<SnippetId> = index
+        .expanded()
+        .iter()
+        .chain(index.listed())
+        .cloned()
+        .collect();
+    if let PositionIndex::General(general) = &index {
+        ids.extend(general.agents.values().flatten().cloned());
+    }
+    ids
+}
+
+/// The ids the computer's published domains other than `owned` name
+/// through their `index.yaml` or as a required read of one of their
+/// snippets.
+fn published_references(
+    corpus: &Corpus,
+    owned: &BTreeSet<DomainName>,
+) -> Result<BTreeSet<SnippetId>, DocsError> {
+    let mut named = BTreeSet::new();
+    let docs = corpus.home().docs_dir();
+    let Ok(entries) = std::fs::read_dir(&docs) else {
+        return Ok(named);
+    };
+    let mut domains: Vec<DomainName> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| DomainName::parse(&e.file_name().to_string_lossy()).ok())
+        .filter(|d| !owned.contains(d))
+        .collect();
+    domains.sort();
+    for domain in domains {
+        let position = Position::of_domain(&domain);
+        let dir = corpus.home().domain_dir(&domain);
+        if let Some(text) = read_home(&dir.join(INDEX_FILE))? {
+            named.extend(index_ids(&position, &text));
+        }
+        for entry in walkdir::WalkDir::new(&dir)
+            .follow_links(false)
+            .sort_by_file_name()
+        {
+            let entry = entry.map_err(|err| DocsError::Walk {
+                path: err.path().unwrap_or(&dir).to_path_buf(),
+                message: err.to_string(),
+            })?;
+            if !entry.file_type().is_file() || entry.path().extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            let Some(text) = read_home(entry.path())? else {
+                continue;
+            };
+            let home_rel = super::_corpus::relative(&docs, entry.path());
+            let Some(source) = published_origin(&home_rel) else {
+                continue;
+            };
+            let version = Version::parse(
+                &source,
+                &text,
+                None,
+                corpus.project(),
+                corpus.home().user_home(),
+            );
+            named.extend(snippet_targets(&version));
+        }
+    }
+    Ok(named)
+}
+
 fn taxonomy_of(id: &SnippetId) -> Option<Taxonomy> {
     let parts: Vec<&str> = id.as_str().split('/').collect();
     let dir = if parts.first() == Some(&"project") {
@@ -1297,6 +1490,7 @@ mod tests {
                 repo_root: root,
                 wiring,
                 agents: &agents,
+                schemas: &Schemas::default(),
             },
         )
         .unwrap()
@@ -1548,6 +1742,7 @@ mod tests {
                 repo_root: Path::new("/nonexistent-repo"),
                 wiring: &CoreWiring::default(),
                 agents: &agents,
+                schemas: &Schemas::default(),
             },
         );
         assert!(matches!(result, Err(DocsError::Read { path, .. }) if path == file));
@@ -1661,6 +1856,7 @@ mod tests {
             wiring: &CoreWiring::default(),
         })
         .unwrap()
+        .findings
     }
 
     #[test]
