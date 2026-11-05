@@ -20,10 +20,10 @@ target evidence, model identity, model version and eval fingerprint. A stamp's
 actor and its model provenance are distinct. A GitHub approval retains the
 identity GitHub reports; a human approval stated in a session is attributed
 to that session’s runtime and id and recorded by its agent. No identity is
-guessed. An agent session's model and version come from the active runtime's
-optional `model` template, called with the session id, which prints
-`<model> <version>`; without that template, or when it fails, the stamp records
-the model as explicitly unknown, never a guess. Outside an agent session, model
+guessed. An agent session's model and version come from the active runtime adapter's
+read of that session's state (on T3, the provider and model `t3 thread show`
+reports for the caller's thread); when the adapter reports none, or the read
+fails, the stamp records the model as explicitly unknown, never a guess. Outside an agent session, model
 and version are explicitly absent and the actor is named. Every stamp copies the current published eval
 fingerprint at write time.
 
