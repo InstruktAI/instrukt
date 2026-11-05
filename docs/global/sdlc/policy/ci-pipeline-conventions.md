@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'The two-tier Makefile button contract (fast agent loop vs heavy e2e lane) and the reusable GitHub workflow catalog: what CI pushes, where shared pipelines live, and the itsUP exception.'
+description: 'The two-tier Makefile button contract (fast agent loop vs heavy e2e lane) and how projects share CI: a shared workflows repository consumed by composition, deliberate divergence, and references that cannot move across organisations.'
 ---
 
 # CI Pipeline Conventions — Policy
@@ -31,29 +31,71 @@ description: 'The two-tier Makefile button contract (fast agent loop vs heavy e2
   may add private targets (`test-agents`, `coverage`, …) freely — the
   contract mandates the two shared buttons, it does not forbid more.
 
-### Reusable workflows
+### Shared workflows
 
-- Generic pipelines live as `workflow_call` workflows in the dedicated
-  **`InstruktAI/workflows`** repo, consumed by version tag:
-  `uses: InstruktAI/workflows/.github/workflows/<name>.yml@v1`.
-- The catalog stays thin precisely because of the button contract: each
-  workflow is checkout → toolchain setup → `make` buttons → deploy step.
-  Starting set: `ci-node`, `ci-python`, `ci-rust`, `deploy-cloudflare`.
-- **Target-owned deploy workflows stay with their target.** itsUP's
-  `reconcile.yml` lives in `Morriz/itsUP` because itsUP _is_ the deployment
-  target; app repos call it directly with `secrets: inherit`. Do not mirror or
-  wrap it in the workflows repo.
-- Private-repo reuse requires the workflows repo's access setting
-  "accessible from repositories in the organization" — set once.
+- **CI has a shared home.** Generic pipeline logic lives in a shared workflows
+  repository and is consumed from there. `InstruktAI/workflows` is the public
+  reference for shared CI built on the button contract. A project looks in its
+  organisation's shared repository before writing pipeline logic of its own.
+- **Within one organisation, projects compose.** A project's own workflow files
+  are the plumbing: they decide when CI runs, which permissions it holds and
+  which inputs and secrets it passes on, and they take the generic work from the
+  organisation's shared repository at a released version. A project may run its
+  own jobs alongside or after the shared ones; that is composition, not
+  duplication.
+- **Divergence is deliberate and visible.** The default is the shared workflow
+  as it is. When it does not fit, the improvement belongs in the shared
+  repository, where every consumer gains it. A local variant is sometimes
+  justified — an urgent fix, an experiment, an improvement on its way upstream —
+  and is then declared as a divergence, with its reason and its way back.
+- **Some pipelines belong to their project.** Where the logic expresses the
+  project's own domain rather than the craft of CI — a deployment target that is
+  itself what the pipeline operates, a release process no other project shares —
+  the project owns that YAML outright. The test is whose knowledge the logic
+  encodes.
+- **Shared workflows keep their callers working.** A change aims to stay
+  compatible with the projects already consuming it; a change that cannot ships
+  as a new release that callers adopt deliberately. Only the shared repository's
+  release process moves a release reference.
+- **Across organisations, references do not move.** Another organisation's
+  workflows and actions are consumed pinned to a reviewed full commit, and each
+  update arrives as a reviewed change, which an automated review may carry. A
+  shared workflows repository pins every third-party action it calls in the same
+  way, so that a consumer's pin to it holds all the way down.
+- **Pin by default; fork for a reason.** Forking another organisation's shared
+  repository is justified when the project needs behaviour that does not belong
+  upstream, when its organisation admits CI code only from inside the
+  organisation, or when it must not depend on the upstream repository's
+  continued existence. A fork made to propose a change upstream is a
+  contribution, and consumption returns to the pinned upstream once the change
+  lands. A fork becomes that organisation's own shared repository, maintained
+  deliberately.
+- **Hand over only what is needed.** A shared workflow receives the secrets and
+  permissions its job requires, never all of them by default.
 
 ## Rationale
 
 `make test` must stay fast or agents stop running it; heavy suites must gate
 releases or regressions ship. Two named tiers keep both true and give CI one
-standardized entry across every language and flavor. Centralizing the generic
-pipelines removes per-repo YAML drift, while the itsUP exception keeps
-domain-owned plumbing (VPN, SSH, reconcile semantics) in the repo that owns
-the domain.
+standardized entry across every language and flavor.
+
+Pipeline logic copied into each project drifts, and a fix made in one copy
+reaches none of the others; a shared home makes every improvement everyone's.
+A blanket ban on local variants would push urgent fixes and experiments into
+unacknowledged copies, so divergence is allowed and made visible instead, which
+keeps the way back open. Logic that encodes one project's domain gains nothing
+from sharing and would make the shared repository carry knowledge it does not
+own.
+
+A shared workflow runs inside its caller, with the caller's token and every
+secret passed to it, so whoever can move a reference controls code running on
+those secrets. Within an organisation that publisher is the organisation
+itself, and the release process guarding its references is the safeguard.
+Across organisations the publisher is a stranger, and a tag or branch can be
+moved to other code at any time; a reviewed full commit is the only reference
+that cannot. Pinning keeps upstream improvements reachable at the cost of
+reviewing each update, while a fork trades that review for maintaining a copy,
+which is why a fork needs a reason of its own.
 
 ## Scope
 
@@ -65,13 +107,17 @@ scripts may omit it.
 
 - A deployed repo whose CI does not run `make e2e` (or whose Makefile lacks
   the target) fails review.
-- New per-repo workflow YAML that duplicates a catalog pipeline is a defect —
-  consume the reusable workflow instead.
+- Pipeline changes are reviewed under the paradigm-fit lane's existing-path
+  check (`sdlc/policy/definition-of-done-lanes`). The existing path for generic
+  pipeline logic is the organisation's shared workflows repository: an
+  undeclared local copy of it is an undeclared parallel, and a declared
+  divergence is judged on whether its reason holds.
+- A reference to another organisation's workflow or action that can still move
+  fails review.
 
 ## Exceptions
 
-- Repos with genuinely bespoke pipelines (the workflows repo itself, itsUP)
-  own their YAML outright.
+- The shared workflows repository owns its own YAML outright.
 
 ## See Also
 
