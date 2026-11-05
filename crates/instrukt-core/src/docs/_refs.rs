@@ -1,10 +1,16 @@
-//! The forms an `@` reference may take and what each names.
+//! What a reference names.
 //!
-//! Three forms are valid: the published-home form
-//! (`~/.instrukt/docs/<id>.md` or its home-expanded absolute form) naming a
-//! published snippet, the same form naming a domain bundle
-//! (`~/.instrukt/docs/<domain>/bundle.md`), and `docs/project/<…>` naming
-//! material in the project position.
+//! A snippet's references are ids: a `## Required reads` entry is one
+//! snippet id or one bare domain name ([`entry`]), and a See Also entry
+//! opens with an id (`project/instrukt/spec/domain/docs`, "Reference").
+//!
+//! The `@` path forms ([`parse`]) remain only for the non-snippet sources
+//! publication still compiles from paths — masters and baseline manifests:
+//! the published-home form (`~/.instrukt/docs/<id>.md` or its
+//! home-expanded absolute form) naming a published snippet, the same form
+//! naming a domain bundle (`~/.instrukt/docs/<domain>/bundle.md`), and
+//! `docs/project/<…>` naming material in the project position. In a
+//! snippet, a path reference is a validation finding.
 
 use std::path::Path;
 
@@ -19,7 +25,10 @@ use crate::ids::{DomainName, ProjectSlug, SnippetId};
 pub enum RefTarget {
     /// A snippet, by identity (published or local).
     Snippet(SnippetId),
-    /// A published domain's generated bundle.
+    /// A bare domain name (`general` included): that domain's `expanded`
+    /// set, each with its closure.
+    Domain(DomainName),
+    /// A published domain's generated bundle, named by path.
     Bundle(DomainName),
     /// A local-half file that is not a snippet (e.g.
     /// `docs/project/baseline.md`), repository-relative.
@@ -31,7 +40,7 @@ impl RefTarget {
     pub fn is_local(&self) -> bool {
         match self {
             RefTarget::Snippet(id) => id.is_project(),
-            RefTarget::Bundle(_) => false,
+            RefTarget::Domain(_) | RefTarget::Bundle(_) => false,
             RefTarget::LocalFile(_) => true,
         }
     }
@@ -47,6 +56,35 @@ pub struct Reference {
 }
 
 const HOME_DOCS: &str = ".instrukt/docs/";
+
+/// Reads one `## Required reads` entry of a snippet, as written after its
+/// list marker: a snippet id, or a bare domain name. Anything else names
+/// nothing.
+pub(super) fn entry(raw: &str) -> Reference {
+    let target = if let Ok(id) = SnippetId::parse(raw) {
+        Some(RefTarget::Snippet(id))
+    } else if raw.contains('/') {
+        None
+    } else {
+        DomainName::parse(raw).ok().map(RefTarget::Domain)
+    };
+    Reference {
+        raw: raw.to_owned(),
+        target,
+    }
+}
+
+/// Whether `token` names a snippet file by its path: an `@` reference, or
+/// a path to a Markdown file below a position or the home's published
+/// tree.
+pub(super) fn is_snippet_path(token: &str) -> bool {
+    let path = token.strip_prefix('@').unwrap_or(token);
+    path.ends_with(".md")
+        && (path.starts_with("docs/")
+            || path.starts_with("~/")
+            || path.contains(HOME_DOCS)
+            || token.starts_with('@'))
+}
 
 /// Reads `raw` (a reference without its `@`) for a repository declaring
 /// `project`, whose readers' home directory is `user_home`.
@@ -126,6 +164,44 @@ mod tests {
             target(manifest),
             Some(RefTarget::LocalFile(manifest.to_owned()))
         );
+    }
+
+    #[test]
+    fn an_entry_names_a_snippet_or_a_domain() {
+        assert_eq!(entry("sdlc/policy/x").target, snippet("sdlc/policy/x"));
+        assert_eq!(
+            entry("project/demo/spec/a").target,
+            snippet("project/demo/spec/a")
+        );
+        for name in ["sdlc", "general"] {
+            assert_eq!(
+                entry(name).target,
+                Some(RefTarget::Domain(DomainName::parse(name).unwrap()))
+            );
+        }
+        for raw in [
+            "sdlc/notes",
+            "project",
+            "@~/.instrukt/docs/sdlc/policy/x.md",
+            "a b",
+        ] {
+            assert_eq!(entry(raw).target, None, "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_path_to_a_snippet_file_is_recognized() {
+        for token in [
+            "@~/.instrukt/docs/sdlc/policy/x.md",
+            "~/.instrukt/docs/sdlc/policy/x.md",
+            "docs/domain/sdlc/policy/x.md",
+            "@x.md",
+        ] {
+            assert!(is_snippet_path(token), "{token}");
+        }
+        for token in ["sdlc/policy/x", "README", "notes.md"] {
+            assert!(!is_snippet_path(token), "{token}");
+        }
     }
 
     #[test]

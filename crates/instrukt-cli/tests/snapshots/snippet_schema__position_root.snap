@@ -1,0 +1,198 @@
+---
+source: crates/instrukt-cli/tests/snippet-schema.rs
+expression: run.out
+---
+docs/project: principle
+
+Required sections:
+  Principle       instrukt root rules
+  Rationale       instrukt root rules
+  Implications    instrukt root rules
+  Tensions        instrukt root rules
+
+Optional sections:
+  Required reads  instrukt root rules
+  See Also        instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this principle is about>
+---
+
+# <Title> — Principle
+
+## Principle
+
+## Rationale
+
+## Implications
+
+## Tensions
+
+docs/project: concept
+
+Required sections:
+  What            instrukt root rules
+  Why             instrukt root rules
+
+Optional sections:
+  Required reads  instrukt root rules
+  See Also        instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this concept is about>
+---
+
+# <Title> — Concept
+
+## What
+
+## Why
+
+docs/project: policy
+
+Required sections:
+  Rules           instrukt root rules
+  Rationale       instrukt root rules
+  Scope           instrukt root rules
+  Enforcement     instrukt root rules
+  Exceptions      instrukt root rules
+
+Optional sections:
+  Required reads  instrukt root rules
+  See Also        instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this policy is about>
+---
+
+# <Title> — Policy
+
+## Rules
+
+## Rationale
+
+## Scope
+
+## Enforcement
+
+## Exceptions
+
+docs/project: procedure
+
+Required sections:
+  Goal            instrukt root rules
+  Preconditions   instrukt root rules
+  Steps           instrukt root rules
+  Outputs         instrukt root rules
+  Recovery        instrukt root rules
+
+Optional sections:
+  Required reads  instrukt root rules
+  Discipline      instrukt root rules
+  See Also        instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this procedure is about>
+---
+
+# <Title> — Procedure
+
+## Goal
+
+## Preconditions
+
+## Steps
+
+## Outputs
+
+## Recovery
+
+docs/project: design
+
+Required sections:
+  Purpose         instrukt root rules
+  Inputs/Outputs  instrukt root rules
+  Invariants      instrukt root rules
+  Primary flows   instrukt root rules
+  Failure modes   instrukt root rules
+
+Optional sections:
+  Required reads  instrukt root rules
+  See Also        instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this design is about>
+---
+
+# <Title> — Design
+
+## Purpose
+
+## Inputs/Outputs
+
+## Invariants
+
+## Primary flows
+
+## Failure modes
+
+docs/project: spec
+
+Required sections:
+  What it is        instrukt root rules
+  Canonical fields  instrukt root rules
+
+Optional sections:
+  Required reads    instrukt root rules
+  Allowed values    instrukt root rules
+  Known caveats     instrukt root rules
+  See Also          instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this spec is about>
+---
+
+# <Title> — Spec
+
+## What it is
+
+## Canonical fields
+
+docs/project: adr
+
+Required sections:
+  Context                  instrukt root rules
+  Decision                 instrukt root rules
+  Consequences             instrukt root rules
+
+Optional sections:
+  Required reads           instrukt root rules
+  Alternatives Considered  instrukt root rules
+  Status                   instrukt root rules
+  See Also                 instrukt root rules
+
+Skeleton:
+
+---
+description: <one line saying what this adr is about>
+---
+
+# <Title> — ADR
+
+## Context
+
+## Decision
+
+## Consequences

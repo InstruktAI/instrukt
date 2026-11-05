@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stderr(&env, &domain)"
 ---
-instrukt: unknown domain: gamma; the published domains are: acme, beta
+instrukt: unknown domain: delta; the published domains are: acme, beta, gamma

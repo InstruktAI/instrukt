@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "refused_closure(&env, &demo, \"third-party/tool/guide\")"
+---
+instrukt: cannot read third-party/tool/guide as a closure: a closure is read for exactly one snippet; third-party/tool/guide is a third-party doc

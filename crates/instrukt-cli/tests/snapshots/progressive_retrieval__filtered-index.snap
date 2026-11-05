@@ -3,9 +3,11 @@ source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stdout(&env, &listed)"
 ---
 # instrukt docs index: snippet ids with their descriptions
-# Filter with --domains <acme|beta>, --areas <principle|concept|policy|procedure|design|spec|adr>, --baseline-only, --third-party, --target <slug>, --project <slug>
+# Filter with --domain <acme|beta|gamma> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Source of acme: [TMP]/demo/docs/domain/acme/ — published commit [SHA] — remote none
 
 acme/policy/rules: The rules of the work.
+acme/procedure/greet: Greets a newcomer.
 acme/procedure/start: Starts a session.
 acme/procedure/work: How the work is done.
 

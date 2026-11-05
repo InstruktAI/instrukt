@@ -67,36 +67,6 @@ impl Taxonomy {
             Taxonomy::Adr => "ADR",
         }
     }
-
-    /// The H2 sections the taxonomy requires.
-    pub fn required_sections(self) -> &'static [&'static str] {
-        match self {
-            Taxonomy::Principle => &["Principle", "Rationale", "Implications", "Tensions"],
-            Taxonomy::Concept => &["What", "Why"],
-            Taxonomy::Policy => &["Rules", "Rationale", "Scope", "Enforcement", "Exceptions"],
-            Taxonomy::Procedure => &["Goal", "Preconditions", "Steps", "Outputs", "Recovery"],
-            Taxonomy::Design => &[
-                "Purpose",
-                "Inputs/Outputs",
-                "Invariants",
-                "Primary flows",
-                "Failure modes",
-            ],
-            Taxonomy::Spec => &["What it is", "Canonical fields"],
-            Taxonomy::Adr => &["Context", "Decision", "Consequences"],
-        }
-    }
-
-    /// The H2 sections the taxonomy allows besides its required ones and
-    /// the sections every snippet may carry (`Required reads`, `See also`).
-    pub fn optional_sections(self) -> &'static [&'static str] {
-        match self {
-            Taxonomy::Procedure => &["Discipline"],
-            Taxonomy::Spec => &["Allowed values", "Known caveats"],
-            Taxonomy::Adr => &["Alternatives Considered", "Status"],
-            _ => &[],
-        }
-    }
 }
 
 impl fmt::Display for Taxonomy {

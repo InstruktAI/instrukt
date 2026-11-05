@@ -8,6 +8,7 @@ Usage: instrukt docs <COMMAND>
 
 Commands:
   validate  Check the repository's documentation against the snippet contract
+  schema    Show the sections the snippets of a folder must and may carry
   fold      Apply one delivery's pending documentation to the working tree
   index     List published snippet ids with their descriptions (phase 1)
   get       Read snippets through the read pipeline (phase 2)

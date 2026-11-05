@@ -3,7 +3,8 @@ source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stdout(&env, &others)"
 ---
 # instrukt docs index: snippet ids with their descriptions
-# Filter with --domains <acme|beta>, --areas <principle|concept|policy|procedure|design|spec|adr>, --baseline-only, --third-party, --target <slug>, --project <slug>
+# Filter with --domain <acme|beta|gamma> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Source of project other: [TMP]/other/docs/project/ — published commit [SHA] — remote none
 
 project/other/concept/notes: Other's notes.
 

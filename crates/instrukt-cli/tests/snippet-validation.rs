@@ -73,84 +73,108 @@ fn project(env: &TestEnv) -> Repo {
     repo
 }
 
-/// A documentation tree that keeps the whole contract: both halves,
-/// required reads of every valid form, a baseline, a third-party doc and
-/// every pending carrier.
+/// A documentation tree that keeps the whole contract: a domain and the
+/// project, required reads of every valid form (an id, a bare domain), a
+/// domain index, a baseline, a third-party doc and every pending carrier.
+/// Every delivered snippet is named by an index or a required read, so the
+/// run carries no notice.
 fn valid_tree(repo: &Repo) {
-    repo.write("docs/domain/acme/principle/care.md", &snippet("principle", "", ""))
-        .write(
-            "docs/domain/acme/policy/rules.md",
-            &snippet(
-                "policy",
-                "visibility: public\neval: true\n",
-                "\n## See also\n\n- acme/principle/care\n",
-            )
-            .replace(
-                "# Sample — Policy\n",
-                "# Sample — Policy\n\n## Required reads\n\n- @~/.instrukt/docs/acme/principle/care.md\n",
-            ),
+    repo.write(
+        "docs/project/index.yaml",
+        "listed: [project/demo/adr/0049-choice, project/demo/design/retired]
+",
+    );
+    repo.write(
+        "docs/domain/acme/principle/care.md",
+        &snippet("principle", "", ""),
+    )
+    .write(
+        "docs/domain/acme/policy/rules.md",
+        &snippet(
+            "policy",
+            "visibility: public\neval: true\n",
+            "\n## See also\n\n- acme/principle/care\n",
         )
-        .write(
-            "docs/domain/acme/procedure/work/overview.md",
-            &snippet(
-                "procedure",
-                "role: worker\nactivation_trigger: When work arrives.\n\
+        .replace(
+            "# Sample — Policy\n",
+            "# Sample — Policy\n\n## Required reads\n\n- acme/principle/care\n",
+        ),
+    )
+    .write(
+        "docs/domain/acme/procedure/work/overview.md",
+        &snippet(
+            "procedure",
+            "role: worker\nactivation_trigger: When work arrives.\n\
                  parameters:\n  - name: slug\n    required: true\n\
                  dispatch:\n  agent: [claude]\n  thinking_mode: med\n",
-                "",
-            ),
+            "",
+        ),
+    )
+    .write(
+        "docs/domain/acme/procedure/listen.md",
+        &snippet(
+            "procedure",
+            "role: listener\nsubscriptions: ['acme.events.*']\nevent_delivery: batched\n",
+            "",
+        ),
+    )
+    .write(
+        "docs/domain/acme/baseline.md",
+        "@~/.instrukt/docs/acme/policy/rules.md\n@~/.instrukt/docs/acme/procedure/listen.md\n",
+    )
+    .write(
+        "docs/domain/acme/index.yaml",
+        "description: The acme way of working.\nexpanded: [acme/policy/rules]\n\
+             listed: [acme/procedure/listen, acme/procedure/work/overview]\n",
+    )
+    .write(
+        "docs/project/spec/feature/thing.md",
+        &snippet(
+            "spec",
+            "delivered_by: [build-thing]\n",
+            // Read in a session, never compiled: a runtime value is fine.
+            "\n<!-- @config: runtime.session_id -->\n",
         )
-        .write(
-            "docs/domain/acme/procedure/listen.md",
-            &snippet(
-                "procedure",
-                "role: listener\nsubscriptions: ['acme.events.*']\nevent_delivery: batched\n",
-                "",
-            ),
-        )
-        .write(
-            "docs/domain/acme/baseline.md",
-            "@~/.instrukt/docs/acme/policy/rules.md\n@~/.instrukt/docs/acme/procedure/listen.md\n",
-        )
-        .write(
-            "docs/project/spec/feature/thing.md",
-            &snippet(
-                "spec",
-                "delivered_by: [build-thing]\n",
-                // Read in a session, never compiled: a runtime value is fine.
-                "\n<!-- @config: runtime.session_id -->\n",
-            )
-            .replace(
-                "# Sample — Spec\n",
-                "# Sample — Spec\n\n## Required reads\n\n- @docs/project/design/shape.md\n- @~/.instrukt/docs/acme/bundle.md\n",
-            ),
-        )
-        .write(
-            "docs/project/design/shape.md",
-            &snippet(
-                "design",
-                "",
-                "\n<!-- planned:build-thing -->\nAdded.\n<!-- /planned:build-thing -->\n\n\
+        .replace(
+            "# Sample — Spec\n",
+            "# Sample — Spec\n\n## Required reads\n\n- project/demo/design/shape\n- acme\n",
+        ),
+    )
+    .write(
+        "docs/project/design/shape.md",
+        &snippet(
+            "design",
+            "",
+            "\n<!-- planned:build-thing -->\nAdded.\n<!-- /planned:build-thing -->\n\n\
                  <!-- planned-change:rework-shape -->\nOld.\n<!-- change:rework-shape -->\nNew.\n\
                  <!-- /planned-change:rework-shape -->\n",
-            ),
-        )
-        .write("docs/project/design/shape.next-shape.md", &snippet("design", "", ""))
-        .write("docs/project/design/retired.md", &snippet("design", "", ""))
-        .write("docs/project/design/retired.drop-it.md", "")
-        .write("docs/project/baseline.md", "@docs/project/design/shape.md\n")
-        .write(
-            "docs/third-party/tool/usage.md",
-            "---\ndescription: How to use the tool.\n---\n\n# Tool usage\n\n## Sources\n\n\
+        ),
+    )
+    .write(
+        "docs/project/design/shape.next-shape.md",
+        &snippet("design", "", ""),
+    )
+    .write("docs/project/design/retired.md", &snippet("design", "", ""))
+    .write("docs/project/design/retired.drop-it.md", "")
+    .write(
+        "docs/project/baseline.md",
+        "@docs/project/design/shape.md\n",
+    )
+    .write(
+        "docs/third-party/tool/usage.md",
+        "---\ndescription: How to use the tool.\n---\n\n# Tool usage\n\n## Sources\n\n\
              - https://tool.example/docs\n- [Guide](https://tool.example/guide)\n- /tool/docs\n\
              - <https://tool.example/reference>\n",
-        )
-        .write(
-            "docs/project/adr/0049-choice.md",
-            "---\ndescription: A choice.\ndate: 2026-01-02\nnumber: 0049\n---\n\n# Choice — ADR\n\n\
+    )
+    .write(
+        "docs/project/adr/0049-choice.md",
+        "---\ndescription: A choice.\ndate: 2026-01-02\nnumber: 0049\n---\n\n# Choice — ADR\n\n\
              ## Context\n\n## Decision\n\n## Consequences\n",
-        )
-        .write("docs/domain/acme/_drafts/notes.md", "no frontmatter at all\n");
+    )
+    .write(
+        "docs/domain/acme/_drafts/notes.md",
+        "no frontmatter at all\n",
+    );
 }
 
 struct Run {
@@ -284,8 +308,8 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             )
             .replace(
                 "# Sample — Policy\n",
-                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- @docs/domain/acme/principle/care.md\n\
-                 - @~/.instrukt/docs/acme/principle/missing.md\n- @docs/project/design/shape.md\n",
+                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- acme/principle/missing\n\
+                 - project/demo/design/shape\n",
             ),
         )
         // Pending
@@ -350,7 +374,8 @@ fn findings_print_as_a_json_list_with_file_code_and_value() {
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("json_findings", run.out);
     let clean = env.git_repo("clean");
-    clean.write("instrukt.yaml", "schema_version: 1\nproject: clean\n");
+    // The valid tree names its project snippets as project `demo`'s.
+    clean.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
     valid_tree(&clean);
     let run = validate(&env, &clean, &["--json"]);
     assert!(run.success, "{}", run.err);
@@ -394,15 +419,22 @@ fn an_entry_procedure_requiring_its_own_sub_procedure_is_reported() {
     let env = TestEnv::new();
     let repo = project(&env);
     valid_tree(&repo);
-    repo.write("docs/domain/acme/procedure/work/step.md", &snippet("procedure", "", ""))
-        .write(
-            "docs/domain/acme/procedure/work/overview.md",
-            &snippet("procedure", "role: worker\nactivation_trigger: When work arrives.\n", "")
-                .replace(
-                    "# Sample — Procedure\n",
-                    "# Sample — Procedure\n\n## Required reads\n\n- @~/.instrukt/docs/acme/procedure/work/step.md\n",
-                ),
-        );
+    repo.write(
+        "docs/domain/acme/procedure/work/step.md",
+        &snippet("procedure", "", ""),
+    )
+    .write(
+        "docs/domain/acme/procedure/work/overview.md",
+        &snippet(
+            "procedure",
+            "role: worker\nactivation_trigger: When work arrives.\n",
+            "",
+        )
+        .replace(
+            "# Sample — Procedure\n",
+            "# Sample — Procedure\n\n## Required reads\n\n- acme/procedure/work/step\n",
+        ),
+    );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("subprocedure_required", run.out);
@@ -421,9 +453,8 @@ fn references_to_domains_published_elsewhere_resolve_through_the_home() {
         "docs/domain/acme/concept/borrowing.md",
         &snippet("concept", "", "").replace(
             "# Sample — Concept\n",
-            "# Sample — Concept\n\n## Required reads\n\n- @~/.instrukt/docs/general/principle/stewardship.md\n\
-             - @~/.instrukt/docs/general/principle/absent.md\n- @~/.instrukt/docs/general/bundle.md\n\
-             - @~/.instrukt/docs/nowhere/bundle.md\n",
+            "# Sample — Concept\n\n## Required reads\n\n- general/principle/stewardship\n\
+             - general/principle/absent\n- general\n- nowhere\n",
         ),
     );
     let run = validate(&env, &repo, &[]);
@@ -503,4 +534,152 @@ fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_report
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("undeclared_flavor_role", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV4
+#[test]
+fn a_snippet_naming_another_by_its_path_is_reported_with_the_path() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/acme/concept/paths.md",
+        &snippet(
+            "concept",
+            "",
+            "\nRead docs/domain/acme/principle/care.md first, or `docs/domain/acme/principle/care.md` \
+             in code, which is fine.\n\n## See also\n\n- acme/principle/gone\n- acme/principle/care\n",
+        )
+        .replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- @~/.instrukt/docs/acme/principle/care.md\n\
+             - acme/principle/nothing\n- two words\n",
+        ),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("path_references", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/position-index UC-PI1
+#[test]
+fn a_publisher_learns_everything_their_indexes_cannot_say_in_one_run() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/general/principle/root.md",
+        &snippet("principle", "", ""),
+    )
+    .write(
+        "docs/general/policy/top.md",
+        &snippet("policy", "", "").replace(
+            "# Sample — Policy\n",
+            "# Sample — Policy\n\n## Required reads\n\n- general/principle/root\n",
+        ),
+    )
+    .write(
+        "docs/general/spec/coming.md",
+        &snippet("spec", "delivered_by: [build-coming]\n", ""),
+    )
+    .write(
+        "docs/general/index.yaml",
+        "expanded: [general/policy/top, general/spec/coming, nowhere/policy/x]\n\
+         listed: [general/principle/root, not an id]\n\
+         agents:\n  claude: [general/policy/top]\n  cursor: [general/policy/top]\n\
+         bundles: [x]\n",
+    )
+    .write(
+        "docs/domain/acme/index.yaml",
+        "agents: {}\nexpanded: [general/policy/top]\nlisted: [acme/procedure/listen]\n",
+    )
+    .write(
+        "docs/project/index.yaml",
+        "description: The project.\nexpanded: project/demo/design/shape\n",
+    )
+    .write("docs/domain/acme/policy/index.yaml", "listed: []\n");
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("index_findings", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/position-index UC-PI2
+#[test]
+fn a_publisher_is_told_a_domain_has_no_index_and_the_run_does_not_fail() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/beta/concept/thing.md",
+        &snippet("concept", "", ""),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}{}", run.out, run.err);
+    insta::assert_snapshot!("domain_without_index", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
+#[test]
+fn a_required_read_another_required_read_already_brings_is_reported() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    // `rules` already requires `care`; `overlap` requires both, and also
+    // `listen`, which nothing else brings.
+    repo.write(
+        "docs/domain/acme/concept/overlap.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- acme/principle/care\n\
+             - acme/policy/rules\n- acme/procedure/listen\n",
+        ),
+    )
+    .write(
+        "docs/domain/acme/index.yaml",
+        "description: The acme way of working.\nexpanded: [acme/policy/rules]\n\
+         listed: [acme/procedure/listen, acme/procedure/work/overview, acme/concept/overlap]\n",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("required_read_implied", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV3
+#[test]
+fn a_snippet_nothing_names_is_a_notice_that_does_not_fail_the_run() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/project/concept/orphan.md",
+        &snippet("concept", "", ""),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}", run.err);
+    insta::assert_snapshot!("unreferenced_snippet", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV3
+#[test]
+fn a_snippet_a_published_snippet_requires_is_not_unreferenced() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/acme/concept/borrowed.md",
+        &snippet("concept", "", ""),
+    );
+    let crew = env.instrukt_home().join("docs/crew/concept");
+    std::fs::create_dir_all(&crew).unwrap();
+    std::fs::write(
+        crew.join("uses.md"),
+        snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- acme/concept/borrowed\n",
+        ),
+    )
+    .unwrap();
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}", run.err);
+    insta::assert_snapshot!("referenced_from_the_computer", run.out);
 }

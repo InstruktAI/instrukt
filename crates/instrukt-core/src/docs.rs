@@ -3,7 +3,8 @@
 //!
 //! Callers ask for the parsed documentation of a repository
 //! ([`Corpus::load`], or [`Corpus::from_sources`] for a committed
-//! revision), for its findings ([`validate`]), for one delivery's fold
+//! revision), for its findings and notices ([`validate`]), for the
+//! effective schema of a folder ([`schema`]), for one delivery's fold
 //! ([`fold`]), or for moving one todo's pending documentation to another
 //! ([`transfer_pending`]); identity derivation, frontmatter reading, reference forms
 //! and the pending-marker grammar stay behind those calls.
@@ -20,7 +21,8 @@
 //! - the [`Position`]s documentation lives in, and the documents a
 //!   position carries at its root: its [`PositionIndex`] (`index.yaml`)
 //!   and its [`PositionSchema`] (`schema.yaml`), parsed with the keys
-//!   each position allows;
+//!   each position allows; the root rules and a position's schema
+//!   resolve to the [`EffectiveSchema`] each snippet is held to;
 //! - [`BaselineManifest`]s, [`ThirdPartyDoc`]s and whether a reference resolves
 //!   ([`Corpus::resolves`]).
 //!
@@ -39,7 +41,6 @@
 //!     pub home: &'a Home,              // expands `~/` references
 //!     pub values: &'a Values<'a>,      // Values::read(&configuration)
 //!                                      // | Values::publish(&configuration)
-//!     pub repo_root: Option<&'a Path>, // resolves `docs/…` references
 //!     pub project: Option<&'a ProjectSlug>,
 //! }
 //! pub struct Rendered {
@@ -49,12 +50,11 @@
 //! }
 //! ```
 //!
-//! A rendering strips frontmatter, resolves planned blocks for the lens, replaces
-//! each visible `@config` directive by its configured value, turns
-//! `@<path>.md` references into absolute paths and strips the `Required
-//! reads` section, returning its references. It runs no command and
-//! includes nothing: a leftover `@exec` or `@include` stays exactly as
-//! written. The pending gate and the companion are
+//! A rendering strips frontmatter, resolves planned blocks for the lens,
+//! replaces each visible `@config` directive by its configured value and
+//! strips the `Required reads` section, returning its entries. References
+//! are ids and stay as written. It runs no command and includes nothing: a
+//! leftover `@exec` or `@include` stays exactly as written. The pending gate and the companion are
 //! [`Snippet::view`]: render the version a `View::Visible` names.
 //! [`Values::read`] resolves in the reader's session and turns a refusal
 //! into an inline notice listed in [`Rendered::config_refusals`];
@@ -64,8 +64,16 @@
 //! Retrieval reads what publication wrote into the home: [`index`] lists
 //! the global index's entries for an [`IndexRequest`], [`get`] reads the
 //! snippets a [`GetRequest`] names through the read pipeline, with their
-//! required reads named or, as a closure, included. Neither writes
-//! anything; publication's copying and indexing belong to publication.
+//! required reads named or, as a closure, included, and [`get_domain`]
+//! renders one domain's position index for a [`DomainRequest`]. None
+//! writes anything; publication's copying and indexing belong to
+//! publication.
+//!
+//! A rendered position index has one shape wherever it appears — the
+//! domain read, the global agent files, a project's `AGENTS.md`: a
+//! [`Selection`] of snippets [`InFull`] and [`Listing`] lines, rendered
+//! under the position's [`heading`] with every snippet's headings demoted
+//! ([`demote_headings`]).
 
 mod _corpus;
 mod _directives;
@@ -73,11 +81,14 @@ mod _finding;
 mod _fold;
 mod _frontmatter;
 mod _identity;
+mod _index_check;
 mod _markers;
 mod _position;
 mod _refs;
 mod _render;
 mod _retrieval;
+mod _schema;
+mod _selection;
 mod _text;
 mod _transfer;
 mod _validate;
@@ -88,7 +99,7 @@ pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
     Version, View,
 };
-pub use _finding::{Finding, FindingCode};
+pub use _finding::{Finding, FindingCode, Notice, NoticeCode};
 pub use _fold::{FoldOutcome, fold};
 pub use _frontmatter::{
     Dispatch, EventDelivery, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
@@ -104,10 +115,14 @@ pub use _position::{
 };
 pub use _refs::{RefTarget, Reference};
 pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
-pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
+pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_domain, index};
+pub use _schema::{
+    EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,
+};
+pub use _selection::{InFull, Listing, Selection, closure_command, demote_headings, heading};
 pub use _text::Directive;
 pub use _transfer::{TransferOutcome, transfer_pending};
-pub use _validate::{ValidationRequest, validate};
+pub use _validate::{Validation, ValidationRequest, validate};
 
 /// The `@` references visible in `text`, each without its `@`, as the
 /// docs model recognizes them: outside fenced code, inline code and HTML
@@ -181,6 +196,16 @@ pub enum DocsError {
         path.display()
     )]
     OutsideRepository { path: PathBuf },
+    #[error(
+        "{} lies outside every documentation position; the positions are docs/general/, docs/domain/<domain>/ and docs/project/",
+        path.display()
+    )]
+    OutsidePositions { path: PathBuf },
+    #[error(
+        "{} is not inside a taxonomy directory: `{dir}` is not one of principle, concept, policy, procedure, design, spec, adr",
+        path.display()
+    )]
+    NotATaxonomyFolder { path: PathBuf, dir: String },
     #[error("cannot transfer pending documentation at {}: {reason}", path.display())]
     TransferRefused { path: PathBuf, reason: String },
     #[error(
@@ -228,6 +253,11 @@ pub enum DocsError {
     UnknownDomains {
         unknown: Vec<String>,
         valid: Vec<String>,
+    },
+    #[error("{} is not a valid position index: {source}", path.display())]
+    PositionIndexInvalid {
+        path: PathBuf,
+        source: serde_yaml_ng::Error,
     },
     #[error("cannot read {id} as a closure: {reason}")]
     ClosureRefused { id: String, reason: String },

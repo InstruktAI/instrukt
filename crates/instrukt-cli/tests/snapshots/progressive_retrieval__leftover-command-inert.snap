@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stdout(&env, &read).replace(&marker.display().to_string(), \"[MARKER]\")"
+expression: "stdout(&env, &read)"
 ---
 # instrukt docs get: project/demo/procedure/later
 
@@ -10,6 +10,7 @@ type: procedure
 domain: project
 scope: project
 description: Written after publication.
+source: [TMP]/demo/docs/project/procedure/later.md
 ---
 # Later — Procedure
 

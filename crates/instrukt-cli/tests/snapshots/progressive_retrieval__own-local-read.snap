@@ -11,6 +11,7 @@ type: spec
 domain: project
 scope: project
 description: The x feature.
+source: [TMP]/demo/docs/project/spec/feature/x.md
 ---
 # X — Spec
 
