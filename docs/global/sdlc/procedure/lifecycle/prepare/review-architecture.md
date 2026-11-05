@@ -40,7 +40,7 @@ unsupported invention and status-quo absorption.
 
 <!-- @include: docs/snippets/step-role-read.md -->
 
-First read the sdlc principles as listed in the sdlc baseline that apply to this work with `instrukt docs get`.
+First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
 
 ### 1. Read context
 

@@ -22,8 +22,8 @@ and readable at the level of behavior rather than implementation.
   (`sdlc/principle/documentation-first-development`): a feature
   spec sits at `spec/feature/<context>/<concept-name>.md` within the scope whose
   bounded context owns the behavior, concept-named, never slug-named. Most sit
-  under `docs/local/`; the scope follows the owning context rather than being
-  fixed to one.
+  under `docs/project/`; the position follows the owning context rather than
+  being fixed to one.
 - Pending-change mechanics are loaded
   (`general/procedure/doc-snippet-authoring`): a scenario describing behavior
   not yet delivered is wrapped in a planned marker naming its delivering slug.
@@ -67,10 +67,13 @@ the boundary first. Ownership is decided per use case, not once per spec: a
 spec correctly placed under its context still admits no scenario whose
 predicate another context decides. Before authoring a scenario, read the spec
 of every context whose outcome its `Then` clauses assert —
-`instrukt docs index --areas spec` (the default view includes this project’s
-local specs; use `instrukt docs index --project <slug>` for a named project’s
-local docs), then `instrukt docs get <id>`, with
-`--target <slug>` when the owner is pending.
+`instrukt docs index --areas spec` (the default view includes this project's
+specs; use `instrukt docs index --project <slug>` for a named project's), then
+`instrukt docs get <id>`, with `--target <slug>` when the owner is pending. A
+feature spec carries no list of cross-context references: a claim about who
+decides what between two contexts belongs in the owning context's domain spec
+(`sdlc/spec/domain-spec`, Ownership boundary), and a dependency on another
+context's contract is a plain citation of its spec by id.
 
 2. **Name the stakeholder as the actor.** Each use case names who pursues the
    goal: a person or an
@@ -84,11 +87,12 @@ local docs), then `instrukt docs get <id>`, with
    in scenario text, whoever the stakeholder is: behavior language is what
    makes the fence.
 
-4. **Structure use cases for stable identity.** Scenarios live under a
-   `### Use cases` heading. Each identified scenario is a `#### UC-<area><n>:`
-   subsection containing exactly one fenced Gherkin block; ids are unique
-   within the spec. A Gherkin block not yet under a `#### UC-` header is an
-   anonymous scenario. Classify it under step 1 before assigning an id; only
+4. **Structure use cases for stable identity.** Scenarios live under the
+   spec's `Use cases` section, which sdlc's schema adds for `spec/feature`
+   (`instrukt docs schema <folder>` prints the shape). Each identified scenario
+   is a `UC-<area><n>:` subsection of it containing exactly one fenced Gherkin
+   block; ids are unique within the spec. A Gherkin block not yet under a `UC-`
+   heading is an anonymous scenario. Classify it under step 1 before assigning an id; only
    admitted goals enter the id-assignment backlog and acquire bindings.
 
 5. **Honor identity immutability.**
@@ -135,7 +139,7 @@ local docs), then `instrukt docs get <id>`, with
 
 ## Recovery
 
-- An existing spec whose Gherkin blocks share one `#### UC-` header: classify
+- An existing spec whose Gherkin blocks share one `UC-` heading: classify
   each body under step 1 before changing its structure. Consolidate variations
   of one goal and retire mechanics while preserving necessary requirements.
   Only distinct admitted goals receive additional fresh ids; preserve the

@@ -631,7 +631,7 @@ For each changed snippet body, flag the Narration anti-pattern in its four forms
 4. **Future framing** — "will", "is planned", "the new surface is going to …",
    instead of a present-tense description of the intended shape.
 
-For each changed snippet body, and for a baseline-manifest diff per item 8's
+For each changed snippet body, and for an `index.yaml` diff per item 8's
 own trigger below, additionally flag the coherence anti-patterns
 (`snippet-value-contract` owns the full definition; do not re-derive it here):
 
@@ -669,41 +669,19 @@ own trigger below, additionally flag the coherence anti-patterns
    language) that belong in the policy operationalizing it; or a `policy`
    snippet carrying procedure mechanics (numbered execution steps) that belong
    in a procedure.
-8. **Manual in the baseline** — new or expanded content in a snippet listed in
-   any baseline manifest — a `baseline.md` at the global, domain, or project
-   docs root — that only some sessions in that scope need: a declaration
-   schema, a role-specific mechanics block, a lookup table. The reviewer checks
-   whether the changed snippet is baseline-listed before applying this finding;
-   it does not apply to on-demand snippets. This item's trigger is not only a
-   changed snippet body: a diff that adds a row to any baseline manifest
-   itself promotes that snippet to always-loaded even when the snippet's own
-   body is untouched in the same commit. Read the promoted snippet's current
-   content against this item when the manifest changes, not only when the
+8. **Manual in the always-on set** — new or expanded content in a snippet an
+   `index.yaml` makes ambient — an `expanded` entry or its closure, or an
+   `agents` entry — that only some sessions it reaches need: a declaration
+   schema, a role-specific mechanics block, a lookup table; or a new `listed`
+   line or `activation_trigger` no agent needs before a task names it. The
+   reviewer checks whether the changed snippet is in an always-on set before
+   applying this finding; it does not apply to on-demand snippets. This item's
+   trigger is not only a changed snippet body: a diff that adds an entry to
+   any `index.yaml`, or a required read to an expanded snippet, itself
+   promotes a snippet to always-loaded even when the snippet's own body is
+   untouched in the same commit. Read the promoted snippet's current content
+   against this item when the index or the closure changes, not only when the
    snippet does.
-9. **Restatement** — the changed region paraphrases source code, a
-   configuration file, or workflow YAML instead of pointing to it. Check
-   against the actual source the snippet claims to describe, not just against
-   other snippets: a snippet is the wrong source of truth for what a codebase
-   or config file already states.
-10. **Value-copying** — the changed region repeats a value whose canonical
-    home is code, configuration, a schema, or a runtime registry: a number,
-    duration, limit, threshold, port, path, default, cadence, retention
-    window, enum member, configured service, or registry entry. Naming the
-    value's owner is fine; restating the value itself is not — it goes stale
-    the moment the value moves, and nothing downstream catches it. An example
-    of an artifact whose shape a schema, generator, or configuration file owns
-    — a sample JSON or YAML document, generated file contents, captured command
-    output — is this finding, not an illustration.
-11. **Value test on a new snippet** — a snippet the diff adds must pass the
-    value test in `general/policy/snippet-value-contract`: it answers a named
-    future-agent question that a one-minute read of the relevant source, an
-    already-loaded global policy or principle, the project's README, or an
-    existing snippet does not already answer. A new snippet that fails is
-    rejected or collapsed into a citation from an existing one.
-12. **Prohibition priming** — the changed region names acts its reader's role
-    excludes instead of stating the reality wanted from that role. The reader
-    is the role the snippet's load path reaches; `general/policy/agent-facing-text`
-    owns the definition and the counter for an invited act.
 
 When the changed snippet is an ADR (`docs/local/adr/**`), additionally hold its
 body to the ADR contract (`general/policy/adr-discipline`, `general/procedure/adr-authoring`
@@ -740,9 +718,9 @@ Severity guidance:
   **Important**; a remediation that elaborates it instead of removing or
   pointing is a new **Important** finding.
 - Layer bleed or Section echo introduced by this change → **Important**.
-- New baseline-listed content that is Manual-in-the-baseline → **Important**,
+- New always-on content that is Manual-in-the-always-on-set → **Important**,
   with the correct-shape note (move to an on-demand snippet, cite from the
-  baseline snippet).
+  always-on snippet).
 - Restatement of source code, config, or workflow YAML introduced or left
   uncorrected by this change → **Important**.
 - Value-copying — a copied number, path, default, enum member, registry

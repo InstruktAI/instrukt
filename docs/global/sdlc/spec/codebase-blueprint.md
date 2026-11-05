@@ -86,8 +86,11 @@ stays underneath, and agents never call an engine directly. It requires the
 
 With the `blueprint` module on, `instrukt specs trace <spec_id> <UC-id>` lists
 the tests binding that use case and the code they reach in the latest
-generation; from a file, it lists the tests reaching it and the use cases they
-bind. A link is evidence, not proof: a test also reaches helpers. Use-case ids
+generation; `instrukt specs trace --file <a> [--file <b> …]` lists, for one or
+several files, the tests reaching them and the use cases those tests bind,
+grouped by the folder of their spec — under sdlc's layout the folder is the
+bounded context, so the grouping is the business-level blast radius of a
+change. A link is evidence, not proof: a test also reaches helpers. Use-case ids
 live in specs and test bindings only, never in production code.
 
 ### Fallback

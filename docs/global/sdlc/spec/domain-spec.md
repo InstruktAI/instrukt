@@ -1,5 +1,5 @@
 ---
-description: "Template every bounded context's canonical domain spec must follow — ubiquitous language, aggregates, events, use cases, context map position."
+description: "What every bounded context's canonical domain spec holds — ubiquitous language, ownership boundary, model, events, use-case index, governing designs, context map position. Its section shape comes from sdlc's schema."
 visibility: 'public'
 ---
 
@@ -7,53 +7,39 @@ visibility: 'public'
 
 ## What it is
 
-The required structure for the canonical domain spec of a bounded context. One spec per context. The spec is the source of truth for what the context does in domain terms — independent of implementation language or technology. Implementation (Python, Rust, anything else) must satisfy the spec; the spec does not describe implementation.
+The canonical domain spec of a bounded context. One spec per context. The spec is the source of truth for what the context does in domain terms — independent of implementation language or technology. Implementation (Python, Rust, anything else) must satisfy the spec; the spec does not describe implementation.
 
-Domain specs are documentation snippets and follow the snippet schema (`general/spec/snippet-authoring-schema`). Project-scoped domain specs live under `docs/local/spec/domain/<context>.md`. Cross-project domain contexts use the owning global domain's `spec/domain/<context>` snippet path when a global snippet is warranted.
+Domain specs are documentation snippets (`general/spec/snippet-authoring-schema`). A project's domain specs live under `docs/project/spec/domain/<context>.md`. A context owned by a published domain uses that domain's `spec/domain/<context>` path when a published snippet is warranted.
 
-Each spec is authored once per bounded context and evolves with the context. New intended state is added by updating the spec and adding the delivering slug to `delivered_by`. Implementation changes that change behavior MUST update the spec.
+Each spec is authored once per bounded context and evolves with the context. New intended state is added as pending material naming its delivering slug (`general/procedure/doc-snippet-authoring`). Implementation changes that change behavior MUST update the spec.
 
-Together with the project's policies, the domain specs and the project's context map are the fixed entry points from which preparation reaches every contract governing a work item (`sdlc/policy/preparation-artifact-quality`, Governing contracts). The context map lives at `spec/domain/context-map` in the project's local half. It lists every bounded context with its domain spec and every cross-cutting design, the designs whose subject is the relationship among contexts rather than one context's model. Every design and decision record is listed by the context map or by one domain spec, from the change that adds it.
+Together with the project's policies, the domain specs and the project's context map are the fixed entry points from which preparation reaches every contract governing a work item (`sdlc/policy/preparation-artifact-quality`, Governing contracts). The context map is the project's `spec/domain/context-map`. It lists every bounded context with its domain spec and every cross-cutting design, the designs whose subject is the relationship among contexts rather than one context's model. Every design and decision record is listed by the context map or by one domain spec, from the change that adds it.
 
 ## Canonical fields
 
-### Frontmatter
+### Section shape
 
-```yaml
-id: projects/<slug>/spec/domain/<context-name>
-type: spec
-domain: <domain>
-scope: project | global
-delivered_by: [<slug>, ...] # optional; present when the spec describes intended state pending delivery
-visibility: public
-description: <one-line summary of the bounded context>
-```
+The H2 sections a domain spec carries, and which are required, are declared
+for `spec/domain` in sdlc's `schema.yaml` and copied into a project's own
+`schema.yaml` at adoption. `instrukt docs schema <folder>` prints them with a
+skeleton. What follows is what each section holds. Everything is written in
+the ubiquitous language of the context.
 
-### Required H2 sections
+### What it is
 
-The spec uses `spec` taxonomy but extends the canonical `What it is` / `Canonical fields` shape with domain-specific subsections. The required structure:
+One paragraph: what domain activity the context owns, what state it manages,
+what it does not own.
 
-**`## What it is`**
+### Ubiquitous language
 
-One-paragraph description of the bounded context. What domain activity it owns, what state it manages, what it does NOT own. Written in the ubiquitous language of the context.
+Glossary of terms used inside this bounded context. Each term has one meaning
+here: its definition in plain prose, using other glossary terms where they
+apply, with synonyms and any difference from another context's use of the same
+word. Terms include entities, value objects, statuses, actions and roles.
+Implementation terms (table names, function names) appear only when they are
+the domain term.
 
-**`## Canonical fields`**
-
-The structured domain content, organized as `###` subsections in this order:
-
-#### Ubiquitous language
-
-Glossary of terms used INSIDE this bounded context. Each term has one meaning here. Format:
-
-```
-**<Term>**
-:  <Definition in plain prose, using other glossary terms where applicable>
-:  *Synonyms:* <if any>   *Note:* <if the term differs from other contexts>
-```
-
-Terms include: entities, value objects, statuses, actions, roles. Avoid implementation terms (table names, function names) unless they ARE the domain term.
-
-#### Ownership boundary
+### Ownership boundary
 
 The context's semantic boundary, stated independently of current deployment or
 module topology:
@@ -71,11 +57,15 @@ module topology:
 
 Implementation roots are recorded for grounding, but never substitute for this
 boundary. A file's current location is evidence about code, not authority over
-the rule it contains.
+the rule it contains. A claim about who decides what between this context and
+another lives here, or as a plain citation of the other context's spec by id;
+no spec carries a separate list of cross-context references.
 
-#### Aggregates
+### Canonical fields
 
-One subsubsection per aggregate. Each aggregate description includes:
+The context's model.
+
+**Aggregates.** Each aggregate names:
 
 - **Root entity** — the entry point. State changes go through this entity.
 - **Contained entities and value objects** — what the aggregate cluster owns.
@@ -83,76 +73,55 @@ One subsubsection per aggregate. Each aggregate description includes:
 - **Identifier** — how aggregates are uniquely identified (UUID, slug, composite key).
 - **Lifecycle** — how aggregates come into existence and how they end (creation, deletion, archival).
 
-Example:
-
-```
-#### Todo (aggregate)
-
-- **Root:** TodoEntry
-- **Contains:** Artifact (input | prd | architecture | implementation-plan | task-plan | bug | quality-checklist | design-spec | deferrals | review-findings), VersionedArtifact, StageState
-- **Invariants:**
-  - A todo has exactly one current StageState at any moment.
-  - An artifact's version history is append-only.
-  - An SDLC todo cannot move to `delivered` stage without a non-empty `delivery_commit`.
-- **Identifier:** slug (kebab-case, unique per project)
-- **Lifecycle:** Created via `instrukt todo create <slug> <content> --kind <kind>` (content and kind required). Reaches terminal `delivered` after integration for SDLC kinds. Frozen aggregates move to icebox.
-```
-
-#### Domain events emitted
-
-One subsubsection per event. Each event description includes:
+**Domain events emitted.** Each event names:
 
 - **Name** — in the form `<context>.<past-tense-verb>` (e.g., `workflow.finalized`)
 - **Emitted when** — the domain condition that triggers emission
 - **Payload** — the data carried (field names and types in domain terms; serialization is implementation detail)
-- **Consumers** — known downstream contexts that act on this event (cross-reference to their domain specs)
+- **Consumers** — known downstream contexts that act on this event, citing their domain specs
 - **Idempotency key** — what makes two emissions of "the same event" the same (so consumers can dedupe)
 
-#### Domain events consumed
-
-One subsubsection per consumed event. Each entry:
+**Domain events consumed.** Each consumed event names:
 
 - **Name** — the producing context's event (e.g., `integration.hook_received`)
-- **Producer** — which context emits it (cross-reference)
+- **Producer** — which context emits it, citing its domain spec
 - **Reaction** — what this context does in response, in domain terms
 - **Failure handling** — what happens if the reaction fails (retry, dead-letter, compensating event)
 
-#### Use cases (index of feature specs)
+### Event subjects and origins
 
-This section is an INDEX. Each entry references a feature spec snippet at `docs/local/spec/feature/<this-context>/<concept-name>.md` that owns the Gherkin acceptance scenarios for one use case touching this context.
+For every event this context emits, what it states as its subject — the one
+thing its act concerned, the same across every emission about that thing — and
+as its origin: the party the act was for, such as the project it belongs to, or
+none. Consumers scope, correlate and deduplicate events by these, so two
+emissions about one thing state one subject. A context that emits no events
+says so in one line.
 
-Per `sdlc/principle/documentation-first-development`, feature specs are the hub (Gherkin lives there); domain specs are the spokes. The use cases section here lists which feature specs touch this bounded context, with a one-line summary per entry — NOT embedded Gherkin.
+### Use cases
 
-Format:
+An index of the feature specs that touch this bounded context: one entry per
+feature spec, naming it by id with a one-line summary of its use case in domain
+language. Per `sdlc/principle/documentation-first-development`, feature specs
+are the hub (Gherkin lives there); domain specs are the spokes. When a new
+feature touches this context, its entry is added here and the feature spec is
+authored under the context's `spec/feature/<context>/` folder.
 
-```
-- **<feature-concept-name>** — `docs/local/spec/feature/<this-context>/<concept-name>.md` — one-line summary of the use case in domain language
-```
+Gherkin scenarios and business value live in the feature spec, never here. The
+domain spec stays compact because its job is to describe the bounded context's
+model and index its features.
 
-Example:
+### Governing designs and decisions
 
-```
-- **order-fulfillment** — `docs/local/spec/feature/orders/order-fulfillment.md` — customers receive the items in their accepted orders
-- **order-tracking** — `docs/local/spec/feature/orders/order-tracking.md` — customers follow an order through fulfillment
-```
+An index of the design snippets that shape this context's model and of the
+decision records behind them: one entry per snippet, by id, with a one-line
+statement of what it governs in this context. A cross-cutting design is listed
+in the context map instead.
 
-When a new feature touches this context, a new entry is added here AND the corresponding feature spec is authored at the referenced path.
+### Context map position
 
-Detailed Gherkin scenarios live in the feature spec, not here. Detailed JTBD / business value lives in the feature spec, not here. The domain spec stays compact because its job is to describe the bounded context's model + index its features — not to duplicate scenario detail.
-
-#### Governing designs and decisions (index)
-
-An INDEX of the design snippets that shape this context's model and of the decision records behind them, one line each. A cross-cutting design is listed in the context map instead.
-
-Format:
-
-```
-- **<snippet id>** — one-line statement of what it governs in this context
-```
-
-#### Context map position
-
-How this bounded context relates to others. For each related context, name the relationship:
+How this bounded context relates to others: for each related context, one entry
+naming the relationship and a one-line description of its purpose or
+constraint.
 
 - **Partnership** — both contexts evolve together; tight coordination expected.
 - **Customer / Supplier** — downstream depends on upstream; upstream commits to a contract for the downstream's needs.
@@ -162,17 +131,12 @@ How this bounded context relates to others. For each related context, name the r
 - **Open host service** — this context provides a stable open interface for any consumer.
 - **Published language** — the events/contracts this context publishes for any consumer to read.
 
-Format:
+### Allowed values and Known caveats
 
-```
-- **<Other context>** — <relationship>. <One-line description of the relationship's purpose or constraint>.
-```
-
-### Optional H2 sections
-
-**`## Allowed values`** — when the context owns enumerations that don't fit naturally inside an aggregate (e.g., role taxonomies, lifecycle hierarchies that cross aggregates).
-
-**`## Known caveats`** — open questions, known design debts, documented exceptions to the discipline. Each caveat names the trade-off and (if applicable) a reference to a slug planning the resolution.
+`Allowed values` holds enumerations the context owns that don't fit naturally
+inside an aggregate (e.g., role taxonomies, lifecycle hierarchies that cross
+aggregates). `Known caveats` holds the limits of the context's current contract
+(`general/spec/snippet-authoring-schema`).
 
 ## Allowed values
 
