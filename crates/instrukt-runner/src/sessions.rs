@@ -1,6 +1,13 @@
 //! The sessions facade over the runtime mapping (`session-continuity`):
-//! start, send, observe, read, link and end sessions through the command
-//! templates of the global layer's runtime entries.
+//! start, send, observe, read, link and end sessions and look up history
+//! through the verbs of the global layer's runtime entries.
+//!
+//! Each verb is a `command`, which the facade runs, or an `agent`
+//! instruction, which it hands back for the calling agent to carry out
+//! with its own runtime's tools; it never runs anything for an `agent`
+//! verb. An instruction names the addressed session's id literally where
+//! it says `{runtime.session_id}`, and lists the call's inputs after it,
+//! one per line.
 //!
 //! Template contract, as this facade calls it:
 //!
@@ -11,8 +18,9 @@
 //! - Per-call inputs are appended as positional arguments, never spliced
 //!   into the command text: `start` receives the session's opening
 //!   message; `send` the text; `link` the other session's id (`--remove`
-//!   before it to remove the link); `alive`, `conversation` and `end`
-//!   nothing.
+//!   before it to remove the link); `history.search` the text;
+//!   `history.show` the session id; `alive`, `conversation`, `end` and
+//!   `end_self` nothing.
 //! - `start` runs with `INSTRUKT_WORKTREE` set to the requested worktree
 //!   name, and with `INSTRUKT_AGENT` and `INSTRUKT_THINKING` set when an
 //!   agent was selected. It prints the new session's id on its first line
@@ -26,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use instrukt_core::config::{ConfigError, Configuration, Env, RuntimeEntry};
+use instrukt_core::config::{ConfigError, Configuration, Env, RuntimeEntry, VerbKind, VerbName};
 use instrukt_core::ids::{IdError, RuntimeName, SessionId, SessionRef};
 use serde::{Deserialize, Serialize};
 
@@ -99,30 +107,64 @@ pub enum Observation {
     Unobservable(String),
 }
 
-/// A capability a runtime entry declares by carrying its template.
+/// A capability of a verb that the entry's text cannot show, found
+/// missing when the verb runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
-    Link,
-    End,
-    Notify,
+    /// `start` returning the worktree path of a worktree request.
     Worktree,
-}
-
-impl Capability {
-    fn name(self) -> &'static str {
-        match self {
-            Capability::Link => "link",
-            Capability::End => "end",
-            Capability::Notify => "notify",
-            Capability::Worktree => "worktree",
-        }
-    }
 }
 
 impl fmt::Display for Capability {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+        match self {
+            Capability::Worktree => f.write_str("worktree"),
+        }
     }
+}
+
+/// What an `agent` verb hands back: the instruction, with the call's
+/// inputs after it, for the calling agent to carry out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instruction(pub String);
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// What one call of a verb that takes either kind came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer<T> {
+    /// The `command` ran; its result.
+    Ran(T),
+    /// The verb is `agent`: the caller's to do.
+    YoursToDo(Instruction),
+}
+
+impl<T> Answer<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Answer<U> {
+        match self {
+            Answer::Ran(value) => Answer::Ran(f(value)),
+            Answer::YoursToDo(instruction) => Answer::YoursToDo(instruction),
+        }
+    }
+}
+
+/// What ending one session came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ending {
+    /// The runtime fills neither `end` (nor, for the caller's own session,
+    /// `end_self`): it needs no ending, and nothing was done.
+    NotNeeded { runtime: String },
+    /// The runtime's `end` command ended it.
+    Ended(SessionRef),
+    /// The runtime fills ending as an instruction for the agent.
+    YoursToDo {
+        session: SessionRef,
+        instruction: Instruction,
+    },
 }
 
 /// A sessions facade operation failed.
@@ -132,6 +174,12 @@ pub enum SessionsError {
     NoRuntime,
     #[error("`{0}` names no runtime of the runtime mapping")]
     UnknownRuntime(String),
+    #[error("runtime `{runtime}` leaves `{verb}` empty, so this call is not available")]
+    MissingVerb { runtime: String, verb: VerbName },
+    #[error(
+        "this call addresses the runtime the caller runs in, and no configured runtime's session variable is set"
+    )]
+    NoActiveRuntime,
     #[error("runtime `{runtime}` lacks the {capability} capability")]
     MissingCapability {
         runtime: String,
@@ -173,6 +221,7 @@ impl SessionsError {
             self,
             SessionsError::NoRuntime
                 | SessionsError::UnknownRuntime(_)
+                | SessionsError::MissingVerb { .. }
                 | SessionsError::Template { .. }
                 | SessionsError::Failed { .. }
                 | SessionsError::OrderExhausted { .. }
@@ -252,7 +301,7 @@ impl<'c> Sessions<'c> {
                 tracing::warn!(event = "dispatch_agent_unmapped", agent = %choice.agent);
                 continue;
             };
-            if let Some(check) = entry.field("available") {
+            if let Some(check) = entry.command(VerbName::Available) {
                 let available = self
                     .invocation(entry, check, None, &[])?
                     .run(self.timeout)
@@ -286,7 +335,7 @@ impl<'c> Sessions<'c> {
         choice: Option<&AgentChoice>,
         request: &StartRequest<'_>,
     ) -> Result<Started, SessionsError> {
-        let template = self.template(entry, "start")?;
+        let template = self.template(entry, VerbName::Start)?;
         let mut invocation = self.invocation(entry, template, None, &[request.message])?;
         if let Some(name) = request.worktree {
             invocation = invocation.env("INSTRUKT_WORKTREE", name);
@@ -329,7 +378,7 @@ impl<'c> Sessions<'c> {
     /// Sends `text` to `session`.
     pub fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError> {
         let entry = self.entry(session)?;
-        let template = self.template(entry, "send")?;
+        let template = self.template(entry, VerbName::Send)?;
         let done = self
             .invocation(entry, template, Some(&session.id), &[text])?
             .run(self.timeout)?;
@@ -343,7 +392,7 @@ impl<'c> Sessions<'c> {
     /// Observes `session`'s state.
     pub fn alive(&self, session: &SessionRef) -> Result<Observation, SessionsError> {
         let entry = self.entry(session)?;
-        let template = self.template(entry, "alive")?;
+        let template = self.template(entry, VerbName::Alive)?;
         let observed = self
             .invocation(entry, template, Some(&session.id), &[])?
             .run(self.timeout);
@@ -370,7 +419,7 @@ impl<'c> Sessions<'c> {
     /// else: the model is then unknown, never guessed.
     pub fn model(&self, session: &SessionRef) -> Option<(String, String)> {
         let entry = self.entry(session).ok()?;
-        let template = entry.field("model")?;
+        let template = entry.command(VerbName::Model)?;
         let done = match self
             .invocation(entry, template, Some(&session.id), &[])
             .and_then(|invocation| invocation.run(self.timeout).map_err(SessionsError::from))
@@ -398,7 +447,7 @@ impl<'c> Sessions<'c> {
     /// Reads `session`'s conversation as the runtime prints it.
     pub fn conversation(&self, session: &SessionRef) -> Result<String, SessionsError> {
         let entry = self.entry(session)?;
-        let template = self.template(entry, "conversation")?;
+        let template = self.template(entry, VerbName::Conversation)?;
         let done = self
             .invocation(entry, template, Some(&session.id), &[])?
             .run(self.timeout)?;
@@ -408,8 +457,14 @@ impl<'c> Sessions<'c> {
         Ok(done.stdout)
     }
 
-    /// Links `a` and `b`, or removes their link.
-    pub fn link(&self, a: &SessionRef, b: &SessionRef, remove: bool) -> Result<(), SessionsError> {
+    /// Links `a` and `b`, or removes their link; refused naming `link`
+    /// when the runtime leaves it empty.
+    pub fn link(
+        &self,
+        a: &SessionRef,
+        b: &SessionRef,
+        remove: bool,
+    ) -> Result<Answer<()>, SessionsError> {
         if a.runtime != b.runtime {
             return Err(SessionsError::CrossRuntime {
                 a: a.clone(),
@@ -417,34 +472,154 @@ impl<'c> Sessions<'c> {
             });
         }
         let entry = self.entry(a)?;
-        let template = self.capability(entry, "link", Capability::Link)?;
         let operands: Vec<&str> = if remove {
             vec!["--remove", b.id.as_str()]
         } else {
             vec![b.id.as_str()]
         };
-        let done = self
-            .invocation(entry, template, Some(&a.id), &operands)?
-            .run(self.timeout)?;
-        if !done.success {
-            return Err(failed(entry, "link", &done.stderr));
+        let answer = self.call(entry, VerbName::Link, Some(&a.id), &operands)?;
+        if let Answer::Ran(_) = answer {
+            tracing::info!(event = "sessions_linked", a = %a, b = %b, remove);
         }
-        tracing::info!(event = "sessions_linked", a = %a, b = %b, remove);
-        Ok(())
+        Ok(answer.map(|_| ()))
     }
 
-    /// Ends `session`.
-    pub fn end(&self, session: &SessionRef) -> Result<(), SessionsError> {
+    /// Ends `session` through its runtime's `end`.
+    pub fn end(&self, session: &SessionRef) -> Result<Ending, SessionsError> {
         let entry = self.entry(session)?;
-        let template = self.capability(entry, "end", Capability::End)?;
-        let done = self
-            .invocation(entry, template, Some(&session.id), &[])?
-            .run(self.timeout)?;
-        if !done.success {
-            return Err(failed(entry, "end", &done.stderr));
+        if !entry.fills(VerbName::End) {
+            return Ok(Ending::NotNeeded {
+                runtime: entry.name.clone(),
+            });
         }
-        tracing::info!(event = "session_ended", session = %session);
-        Ok(())
+        self.ending(entry, VerbName::End, session)
+    }
+
+    /// The caller's own session: the active runtime's `session_id_env`.
+    pub fn caller(&self) -> Result<SessionRef, SessionsError> {
+        let entry = self
+            .config
+            .active_runtime(self.env)
+            .map_err(|_| SessionsError::NoActiveRuntime)?;
+        let id = self.env.get(&entry.session_id_env).unwrap_or_default();
+        self.session_ref(entry, id)
+    }
+
+    /// Ends the caller's own session through `end_self`, or through `end`
+    /// with the caller's id when `end_self` is empty.
+    pub fn end_self(&self) -> Result<Ending, SessionsError> {
+        let caller = self.caller()?;
+        let entry = self.entry(&caller)?;
+        if entry.fills(VerbName::EndSelf) {
+            return self.ending(entry, VerbName::EndSelf, &caller);
+        }
+        self.end(&caller)
+    }
+
+    fn ending(
+        &self,
+        entry: &RuntimeEntry,
+        verb: VerbName,
+        session: &SessionRef,
+    ) -> Result<Ending, SessionsError> {
+        Ok(match self.call(entry, verb, Some(&session.id), &[])? {
+            Answer::Ran(_) => {
+                tracing::info!(event = "session_ended", session = %session);
+                Ending::Ended(session.clone())
+            }
+            Answer::YoursToDo(instruction) => Ending::YoursToDo {
+                session: session.clone(),
+                instruction,
+            },
+        })
+    }
+
+    /// Finds earlier conversations by `text` in the runtime the caller runs
+    /// in (`history.search`); a command's output names their session ids.
+    pub fn history_search(&self, text: &str) -> Result<Answer<String>, SessionsError> {
+        let entry = self.active_entry()?;
+        self.call(entry, VerbName::HistorySearch, None, &[text])
+    }
+
+    /// Shows one conversation of the runtime the caller runs in
+    /// (`history.show`). `id` is the runtime-native id, or the
+    /// `{runtime}:{id}` a record carries for that runtime.
+    pub fn history_show(&self, id: &str) -> Result<Answer<String>, SessionsError> {
+        let entry = self.active_entry()?;
+        let native = SessionRef::parse(id)
+            .ok()
+            .filter(|session| session.runtime.as_str() == entry.name)
+            .map_or_else(|| id.to_owned(), |session| session.id.to_string());
+        self.call(entry, VerbName::HistoryShow, None, &[&native])
+    }
+
+    fn active_entry(&self) -> Result<&'c RuntimeEntry, SessionsError> {
+        self.config
+            .active_runtime(self.env)
+            .map_err(|_| SessionsError::NoActiveRuntime)
+    }
+
+    /// Calls `verb` of `entry` for `session` with `operands`: runs a
+    /// `command` and answers its output, or answers an `agent` verb's
+    /// instruction. Refused naming the verb when the entry leaves it
+    /// empty.
+    fn call(
+        &self,
+        entry: &RuntimeEntry,
+        verb: VerbName,
+        session: Option<&SessionId>,
+        operands: &[&str],
+    ) -> Result<Answer<String>, SessionsError> {
+        let filled = entry.verb(verb).ok_or_else(|| SessionsError::MissingVerb {
+            runtime: entry.name.clone(),
+            verb,
+        })?;
+        match filled.kind {
+            VerbKind::Agent => Ok(Answer::YoursToDo(self.instruction(
+                entry,
+                &filled.text,
+                session,
+                operands,
+            )?)),
+            VerbKind::Command => {
+                let done = self
+                    .invocation(entry, &filled.text, session, operands)?
+                    .run(self.timeout)?;
+                if !done.success {
+                    return Err(failed(entry, verb.key(), &done.stderr));
+                }
+                Ok(Answer::Ran(done.stdout))
+            }
+        }
+    }
+
+    /// An `agent` verb's instruction: `{runtime.session_id}` replaced by
+    /// the addressed session's id as text, the rest expanded, and each
+    /// input on a line of its own after it.
+    fn instruction(
+        &self,
+        entry: &RuntimeEntry,
+        text: &str,
+        session: Option<&SessionId>,
+        operands: &[&str],
+    ) -> Result<Instruction, SessionsError> {
+        let mut out = String::new();
+        for (index, piece) in text.split(SESSION_PLACEHOLDER).enumerate() {
+            if index > 0 {
+                out.push_str(session.map(SessionId::as_str).unwrap_or_default());
+            }
+            out.push_str(&self.config.expand(piece, self.env).map_err(|source| {
+                SessionsError::Template {
+                    runtime: entry.name.clone(),
+                    source,
+                }
+            })?);
+        }
+        for operand in operands {
+            out.push('\n');
+            out.push_str(operand);
+        }
+        Ok(Instruction(out))
     }
 
     /// The runtime entry `session` belongs to.
@@ -467,26 +642,13 @@ impl<'c> Sessions<'c> {
     fn template<'e>(
         &self,
         entry: &'e RuntimeEntry,
-        field: &'static str,
-    ) -> Result<&'e str, SessionsError> {
-        entry.field(field).ok_or_else(|| SessionsError::Failed {
-            runtime: entry.name.clone(),
-            operation: field,
-            detail: format!("the entry has no `{field}` template"),
-        })
-    }
-
-    fn capability<'e>(
-        &self,
-        entry: &'e RuntimeEntry,
-        field: &str,
-        capability: Capability,
+        verb: VerbName,
     ) -> Result<&'e str, SessionsError> {
         entry
-            .field(field)
-            .ok_or_else(|| SessionsError::MissingCapability {
+            .command(verb)
+            .ok_or_else(|| SessionsError::MissingVerb {
                 runtime: entry.name.clone(),
-                capability,
+                verb,
             })
     }
 

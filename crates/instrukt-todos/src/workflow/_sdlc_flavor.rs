@@ -9,7 +9,7 @@ use proptest::prelude::*;
 use super::_derive::{Derivation, Obligation, Responsible, Subject};
 use super::_facts::{FactName, FactType, FactValue, Facts};
 use super::_flavor::Flavor;
-use super::_render::{ConfigLookup, RenderFailure, RenderFinding};
+use super::_render::ConfigLookup;
 use super::_testing::{facts, no_config, sdlc_dir, session_config, sha, subject, text};
 
 fn sdlc() -> Flavor {
@@ -248,14 +248,9 @@ fn a_prepared_feature_is_released() {
 }
 
 #[test]
-fn the_release_brief_needs_the_runtime_session_from_configuration() {
+fn the_release_brief_renders_outside_any_runtime_session() {
     let derived = derive("prepare", prepared_feature());
-    assert_eq!(
-        obligation(derived).brief,
-        Err(RenderFailure {
-            findings: vec![RenderFinding::Unknown("runtime.session_id".into())]
-        })
-    );
+    assert!(obligation(derived).brief.is_ok());
 }
 
 #[test]

@@ -10,6 +10,7 @@
 
 mod _effective;
 mod _error;
+mod _features;
 mod _interpolate;
 mod _layer;
 mod _merge;
@@ -17,6 +18,7 @@ mod _module;
 mod _render;
 mod _runtime;
 mod _schema;
+mod _shipped;
 mod _validate;
 
 use std::path::Path;
@@ -26,14 +28,16 @@ pub use _effective::{
     ThinkingMode, WatchedRef,
 };
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
+pub use _features::{Feature, Unavailable};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, MigrationOutcome, Revision, init, migrate, parse_patch,
     patch, revision,
 };
 pub use _module::Module;
 pub use _render::render_yaml;
-pub use _runtime::{Env, RuntimeEntry};
+pub use _runtime::{Env, RuntimeEntry, Verb, VerbKind, VerbName};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};
+pub use _shipped::names as shipped_runtimes;
 pub use _validate::validate;
 
 use crate::home::Home;

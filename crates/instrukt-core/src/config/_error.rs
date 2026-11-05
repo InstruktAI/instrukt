@@ -51,6 +51,11 @@ pub enum FindingKind {
     AgentNotStartable,
     /// `runner.runtime` names no runtime-mapping entry.
     UnknownRuntime,
+    /// A module switch turns on features while no runtime is chosen.
+    NoRuntimeChosen,
+    /// A module switch turns on features whose verbs the chosen runtime
+    /// leaves empty.
+    RuntimeVerbMissing,
     /// A reference to a key that does not exist.
     UnresolvedReference,
     /// A reference that leads back to itself.

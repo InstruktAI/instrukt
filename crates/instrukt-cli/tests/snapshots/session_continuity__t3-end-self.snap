@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+expression: stdout(&own)
+---
+Settle this thread with the T3 thread organize tool (`t3_thread_organize`, action `settle`), naming no thread. T3 applies it when this turn ends, so make it the last thing you do.

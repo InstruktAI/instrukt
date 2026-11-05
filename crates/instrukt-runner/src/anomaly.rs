@@ -7,7 +7,7 @@
 //! be built. Nothing of the anomaly's content is passed, logged or
 //! retried; a failed notification leaves the anomaly where it lives.
 
-use instrukt_core::config::{Configuration, Env, Notify, RuntimeEntry};
+use instrukt_core::config::{Configuration, Env, Notify, RuntimeEntry, VerbName};
 
 use crate::sessions::{RUNTIME_COMMAND_TIMEOUT, Sessions};
 
@@ -28,7 +28,7 @@ pub fn route<'a>(notify: &'a Notify, runtime: Option<&'a RuntimeEntry>) -> Route
         Notify::Off => Route::Silent,
         Notify::Command(command) => Route::Configured(command),
         Notify::RuntimeDefault => match runtime {
-            Some(entry) if entry.field("notify").is_some() => Route::Runtime(entry),
+            Some(entry) if entry.command(VerbName::Notify).is_some() => Route::Runtime(entry),
             _ => Route::Silent,
         },
     }
@@ -58,7 +58,7 @@ pub fn notify(config: &Configuration, env: &Env, reference: &str, deep_link: Opt
             .map(|cmd| crate::process::Invocation::shell(&cmd, &operands))
             .map_err(|err| err.to_string()),
         Route::Runtime(entry) => entry
-            .field("notify")
+            .command(VerbName::Notify)
             .ok_or_else(|| "the runtime has no notify template".to_owned())
             .and_then(|template| {
                 sessions
