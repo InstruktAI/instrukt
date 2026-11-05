@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/agent-entrypoints.rs
+expression: "stderr(&env, &refused).replace(&platform.head(), \"[SHA]\")"
+---
+instrukt: platform at [SHA] is not published: `[TMP]/home/.claude/CLAUDE.md` holds instructions instrukt did not write; move that content into documentation (a snippet `docs/general/index.yaml` selects, or an `agents` snippet for that agent CLI) or move the file out of the way, then sync again

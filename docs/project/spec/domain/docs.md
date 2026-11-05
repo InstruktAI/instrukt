@@ -258,6 +258,18 @@ recorded by publication.
 - **Identifier:** derived from its path below the third-party root.
 - **Lifecycle:** authored and curated in a repository; published with it.
 
+### Published subscription declarations
+
+Docs owns validation and resolution of subscribed procedure metadata: patterns,
+required `subscription_home`, optional `subscription_identity` and
+`subscription_attendance`, `event_delivery`, `interruptible`, role and authored
+Required reads. Publication copies those facts and position/owning-project reach
+into the existing generated index. Runner routing consumes that index, never
+scans source documents to reconstruct subscriptions. General/domain declarations
+reach their declared home kind; project-local declarations answer only that
+project. Pending entries remain inactive. Declaration validation does not change
+the session when a procedure is read as supporting knowledge.
+
 ### Domain events emitted
 
 None. instrukt runs no daemon and emits no events from this context.
@@ -309,3 +321,7 @@ None.
 - With no publication yet, `index` says nothing is published and directs the caller to `instrukt sync` in a project; `get` fails as for an unknown id.
 - The pre-release layout (`docs/global/`, `docs/local/`, baseline manifests, bundles) has no compatibility path: a snippet left there yields no identity, which is a validation finding.
 - A prose citation is not checked: validation does not judge prose, so a cited id that names nothing passes.
+
+## See Also
+
+- [project/instrukt/design/architecture/overview](../../design/architecture/overview.md)

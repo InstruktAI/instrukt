@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/project-publication.rs
 expression: "text(&failed.get_output().stderr, &[])"
 ---
-instrukt: cannot compile AGENTS.master.md: the configured value `no.such.setting` cannot be resolved: `no.such.setting` does not exist: no `no` in the configuration
+instrukt: cannot render AGENTS.master.md: the configured value `no.such.setting` cannot be resolved: `no.such.setting` does not exist: no `no` in the configuration

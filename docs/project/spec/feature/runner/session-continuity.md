@@ -176,8 +176,10 @@ A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
 
-Handled-event marks advance only after acceptance and commit with the delivery
-result and binding. Input delivery is at least once across a lost acknowledgement
+Runtime acceptance commits with the delivery result and binding. Consumer
+handled marks instead track durable activation acceptance under
+`project/instrukt/spec/feature/runner/procedure-subscription-routing`; they do not
+wait for a runtime send. Input delivery is at least once across a lost acknowledgement
 or crash between send and commit. Handlers reconcile their subject idempotently;
 one keyed thread does not imply exactly-once execution of its brief.
 
@@ -394,6 +396,9 @@ test bindings are removed by the builder.
 
 ## Known caveats
 
+- Runtime start/send acceptance supplies transport evidence only. Event-hook
+  provenance and eligible delivery remain the S6 feasibility gate under
+  `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 - UC-SS4 is to retire: history search and archive lookup are not released in A3.
 - UC-SS7 is to retire: session ending and agent-kind instructions belong to the runtime.
 - T3 has no atomic server-side keyed start. Request pingdotgg/t3code#31621

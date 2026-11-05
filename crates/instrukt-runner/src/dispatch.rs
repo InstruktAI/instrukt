@@ -16,6 +16,8 @@ use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::index::{GlobalIndex, IndexEntry};
+use instrukt_core::state_db::StateDbError;
+use instrukt_core::state_db::rusqlite::{Transaction, params};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
@@ -30,7 +32,6 @@ use crate::launch;
 use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
 use crate::state::{self, RunnerState, StateError};
 use crate::timing::{self, Decision};
-use instrukt_core::state_db::rusqlite::params;
 
 /// The role of the procedure that runs a due task.
 pub const TASK_RUNNER_ROLE: &str = "task-runner";
@@ -400,6 +401,38 @@ fn save_task_failure(state: &RunnerState, failure: &TaskFailure) -> Result<(), S
     })
 }
 
+/// Records a task failure cause through work's transaction, so its
+/// notification bookkeeping and automatic hold commit together. Anomaly
+/// holds have no task-failure bookkeeping.
+pub fn record_task_failure(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    todo_id: &str,
+    cause: &HoldCause,
+) -> Result<(), StateDbError> {
+    let HoldCause::TaskFailed {
+        occurrence,
+        session,
+        ..
+    } = cause
+    else {
+        return Ok(());
+    };
+    let path = state::db_path(tx);
+    tx.execute(
+        "INSERT OR REPLACE INTO task_failures (project, todo_id, occurrence, session, notified)
+         VALUES (?1, ?2, ?3, ?4, 0)",
+        params![
+            project.as_str(),
+            todo_id,
+            occurrence.to_string(),
+            session.as_ref().map(ToString::to_string),
+        ],
+    )
+    .map_err(StateDbError::sqlite(&path))?;
+    Ok(())
+}
+
 /// A task whose last firing recorded `error` is a blocker needing the
 /// developer's judgment (`task-timing`, UC-TT4): the todo is held at once
 /// with the task-error reason, so no further occurrence runs on its own,
@@ -435,15 +468,6 @@ fn hold_failed_firing(
     {
         return;
     }
-    let cause = HoldCause::TaskFailed {
-        reason: reason
-            .clone()
-            .unwrap_or_else(|| "no reason recorded".to_owned()),
-    };
-    if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
-        tracing::warn!(event = "task_failure_hold_failed", project = %project.slug, todo = %todo, error = %err);
-        return;
-    }
     let session = RoleName::parse(TASK_RUNNER_ROLE)
         .ok()
         .and_then(|role| match work.bindings.session_binding(project, todo, &role) {
@@ -453,17 +477,18 @@ fn hold_failed_firing(
                 None
             }
         });
-    tracing::warn!(event = "task_failed_held", project = %project.slug, todo = %todo, occurrence = %firing.occurrence);
-    let failure = TaskFailure {
-        project: project.slug.clone(),
-        todo: todo.clone(),
-        occurrence,
+    let cause = HoldCause::TaskFailed {
+        reason: reason
+            .clone()
+            .unwrap_or_else(|| "no reason recorded".to_owned()),
+        occurrence: firing.occurrence,
         session,
-        notified: false,
     };
-    if let Err(err) = save_task_failure(cx.state, &failure) {
-        tracing::warn!(event = "task_failures_unwritable", error = %err);
+    if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
+        tracing::warn!(event = "task_failure_hold_failed", project = %project.slug, todo = %todo, error = %err);
+        return;
     }
+    tracing::warn!(event = "task_failed_held", project = %project.slug, todo = %todo, occurrence = %firing.occurrence);
 }
 
 /// Notifies each of `project`'s held task failures once its conversation

@@ -16,8 +16,11 @@ reactivity. The runner executes the work of enabled modules in one process.
 ### Execution contract
 
 `instrukt run` and `instrukt tick` are entry points to the runner. The OS
-scheduler supplies wake-ups; instrukt has no daemon, socket API, or separate
-state service. Its state is the state database
+scheduler supplies wake-ups. The runner has no consumer daemon or separate state
+service. Enabled project webhook sources use the independent loopback ingress
+receiver under `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`;
+that narrow intake outlives runner invocations and exposes no session-control API.
+The runner's local state is the state database
 (`project/instrukt/spec/feature/work/state-database`), written by
 whichever instrukt process holds the writer lock. A running process can read events and react to them; the
 scheduled tick supplies time-based wake-ups. These are execution forms of the
@@ -164,7 +167,7 @@ Then the command refuses and names both switches that would enable it
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/session-continuity
-- project/instrukt/spec/feature/runner/task-timing
-- project/instrukt/spec/feature/workflow/delivery-cycle
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/runner/task-timing](task-timing.md)
+- [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)

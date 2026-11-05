@@ -5,6 +5,8 @@
 
 use serde_json::{Map, Value};
 
+use crate::docs::AgentCli;
+
 /// A settings key that makes an agent CLI load `AGENTS.md` files.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct LoadingKey {
@@ -19,7 +21,9 @@ pub(super) struct LoadingKey {
 /// One supported agent CLI.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct AgentTarget {
-    /// The agent's name; its addendum is `agents/<NAME>.addendum.md`.
+    /// The agent CLI, as `docs/general/index.yaml`'s `agents` names it.
+    pub cli: AgentCli,
+    /// The agent's name.
     pub name: &'static str,
     /// Its user directory, relative to the user's home directory; a CLI
     /// whose directory does not exist is skipped.
@@ -34,16 +38,10 @@ pub(super) struct AgentTarget {
     pub project_override: Option<&'static str>,
 }
 
-impl AgentTarget {
-    /// `agents/<NAME>.addendum.md`.
-    pub(super) fn addendum(&self) -> String {
-        format!("agents/{}.addendum.md", self.name.to_uppercase())
-    }
-}
-
 /// The supported agent CLIs.
 pub(super) const TARGETS: [AgentTarget; 4] = [
     AgentTarget {
+        cli: AgentCli::Claude,
         name: "claude",
         dir: ".claude",
         entrypoint: "CLAUDE.md",
@@ -60,6 +58,7 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
         project_override: None,
     },
     AgentTarget {
+        cli: AgentCli::Codex,
         name: "codex",
         dir: ".codex",
         entrypoint: "AGENTS.md",
@@ -67,6 +66,7 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
         project_override: Some("AGENTS.override.md"),
     },
     AgentTarget {
+        cli: AgentCli::Gemini,
         name: "gemini",
         dir: ".gemini/antigravity-cli",
         entrypoint: "AGENTS.md",
@@ -83,6 +83,7 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
         project_override: None,
     },
     AgentTarget {
+        cli: AgentCli::Deepseek,
         name: "deepseek",
         dir: ".dsh",
         entrypoint: "AGENTS.md",

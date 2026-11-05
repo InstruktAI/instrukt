@@ -147,6 +147,18 @@ Frontmatter (optional, authored):
 
 Third-party docs under `docs/third-party/` or `~/.instrukt/docs/third-party/` are indexed separately from taxonomy snippets. They author only `description`; their `id` and `scope` are derived from their path below the third-party root, and they no longer carry `type`.
 
+### Event subscription declarations
+
+A subscribed procedure declares `subscription_home`: `project`, `platform`,
+`company` or `person`. Optional `subscription_identity` is `home` (default) or
+`subject`, and `subscription_attendance` is `attended` (default) or `unattended`.
+These are procedure-only and require subscriptions; malformed or unknown values
+are findings. A project-position procedure declares project home and answers only
+its own project; general/domain publication reaches all homes of its declared
+kind. Company/person vocabulary does not supply executable home management.
+Validation/publication own interpretation; routing forwards the resolved facts
+unchanged. Reading a procedure as supporting knowledge reconfigures no session.
+
 ### Event delivery declarations
 
 A procedure declaring `subscriptions` may also declare:
