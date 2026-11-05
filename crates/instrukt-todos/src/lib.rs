@@ -1,5 +1,5 @@
-//! The todos module: the work record (`docs/local/spec/domain/work.md`) and
-//! the workflow engine (`docs/local/spec/domain/workflow.md`).
+//! The todos module: the work record (`docs/project/spec/domain/work.md`) and
+//! the workflow engine (`docs/project/spec/domain/workflow.md`).
 //!
 //! What each context implements, and for whom (wave 3):
 //!

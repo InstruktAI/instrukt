@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/work/eval-report`: an HTML
+//! `project/instrukt/spec/feature/work/eval-report`: an HTML
 //! evaluation report derived from the work record of every project the home
 //! publishes, by project and evaluation window, with the model a separate
 //! dimension and human acts in a row of their own.
@@ -224,7 +224,7 @@ impl Evaluated {
     }
 }
 
-// spec: local/projects/instrukt/spec/feature/work/eval-report UC-ER1
+// spec: project/instrukt/spec/feature/work/eval-report UC-ER1
 #[test]
 fn a_report_compares_outcomes_across_process_changes_and_models_in_every_project() {
     let mut eval = Evaluated::new();
@@ -263,7 +263,7 @@ fn a_report_compares_outcomes_across_process_changes_and_models_in_every_project
     insta::assert_snapshot!("report", page);
 }
 
-// spec: local/projects/instrukt/spec/feature/work/eval-report UC-ER1
+// spec: project/instrukt/spec/feature/work/eval-report UC-ER1
 #[test]
 fn with_no_recorded_work_the_report_says_there_is_nothing_to_compare() {
     let mut eval = Evaluated::new();
@@ -276,7 +276,7 @@ fn with_no_recorded_work_the_report_says_there_is_nothing_to_compare() {
     insta::assert_snapshot!("nothing-to-compare", page);
 }
 
-// spec: local/projects/instrukt/spec/feature/work/eval-report UC-ER1
+// spec: project/instrukt/spec/feature/work/eval-report UC-ER1
 #[test]
 fn work_recorded_in_a_project_whose_checkout_is_gone_stays_in_the_report() {
     let mut eval = Evaluated::new();
@@ -297,7 +297,7 @@ fn work_recorded_in_a_project_whose_checkout_is_gone_stays_in_the_report() {
     insta::assert_snapshot!("checkout-gone-report", page);
 }
 
-// spec: local/projects/instrukt/spec/feature/work/eval-report UC-ER1
+// spec: project/instrukt/spec/feature/work/eval-report UC-ER1
 #[test]
 fn evidence_another_computer_recorded_reaches_the_report() {
     let mut eval = Evaluated::new();

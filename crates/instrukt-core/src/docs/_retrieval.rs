@@ -1,6 +1,6 @@
 //! Progressive retrieval: `docs index` lists what the home holds, `docs get`
 //! reads it through the read pipeline
-//! (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`).
+//! (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 //!
 //! Both read the global index and the publication record; neither writes
 //! anything. A published snippet is read from the home, a local snippet
@@ -213,7 +213,7 @@ fn slugs<'a>(slugs: impl IntoIterator<Item = &'a TodoSlug>) -> String {
 
 /// The ids every baseline manifest in view names: the published domains'
 /// `baseline.md` and `baseline-progressive.md`, and the listed project's
-/// `docs/local/baseline.md`.
+/// `docs/project/baseline.md`.
 fn baseline_ids(
     req: &IndexRequest<'_>,
     domains: &BTreeSet<&str>,
@@ -234,7 +234,7 @@ fn baseline_ids(
         None => caller.repo_root.clone().zip(caller.project.clone()),
     };
     if let Some((root, project)) = local {
-        let path = root.join("docs/local/baseline.md");
+        let path = root.join("docs/project/baseline.md");
         match std::fs::read_to_string(&path) {
             Ok(text) => manifests.push((text, Some(project))),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -882,20 +882,20 @@ fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
 }
 
 /// A local entry's project root and the file's repository path
-/// (`docs/local/<taxonomy>/<rest>.md`), from the absolute path the entry
+/// (`docs/project/<taxonomy>/<rest>.md`), from the absolute path the entry
 /// carries.
 fn local_root(entry: &IndexEntry) -> Result<(PathBuf, String), DocsError> {
     let mismatch = || DocsError::IndexMismatch {
         id: entry.id.clone(),
         path: entry.path.clone(),
     };
-    let prefix = format!("local/projects/{}/", entry.source_project.as_str());
+    let prefix = format!("project/{}/", entry.source_project.as_str());
     let rest = entry
         .id
         .as_str()
         .strip_prefix(&prefix)
         .ok_or_else(mismatch)?;
-    let rel = format!("docs/local/{rest}.md");
+    let rel = format!("docs/project/{rest}.md");
     if !entry.path.is_absolute() || !entry.path.ends_with(&rel) {
         return Err(mismatch());
     }
@@ -1008,14 +1008,14 @@ mod tests {
 
     #[test]
     fn a_local_entry_names_its_project_root_by_the_path_it_carries() {
-        let id = "local/projects/demo/spec/feature/a";
-        let rel = "docs/local/spec/feature/a.md";
+        let id = "project/demo/spec/feature/a";
+        let rel = "docs/project/spec/feature/a.md";
         let root = PathBuf::from("/work/demo");
         let placed = entry(id, IndexScope::Local, &root.join(rel).display().to_string());
         assert_eq!(local_root(&placed).unwrap(), (root, rel.to_owned()));
         for path in [
-            "docs/local/spec/feature/a.md",
-            "/work/demo/docs/local/spec/feature/b.md",
+            "docs/project/spec/feature/a.md",
+            "/work/demo/docs/project/spec/feature/b.md",
         ] {
             assert!(
                 matches!(
@@ -1026,9 +1026,9 @@ mod tests {
             );
         }
         let other = entry(
-            "local/projects/other/spec/a",
+            "project/other/spec/a",
             IndexScope::Local,
-            "/x/docs/local/spec/a.md",
+            "/x/docs/project/spec/a.md",
         );
         assert!(matches!(
             local_root(&other),

@@ -31,7 +31,7 @@ reflect concrete findings from the analyzed repository, not generic templates.
 ## Preconditions
 
 - The project has source files (not an empty repository).
-- The project is adopted with `instrukt init`, so its `instrukt.yaml` (with the `project` slug), `docs/local` and hook sections exist.
+- The project is adopted with `instrukt init`, so its `instrukt.yaml` (with the `project` slug), `docs/project` and hook sections exist.
 - The required reads above provide the snippet-authoring discipline (`doc-snippet-authoring`, which transitively
   pulls in the value contract, schema, and referencing rules), and the
   agent-artifact governance (for the AGENTS.master.md decision in Step 15).
@@ -39,7 +39,7 @@ reflect concrete findings from the analyzed repository, not generic templates.
 
 ## Steps
 
-On a re-run, read the project's existing `docs/local` and compare them with their git history. Use no markers or metadata files to track analysis.
+On a re-run, read the project's existing `docs/project` and compare them with their git history. Use no markers or metadata files to track analysis.
 
 ### 1. Orientation
 
@@ -48,7 +48,7 @@ Determine the project's primary characteristics before deep analysis:
 - Read `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Gemfile`,
   `pom.xml`, `build.gradle`, or equivalent to identify language and package manager.
 - Read the project root directory listing to identify top-level structure.
-- Check for existing `instrukt.yaml`, `docs/local/`, and `AGENTS.md` to
+- Check for existing `instrukt.yaml`, `docs/project/`, and `AGENTS.md` to
   understand current instrukt integration state.
 
 ### 2. Language and Framework Detection
@@ -95,13 +95,13 @@ cleanup pass.
   or consumed events, and persistence boundaries. A package, directory, or
   class is not automatically a bounded context; it earns that treatment only
   when it owns a coherent domain model.
-- **Domain specs:** author or refresh `local/projects/<slug>/spec/domain/<context>` only
+- **Domain specs:** author or refresh `project/<slug>/spec/domain/<context>` only
   when a bounded context is evidenced. The spec names ubiquitous language,
   aggregates, domain events, use cases, and context-map position in domain
-  terms. Do not replace this with a flat `local/projects/<slug>/concept/domain-model`
+  terms. Do not replace this with a flat `project/<slug>/concept/domain-model`
   summary.
 - **Feature specs:** author or refresh
-  `local/projects/<slug>/spec/feature/<context>/<concept>` for behavioral
+  `project/<slug>/spec/feature/<context>/<concept>` for behavioral
   capabilities under `sdlc/principle/documentation-first-development`. Apply
   `sdlc/procedure/feature-spec-authoring` separately before writing Gherkin;
   implementation branches do not establish stakeholder goals. The concept is a
@@ -221,8 +221,8 @@ Generated snippets must:
 
 - Conform to the snippet schema (`general/spec/snippet-authoring-schema`).
 - Carry the analyzed project's qualified IDs
-  (`local/projects/<slug>/…`, `<slug>` being the `project` slug in its `instrukt.yaml`). Flat IDs such as
-  `local/projects/<slug>/design/architecture` remain valid; nested spec IDs are reserved for
+  (`project/<slug>/…`, `<slug>` being the `project` slug in its `instrukt.yaml`). Flat IDs such as
+  `project/<slug>/design/architecture` remain valid; nested spec IDs are reserved for
   earned domain specs and classified feature specs.
 - Reference concrete findings: real package names, actual file paths, observed
   patterns — never generic placeholder text.
@@ -240,15 +240,15 @@ over restating the contract.
 
 | Snippet shape                                            | Taxonomy | Worth producing when…                                                                                                                                                                           |
 | -------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `local/projects/<slug>/spec/domain/<context>`            | spec     | A bounded context is evidenced by coherent domain vocabulary, state ownership, events, entry points, and invariants.                                                                            |
-| `local/projects/<slug>/spec/feature/<context>/<concept>` | spec     | A behavioral capability earns a durable contract under `sdlc/principle/documentation-first-development`; Gherkin is added only for goals admitted by `sdlc/procedure/feature-spec-authoring`.   |
-| `local/projects/<slug>/design/architecture`              | design   | Repo structure encodes durable intent the code cannot express — non-obvious layering, a deliberate constraint, or topology agents must navigate.                                                |
-| `local/projects/<slug>/policy/conventions`               | policy   | Conventions diverge from the language's global policy in ways agents must respect (custom error hierarchy, project-specific naming). The global policy answers the rest.                        |
-| `local/projects/<slug>/spec/dependencies`                | spec     | Dependency choices encode constraints invisible in the manifest (why a version is pinned, why a library was chosen over alternatives). Otherwise the manifest is the source of truth.           |
-| `local/projects/<slug>/spec/entry-points`                | spec     | Entry points have non-obvious wiring (conditional registration, side-effect imports). Otherwise a 30-second source read answers it.                                                             |
-| `local/projects/<slug>/design/test-strategy`             | design   | The project tests in non-standard ways agents must follow (custom fixtures, coverage philosophy, specific frameworks). Generic test-runner patterns do not earn a snippet.                      |
-| `local/projects/<slug>/spec/build-deploy`                | spec     | The pipeline encodes constraints invisible in the CI YAML (why a step exists, what failure it defends). Otherwise the YAML is the source of truth.                                              |
-| `local/projects/<slug>/spec/configuration`               | spec     | Configuration semantics are project-specific. **If the project implements a global policy, write a reverse pointer (`See also: <global policy ID>`) and stop — do not duplicate the contract.** |
+| `project/<slug>/spec/domain/<context>`            | spec     | A bounded context is evidenced by coherent domain vocabulary, state ownership, events, entry points, and invariants.                                                                            |
+| `project/<slug>/spec/feature/<context>/<concept>` | spec     | A behavioral capability earns a durable contract under `sdlc/principle/documentation-first-development`; Gherkin is added only for goals admitted by `sdlc/procedure/feature-spec-authoring`.   |
+| `project/<slug>/design/architecture`              | design   | Repo structure encodes durable intent the code cannot express — non-obvious layering, a deliberate constraint, or topology agents must navigate.                                                |
+| `project/<slug>/policy/conventions`               | policy   | Conventions diverge from the language's global policy in ways agents must respect (custom error hierarchy, project-specific naming). The global policy answers the rest.                        |
+| `project/<slug>/spec/dependencies`                | spec     | Dependency choices encode constraints invisible in the manifest (why a version is pinned, why a library was chosen over alternatives). Otherwise the manifest is the source of truth.           |
+| `project/<slug>/spec/entry-points`                | spec     | Entry points have non-obvious wiring (conditional registration, side-effect imports). Otherwise a 30-second source read answers it.                                                             |
+| `project/<slug>/design/test-strategy`             | design   | The project tests in non-standard ways agents must follow (custom fixtures, coverage philosophy, specific frameworks). Generic test-runner patterns do not earn a snippet.                      |
+| `project/<slug>/spec/build-deploy`                | spec     | The pipeline encodes constraints invisible in the CI YAML (why a step exists, what failure it defends). Otherwise the YAML is the source of truth.                                              |
+| `project/<slug>/spec/configuration`               | spec     | Configuration semantics are project-specific. **If the project implements a global policy, write a reverse pointer (`See also: <global policy ID>`) and stop — do not duplicate the contract.** |
 
 ### 15. Agent Bootstrap Content (AGENTS.master.md decision)
 
@@ -259,7 +259,7 @@ the matching case; do not improvise.
 **Case 1 — `AGENTS.master.md` exists.** Respect it. Do not modify. The
 existing source is authoritative.
 
-**Case 2 — Hand-authored `AGENTS.md` exists, no master.** Do not seed a master. Report that the content must first move into a `docs/local` snippet; the master carries only Purpose and Required reads. The next init run seeds the master.
+**Case 2 — Hand-authored `AGENTS.md` exists, no master.** Do not seed a master. Report that the content must first move into a `docs/project` snippet; the master carries only Purpose and Required reads. The next init run seeds the master.
 
 **Case 3 — Substantive standalone runtime-specific instruction file, no `AGENTS.md`.** Respect by
 default. Do not auto-create a master — a substantive standalone runtime-specific instruction file
@@ -282,7 +282,7 @@ proceeds.
 
 ## Outputs
 
-- A set of schema-valid doc snippets under `docs/local/`.
+- A set of schema-valid doc snippets under `docs/project/`.
 - A concise summary of what was created/updated.
 
 ## Recovery

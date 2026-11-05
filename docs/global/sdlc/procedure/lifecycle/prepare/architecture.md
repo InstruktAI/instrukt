@@ -39,13 +39,13 @@ Architecture is NOT a separate workflow.artifact. Design decisions that survive
 delivery land in docs across two locations — route per change:
 
 - **Per-context architectural changes** → the affected domain spec snippet at
-  `docs/local/spec/domain/<context>.md`. Examples: a new aggregate, a new
+  `docs/project/spec/domain/<context>.md`. Examples: a new aggregate, a new
   event the context emits, a refined invariant, a new ubiquitous-language term
   inside the context, an internal-model adjustment.
 - **Cross-cutting architectural changes** → the architecture design docs. A
   genuinely single-document topic may remain
-  `docs/local/design/architecture/<topic>.md`; a composite topic uses
-  `docs/local/design/architecture/<topic>/overview.md`, with named sibling
+  `docs/project/design/architecture/<topic>.md`; a composite topic uses
+  `docs/project/design/architecture/<topic>/overview.md`, with named sibling
   design facets and topic-owned companion assets when useful. Examples: a new
   bounded context, a communication-pattern change, a transport-boundary
   change, a context-map shift, or a deployment-shape change.
@@ -59,7 +59,7 @@ delivery land in docs across two locations — route per change:
   never becomes the owner merely because it connects the participants.
 - **A change with both faces** → updates both. A new event family used across
   contexts adds the event to the producing context's domain spec AND adds it
-  to `local/projects/<slug>/spec/domain/event-catalog` AND may add a new context-map edge if
+  to `project/<slug>/spec/domain/event-catalog` AND may add a new context-map edge if
   the consumer set changes.
 
 Author new and changed design material through the pending carriers prescribed

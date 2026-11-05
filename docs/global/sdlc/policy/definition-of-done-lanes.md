@@ -683,7 +683,7 @@ own trigger below, additionally flag the coherence anti-patterns
    against this item when the index or the closure changes, not only when the
    snippet does.
 
-When the changed snippet is an ADR (`docs/local/adr/**`), additionally hold its
+When the changed snippet is an ADR (`docs/project/adr/**`), additionally hold its
 body to the ADR contract (`general/policy/adr-discipline`, `general/procedure/adr-authoring`
 — "What an ADR is"):
 

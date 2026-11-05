@@ -1,5 +1,5 @@
 //! `instrukt todo prepare`
-//! (`docs/local/spec/feature/workflow/preparation.md`): a feature is
+//! (`docs/project/spec/feature/workflow/preparation.md`): a feature is
 //! released for implementation only once its derivations, reviews and
 //! approval are current, and review findings return to their author.
 #![allow(
@@ -20,7 +20,7 @@ use instrukt_todos::evidence::artifact_names;
 use support::redact;
 use workflow::Crew;
 
-// spec: local/projects/instrukt/spec/feature/workflow/preparation UC-PR1
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR1
 #[test]
 fn a_feature_is_released_only_after_current_reviews_and_approval() {
     let crew = Crew::new();
@@ -154,7 +154,7 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
     insta::assert_snapshot!("feature-preparation", redact(&steps.join("=====\n")));
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/preparation UC-PR1
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR1
 #[test]
 fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_analysis() {
     let crew = Crew::new();
@@ -207,7 +207,7 @@ fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_anal
     insta::assert_snapshot!("unresolved-grounding", redact(&steps.join("=====\n")));
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/preparation UC-PR1
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR1
 #[test]
 fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
     let crew = Crew::new();

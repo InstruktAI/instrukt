@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/configuration/layered-configuration`:
+//! `project/instrukt/spec/feature/configuration/layered-configuration`:
 //! the global and the project layer, which key lives where, validation and
 //! schema versions.
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
@@ -57,7 +57,7 @@ agents:
   thinking_mode: med
 "#;
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
 #[test]
 fn a_project_value_overrides_the_machine_default_only_inside_that_project() {
     let env = TestEnv::new();
@@ -83,7 +83,7 @@ fn a_project_value_overrides_the_machine_default_only_inside_that_project() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL2
 #[test]
 fn a_cloned_project_cannot_declare_what_runs_on_the_machine() {
     let env = TestEnv::new();
@@ -134,7 +134,7 @@ actions:
         .success();
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL2
 #[test]
 fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
     let env = mapped::machine();
@@ -170,7 +170,7 @@ fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
     assert!(!mark.exists(), "the project's engine command never ran");
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL3
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
 #[test]
 fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     // Schema version 1 is the first schema; documents an earlier instrukt
@@ -217,7 +217,7 @@ fn unchanged(repo: &Repo, bytes: &[u8]) {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
 #[test]
 fn reading_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();
@@ -227,7 +227,7 @@ fn reading_configuration_written_by_a_newer_instrukt_is_refused() {
     unchanged(&repo, &bytes);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
 #[test]
 fn reading_the_revision_of_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();
@@ -239,7 +239,7 @@ fn reading_the_revision_of_configuration_written_by_a_newer_instrukt_is_refused(
     unchanged(&repo, &bytes);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
 #[test]
 fn changing_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();
@@ -262,7 +262,7 @@ fn changing_configuration_written_by_a_newer_instrukt_is_refused() {
     unchanged(&repo, &bytes);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/layered-configuration UC-CL4
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
 #[test]
 fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();

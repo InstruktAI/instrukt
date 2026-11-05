@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/work/approvals`: approvals
+//! `project/instrukt/spec/feature/work/approvals`: approvals
 //! attributed to their observed source and bound to the evidence approved;
 //! intent checked by its first other recipient.
 #![allow(
@@ -19,7 +19,7 @@ use instrukt_core::config::CURRENT_SCHEMA_VERSION;
 use support::{Project, REPOSITORY, redact};
 use workflow::Crew;
 
-// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP3
+// spec: project/instrukt/spec/feature/work/approvals UC-AP3
 #[test]
 fn an_earlier_approval_carries_to_the_revised_outcome_only_under_a_current_review() {
     let project = Project::new();
@@ -89,7 +89,7 @@ fn an_earlier_approval_carries_to_the_revised_outcome_only_under_a_current_revie
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP3
+// spec: project/instrukt/spec/feature/work/approvals UC-AP3
 #[test]
 fn a_review_whose_findings_changed_since_no_longer_supports_a_carry() {
     let project = Project::new();
@@ -155,7 +155,7 @@ fn prd_approved_by(crew: &Crew, approver: &str) {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP4
+// spec: project/instrukt/spec/feature/work/approvals UC-AP4
 #[test]
 fn a_peer_approves_where_the_project_allows_it_with_its_session_and_reason() {
     let mut crew = Crew::new();
@@ -242,7 +242,7 @@ fn shown_prd_prefix(project: &Project) -> String {
     line.split('`').nth(1).unwrap().to_owned()
 }
 
-// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP1
+// spec: project/instrukt/spec/feature/work/approvals UC-AP1
 #[test]
 fn an_approval_on_github_applies_to_the_evidence_it_names_attributed_to_the_approver() {
     let project = Project::new();
@@ -305,7 +305,7 @@ fn an_approval_on_github_applies_to_the_evidence_it_names_attributed_to_the_appr
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP1
+// spec: project/instrukt/spec/feature/work/approvals UC-AP1
 #[test]
 fn an_approval_names_its_source_and_stays_bound_to_the_approved_evidence() {
     let project = Project::new();
@@ -359,7 +359,7 @@ fn an_approval_names_its_source_and_stays_bound_to_the_approved_evidence() {
     insta::assert_snapshot!("approved", redact(&format!("{approved}---\n{shown}")));
 }
 
-// spec: local/projects/instrukt/spec/feature/work/approvals UC-AP2
+// spec: project/instrukt/spec/feature/work/approvals UC-AP2
 #[test]
 fn the_first_other_recipient_checks_the_recorded_intent_against_its_conversation() {
     let mut project = Project::with_runtime(Some("AGENT_SESSION"));

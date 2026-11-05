@@ -3,13 +3,13 @@ source: crates/instrukt-cli/tests/dependencies-and-holds.rs
 expression: "redact(&format!(\"{filed}---\\n{}\", rendered(&docs)))"
 ---
 created nested-lists (change) with identity <id 1>
-documentation to commit: docs/local/spec/feature/depth.md
-documentation to commit: docs/local/spec/feature/lists.md
-documentation to commit: docs/local/spec/feature/lists.list-depth.md
-documentation to commit: docs/local/spec/feature/lists.nested-lists.md
+documentation to commit: docs/project/spec/feature/depth.md
+documentation to commit: docs/project/spec/feature/lists.md
+documentation to commit: docs/project/spec/feature/lists.list-depth.md
+documentation to commit: docs/project/spec/feature/lists.nested-lists.md
 reflection: reflected to GitHub
 ---
-== local/spec/feature/depth.md
+== project/spec/feature/depth.md
 ---
 description: List depth.
 delivered_by: [nested-lists]
@@ -19,7 +19,7 @@ delivered_by: [nested-lists]
 
 Lists keep their depth.
 
-== local/spec/feature/lists.md
+== project/spec/feature/lists.md
 ---
 description: Lists.
 ---
@@ -32,7 +32,7 @@ The current lists.
 Depth everywhere.
 <!-- /planned:nested-lists -->
 
-== local/spec/feature/lists.nested-lists.md
+== project/spec/feature/lists.nested-lists.md
 ---
 description: Lists.
 ---
@@ -41,7 +41,7 @@ description: Lists.
 
 The lists as list-depth delivers them.
 
-== local/spec/feature/renderer.md
+== project/spec/feature/renderer.md
 ---
 description: Rendering.
 delivered_by: [renderer]

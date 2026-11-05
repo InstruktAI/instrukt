@@ -27,7 +27,7 @@ caps, and the human is involved only where their lane is crossed.
 
 - The required reads above are loaded.
 - The bounded contexts of the codebase are known from its domain specs
-  (`docs/local/spec/domain/*`), or their absence is recorded.
+  (`docs/project/spec/domain/*`), or their absence is recorded.
 - Blueprint facts (`instrukt blueprint affected`, co-change history) are
   available and their coverage limits are known; unsupported edge classes are
   never read as "no dependents".

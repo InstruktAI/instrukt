@@ -1,5 +1,5 @@
 //! The fact vocabulary: names and types the provider may supply
-//! (`docs/local/spec/domain/workflow.md`, fact table), and the fact set an
+//! (`docs/project/spec/domain/workflow.md`, fact table), and the fact set an
 //! evaluation reads.
 
 use std::collections::BTreeMap;

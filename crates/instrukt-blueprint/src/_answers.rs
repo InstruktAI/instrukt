@@ -1,6 +1,6 @@
 //! The answers the blueprint computes itself from a graph: blast radius
-//! (`docs/local/spec/feature/blueprint/blast-radius.md`) and path
-//! (`docs/local/spec/feature/blueprint/graph-navigation.md`).
+//! (`docs/project/spec/feature/blueprint/blast-radius.md`) and path
+//! (`docs/project/spec/feature/blueprint/graph-navigation.md`).
 
 use std::collections::BTreeSet;
 use std::path::Path;

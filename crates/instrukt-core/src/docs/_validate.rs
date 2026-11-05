@@ -1,5 +1,5 @@
 //! Structural validation of a repository's documentation
-//! (`local/projects/instrukt/spec/feature/docs/snippet-validation`).
+//! (`project/instrukt/spec/feature/docs/snippet-validation`).
 //!
 //! Validation judges shape, placement and form only, never prose. It reads
 //! the corpus, the effective configuration (startable agents, `requires`),
@@ -531,8 +531,8 @@ fn check_third_party(version: &Version, sources: Vec<String>, out: &mut Vec<Find
 /// The taxonomy an identity spells.
 fn taxonomy_of(id: &SnippetId) -> Option<Taxonomy> {
     let parts: Vec<&str> = id.as_str().split('/').collect();
-    let dir = if parts.first() == Some(&"local") {
-        parts.get(3)
+    let dir = if parts.first() == Some(&"project") {
+        parts.get(2)
     } else {
         parts.get(1)
     };
@@ -585,7 +585,7 @@ impl<'c> RequiredReads<'c> {
     }
 
     fn home_version(&self, id: &SnippetId) -> Result<Option<Version>, DocsError> {
-        if id.as_str().starts_with("local/") {
+        if id.is_project() {
             return Ok(None);
         }
         let file = self.corpus.home().docs_dir().join(format!("{id}.md"));
@@ -1301,13 +1301,13 @@ mod tests {
 
     #[test]
     fn with_todos_off_neither_existence_nor_roles_are_asked() {
-        let c = corpus(&[("docs/local/procedure/p.md", &procedure(PENDING_BUILDER))]);
+        let c = corpus(&[("docs/project/procedure/p.md", &procedure(PENDING_BUILDER))]);
         assert!(run(&c, &CoreWiring::default(), &[]).is_empty());
     }
 
     #[test]
     fn with_todos_on_unknown_slugs_and_undeclared_roles_are_findings() {
-        let c = corpus(&[("docs/local/procedure/p.md", &procedure(PENDING_BUILDER))]);
+        let c = corpus(&[("docs/project/procedure/p.md", &procedure(PENDING_BUILDER))]);
         let wiring = CoreWiring {
             todo_existence: Some(Arc::new(Todos(vec!["known"]))),
             flavor_roles: Some(Arc::new(Roles(vec!["reviewer"]))),
@@ -1327,7 +1327,7 @@ mod tests {
     #[test]
     fn dispatch_agents_must_be_startable() {
         let c = corpus(&[(
-            "docs/local/procedure/p.md",
+            "docs/project/procedure/p.md",
             &procedure(
                 "role: r\nactivation_trigger: t\ndispatch: {agent: [claude, ghost], thinking_mode: med}\n",
             ),
@@ -1348,12 +1348,12 @@ mod tests {
         );
         let clean = ADR.replace("{extra}", "").replace("{body}", "");
         let c = corpus(&[
-            ("docs/local/adr/0001-a.md", &adr),
+            ("docs/project/adr/0001-a.md", &adr),
             (
-                "docs/local/adr/0002-b.md",
+                "docs/project/adr/0002-b.md",
                 &clean.replace("number: 1", "number: 2"),
             ),
-            ("docs/local/adr/0002-b.later.md", ""),
+            ("docs/project/adr/0002-b.later.md", ""),
         ]);
         let found = run(&c, &CoreWiring::default(), &[]);
         let carriers: Vec<&Path> = found
@@ -1364,9 +1364,9 @@ mod tests {
         assert_eq!(
             carriers,
             [
-                Path::new("docs/local/adr/0001-a.md"),
-                Path::new("docs/local/adr/0001-a.md"),
-                Path::new("docs/local/adr/0002-b.later.md"),
+                Path::new("docs/project/adr/0001-a.md"),
+                Path::new("docs/project/adr/0001-a.md"),
+                Path::new("docs/project/adr/0002-b.later.md"),
             ]
         );
     }
@@ -1421,13 +1421,13 @@ mod tests {
                 "@~/.instrukt/docs/acme/concept/a.md\n",
             ),
             (
-                "docs/local/baseline.md",
+                "docs/project/baseline.md",
                 "@~/.instrukt/docs/acme/bundle.md\n@~/.instrukt/docs/acme/concept/a.md\n",
             ),
         ]);
         let found = run(&c, &CoreWiring::default(), &[]);
         assert_eq!(codes(&found), [FindingCode::BaselineCarried]);
-        assert_eq!(found[0].path, Path::new("docs/local/baseline.md"));
+        assert_eq!(found[0].path, Path::new("docs/project/baseline.md"));
     }
 
     const CONCEPT: &str = "---\ndescription: d\n---\n# C — Concept\n\n## What\n\n## Why\n";
@@ -1446,7 +1446,7 @@ mod tests {
                 "@~/.instrukt/docs/acme/concept/a.md\n",
             ),
             (
-                "docs/local/baseline.md",
+                "docs/project/baseline.md",
                 "@~/.instrukt/docs/outer/bundle.md\n@~/.instrukt/docs/acme/concept/a.md\n",
             ),
         ];
@@ -1461,7 +1461,7 @@ mod tests {
     fn a_bundle_naming_another_bundle_carries_what_that_bundle_carries() {
         let carried = vec![(
             FindingCode::BaselineCarried,
-            PathBuf::from("docs/local/baseline.md"),
+            PathBuf::from("docs/project/baseline.md"),
         )];
         let nested = local_manifest_findings(&[(
             "docs/global/outer/baseline.md",
@@ -1492,7 +1492,7 @@ mod tests {
                 "@~/.instrukt/docs/acme/bundle.md\n",
             ),
             (
-                "docs/local/baseline.md",
+                "docs/project/baseline.md",
                 "@~/.instrukt/docs/outer/bundle.md\n",
             ),
         ]);

@@ -1,6 +1,6 @@
 #!/bin/sh
 # instrukt repository checks: shellcheck, fmt, clippy, test
-# (docs/local/policy/testing.md). Needs shellcheck and the Rust toolchain.
+# (docs/project/policy/testing.md). Needs shellcheck and the Rust toolchain.
 # Enable once per clone with `make hooks`.
 set -e
 # Checkouts sharing one CARGO_TARGET_DIR take turns: the whole check runs

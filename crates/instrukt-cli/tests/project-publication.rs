@@ -1,5 +1,5 @@
 //! `instrukt sync`
-//! (`docs/local/spec/feature/publication/project-publication.md`).
+//! (`docs/project/spec/feature/publication/project-publication.md`).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -53,7 +53,7 @@ fn project(env: &TestEnv, name: &str, domains: &[&str]) -> Repo {
         );
     }
     repo.write(
-        "docs/local/policy/house.md",
+        "docs/project/policy/house.md",
         &policy("House", "visibility: public\n"),
     );
     repo.commit("docs");
@@ -110,7 +110,7 @@ fn text(bytes: &[u8], shas: &[&str]) -> String {
     text
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB1
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB1
 #[test]
 fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_out() {
     let env = TestEnv::new();
@@ -152,13 +152,13 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
     let local = index
         .snippets
         .iter()
-        .find(|e| e.id.as_str() == "local/projects/demo/policy/house")
+        .find(|e| e.id.as_str() == "project/demo/policy/house")
         .unwrap();
     assert_eq!(
         (local.scope, local.path.clone()),
         (
             IndexScope::Local,
-            repo.path().join("docs/local/policy/house.md")
+            repo.path().join("docs/project/policy/house.md")
         )
     );
     let record = PublishedRecord::load(&home(&env), &entry.source_project)
@@ -175,7 +175,7 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB1
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB1
 #[test]
 fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     let env = TestEnv::new();
@@ -203,7 +203,7 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     assert!(!ids(&index(&env)).contains(&"acme/policy/feature"));
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB2
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB2
 #[test]
 fn two_projects_publish_side_by_side_and_a_claim_on_anothers_domain_is_refused() {
     let env = TestEnv::new();
@@ -222,8 +222,8 @@ fn two_projects_publish_side_by_side_and_a_claim_on_anothers_domain_is_refused()
         [
             "alpha-docs/policy/rules",
             "beta-docs/policy/rules",
-            "local/projects/alpha/policy/house",
-            "local/projects/beta/policy/house",
+            "project/alpha/policy/house",
+            "project/beta/policy/house",
         ]
     );
     let alpha_after: Vec<IndexEntry> = owned_by(&both, "alpha").into_iter().cloned().collect();
@@ -276,7 +276,7 @@ fn published_commit(env: &TestEnv, project: &str) -> String {
         .to_string()
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB3
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB3
 #[test]
 fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     let env = TestEnv::new();
@@ -314,8 +314,8 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
         ids(&after),
         [
             "acme/policy/rules",
-            "local/projects/demo/policy/house",
-            "local/projects/other/policy/house",
+            "project/demo/policy/house",
+            "project/other/policy/house",
             "shared/policy/rules",
         ]
     );
@@ -330,7 +330,7 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     assert_eq!(other_tree_after, other_tree);
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB4
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB4
 #[test]
 fn main_unchanged_since_its_publication_is_a_no_op_until_forced() {
     let env = TestEnv::new();
@@ -352,7 +352,7 @@ fn main_unchanged_since_its_publication_is_a_no_op_until_forced() {
     assert_eq!(published_commit(&env, "demo"), sha);
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB5
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB5
 #[test]
 fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication() {
     let env = TestEnv::new();
@@ -386,7 +386,7 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB6
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
 fn an_unresolvable_configured_value_fails_the_sync_and_keeps_the_previous_publication() {
     let env = TestEnv::new();
@@ -414,7 +414,7 @@ fn without_tmp(env: &TestEnv, bytes: &[u8], shas: &[&str]) -> String {
     text(bytes, shas).replace(base.trim_end_matches('/'), "[TMP]")
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB6
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
 fn a_bundle_left_with_a_reference_fails_the_sync() {
     let env = TestEnv::new();
@@ -431,7 +431,7 @@ fn a_bundle_left_with_a_reference_fails_the_sync() {
     )
     .write(
         "docs/global/snippets/note.md",
-        "Read it (@docs/local/policy/house.md) first.\n",
+        "Read it (@docs/project/policy/house.md) first.\n",
     )
     .write(
         "docs/global/acme/baseline.md",
@@ -441,12 +441,12 @@ fn a_bundle_left_with_a_reference_fails_the_sync() {
     env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/global/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/local/policy/house.md`");
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/global/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/project/policy/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB7
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB7
 #[cfg(unix)]
 #[test]
 fn an_output_that_is_a_symbolic_link_is_refused_and_its_target_left_alone() {
@@ -468,7 +468,7 @@ fn an_output_that_is_a_symbolic_link_is_refused_and_its_target_left_alone() {
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB8
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB8
 #[cfg(unix)]
 #[test]
 fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
@@ -531,7 +531,7 @@ fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
     assert!(leftovers().is_empty(), "the next sync removes the leftover");
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB7
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB7
 #[cfg(unix)]
 #[test]
 fn a_linked_later_output_is_refused_before_anything_is_written() {
@@ -589,7 +589,7 @@ fn a_linked_later_output_is_refused_before_anything_is_written() {
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/project-publication UC-PUB8
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB8
 #[cfg(unix)]
 #[test]
 fn a_refused_sync_still_reports_the_leftover_it_could_not_remove() {

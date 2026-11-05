@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/repository/hook-sections`:
+//! `project/instrukt/spec/feature/repository/hook-sections`:
 //! `instrukt hooks install|remove|status|run` — one marked section per hook
 //! file beside whatever else is there, post-hooks that start publication
 //! without blocking git, and the status a hook manager's user needs.
@@ -152,7 +152,7 @@ other-tool run post-commit\n\
 # <<< other-tool <<<\n\
 HOOK_NAME=post-commit exec sh -c 'echo ran >> \"$(git rev-parse --git-dir)/own-hook-ran\"'\n";
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn installing_keeps_the_developers_own_hook_and_a_commit_starts_publication() {
     let env = machine();
@@ -191,7 +191,7 @@ fn installing_keeps_the_developers_own_hook_and_a_commit_starts_publication() {
     finished_run(&env, "demo", Hook::PostCommit);
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn with_blueprint_on_the_pre_push_section_is_installed_and_a_push_still_completes() {
     let env = machine();
@@ -240,7 +240,7 @@ fn temporary_files(env: &TestEnv) -> Vec<PathBuf> {
     names
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn a_pre_push_section_after_instrukts_reads_the_full_ref_list() {
     let env = machine();
@@ -380,31 +380,31 @@ fn push_with_failing_step(failure: &Failure) {
     assert!(ran.exists(), "the section after instrukt's ran");
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn a_temporary_file_that_cannot_be_removed_leaves_the_push_and_later_sections_alone() {
     push_with_failing_step(&Failure::Removal);
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn a_temporary_file_that_cannot_be_made_leaves_the_push_and_later_sections_alone() {
     push_with_failing_step(&Failure::TemporaryFile);
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn a_failed_copy_of_the_ref_list_leaves_the_push_and_later_sections_alone() {
     push_with_failing_step(&Failure::Copy);
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK1
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
 #[test]
 fn a_temporary_file_gone_before_stdin_is_restored_leaves_the_push_and_later_sections_alone() {
     push_with_failing_step(&Failure::FileGone);
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK2
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK2
 #[test]
 fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() {
     let env = machine();
@@ -459,7 +459,7 @@ fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() 
     finished_run(&env, "demo", Hook::PostCheckout);
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK3
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK3
 #[test]
 fn status_names_the_hook_a_hook_manager_regenerated_and_the_line_to_restore_it() {
     let env = machine();
@@ -497,7 +497,7 @@ exec other-tool post-merge \"$@\"\n";
 /// A hook the developer keeps switched off.
 const OWN_POST_CHECKOUT: &str = "#!/bin/sh\necho disabled";
 
-// spec: local/projects/instrukt/spec/feature/repository/hook-sections UC-HK4
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK4
 #[test]
 fn removing_leaves_every_byte_of_the_developers_hooks_as_it_was() {
     let env = machine();

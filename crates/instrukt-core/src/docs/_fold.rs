@@ -1,6 +1,6 @@
 //! The delivery fold: `instrukt docs fold <slug>` applies exactly one
 //! delivery's pending carriers to the working tree
-//! (`local/projects/instrukt/spec/feature/docs/pending-documentation`,
+//! (`project/instrukt/spec/feature/docs/pending-documentation`,
 //! Delivery fold).
 //!
 //! The whole fold is planned in memory first; a refusal writes nothing.
@@ -421,7 +421,7 @@ mod tests {
             .collect()
     }
 
-    const X: &str = "docs/local/spec/x.md";
+    const X: &str = "docs/project/spec/x.md";
     const BODY: &str = "body\n";
 
     /// The `delivered_by` slugs a folded file's frontmatter still carries.
@@ -496,21 +496,21 @@ mod tests {
         let out = plan(
             sources(&[
                 (X, "old\n"),
-                ("docs/local/spec/x.a.md", NEW),
-                ("docs/local/spec/y.md", "gone\n"),
-                ("docs/local/spec/y.a.md", ""),
-                ("docs/local/spec/z.b.md", "other\n"),
-                ("docs/local/spec/z.md", "kept\n"),
+                ("docs/project/spec/x.a.md", NEW),
+                ("docs/project/spec/y.md", "gone\n"),
+                ("docs/project/spec/y.a.md", ""),
+                ("docs/project/spec/z.b.md", "other\n"),
+                ("docs/project/spec/z.md", "kept\n"),
             ]),
             &slug("a"),
         )
         .unwrap();
         assert!(out[X].as_deref().is_some_and(is_next_version));
-        assert_eq!(out["docs/local/spec/x.a.md"], None);
-        assert_eq!(out["docs/local/spec/y.md"], None);
-        assert_eq!(out["docs/local/spec/y.a.md"], None);
-        assert!(!out.contains_key("docs/local/spec/z.md"));
-        assert!(!out.contains_key("docs/local/spec/z.b.md"));
+        assert_eq!(out["docs/project/spec/x.a.md"], None);
+        assert_eq!(out["docs/project/spec/y.md"], None);
+        assert_eq!(out["docs/project/spec/y.a.md"], None);
+        assert!(!out.contains_key("docs/project/spec/z.md"));
+        assert!(!out.contains_key("docs/project/spec/z.b.md"));
     }
 
     const FOREIGN_BLOCK: &str = "<!-- planned:b -->\nlater\n<!-- /planned:b -->\n";
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn a_retirement_that_would_lose_foreign_carriers_is_refused() {
-        let empty = ("docs/local/spec/x.a.md", "");
+        let empty = ("docs/project/spec/x.a.md", "");
         assert!(refused(&[(X, FOREIGN_BLOCK), empty]));
         assert!(refused(&[
             (X, "---\ndescription: d\ndelivered_by: [b]\n---\nx\n"),
@@ -533,7 +533,7 @@ mod tests {
         assert!(refused(&[
             (X, "x\n"),
             empty,
-            ("docs/local/spec/x.b.md", NEW)
+            ("docs/project/spec/x.b.md", NEW)
         ]));
         assert!(!refused(&[(X, "x\n"), empty]));
     }
@@ -541,12 +541,12 @@ mod tests {
     #[test]
     fn a_replacement_that_would_lose_foreign_carriers_is_refused() {
         let parent = format!("old\n{FOREIGN_BLOCK}");
-        assert!(refused(&[(X, &parent), ("docs/local/spec/x.a.md", NEW)]));
+        assert!(refused(&[(X, &parent), ("docs/project/spec/x.a.md", NEW)]));
         let pending = "---\ndescription: d\ndelivered_by: [a, b]\n---\nold\n";
-        assert!(refused(&[(X, pending), ("docs/local/spec/x.a.md", NEW)]));
+        assert!(refused(&[(X, pending), ("docs/project/spec/x.a.md", NEW)]));
         let carried = format!("{NEW}{FOREIGN_BLOCK}");
         let out = plan(
-            sources(&[(X, &parent), ("docs/local/spec/x.a.md", &carried)]),
+            sources(&[(X, &parent), ("docs/project/spec/x.a.md", &carried)]),
             &slug("a"),
         )
         .unwrap();
@@ -585,15 +585,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         write(root, X, "old\n");
-        write(root, "docs/local/spec/x.a.md", NEW);
-        write(root, "docs/local/spec/keep.md", "untouched\n");
+        write(root, "docs/project/spec/x.a.md", NEW);
+        write(root, "docs/project/spec/keep.md", "untouched\n");
         let outcome = fold(root, &slug("a")).unwrap();
         assert_eq!(outcome.written, [PathBuf::from(X)]);
-        assert_eq!(outcome.removed, [PathBuf::from("docs/local/spec/x.a.md")]);
+        assert_eq!(outcome.removed, [PathBuf::from("docs/project/spec/x.a.md")]);
         assert!(is_next_version(
             &std::fs::read_to_string(root.join(X)).unwrap()
         ));
-        assert!(!root.join("docs/local/spec/x.a.md").exists());
+        assert!(!root.join("docs/project/spec/x.a.md").exists());
         assert!(fold(root, &slug("a")).unwrap().is_empty());
     }
 
@@ -612,11 +612,12 @@ mod tests {
         ));
 
         let inner = tempfile::tempdir().unwrap();
-        write(inner.path(), "docs/local/spec/real.md", "y\n");
-        std::os::unix::fs::symlink(outside.path(), inner.path().join("docs/local/linked")).unwrap();
+        write(inner.path(), "docs/project/spec/real.md", "y\n");
+        std::os::unix::fs::symlink(outside.path(), inner.path().join("docs/project/linked"))
+            .unwrap();
         std::os::unix::fs::symlink(
             outside.path().join("local/spec/x.md"),
-            inner.path().join("docs/local/spec/linked.md"),
+            inner.path().join("docs/project/spec/linked.md"),
         )
         .unwrap();
         assert!(fold(inner.path(), &slug("a")).unwrap().is_empty());

@@ -2,7 +2,7 @@
 source: crates/instrukt-cli/tests/agent-entrypoints.rs
 expression: "repo.read(\"AGENTS.md\")"
 ---
-id: local/projects/demo/policy/house
+id: project/demo/policy/house
 
 # House — Policy
 
@@ -40,20 +40,20 @@ Shared guidance.
 demo
 ```
 
-Written as ``@docs/local/policy/house.md`` it is quoted.
+Written as ``@docs/project/policy/house.md`` it is quoted.
 
 ```
-@docs/local/policy/not-a-snippet.md
+@docs/project/policy/not-a-snippet.md
 ```
 
-<!-- @docs/local/policy/house.md stays a comment -->
+<!-- @docs/project/policy/house.md stays a comment -->
 
 ---
 
 ## Project baseline index — load via `instrukt docs get <id>` when relevant
 
-- `local/projects/demo/policy/style` — About Style.
+- `project/demo/policy/style` — About Style.
 
 ## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
 
-- `local/projects/demo/procedure/release` — About Release. — When cutting a release.
+- `project/demo/procedure/release` — About Release. — When cutting a release.

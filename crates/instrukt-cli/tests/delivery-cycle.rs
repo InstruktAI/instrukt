@@ -1,5 +1,5 @@
 //! `instrukt todo work`
-//! (`docs/local/spec/feature/workflow/delivery-cycle.md`): a prepared
+//! (`docs/project/spec/feature/workflow/delivery-cycle.md`): a prepared
 //! change is built, reviewed, revised, its deferrals decided and finalized,
 //! and handed to integration only on current approval and matching
 //! finalization evidence.
@@ -86,7 +86,7 @@ fn commit(crew: &Crew, dir: &Path, file: &str, message: &str) {
         .git(dir, ["commit", "--quiet", "-m", message]);
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/delivery-cycle UC-DC1
+// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC1
 #[test]
 fn a_change_is_handed_off_only_after_current_approval_deferrals_and_matching_finalization() {
     let crew = Crew::new();
@@ -182,7 +182,7 @@ fn a_change_is_handed_off_only_after_current_approval_deferrals_and_matching_fin
     insta::assert_snapshot!("delivery-cycle", redact(&text));
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/delivery-cycle UC-DC1
+// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC1
 #[test]
 fn an_approval_across_a_merge_of_unpublished_main_is_not_relied_on() {
     let crew = Crew::new();

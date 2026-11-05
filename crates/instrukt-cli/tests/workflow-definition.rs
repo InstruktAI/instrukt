@@ -1,5 +1,5 @@
 //! A project's workflow as its flavor configures it
-//! (`docs/local/spec/feature/workflow/workflow-definition.md`): the next
+//! (`docs/project/spec/feature/workflow/workflow-definition.md`): the next
 //! obligation follows the published definition, actions and instructions,
 //! and changing them changes the obligation with the same engine.
 #![allow(
@@ -19,7 +19,7 @@ mod workflow;
 use support::redact;
 use workflow::Crew;
 
-// spec: local/projects/instrukt/spec/feature/workflow/workflow-definition UC-WD1
+// spec: project/instrukt/spec/feature/workflow/workflow-definition UC-WD1
 #[test]
 fn the_next_obligation_follows_the_configured_order_actions_and_instructions() {
     let crew = Crew::new();

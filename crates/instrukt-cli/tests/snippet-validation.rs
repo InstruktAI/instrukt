@@ -1,5 +1,5 @@
 //! `instrukt docs validate`
-//! (`docs/local/spec/feature/docs/snippet-validation.md`).
+//! (`docs/project/spec/feature/docs/snippet-validation.md`).
 
 #![allow(
     clippy::unwrap_used,
@@ -114,7 +114,7 @@ fn valid_tree(repo: &Repo) {
         )
         .write("docs/global/snippets/shared.md", "Shared text.\n")
         .write(
-            "docs/local/spec/feature/thing.md",
+            "docs/project/spec/feature/thing.md",
             &snippet(
                 "spec",
                 "delivered_by: [build-thing]\n",
@@ -123,11 +123,11 @@ fn valid_tree(repo: &Repo) {
             )
             .replace(
                 "# Sample — Spec\n",
-                "# Sample — Spec\n\n## Required reads\n\n- @docs/local/design/shape.md\n- @~/.instrukt/docs/acme/bundle.md\n",
+                "# Sample — Spec\n\n## Required reads\n\n- @docs/project/design/shape.md\n- @~/.instrukt/docs/acme/bundle.md\n",
             ),
         )
         .write(
-            "docs/local/design/shape.md",
+            "docs/project/design/shape.md",
             &snippet(
                 "design",
                 "",
@@ -136,10 +136,10 @@ fn valid_tree(repo: &Repo) {
                  <!-- /planned-change:rework-shape -->\n",
             ),
         )
-        .write("docs/local/design/shape.next-shape.md", &snippet("design", "", ""))
-        .write("docs/local/design/retired.md", &snippet("design", "", ""))
-        .write("docs/local/design/retired.drop-it.md", "")
-        .write("docs/local/baseline.md", "@docs/local/design/shape.md\n")
+        .write("docs/project/design/shape.next-shape.md", &snippet("design", "", ""))
+        .write("docs/project/design/retired.md", &snippet("design", "", ""))
+        .write("docs/project/design/retired.drop-it.md", "")
+        .write("docs/project/baseline.md", "@docs/project/design/shape.md\n")
         .write(
             "docs/third-party/tool/usage.md",
             "---\ndescription: How to use the tool.\n---\n\n# Tool usage\n\n## Sources\n\n\
@@ -147,7 +147,7 @@ fn valid_tree(repo: &Repo) {
              - <https://tool.example/reference>\n",
         )
         .write(
-            "docs/local/adr/0049-choice.md",
+            "docs/project/adr/0049-choice.md",
             "---\ndescription: A choice.\ndate: 2026-01-02\nnumber: 0049\n---\n\n# Choice — ADR\n\n\
              ## Context\n\n## Decision\n\n## Consequences\n",
         )
@@ -174,7 +174,7 @@ fn validate(env: &TestEnv, repo: &Repo, args: &[&str]) -> Run {
     }
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn documentation_that_keeps_the_contract_validates_successfully() {
     let env = TestEnv::new();
@@ -185,7 +185,7 @@ fn documentation_that_keeps_the_contract_validates_successfully() {
     insta::assert_snapshot!("clean_run", run.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn a_snippet_without_a_description_is_reported_not_left_out() {
     let env = TestEnv::new();
@@ -200,7 +200,7 @@ fn a_snippet_without_a_description_is_reported_not_left_out() {
     insta::assert_snapshot!("description_missing", run.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong() {
     let env = TestEnv::new();
@@ -240,16 +240,16 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             ),
         )
         .write(
-            "docs/local/adr/0001-choice.md",
+            "docs/project/adr/0001-choice.md",
             "---\ndescription: A choice.\n---\n\n# Choice — ADR\n\n## Context\n\n## Decision\n\n## Consequences\n",
         )
         .write(
-            "docs/local/adr/0002-pending.md",
+            "docs/project/adr/0002-pending.md",
             "---\ndescription: Pending.\ndate: 2026-01-02\nnumber: 2\ndelivered_by: [later]\n---\n\n\
              # Pending — ADR\n\n## Context\n\n<!-- planned:later -->\nx\n<!-- /planned:later -->\n\n\
              ## Decision\n\n## Consequences\n",
         )
-        .write("docs/local/adr/0002-pending.later.md", "")
+        .write("docs/project/adr/0002-pending.later.md", "")
         // Structure
         .write(
             "docs/global/acme/principle/shape.md",
@@ -267,12 +267,12 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             .replace(
                 "# Sample — Policy\n",
                 "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- @docs/global/acme/principle/care.md\n\
-                 - @~/.instrukt/docs/acme/principle/missing.md\n- @docs/local/design/shape.md\n",
+                 - @~/.instrukt/docs/acme/principle/missing.md\n- @docs/project/design/shape.md\n",
             ),
         )
         // Pending
         .write(
-            "docs/local/spec/pending.md",
+            "docs/project/spec/pending.md",
             &snippet(
                 "spec",
                 "delivered_by: []\n",
@@ -281,15 +281,15 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
                  <!-- planned:open -->\nnever closed\n",
             ),
         )
-        .write("docs/local/spec/pending.Not_A_Slug.md", &snippet("spec", "", ""))
+        .write("docs/project/spec/pending.Not_A_Slug.md", &snippet("spec", "", ""))
         // Baselines
         .write(
             "docs/global/acme/baseline-progressive.md",
             "@~/.instrukt/docs/acme/policy/rules.md\n@~/.instrukt/docs/acme/principle/shape.md\nnot a reference\n",
         )
         .write(
-            "docs/local/baseline.md",
-            "@~/.instrukt/docs/acme/bundle.md\n@docs/local/design/shape.md\n\
+            "docs/project/baseline.md",
+            "@~/.instrukt/docs/acme/bundle.md\n@docs/project/design/shape.md\n\
              @~/.instrukt/docs/acme/principle/care.md\n",
         )
         // Workflow flavor
@@ -319,7 +319,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
     insta::assert_snapshot!(run.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn findings_print_as_a_json_list_with_file_code_and_value() {
     let env = TestEnv::new();
@@ -340,7 +340,7 @@ fn findings_print_as_a_json_list_with_file_code_and_value() {
     insta::assert_snapshot!("json_clean", run.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn named_paths_limit_the_run_to_those_files_and_their_cross_snippet_checks() {
     let env = TestEnv::new();
@@ -371,7 +371,7 @@ fn named_paths_limit_the_run_to_those_files_and_their_cross_snippet_checks() {
     insta::assert_snapshot!("scoped_clean_file", untouched.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn an_entry_procedure_requiring_its_own_sub_procedure_is_reported() {
     let env = TestEnv::new();
@@ -391,7 +391,7 @@ fn an_entry_procedure_requiring_its_own_sub_procedure_is_reported() {
     insta::assert_snapshot!("subprocedure_required", run.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn references_to_domains_published_elsewhere_resolve_through_the_home() {
     let env = TestEnv::new();
@@ -414,12 +414,12 @@ fn references_to_domains_published_elsewhere_resolve_through_the_home() {
     insta::assert_snapshot!("home_references", run.out);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn local_snippets_in_a_repository_without_a_project_have_no_identity() {
     let env = TestEnv::new();
     let repo = env.git_repo("anonymous");
-    repo.write("docs/local/spec/x.md", &snippet("spec", "", ""));
+    repo.write("docs/project/spec/x.md", &snippet("spec", "", ""));
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!("undeclared_project", run.out);
@@ -457,7 +457,7 @@ fn publish_crew_flavor(env: &TestEnv) {
     env.run(flows.path(), ["sync"]).success();
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/snippet-validation UC-SV1
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
 fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_reported() {
     let env = TestEnv::new();
@@ -468,7 +468,7 @@ fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_report
         "schema_version: 1\nproject: demo\nmodules: {todos: true}\nworkflow: {domain: crew}\n",
     )
     .write(
-        "docs/local/procedure/check.md",
+        "docs/project/procedure/check.md",
         &snippet(
             "procedure",
             "role: checker\nactivation_trigger: When checking.\n",
@@ -476,7 +476,7 @@ fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_report
         ),
     )
     .write(
-        "docs/local/procedure/haunt.md",
+        "docs/project/procedure/haunt.md",
         &snippet(
             "procedure",
             "role: haunter\nactivation_trigger: At night.\n",

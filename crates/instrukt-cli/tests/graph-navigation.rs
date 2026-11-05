@@ -1,5 +1,5 @@
 //! `instrukt blueprint path` — how one part reaches another in the latest
-//! graph (`docs/local/spec/feature/blueprint/graph-navigation.md`).
+//! graph (`docs/project/spec/feature/blueprint/graph-navigation.md`).
 //!
 //! Generation is not part of these tests: each seeds the project's store in
 //! the temporary home through the store's own publication.
@@ -85,7 +85,7 @@ fn mapped() -> Value {
         .build()
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
 #[test]
 fn an_agent_finds_the_chain_from_one_part_to_another() {
     let env = TestEnv::new();
@@ -103,7 +103,7 @@ fn an_agent_finds_the_chain_from_one_part_to_another() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
 #[test]
 fn endpoints_may_be_files() {
     let env = TestEnv::new();
@@ -123,7 +123,7 @@ fn endpoints_may_be_files() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
 #[test]
 fn an_unreachable_part_is_answered_as_such() {
     let env = TestEnv::new();
@@ -139,7 +139,7 @@ fn an_unreachable_part_is_answered_as_such() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
 #[test]
 fn an_endpoint_naming_no_node_is_refused_as_unknown() {
     let env = TestEnv::new();
@@ -153,7 +153,7 @@ fn an_endpoint_naming_no_node_is_refused_as_unknown() {
     insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"instrukt: in the blueprint graph of 0123456789abcdef0123456789abcdef01234567: unknown endpoint `nowhere`: it names no node id or source file in the graph");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN1
 #[test]
 fn with_no_graph_or_the_module_off_path_answers_as_blast_radius_does() {
     let env = TestEnv::new();
@@ -203,7 +203,7 @@ fn with_graphify(env: &mut TestEnv) {
     env.set_env("PATH", &path);
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     let mut env = TestEnv::new();
@@ -228,7 +228,7 @@ fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn an_explanation_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     let mut env = TestEnv::new();
@@ -245,7 +245,7 @@ fn an_explanation_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
+// spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn an_engine_that_answers_no_free_questions_says_so() {
     let env = TestEnv::new();

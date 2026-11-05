@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/repository/attributed-commit`:
+//! `project/instrukt/spec/feature/repository/attributed-commit`:
 //! `instrukt repo commit` and `instrukt repo stamp` — the acting agent as
 //! author, its session and the caller's declaration of human involvement,
 //! nothing guessed, and commit-review notes.
@@ -97,7 +97,7 @@ fn staged(repo: &Repo) -> String {
 const MESSAGE: &str =
     "Teach the parser nested lists\n\nNested lists were flattened; they now keep their depth.";
 
-// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC1
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC1
 #[test]
 fn an_agent_commits_its_work_under_its_own_name_with_its_session() {
     let mut env = TestEnv::new();
@@ -163,7 +163,7 @@ fn an_agent_commits_its_work_under_its_own_name_with_its_session() {
     assert_eq!(staged(&repo), staged_before, "the index is untouched");
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC2
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC2
 #[test]
 fn a_developer_outside_any_session_commits_as_themselves() {
     let env = TestEnv::new();
@@ -200,7 +200,7 @@ fn a_developer_outside_any_session_commits_as_themselves() {
     insta::assert_snapshot!(commit_paths(&repo), @"notes.md");
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC3
 #[test]
 fn review_outcomes_and_exemptions_are_noted_on_each_commit_in_order() {
     let env = TestEnv::new();
@@ -306,7 +306,7 @@ fn stamp_exempt(env: &TestEnv, repo: &Repo, commit: &str, reason: &str) -> Asser
     )
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC3
 #[test]
 fn a_second_machine_stamping_after_the_first_merges_both_outcomes_onto_the_remote() {
     let env = TestEnv::new();
@@ -339,7 +339,7 @@ fn a_second_machine_stamping_after_the_first_merges_both_outcomes_onto_the_remot
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC3
 #[test]
 fn a_stamp_made_while_the_remote_is_unreachable_is_delivered_by_the_next_stamp() {
     let env = TestEnv::new();
@@ -378,7 +378,7 @@ fn a_stamp_made_while_the_remote_is_unreachable_is_delivered_by_the_next_stamp()
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/attributed-commit UC-RC3
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC3
 #[test]
 fn a_later_approval_supersedes_an_earlier_needs_work_and_both_stamps_stay() {
     let env = TestEnv::new();

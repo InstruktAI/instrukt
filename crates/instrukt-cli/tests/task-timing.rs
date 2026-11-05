@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/runner/task-timing`: `instrukt
+//! `project/instrukt/spec/feature/runner/task-timing`: `instrukt
 //! install` registers the generic wake-up — `instrukt tick` every minute —
 //! with the machine's scheduler, and the wake-up it registers is what
 //! `instrukt ticks status` then reports.
@@ -157,7 +157,7 @@ fn run_registered(registered: &Registered, cwd: &Path, at: &str) {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT3
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT3
 #[test]
 fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
     let mut project = Tracked::new(true);
@@ -182,7 +182,7 @@ fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
     insta::assert_snapshot!("installed-catch-up", project.rt.opening("s1"));
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT1
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT1
 #[test]
 fn an_authorized_task_is_dispatched_when_a_wake_up_arrives_at_its_time() {
     let mut project = Tracked::new(true);
@@ -219,19 +219,19 @@ fn missed_occurrences(policy: &str) -> usize {
     project.rt.calls().len()
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT2
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT2
 #[test]
 fn missed_occurrences_with_one_catch_up_dispatch_one_execution() {
     assert_eq!(missed_occurrences("once"), 1);
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT2
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT2
 #[test]
 fn missed_occurrences_with_skip_dispatch_nothing() {
     assert_eq!(missed_occurrences("skip"), 0);
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT4
 #[test]
 fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     let mut project = Tracked::new(true);
@@ -276,7 +276,7 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     assert_eq!(project.rt.notifications().len(), 1);
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT4
 #[test]
 fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_claim() {
     let mut project = Tracked::new(true);
@@ -322,7 +322,7 @@ fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_clai
     assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/task-timing UC-TT4
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT4
 #[test]
 fn a_replayed_start_of_a_finished_run_is_refused_and_leaves_the_current_run() {
     let mut project = Tracked::new(true);

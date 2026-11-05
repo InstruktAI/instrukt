@@ -1,5 +1,5 @@
 //! `instrukt blueprint affected` — blast radius from the latest graph
-//! (`docs/local/spec/feature/blueprint/blast-radius.md`).
+//! (`docs/project/spec/feature/blueprint/blast-radius.md`).
 //!
 //! Generation is not part of these tests: each seeds the project's store in
 //! the temporary home through the store's own publication.
@@ -97,7 +97,7 @@ fn mapped() -> Value {
         .build()
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn an_agent_learns_what_depends_on_the_files_it_changes() {
     let env = TestEnv::new();
@@ -132,7 +132,7 @@ fn an_agent_learns_what_depends_on_the_files_it_changes() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn files_with_no_dependents_say_so_and_name_the_revision() {
     let env = TestEnv::new();
@@ -151,7 +151,7 @@ fn files_with_no_dependents_say_so_and_name_the_revision() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn the_latest_graph_answers_after_a_newer_one_is_published() {
     let env = TestEnv::new();
@@ -178,7 +178,7 @@ fn the_latest_graph_answers_after_a_newer_one_is_published() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn with_no_mapped_revision_the_agent_is_told_to_explore_by_hand() {
     let env = TestEnv::new();
@@ -190,7 +190,7 @@ fn with_no_mapped_revision_the_agent_is_told_to_explore_by_hand() {
     insta::assert_snapshot!(out, @"blueprint unavailable: no graph of this project to answer from; explore by hand");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn an_unreadable_graph_is_answered_as_no_graph() {
     let env = TestEnv::new();
@@ -209,7 +209,7 @@ fn an_unreadable_graph_is_answered_as_no_graph() {
     insta::assert_snapshot!(out, @"blueprint unavailable: no graph of this project to answer from; explore by hand");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn a_file_the_engine_spells_differently_is_still_known() {
     let env = TestEnv::new();
@@ -234,7 +234,7 @@ fn a_file_the_engine_spells_differently_is_still_known() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn a_store_that_cannot_be_used_is_reported_not_answered_as_no_graph() {
     let env = TestEnv::new();
@@ -252,7 +252,7 @@ fn a_store_that_cannot_be_used_is_reported_not_answered_as_no_graph() {
     insta::assert_snapshot!(stderr, @"instrukt: cannot use the blueprint store of demo: [HOME]/.instrukt/state/blueprint/demo is not a directory; the blueprint store needs one there");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/blast-radius UC-BA1
+// spec: project/instrukt/spec/feature/blueprint/blast-radius UC-BA1
 #[test]
 fn with_the_module_off_the_command_refuses_and_names_the_switch() {
     let env = TestEnv::new();

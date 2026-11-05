@@ -1,5 +1,5 @@
 //! Compiled agent instructions from `instrukt sync`
-//! (`docs/local/spec/feature/publication/agent-entrypoints.md`).
+//! (`docs/project/spec/feature/publication/agent-entrypoints.md`).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -45,7 +45,7 @@ fn layer(slug: &str, domains: &[&str]) -> String {
     text
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
 #[test]
 fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
     let env = TestEnv::new();
@@ -56,36 +56,39 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
         .write(
             "AGENTS.master.md",
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
-             ## Required reads\n\n@docs/local/policy/house.md\n@docs/local/policy/future.md\n\n\
+             ## Required reads\n\n@docs/project/policy/house.md\n@docs/project/policy/future.md\n\n\
              ## Notes\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
              <!-- @config: project -->\n\n\
-             Written as ``@docs/local/policy/house.md`` it is quoted.\n\n\
-             ```\n@docs/local/policy/not-a-snippet.md\n```\n\n\
-             <!-- @docs/local/policy/house.md stays a comment -->\n",
+             Written as ``@docs/project/policy/house.md`` it is quoted.\n\n\
+             ```\n@docs/project/policy/not-a-snippet.md\n```\n\n\
+             <!-- @docs/project/policy/house.md stays a comment -->\n",
         )
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n")
         .write("docs/global/snippets/shared.md", "Shared guidance.\n")
         .write(
-            "docs/local/policy/house.md",
+            "docs/project/policy/house.md",
             &snippet("policy", "House", ""),
         )
         .write(
-            "docs/local/policy/future.md",
+            "docs/project/policy/future.md",
             &snippet("policy", "Future", "delivered_by: [build-future]\n"),
         )
         .write(
-            "docs/local/policy/style.md",
+            "docs/project/policy/style.md",
             &snippet("policy", "Style", ""),
         )
         .write(
-            "docs/local/procedure/release.md",
+            "docs/project/procedure/release.md",
             &snippet(
                 "procedure",
                 "Release",
                 "activation_trigger: When cutting a release.\n",
             ),
         )
-        .write("docs/local/baseline.md", "@docs/local/policy/style.md\n");
+        .write(
+            "docs/project/baseline.md",
+            "@docs/project/policy/style.md\n",
+        );
     repo.commit("instructions");
 
     env.run(repo.path(), ["sync"]).success();
@@ -143,7 +146,7 @@ fn keeps_every_member(before: &Value, after: &Value) -> bool {
     }
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/agent-entrypoints UC-AE2
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE2
 #[cfg(unix)]
 #[test]
 fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_settings() {

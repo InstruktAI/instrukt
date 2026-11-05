@@ -17,7 +17,7 @@ docs/global/acme/policy/refs.md: structure-required-reads-not-first
 docs/global/acme/policy/refs.md: reference-outside-required-reads: ~/.instrukt/docs/acme/principle/care.md
 docs/global/acme/policy/refs.md: reference-form-invalid: docs/global/acme/principle/care.md
 docs/global/acme/policy/refs.md: reference-unresolved: ~/.instrukt/docs/acme/principle/missing.md
-docs/global/acme/policy/refs.md: reference-local-from-published: docs/local/design/shape.md
+docs/global/acme/policy/refs.md: reference-local-from-published: docs/project/design/shape.md
 docs/global/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id
 docs/global/acme/principle/shape.md: structure-h1-not-first
 docs/global/acme/principle/shape.md: structure-section-missing: Tensions
@@ -30,20 +30,20 @@ docs/global/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
 docs/global/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
 docs/global/loose.md: identity-missing-domain: loose
 docs/global/snippets/runs.md: directive-exec: touch ran
-docs/local/adr/0001-choice.md: frontmatter-adr-date-invalid
-docs/local/adr/0001-choice.md: frontmatter-adr-number-invalid
-docs/local/adr/0002-pending.later.md: pending-carrier-on-adr: companion
-docs/local/adr/0002-pending.md: pending-carrier-on-adr: delivered_by
-docs/local/adr/0002-pending.md: pending-carrier-on-adr: planned
-docs/local/baseline.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/care.md
-docs/local/baseline.md: baseline-already-carried: ~/.instrukt/docs/acme/principle/care.md
-docs/local/spec/pending.Not_A_Slug.md: pending-slug-invalid: Not_A_Slug
-docs/local/spec/pending.md: pending-delivered-by-invalid: []
-docs/local/spec/pending.md: pending-slug-invalid: Bad_Slug
-docs/local/spec/pending.md: pending-marker-inline: <!-- planned:x -->
-docs/local/spec/pending.md: pending-marker-nested: <!-- planned:b -->
-docs/local/spec/pending.md: pending-marker-unbalanced: <!-- /planned:a -->
-docs/local/spec/pending.md: pending-marker-unbalanced: <!-- planned:open -->
+docs/project/adr/0001-choice.md: frontmatter-adr-date-invalid
+docs/project/adr/0001-choice.md: frontmatter-adr-number-invalid
+docs/project/adr/0002-pending.later.md: pending-carrier-on-adr: companion
+docs/project/adr/0002-pending.md: pending-carrier-on-adr: delivered_by
+docs/project/adr/0002-pending.md: pending-carrier-on-adr: planned
+docs/project/baseline.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/care.md
+docs/project/baseline.md: baseline-already-carried: ~/.instrukt/docs/acme/principle/care.md
+docs/project/spec/pending.Not_A_Slug.md: pending-slug-invalid: Not_A_Slug
+docs/project/spec/pending.md: pending-delivered-by-invalid: []
+docs/project/spec/pending.md: pending-slug-invalid: Bad_Slug
+docs/project/spec/pending.md: pending-marker-inline: <!-- planned:x -->
+docs/project/spec/pending.md: pending-marker-nested: <!-- planned:b -->
+docs/project/spec/pending.md: pending-marker-unbalanced: <!-- /planned:a -->
+docs/project/spec/pending.md: pending-marker-unbalanced: <!-- planned:open -->
 docs/third-party/tool/broken.md: frontmatter-description-missing
 docs/third-party/tool/broken.md: third-party-source-invalid: somewhere on the web
 docs/third-party/tool/broken.md: third-party-field-not-allowed: type

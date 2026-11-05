@@ -1,5 +1,5 @@
 //! The work context: the local-leading work record and its GitHub
-//! reflection (`docs/local/spec/domain/work.md`).
+//! reflection (`docs/project/spec/domain/work.md`).
 //!
 //! [`Work`] is the one capability: it keeps each project's todos in
 //! `~/.instrukt/state/work/<project>/` under a per-computer writer lock,

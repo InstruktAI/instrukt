@@ -1,4 +1,4 @@
-//! Use-case trace (`docs/local/spec/feature/blueprint/use-case-trace.md`):
+//! Use-case trace (`docs/project/spec/feature/blueprint/use-case-trace.md`):
 //! the specs context's bindings joined with reach over a graph, in both
 //! directions.
 //!
@@ -166,7 +166,7 @@ mod tests {
 
     fn reference(uc: &str) -> UseCaseRef {
         UseCaseRef {
-            spec: SnippetId::parse("local/projects/demo/spec/feature/a/b").unwrap(),
+            spec: SnippetId::parse("project/demo/spec/feature/a/b").unwrap(),
             use_case: UseCaseId::parse(uc).unwrap(),
         }
     }

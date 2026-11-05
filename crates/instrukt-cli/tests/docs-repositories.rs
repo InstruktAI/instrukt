@@ -1,6 +1,6 @@
 //! Docs repositories: a computer's doctrine comes from adopted projects
 //! that publish domains
-//! (`docs/local/spec/feature/publication/docs-repositories.md`).
+//! (`docs/project/spec/feature/publication/docs-repositories.md`).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -146,7 +146,7 @@ fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
     }
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR1
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
 #[test]
 fn adopting_a_docs_repository_publishes_its_domains() {
     let env = machine();
@@ -159,7 +159,7 @@ fn adopting_a_docs_repository_publishes_its_domains() {
     insta::assert_snapshot!("published-domains", stdout(&env, &domains));
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR1
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
 #[test]
 fn every_installed_agent_starts_with_the_doctrines_global_baseline() {
     let env = machine();
@@ -178,7 +178,7 @@ fn every_installed_agent_starts_with_the_doctrines_global_baseline() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR1
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
 #[test]
 fn another_project_reads_the_adopted_doctrine() {
     let env = machine();
@@ -194,7 +194,7 @@ fn another_project_reads_the_adopted_doctrine() {
     insta::assert_snapshot!("consumer-reads-doctrine", stdout(&env, &read));
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR2
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR2
 #[test]
 fn a_second_docs_repository_claiming_a_published_domain_is_refused_naming_the_owner() {
     let env = machine();
@@ -210,7 +210,7 @@ fn a_second_docs_repository_claiming_a_published_domain_is_refused_naming_the_ow
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR2
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR2
 #[test]
 fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version() {
     let env = machine();
@@ -247,7 +247,7 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
     insta::assert_snapshot!("consumer-reads-own-doctrine", stdout(&env, &read));
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
 fn publishing_a_project_whose_master_needs_an_unpublished_domain_names_it() {
     let env = machine();
@@ -269,12 +269,12 @@ fn workflow_consumer(env: &TestEnv) -> Repo {
             "modules: {todos: true}\nworkflow: {domain: flows}\n",
         ),
     )
-    .write("docs/local/policy/house.md", &policy("House", "Be kind."));
+    .write("docs/project/policy/house.md", &policy("House", "Be kind."));
     app.commit("app");
     app
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
 fn validating_a_project_whose_workflow_domain_is_unpublished_names_it() {
     let env = machine();
@@ -284,7 +284,7 @@ fn validating_a_project_whose_workflow_domain_is_unpublished_names_it() {
     insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `flows` is not published on this computer, but `workflow.domain` needs it; adopt a docs repository that publishes it");
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
 fn publishing_a_project_whose_workflow_domain_is_unpublished_names_it() {
     let env = machine();
@@ -294,7 +294,7 @@ fn publishing_a_project_whose_workflow_domain_is_unpublished_names_it() {
     insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `flows` is not published on this computer, but `workflow.domain` needs it; adopt a docs repository that publishes it");
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
 fn publishing_reads_the_todos_switch_from_committed_main_not_the_working_tree() {
     let env = machine();
@@ -313,7 +313,7 @@ fn publishing_reads_the_todos_switch_from_committed_main_not_the_working_tree() 
 fn dependent_consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
     app.write("instrukt.yaml", &layer("app", &[], "")).write(
-        "docs/local/concept/flow.md",
+        "docs/project/concept/flow.md",
         "---\ndescription: How work flows here.\n---\n\n# Flow — Concept\n\n\
          ## Required reads\n\n- @~/.instrukt/docs/flows/policy/rules.md\n\n\
          ## What\n\nOur flow.\n\n## Why\n\nTo ship.\n",
@@ -322,22 +322,22 @@ fn dependent_consumer(env: &TestEnv) -> Repo {
     app
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
 fn validating_a_snippet_that_requires_an_unpublished_domain_names_it() {
     let env = machine();
     let app = dependent_consumer(&env);
 
     let refused = env.run(app.path(), ["docs", "validate"]).failure();
-    insta::assert_snapshot!(stdout(&env, &refused), @"docs/local/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
+    insta::assert_snapshot!(stdout(&env, &refused), @"docs/project/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
 }
 
-// spec: local/projects/instrukt/spec/feature/publication/docs-repositories UC-DOR3
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
 fn publishing_a_snippet_that_requires_an_unpublished_domain_names_it() {
     let env = machine();
     let app = dependent_consumer(&env);
 
     let refused = env.run(app.path(), ["sync"]).failure();
-    insta::assert_snapshot!(stdout(&env, &refused), @"docs/local/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
+    insta::assert_snapshot!(stdout(&env, &refused), @"docs/project/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
 }

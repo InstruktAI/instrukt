@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/runner/event-activation`: a tick
+//! `project/instrukt/spec/feature/runner/event-activation`: a tick
 //! reads the project's watched upstream refs with `git ls-remote`, logs a
 //! change as `runner.upstream_changed`, and starts — or wakes — the
 //! standing agent of the procedure subscribed to it. The runtime is a fake
@@ -46,7 +46,7 @@ fn tick(env: &TestEnv, cwd: &std::path::Path) {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/event-activation UC-EA1
+// spec: project/instrukt/spec/feature/runner/event-activation UC-EA1
 #[test]
 fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
     let env = TestEnv::new();
@@ -103,7 +103,7 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/event-activation UC-EA1
+// spec: project/instrukt/spec/feature/runner/event-activation UC-EA1
 #[test]
 fn a_runner_killed_while_starting_the_standing_agent_waits_for_the_developer_to_resolve_it() {
     let env = TestEnv::new();

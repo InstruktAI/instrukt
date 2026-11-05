@@ -801,7 +801,7 @@ mod tests {
         let findings = check(
             &yaml(
                 "schema_version: 1\npublishes:\n  - {slug: sdlc, trigger: code}\n  \
-                 - {slug: sdlc, trigger: again}\n  - {slug: local, trigger: x}\n  \
+                 - {slug: sdlc, trigger: again}\n  - {slug: project, trigger: x}\n  \
                  - {slug: ok, trigger: '  '}\n  - {slug: other}\n  \
                  - {slug: more, trigger: t, extra: 1}\n",
             ),

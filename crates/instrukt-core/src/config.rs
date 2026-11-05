@@ -1,5 +1,5 @@
 //! The configuration context: `instrukt.yaml` in a global and a project
-//! layer (`docs/local/spec/domain/configuration.md`).
+//! layer (`docs/project/spec/domain/configuration.md`).
 //!
 //! One capability: answer, validate, migrate and safely change layered
 //! configuration. Readers take a [`Configuration`] (the effective

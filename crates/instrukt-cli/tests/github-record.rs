@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/work/github-record`: the local
+//! `project/instrukt/spec/feature/work/github-record`: the local
 //! record keeps accepted work through GitHub outages, a delivered todo's
 //! evidence can be followed on GitHub, a change made against a todo
 //! changed elsewhere is refused until refreshed, and records posted without
@@ -25,7 +25,7 @@ const PRD: &str = "Lists keep their depth through parse and render.";
 const RECORD_MARKER: &str = "<!-- instrukt:work-record:v2:";
 const CLOSE: &str = " -->";
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
+// spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
 fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
     let mut project = Project::new();
@@ -48,7 +48,7 @@ fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
+// spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
 fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending() {
     let mut project = Project::new();
@@ -75,7 +75,7 @@ fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending(
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
+// spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
 fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests() {
     let project = Project::new();
@@ -102,7 +102,7 @@ fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests(
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR1
+// spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
 fn a_revision_github_accepted_whose_answer_was_lost_completes_without_a_conflict() {
     let project = Project::new();
@@ -138,7 +138,7 @@ fn a_revision_github_accepted_whose_answer_was_lost_completes_without_a_conflict
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR2
+// spec: project/instrukt/spec/feature/work/github-record UC-GR2
 #[test]
 fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() {
     let project = Project::new();
@@ -180,7 +180,7 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
     insta::assert_snapshot!("delivery-on-github", redact(&github_view(&project)));
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR3
+// spec: project/instrukt/spec/feature/work/github-record UC-GR3
 #[test]
 fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
     let project = Project::new();
@@ -214,7 +214,7 @@ fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR3
+// spec: project/instrukt/spec/feature/work/github-record UC-GR3
 #[test]
 fn of_two_computers_recording_at_once_the_later_is_told_to_refresh() {
     let project = Project::new();
@@ -274,7 +274,7 @@ fn of_two_computers_recording_at_once_the_later_is_told_to_refresh() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR4
+// spec: project/instrukt/spec/feature/work/github-record UC-GR4
 #[test]
 fn records_posted_without_write_access_never_change_the_work_and_collaborators_still_do() {
     let project = Project::new();
@@ -527,7 +527,7 @@ fn valued_fields(project: &Project, owner: &str, number: u64) -> BTreeSet<String
         .collect()
 }
 
-// spec: local/projects/instrukt/spec/feature/work/github-record UC-GR5
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
 #[test]
 fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     let project = Project::new();

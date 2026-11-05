@@ -1,6 +1,6 @@
 //! The publication context: committed-state publication into the home,
 //! index patching by owner, entrypoint compilation and the eval fingerprint
-//! (`docs/local/spec/domain/publication.md`).
+//! (`docs/project/spec/domain/publication.md`).
 //!
 //! One operation, [`sync`]: publish the project the caller stands in from
 //! its canonical main, or do nothing when that commit is already

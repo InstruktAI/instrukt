@@ -92,22 +92,24 @@ identifier!(
 );
 
 identifier!(
-    /// A published knowledge domain (`general`, `sdlc`, …).
+    /// A published knowledge domain (`sdlc`, …), or `general`, which is
+    /// addressed like one.
     DomainName,
     "domain",
     is_domain,
-    "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit, and not a reserved name (`local`, `projects`, `project`, `snippets`)"
+    "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit, and not a reserved name (`project`, `snippets`, `third-party`)"
 );
 
 identifier!(
-    /// A snippet's derived identity, e.g. `sdlc/policy/testing` or
-    /// `local/projects/<slug>/spec/feature/<context>/<concept>` — always one
-    /// of the two qualified forms of `general/spec/snippet-authoring-schema`,
-    /// never a shorter one. A feature spec's identity is also its spec id.
+    /// A snippet's derived identity, e.g. `general/policy/x`,
+    /// `sdlc/policy/testing` or
+    /// `project/<slug>/spec/feature/<context>/<concept>` — always one of the
+    /// qualified forms of `general/spec/snippet-authoring-schema`, never a
+    /// shorter one. A feature spec's identity is also its spec id.
     SnippetId,
     "snippet id",
     is_snippet_id,
-    "`<domain>/<taxonomy>/<rest>` or `local/projects/<slug>/<taxonomy>/<rest>`"
+    "`<domain>/<taxonomy>/<rest>` or `project/<slug>/<taxonomy>/<rest>`"
 );
 
 identifier!(
@@ -231,6 +233,22 @@ impl fmt::Display for UseCaseRef {
     }
 }
 
+impl SnippetId {
+    /// Whether the id names a project snippet (`project/<slug>/…`).
+    pub fn is_project(&self) -> bool {
+        self.0.starts_with("project/")
+    }
+
+    /// The domain a published snippet's id opens with (`general`, `sdlc`,
+    /// …); `None` for a project snippet.
+    pub fn domain(&self) -> Option<DomainName> {
+        if self.is_project() {
+            return None;
+        }
+        DomainName::parse(self.0.split('/').next()?).ok()
+    }
+}
+
 fn is_slug(value: &str) -> bool {
     let mut chars = value.chars();
     match chars.next() {
@@ -240,9 +258,10 @@ fn is_slug(value: &str) -> bool {
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
 }
 
-/// Names the identity grammar and the docs tree reserve; no published
-/// domain carries one.
-const RESERVED_DOMAINS: [&str; 4] = ["local", "projects", "project", "snippets"];
+/// Names the identity grammar and the home's published tree reserve; no
+/// published domain carries one. `project` opens a project snippet's id;
+/// `snippets` and `third-party` are directories of the published tree.
+const RESERVED_DOMAINS: [&str; 3] = ["project", "snippets", "third-party"];
 
 fn is_domain(value: &str) -> bool {
     is_slug(value) && !RESERVED_DOMAINS.contains(&value)
@@ -258,7 +277,7 @@ fn is_snippet_id(value: &str) -> bool {
     }
     let segments: Vec<&str> = value.split('/').collect();
     match segments.as_slice() {
-        ["local", "projects", slug, taxonomy, rest @ ..] => {
+        ["project", slug, taxonomy, rest @ ..] => {
             is_slug(slug) && Taxonomy::from_dir(taxonomy).is_some() && !rest.is_empty()
         }
         [domain, taxonomy, rest @ ..] => {
@@ -352,7 +371,7 @@ mod tests {
     #[test]
     fn snippet_ids_are_path_shaped() {
         assert!(SnippetId::parse("sdlc/policy/rust/core").is_ok());
-        assert!(SnippetId::parse("local/projects/instrukt/spec/feature/docs/x").is_ok());
+        assert!(SnippetId::parse("project/instrukt/spec/feature/docs/x").is_ok());
         for bad in [
             "",
             "a//b",
@@ -362,19 +381,27 @@ mod tests {
             "testing",
             "sdlc/policy",
             "sdlc/notes/x",
-            "local/policy/x",
-            "projects/policy/x",
-            "local/projects/Bad/spec/x",
-            "local/projects/demo/spec",
+            "project/policy/x",
+            "local/projects/demo/spec/x",
+            "project/Bad/spec/x",
+            "project/demo/spec",
         ] {
             assert!(SnippetId::parse(bad).is_err(), "{bad} should be refused");
         }
     }
 
     #[test]
+    fn a_snippet_id_tells_its_domain_or_that_it_is_a_project_one() {
+        let general = SnippetId::parse("general/policy/x").unwrap();
+        let project = SnippetId::parse("project/demo/spec/x").unwrap();
+        assert_eq!(general.domain(), DomainName::parse("general").ok());
+        assert_eq!((project.is_project(), project.domain()), (true, None));
+    }
+
+    #[test]
     fn domains_refuse_reserved_names() {
         assert!(DomainName::parse("general").is_ok());
-        for bad in ["local", "projects", "project", "snippets", "Sdlc"] {
+        for bad in ["project", "snippets", "third-party", "Sdlc"] {
             assert!(DomainName::parse(bad).is_err(), "{bad} should be refused");
         }
     }

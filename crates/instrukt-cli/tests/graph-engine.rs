@@ -1,4 +1,4 @@
-//! A developer's own engine (`docs/local/spec/feature/blueprint/graph-engine.md`):
+//! A developer's own engine (`docs/project/spec/feature/blueprint/graph-engine.md`):
 //! a command configured in the machine's global layer receives a checkout of
 //! the pushed revision and writes contract JSON; agents' answers come from its
 //! output, and output that breaks the contract is never served.
@@ -29,7 +29,7 @@ fn mapped() -> Value {
     )
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-engine UC-BE1
+// spec: project/instrukt/spec/feature/blueprint/graph-engine UC-BE1
 #[test]
 fn answers_come_from_the_projects_own_engine_through_the_same_questions() {
     let env = machine();
@@ -56,7 +56,7 @@ fn answers_come_from_the_projects_own_engine_through_the_same_questions() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-engine UC-BE1
+// spec: project/instrukt/spec/feature/blueprint/graph-engine UC-BE1
 #[test]
 fn output_breaking_the_contract_is_never_served_and_the_previous_map_stays() {
     let env = machine();

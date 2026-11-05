@@ -2,7 +2,7 @@
 //!
 //! Identity is derived, never authored (`general/spec/snippet-authoring-schema`):
 //! `<domain>/<taxonomy>/<rest>` in the published half,
-//! `local/projects/<slug>/<taxonomy>/<rest>` in the local half.
+//! `project/<slug>/<taxonomy>/<rest>` in the local half.
 
 use std::fmt;
 
@@ -150,7 +150,7 @@ pub(super) struct Classification {
 pub enum BaselineOwner {
     /// `docs/global/<domain>/baseline.md` or `baseline-progressive.md`.
     Domain(DomainName),
-    /// `docs/local/baseline.md`.
+    /// `docs/project/baseline.md`.
     Project,
 }
 
@@ -211,7 +211,7 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
             Placement::Fragment(tail.join("/"))
         }
         ["global", tail @ ..] => place_published(tail),
-        ["local", tail @ ..] => place_local(tail, project),
+        ["project", tail @ ..] => place_project(tail, project),
         ["third-party", tail @ ..] if !tail.is_empty() => {
             match ThirdPartyId::parse(&format!("third-party/{}", tail.join("/"))) {
                 Ok(id) => Placement::ThirdParty(id),
@@ -253,7 +253,7 @@ fn place_published(tail: &[&str]) -> Placement {
     }
 }
 
-fn place_local(tail: &[&str], project: Option<&ProjectSlug>) -> Placement {
+fn place_project(tail: &[&str], project: Option<&ProjectSlug>) -> Placement {
     match tail {
         ["baseline"] => Placement::Baseline {
             owner: BaselineOwner::Project,
@@ -267,11 +267,7 @@ fn place_local(tail: &[&str], project: Option<&ProjectSlug>) -> Placement {
                 return Placement::Unplaced(Unplaced::UndeclaredProject);
             };
             classify(
-                format!(
-                    "local/projects/{project}/{}/{}",
-                    taxonomy.dir(),
-                    rest.join("/")
-                ),
+                format!("project/{project}/{}/{}", taxonomy.dir(), rest.join("/")),
                 taxonomy,
                 Scope::Project,
                 DocDomain::Project,
@@ -341,8 +337,8 @@ mod tests {
             id("sdlc/policy/rust/core")
         );
         assert_eq!(
-            id_of("docs/local/spec/feature/docs/x.md", Some(&slug())),
-            id("local/projects/demo/spec/feature/docs/x")
+            id_of("docs/project/spec/feature/docs/x.md", Some(&slug())),
+            id("project/demo/spec/feature/docs/x")
         );
     }
 
@@ -368,7 +364,7 @@ mod tests {
                 "docs/global/projects/policy/x.md",
                 Unplaced::MissingDomain("projects".into()),
             ),
-            ("docs/local/spec/x.md", Unplaced::UndeclaredProject),
+            ("docs/project/spec/x.md", Unplaced::UndeclaredProject),
             ("docs/x.md", Unplaced::Outside),
         ];
         for (rel, why) in cases {
@@ -386,7 +382,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            place("docs/local/baseline.md", None),
+            place("docs/project/baseline.md", None),
             Some(Placement::Baseline {
                 owner: BaselineOwner::Project,
                 ..
@@ -407,10 +403,10 @@ mod tests {
     #[test]
     fn companion_names_split_into_parent_and_slug() {
         assert_eq!(
-            companion_shape("docs/local/spec/a.my-todo.md"),
-            Some(("docs/local/spec/a.md".into(), "my-todo".into()))
+            companion_shape("docs/project/spec/a.my-todo.md"),
+            Some(("docs/project/spec/a.md".into(), "my-todo".into()))
         );
-        assert_eq!(companion_shape("docs/local/spec/a.md"), None);
+        assert_eq!(companion_shape("docs/project/spec/a.md"), None);
     }
 
     proptest! {
@@ -427,8 +423,8 @@ mod tests {
             let rest = rest.join("/");
             let published = id_of(&format!("docs/global/{domain}/{}/{rest}.md", tax.dir()), None);
             prop_assert_eq!(published, id(&format!("{domain}/{}/{rest}", tax.dir())));
-            let local = id_of(&format!("docs/local/{}/{rest}.md", tax.dir()), Some(&slug()));
-            prop_assert_eq!(local, id(&format!("local/projects/demo/{}/{rest}", tax.dir())));
+            let local = id_of(&format!("docs/project/{}/{rest}.md", tax.dir()), Some(&slug()));
+            prop_assert_eq!(local, id(&format!("project/demo/{}/{rest}", tax.dir())));
         }
     }
 }

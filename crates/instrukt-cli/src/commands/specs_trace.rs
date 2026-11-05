@@ -1,6 +1,6 @@
 //! Blueprint's `instrukt specs trace <spec_id> <UC-id>` and
 //! `instrukt specs trace --file <path>`
-//! (`docs/local/spec/feature/blueprint/use-case-trace.md`).
+//! (`docs/project/spec/feature/blueprint/use-case-trace.md`).
 //!
 //! The subcommand's one-line about stays on `SpecsCommand::Trace` in
 //! `specs.rs`; this file owns its arguments and answers.

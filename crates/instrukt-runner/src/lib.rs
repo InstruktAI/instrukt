@@ -1,6 +1,6 @@
 //! The runner context: module-aware dispatch, standing agents, event
 //! sources, the sessions facade and task timing
-//! (`docs/local/spec/domain/runner.md`). Shared by the `todos` and `events`
+//! (`docs/project/spec/domain/runner.md`). Shared by the `todos` and `events`
 //! modules; depends on core only.
 //!
 //! - [`interfaces`] — what the runner reads from work and workflow and

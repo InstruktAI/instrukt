@@ -56,7 +56,7 @@ This is the structural reason a service rewrite is safe under this discipline: t
 
 Documentation organizes around two snippet kinds with one-directional flow:
 
-- **Feature spec** (the hub) — describes owner-local behavior in business-value terms through its prose contract, adds Gherkin use cases when user goals warrant them, and points at the bounded contexts it touches. Lives under the context that owns the behavioral decision at `docs/local/spec/feature/<context>/<concept-name>.md`. Concept-named, NEVER slug-named — the snippet identity is the domain concept it describes, not the todo that authored or refined it. Other contexts may index the spec as consumers; that does not make them co-owners.
+- **Feature spec** (the hub) — describes owner-local behavior in business-value terms through its prose contract, adds Gherkin use cases when user goals warrant them, and points at the bounded contexts it touches. Lives under the context that owns the behavioral decision at `docs/project/spec/feature/<context>/<concept-name>.md`. Concept-named, NEVER slug-named — the snippet identity is the domain concept it describes, not the todo that authored or refined it. Other contexts may index the spec as consumers; that does not make them co-owners.
 - **Domain spec** (the spokes) — describes a bounded context's ubiquitous language, aggregates, events, and design. Its Use cases section indexes the feature specs that touch this context.
 
 Authoring flows from hub to spokes: an intake agent processes a human's input as a feature need (the hub), then identifies and updates the affected domain specs (the spokes). The reverse direction (spokes inferring hubs) is forbidden — domain concepts don't carry business value standalone; that's the feature's job.
@@ -70,7 +70,7 @@ what an observer can experience of the system?
 
 | Classification     | What it is                                                                                                                                                                  | Durable doc home                                      | Feature spec? |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------- |
-| **Behavioral**     | Behavior an observer experiences. The observer may be a human (a delivered message, a rendered screen) or an agent (a CLI surface, an event, a structured decision record). | `docs/local/spec/feature/<context>/<concept-name>.md` | **YES**       |
+| **Behavioral**     | Behavior an observer experiences. The observer may be a human (a delivered message, a rendered screen) or an agent (a CLI surface, an event, a structured decision record). | `docs/project/spec/feature/<context>/<concept-name>.md` | **YES**       |
 | **Non-behavioral** | Refactor, migration, tooling, infrastructure with no contract delta — nothing any observer experiences differently.                                                         | None — workflow.artifacts only                        | **NO**        |
 
 A feature spec states its contract in prose: rules, invariants, refusal
@@ -101,9 +101,9 @@ for the capability — short, noun-shaped, descriptive of what users get,
 stable across multiple deliveries that may shape it. Derived from the
 capability, NEVER from the todo slug.
 
-- RIGHT: `docs/local/spec/feature/agent_runtime/session-revival.md`
-- RIGHT: `docs/local/spec/feature/workflow/multi-pillar-split.md`
-- WRONG: `docs/local/spec/feature/<context>/<v2-cutover-slug>.md` (todo slug verbatim)
+- RIGHT: `docs/project/spec/feature/agent_runtime/session-revival.md`
+- RIGHT: `docs/project/spec/feature/workflow/multi-pillar-split.md`
+- WRONG: `docs/project/spec/feature/<context>/<v2-cutover-slug>.md` (todo slug verbatim)
 
 **Smell test.** If the proposed concept name equals, contains, or is an
 obvious rewording of the todo slug, you have not named a concept — you
@@ -122,8 +122,8 @@ delivery in that capability fills naturally.
 
 **The architecture design lives in doc snippets; the `architecture` workflow.artifact is only a thin index/log.** Design decisions that survive delivery land in docs across two locations:
 
-- **Per-context architectural changes** (new aggregates, new events, refined invariants, internal model adjustments) → the affected domain spec snippet at `docs/local/spec/domain/<context>.md`
-- **Cross-cutting architectural changes** (new bounded context, communication patterns, transport rules, context-map shifts, deployment shape) → the architecture design docs at `docs/local/design/architecture/*.md`
+- **Per-context architectural changes** (new aggregates, new events, refined invariants, internal model adjustments) → the affected domain spec snippet at `docs/project/spec/domain/<context>.md`
+- **Cross-cutting architectural changes** (new bounded context, communication patterns, transport rules, context-map shifts, deployment shape) → the architecture design docs at `docs/project/design/architecture/*.md`
 
 The doc-snippet updates ARE the design record — they are authoritative. The `architecture` workflow.artifact persists, but only as a thin per-todo audit log: which snippets the architecture phase touched, why, and the pending carriers that name its slug. It carries no design body and is never the source of truth. There is no `architecture` snippet kind. Decisions that don't survive (implementation tactic choices, library selection, internal sequencing) stay ephemeral in workflow.artifacts. The architecture phase routes per change: internal-to-context → domain spec; cross-cutting → design doc; or both when a change has both faces — and logs the routing in the thin artifact.
 

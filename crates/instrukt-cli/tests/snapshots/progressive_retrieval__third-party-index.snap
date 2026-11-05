@@ -10,9 +10,9 @@ acme/concept/terms: The words used.
 acme/policy/rules: The rules of the work.
 acme/procedure/start: Starts a session.
 acme/procedure/work: How the work is done.
-local/projects/demo/design/y: How y is built.
+project/demo/design/y: How y is built.
 beta/spec/thing: What a thing is.
-local/projects/demo/spec/feature/x: The x feature.
+project/demo/spec/feature/x: The x feature.
 
 # Third-party documentation (not part of the taxonomy)
 third-party/tool/guide: How the tool works.

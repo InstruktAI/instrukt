@@ -1,5 +1,5 @@
 //! The blueprint module: revision-keyed structural graphs of a project and
-//! the questions answered from them (`docs/local/spec/domain/blueprint.md`).
+//! the questions answered from them (`docs/project/spec/domain/blueprint.md`).
 //!
 //! - [`Graph`] — the graph contract and its validation of engine output.
 //! - [`GraphStore`] — the per-project store in the home: the latest complete

@@ -1,5 +1,5 @@
 //! The repository context: adoption, hook sections and attributed commits
-//! (`docs/local/spec/domain/repository.md`).
+//! (`docs/project/spec/domain/repository.md`).
 //!
 //! - [`init`] adopts a repository: project layer, docs folders, master,
 //!   docs reference filter and hook sections, never overwriting a file.

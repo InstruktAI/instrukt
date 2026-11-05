@@ -1,6 +1,6 @@
 //! The three positions documentation lives in, and the two documents a
 //! position may carry at its root: its `index.yaml` and its `schema.yaml`
-//! (`docs/local/spec/domain/docs.md`, "Position", "Position index",
+//! (`docs/project/spec/domain/docs.md`, "Position", "Position index",
 //! "Position schema").
 //!
 //! This module holds the shapes only: where a position sits in a

@@ -1,6 +1,6 @@
 //! The directive checks of validation: the format has no directive that
 //! runs a command, and what publication compiles has no runtime session
-//! (`local/projects/instrukt/spec/feature/docs/snippet-validation`,
+//! (`project/instrukt/spec/feature/docs/snippet-validation`,
 //! Directives).
 //!
 //! - An `@exec` directive in a snippet, a companion, a fragment, a

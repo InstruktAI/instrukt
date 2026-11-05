@@ -6,8 +6,8 @@ publication to the agents a machine runs — with optional modules for a work
 record, a workflow engine and event-driven standing agents.
 
 The repository is documentation-first. Start with
-`docs/local/spec/domain/context-map.md` and
-`docs/local/design/architecture/overview.md`.
+`docs/project/spec/domain/context-map.md` and
+`docs/project/design/architecture/overview.md`.
 
 ## Doctrine comes from a docs repository
 
@@ -17,7 +17,7 @@ project that declares the domains it `publishes` and is adopted with
 `instrukt init`. Its sync publishes those domains into `~/.instrukt/docs/` on
 the computer, and every project there reads them. Our docs repository publishes
 `general` and `sdlc`; fork it, change it or bring your own
-(`docs/local/spec/feature/publication/docs-repositories.md`). Until it is split
+(`docs/project/spec/feature/publication/docs-repositories.md`). Until it is split
 out, this repository is that docs repository: its `docs/global/` is the
 doctrine, and its `instrukt.yaml` declares `publishes`.
 

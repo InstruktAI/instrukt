@@ -3,9 +3,9 @@ source: crates/instrukt-cli/tests/project-initialization.rs
 expression: "stdout(&env, &again)"
 ---
 project layer (instrukt.yaml): already present
-docs folders (docs/global/, docs/local/): already present
+docs folders (docs/global/, docs/project/): already present
 master (AGENTS.master.md): already present
-local baseline (docs/local/baseline.md): already present
+local baseline (docs/project/baseline.md): already present
 docs reference filter (git config filter.instrukt-docs): already present
 filter patterns (.gitattributes): already present
 generated AGENTS.md ignore (.gitignore): already present

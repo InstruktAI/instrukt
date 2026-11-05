@@ -1,4 +1,4 @@
-//! The workflow context: derivation of obligations from configured definitions and facts, and the integration gate (`docs/local/spec/domain/workflow.md`).
+//! The workflow context: derivation of obligations from configured definitions and facts, and the integration gate (`docs/project/spec/domain/workflow.md`).
 //!
 //! The engine is one pure capability: given a loaded [`Flavor`] (definitions,
 //! actions, effects, roles and templates from a published domain's

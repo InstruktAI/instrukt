@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/specs/binding-reservation`:
+//! `project/instrukt/spec/feature/specs/binding-reservation`:
 //! `instrukt specs reserve --slug <slug> --binding <spec_id>:<UC-id>…` —
 //! a todo's planned bindings against the use cases other todos claim.
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
@@ -7,8 +7,8 @@ mod common;
 
 use common::{Repo, TestEnv};
 
-const SPEC: &str = "local/projects/demo/spec/feature/things/thing";
-const SPEC_PATH: &str = "docs/local/spec/feature/things/thing.md";
+const SPEC: &str = "project/demo/spec/feature/things/thing";
+const SPEC_PATH: &str = "docs/project/spec/feature/things/thing.md";
 
 /// A feature spec with `extra` frontmatter lines whose `### Use cases`
 /// section holds `use_cases`.
@@ -67,7 +67,7 @@ fn reserve(env: &TestEnv, repo: &Repo, slug: &str, use_cases: &[&str]) -> String
     )
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/binding-reservation UC-SR1
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
 #[test]
 fn planned_use_cases_free_or_held_by_the_requesting_todo_pass() {
     let env = TestEnv::new();
@@ -80,13 +80,13 @@ fn planned_use_cases_free_or_held_by_the_requesting_todo_pass() {
     let repo = project(&env, &spec("", &body));
     insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH1-alt", "UC-TH2", "UC-TH3"]), @r"
     exit: 0
-    clear: local/projects/demo/spec/feature/things/thing UC-TH1-alt
-    clear: local/projects/demo/spec/feature/things/thing UC-TH2
-    clear: local/projects/demo/spec/feature/things/thing UC-TH3
+    clear: project/demo/spec/feature/things/thing UC-TH1-alt
+    clear: project/demo/spec/feature/things/thing UC-TH2
+    clear: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/binding-reservation UC-SR1
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
 #[test]
 fn a_use_case_another_todo_restated_fails_naming_it_and_its_holder() {
     let env = TestEnv::new();
@@ -94,12 +94,12 @@ fn a_use_case_another_todo_restated_fails_naming_it_and_its_holder() {
     let repo = project(&env, &spec("", &body));
     insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH1", "UC-TH2"]), @r"
     exit: 3
-    clear: local/projects/demo/spec/feature/things/thing UC-TH1
-    reserved: local/projects/demo/spec/feature/things/thing UC-TH2 is held by other-work, requested by build-thing
+    clear: project/demo/spec/feature/things/thing UC-TH1
+    reserved: project/demo/spec/feature/things/thing UC-TH2 is held by other-work, requested by build-thing
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/binding-reservation UC-SR1
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
 #[test]
 fn a_spec_pending_whole_for_another_todo_holds_every_use_case_in_it() {
     let env = TestEnv::new();
@@ -107,11 +107,11 @@ fn a_spec_pending_whole_for_another_todo_holds_every_use_case_in_it() {
     let repo = project(&env, &spec("delivered_by: [other-work]\n", &body));
     insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH2"]), @r"
     exit: 3
-    reserved: local/projects/demo/spec/feature/things/thing UC-TH2 is held by other-work, requested by build-thing
+    reserved: project/demo/spec/feature/things/thing UC-TH2 is held by other-work, requested by build-thing
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/binding-reservation UC-SR1
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
 #[test]
 fn a_binding_naming_no_use_case_is_refused_as_unknown_before_any_claim_is_checked() {
     let env = TestEnv::new();
@@ -119,11 +119,11 @@ fn a_binding_naming_no_use_case_is_refused_as_unknown_before_any_claim_is_checke
     let repo = project(&env, &spec("", &body));
     insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH2", "UC-TH9"]), @r"
     exit: 4
-    unknown: local/projects/demo/spec/feature/things/thing UC-TH9 names no use case
+    unknown: project/demo/spec/feature/things/thing UC-TH9 names no use case
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/binding-reservation UC-SR1
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
 #[test]
 fn a_marker_around_only_an_inheriting_scenario_does_not_reserve_its_use_case() {
     let env = TestEnv::new();
@@ -133,6 +133,6 @@ fn a_marker_around_only_an_inheriting_scenario_does_not_reserve_its_use_case() {
     let repo = project(&env, &spec("", body));
     insta::assert_snapshot!(reserve(&env, &repo, "build-thing", &["UC-TH1"]), @r"
     exit: 0
-    clear: local/projects/demo/spec/feature/things/thing UC-TH1
+    clear: project/demo/spec/feature/things/thing UC-TH1
     ");
 }

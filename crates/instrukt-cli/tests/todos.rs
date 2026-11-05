@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/work/todos`: project work recorded
+//! `project/instrukt/spec/feature/work/todos`: project work recorded
 //! as todos with explicit kinds, and withdrawn work recovered under its
 //! identity.
 #![allow(
@@ -25,7 +25,7 @@ fn identity(created: &str) -> String {
         .to_owned()
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD4
+// spec: project/instrukt/spec/feature/work/todos UC-TD4
 #[test]
 fn a_reused_name_gives_the_new_work_and_earlier_work_is_reached_by_its_address() {
     let project = Project::new();
@@ -51,7 +51,7 @@ fn a_reused_name_gives_the_new_work_and_earlier_work_is_reached_by_its_address()
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD5
+// spec: project/instrukt/spec/feature/work/todos UC-TD5
 #[test]
 fn withdrawal_releases_the_working_copy_and_branch_and_refuses_while_work_would_be_lost() {
     let project = Project::new();
@@ -117,7 +117,7 @@ fn withdrawal_releases_the_working_copy_and_branch_and_refuses_while_work_would_
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD1
+// spec: project/instrukt/spec/feature/work/todos UC-TD1
 #[test]
 fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity() {
     let project = Project::new();
@@ -132,7 +132,7 @@ fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity()
     insta::assert_snapshot!("recorded", redact(&format!("{filed}---\n{shown}")));
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
+// spec: project/instrukt/spec/feature/work/todos UC-TD2
 #[test]
 fn work_withdrawn_on_another_computer_is_restored_there_under_its_identity() {
     let project = Project::new();
@@ -160,7 +160,7 @@ fn work_withdrawn_on_another_computer_is_restored_there_under_its_identity() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
+// spec: project/instrukt/spec/feature/work/todos UC-TD2
 #[test]
 fn a_name_two_withdrawn_todos_carried_restores_neither_until_one_is_addressed() {
     let project = Project::new();
@@ -198,7 +198,7 @@ fn a_name_two_withdrawn_todos_carried_restores_neither_until_one_is_addressed() 
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
+// spec: project/instrukt/spec/feature/work/todos UC-TD2
 #[test]
 fn withdrawn_work_is_restored_with_its_intent_and_evidence_under_its_identity() {
     let project = Project::new();
@@ -225,7 +225,7 @@ fn withdrawn_work_is_restored_with_its_intent_and_evidence_under_its_identity() 
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD2
+// spec: project/instrukt/spec/feature/work/todos UC-TD2
 #[test]
 fn withdrawn_work_past_its_recovery_window_is_gone_and_cannot_be_restored() {
     let mut project = Project::new();
@@ -257,7 +257,7 @@ fn withdrawn_work_past_its_recovery_window_is_gone_and_cannot_be_restored() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/work/todos UC-TD3
+// spec: project/instrukt/spec/feature/work/todos UC-TD3
 #[test]
 fn filing_changing_preparing_and_working_on_a_todo_name_the_switch_while_tracking_is_off() {
     let project = Project::new();

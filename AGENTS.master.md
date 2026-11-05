@@ -7,8 +7,8 @@ agents through progressive retrieval and publication.
 
 ## Required reads
 
-@docs/local/spec/domain/context-map.md
-@docs/local/design/architecture/overview.md
-@docs/local/policy/testing.md
+@docs/project/spec/domain/context-map.md
+@docs/project/design/architecture/overview.md
+@docs/project/policy/testing.md
 
 <!-- LOCKED_FILE: edit only when the human explicitly requests this master change. -->

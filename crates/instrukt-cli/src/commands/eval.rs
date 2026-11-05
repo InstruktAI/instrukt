@@ -1,5 +1,5 @@
 //! Evaluation command: `instrukt eval report`
-//! (`local/projects/instrukt/spec/feature/work/eval-report`).
+//! (`project/instrukt/spec/feature/work/eval-report`).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

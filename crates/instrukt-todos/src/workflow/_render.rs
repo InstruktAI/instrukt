@@ -1,5 +1,5 @@
 //! Placeholder rendering for commands and templates
-//! (`docs/local/spec/domain/workflow.md`, "Flavor-facing contract").
+//! (`docs/project/spec/domain/workflow.md`, "Flavor-facing contract").
 //!
 //! A placeholder is `{name}`, `name` being dot-separated segments of ASCII
 //! letters, digits, `_` and `-`. Any other brace text is literal, and so is

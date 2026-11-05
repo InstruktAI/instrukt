@@ -1,6 +1,6 @@
 //! The eval fingerprint: a digest of every published snippet that declares
 //! `eval: true`, recorded per published commit
-//! (`local/projects/instrukt/spec/feature/publication/eval-fingerprint`).
+//! (`project/instrukt/spec/feature/publication/eval-fingerprint`).
 
 use std::path::PathBuf;
 

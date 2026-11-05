@@ -17,7 +17,7 @@ visibility: 'public'
    label, is caught at review against `sdlc/concept/functional-test-boundary`. The
    discipline lives in the definition and the review.
 
-2. **Test files mirror the feature spec.** A spec at `docs/local/spec/feature/<domain>/<slug>.md`
+2. **Test files mirror the feature spec.** A spec at `docs/project/spec/feature/<domain>/<slug>.md`
    is covered by `tests/<domain>/test_<slug>.py`. Contract-defining tooling (wrappers, git filters)
    is not tested — see the generic policy.
 3. **Bind scenarios with the marker** `@pytest.mark.spec("<spec_id>", "<UC-id>")`.

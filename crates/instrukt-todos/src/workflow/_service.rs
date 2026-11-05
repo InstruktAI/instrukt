@@ -1,7 +1,7 @@
 //! Workflow against the record: `instrukt todo prepare|work` (deliberate
 //! pickup, then the next obligation), the runner's
 //! [`WorkflowAssignments`], and core's [`FlavorRoles`]
-//! (`docs/local/spec/domain/workflow.md`, "Flavor-facing contract").
+//! (`docs/project/spec/domain/workflow.md`, "Flavor-facing contract").
 //!
 //! Each call loads the selected flavor, reads the todo's evidence through
 //! work's [`WorkEvidence`], observes the repository, derives facts and

@@ -21,20 +21,20 @@ pub const MASTER_FILE: &str = "AGENTS.master.md";
 /// The generated instruction file a master compiles into.
 pub const GENERATED_FILE: &str = "AGENTS.md";
 /// The project's own baseline manifest a seeded master requires.
-pub const LOCAL_BASELINE: &str = "docs/local/baseline.md";
+pub const LOCAL_BASELINE: &str = "docs/project/baseline.md";
 /// The docs folders adoption creates.
-const DOCS_FOLDERS: [&str; 2] = ["docs/global", "docs/local"];
+const DOCS_FOLDERS: [&str; 2] = ["docs/global", "docs/project"];
 
 /// A part of adoption, in the order `init` establishes them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitPart {
     /// `instrukt.yaml` at the repository root.
     ProjectLayer,
-    /// `docs/global/` and `docs/local/`.
+    /// `docs/global/` and `docs/project/`.
     DocsFolders,
     /// `AGENTS.master.md` at the repository root.
     Master,
-    /// `docs/local/baseline.md`, the manifest a seeded master requires.
+    /// `docs/project/baseline.md`, the manifest a seeded master requires.
     LocalBaseline,
     /// The `instrukt-docs` filter in the repository's git configuration.
     DocsFilter,
@@ -54,7 +54,7 @@ pub enum PartOutcome {
     Completed,
     AlreadyPresent,
     /// Not written: a hand-written `AGENTS.md` exists without a master, so
-    /// its content must first move into a `docs/local` snippet.
+    /// its content must first move into a `docs/project` snippet.
     Withheld,
 }
 

@@ -194,7 +194,7 @@ WHERE durable docs land — that's intake's classification job
 Concrete signals of leakage in `input` — each is a defect:
 
 - **Naming specific feature-spec, domain-spec, or design-doc paths.** Inputs
-  that say "author `docs/local/spec/feature/<x>/<y>.md`" are prescribing
+  that say "author `docs/project/spec/feature/<x>/<y>.md`" are prescribing
   doc routing the author may have classified wrong. Especially toxic when
   the path contains the todo slug, because the intake worker takes the
   string literally and creates a slug-named non-feature snippet — exactly
@@ -604,7 +604,7 @@ Plans must provide enough detail for a builder to execute without guessing:
 - **Every task begins with references to the upstream items it delivers** —
   by artifact path and section header, e.g.
   `Delivers: prd#criterion-a, prd#criterion-b, architecture#event-naming,
-docs/local/spec/feature/workflow/todo-rename#scenario-rename-conflict`. The task body then describes the work
+docs/project/spec/feature/workflow/todo-rename#scenario-rename-conflict`. The task body then describes the work
   and must name each referenced item in its delivery description — showing
   which change satisfies which reference. A task that references items it
   does not deliver, or delivers work not traceable to any referenced upstream

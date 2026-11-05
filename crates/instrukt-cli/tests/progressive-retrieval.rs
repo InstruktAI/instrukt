@@ -1,5 +1,5 @@
 //! `instrukt docs index|get`
-//! (`docs/local/spec/feature/docs/progressive-retrieval.md`).
+//! (`docs/project/spec/feature/docs/progressive-retrieval.md`).
 //!
 //! Every home is published by the real `instrukt sync` from temporary
 //! project repositories (`support/documented.rs`).
@@ -51,7 +51,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 &[CARE],
                 "Follow the rules.\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
                  <!-- @include: docs/snippets/missing.md -->\n\n\
-                 A reference is written `@docs/local/design/y.md`, for example:\n\n\
+                 A reference is written `@docs/project/design/y.md`, for example:\n\n\
                  ```\n- @~/.instrukt/docs/acme/principle/care.md\n```\n",
             ),
         ),
@@ -106,23 +106,23 @@ fn demo_files() -> Vec<(&'static str, String)> {
             "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n".to_owned(),
         ),
         (
-            "docs/local/spec/feature/x.md",
+            "docs/project/spec/feature/x.md",
             snippet(
                 "spec",
                 "X",
                 "The x feature.",
                 "",
-                &["- @docs/local/design/y.md"],
+                &["- @docs/project/design/y.md"],
                 "The x feature.\n",
             ),
         ),
         (
-            "docs/local/design/y.md",
+            "docs/project/design/y.md",
             snippet("design", "Y", "How y is built.", "", &[], "Y.\n"),
         ),
         (
-            "docs/local/baseline.md",
-            "@docs/local/design/y.md\n".to_owned(),
+            "docs/project/baseline.md",
+            "@docs/project/design/y.md\n".to_owned(),
         ),
     ]
 }
@@ -134,7 +134,7 @@ fn published_demo(env: &TestEnv) -> Repo {
     demo
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
     let env = TestEnv::new();
@@ -178,7 +178,7 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
     insta::assert_snapshot!("fragment-required-read-not-loaded", stdout(&env, &start));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn an_agent_sees_its_own_project_and_reads_another_projects_local_documentation() {
     let env = TestEnv::new();
@@ -188,7 +188,7 @@ fn an_agent_sees_its_own_project_and_reads_another_projects_local_documentation(
         "other",
         &[],
         &[(
-            "docs/local/concept/notes.md",
+            "docs/project/concept/notes.md",
             snippet("concept", "Notes", "Other's notes.", "", &[], "Notes.\n"),
         )],
     );
@@ -211,23 +211,17 @@ fn an_agent_sees_its_own_project_and_reads_another_projects_local_documentation(
     insta::assert_snapshot!("other-project-index", stdout(&env, &others));
 
     let read = env
-        .run(
-            &outside,
-            ["docs", "get", "local/projects/other/concept/notes"],
-        )
+        .run(&outside, ["docs", "get", "project/other/concept/notes"])
         .success();
     insta::assert_snapshot!("other-project-local-read", stdout(&env, &read));
 
     let local = env
-        .run(
-            demo.path(),
-            ["docs", "get", "local/projects/demo/spec/feature/x"],
-        )
+        .run(demo.path(), ["docs", "get", "project/demo/spec/feature/x"])
         .success();
     insta::assert_snapshot!("own-local-read", stdout(&env, &local));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn an_agent_narrows_to_baselines_and_adds_third_party_documentation() {
     let env = TestEnv::new();
@@ -249,7 +243,7 @@ fn an_agent_narrows_to_baselines_and_adds_third_party_documentation() {
     insta::assert_snapshot!("third-party-read", stdout(&env, &guide));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
     let env = TestEnv::new();
@@ -277,7 +271,7 @@ fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
     insta::assert_snapshot!("general-owner-third-party-read", stdout(&env, &guide));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn the_general_owner_is_known_by_its_publisher_record_even_without_snippets() {
     let env = TestEnv::new();
@@ -307,7 +301,7 @@ fn the_general_owner_is_known_by_its_publisher_record_even_without_snippets() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn an_agent_is_warned_when_main_is_ahead_of_what_was_published() {
     let env = TestEnv::new();
@@ -333,7 +327,7 @@ fn an_agent_is_warned_when_main_is_ahead_of_what_was_published() {
     insta::assert_snapshot!("get-behind-main", read);
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
 fn an_agent_asking_for_what_is_not_there_is_told_so() {
     let env = TestEnv::new();
@@ -369,9 +363,9 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
         .success();
     insta::assert_snapshot!("unknown-project", stdout(&env, &nobody));
 
-    std::fs::remove_file(demo.path().join("docs/local/design/y.md")).unwrap();
+    std::fs::remove_file(demo.path().join("docs/project/design/y.md")).unwrap();
     let missing = env
-        .run(demo.path(), ["docs", "get", "local/projects/demo/design/y"])
+        .run(demo.path(), ["docs", "get", "project/demo/design/y"])
         .failure();
     insta::assert_snapshot!("missing-local-file", stderr(&env, &missing));
 }
@@ -455,7 +449,7 @@ fn refused_closure(env: &TestEnv, demo: &Repo, id: &str) -> String {
     stderr(env, &refused)
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     let env = TestEnv::new();
@@ -472,7 +466,7 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     insta::assert_snapshot!("closure", stdout(&env, &closure));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn a_closure_whose_required_read_is_pending_is_refused_naming_it() {
     let env = TestEnv::new();
@@ -483,7 +477,7 @@ fn a_closure_whose_required_read_is_pending_is_refused_naming_it() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn a_closure_whose_fragment_requires_a_pending_read_is_refused_naming_it() {
     let env = TestEnv::new();
@@ -494,7 +488,7 @@ fn a_closure_whose_fragment_requires_a_pending_read_is_refused_naming_it() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn a_closure_whose_required_read_cannot_be_read_is_refused_naming_it() {
     let env = TestEnv::new();
@@ -505,7 +499,7 @@ fn a_closure_whose_required_read_cannot_be_read_is_refused_naming_it() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn a_closure_is_read_for_exactly_one_procedure() {
     let env = TestEnv::new();
@@ -526,7 +520,7 @@ fn a_closure_is_read_for_exactly_one_procedure() {
     insta::assert_snapshot!("closure-of-two-ids", stderr(&env, &two));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
 fn a_closure_is_read_only_for_a_procedure() {
     let env = TestEnv::new();
@@ -558,7 +552,7 @@ fn machine(env: &TestEnv) {
     std::fs::write(env.instrukt_home().join("instrukt.yaml"), RUNTIMES).unwrap();
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
 fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
     let mut env = TestEnv::new();
@@ -600,7 +594,7 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
 fn each_agent_reads_the_value_of_the_project_it_stands_in() {
     let env = TestEnv::new();
@@ -650,7 +644,7 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
     insta::assert_snapshot!("value-outside-projects", stdout(&env, &refused));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
 fn a_value_that_cannot_be_resolved_is_named_with_why_and_the_read_fails() {
     let env = TestEnv::new();
@@ -679,7 +673,7 @@ fn a_value_that_cannot_be_resolved_is_named_with_why_and_the_read_fails() {
     insta::assert_snapshot!("unresolved-values", stdout(&env, &failed));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR3
 #[test]
 fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when_read() {
     let env = TestEnv::new();
@@ -719,7 +713,7 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
         &snippet("procedure", "Runs", "Runs nothing.", "", &[], "Nothing.\n"),
     )
     .write(
-        "docs/local/procedure/later.md",
+        "docs/project/procedure/later.md",
         &snippet(
             "procedure",
             "Later",
@@ -731,12 +725,9 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
     );
     demo.commit("docs: no commands");
     sync(&env, &demo);
-    demo.write("docs/local/procedure/later.md", &runs("Later"));
+    demo.write("docs/project/procedure/later.md", &runs("Later"));
     let read = env
-        .run(
-            demo.path(),
-            ["docs", "get", "local/projects/demo/procedure/later"],
-        )
+        .run(demo.path(), ["docs", "get", "project/demo/procedure/later"])
         .success();
     assert!(!marker.exists(), "the leftover command never ran");
     insta::assert_snapshot!("leftover-command-inert", stdout(&env, &read));

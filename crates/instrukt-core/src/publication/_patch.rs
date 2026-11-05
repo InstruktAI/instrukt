@@ -295,7 +295,7 @@ mod tests {
     }
 
     fn entry(id: &str, owner: &str) -> IndexEntry {
-        let global = !id.starts_with("local/");
+        let global = !id.starts_with("project/");
         IndexEntry {
             id: SnippetId::parse(id).unwrap(),
             description: format!("about {id}"),
@@ -358,12 +358,12 @@ mod tests {
 
     #[test]
     fn an_id_held_by_another_project_is_refused_naming_its_owner() {
-        let before = index(vec![entry("local/projects/same/spec/a", "first")]);
-        let new = contribution("second", &[], &["local/projects/same/spec/a"]);
+        let before = index(vec![entry("project/same/spec/a", "first")]);
+        let new = contribution("second", &[], &["project/same/spec/a"]);
         assert_eq!(
             patch(&before, &BTreeMap::new(), &new),
             Err(Claim::DuplicateId {
-                id: "local/projects/same/spec/a".into(),
+                id: "project/same/spec/a".into(),
                 owner: slug("first"),
             })
         );

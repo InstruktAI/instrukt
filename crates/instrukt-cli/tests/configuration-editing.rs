@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/configuration/configuration-editing`:
+//! `project/instrukt/spec/feature/configuration/configuration-editing`:
 //! `instrukt config init|get|patch` — revision checks, whole-document
 //! validation and atomic writes.
 #![allow(
@@ -48,7 +48,7 @@ fn patch(env: &TestEnv, repo: &Repo, revision: &str, yaml: &str) -> Assert {
     )
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn a_patch_from_the_current_revision_changes_only_what_it_names() {
     let env = TestEnv::new();
@@ -111,7 +111,7 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
     assert_eq!(layer(&repo)["approvals"], approvals);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn a_patch_from_a_stale_revision_is_refused_and_writes_nothing() {
     let env = TestEnv::new();
@@ -125,7 +125,7 @@ fn a_patch_from_a_stale_revision_is_refused_and_writes_nothing() {
     assert_eq!(repo.read("instrukt.yaml"), content);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn of_two_patches_from_one_revision_exactly_one_lands() {
     let env = TestEnv::new();
@@ -159,7 +159,7 @@ fn of_two_patches_from_one_revision_exactly_one_lands() {
     assert_eq!(actions, Some(1), "only the winning patch is stored");
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn a_patch_leaving_the_configuration_invalid_is_refused_naming_what_is_wrong() {
     let env = TestEnv::new();
@@ -181,7 +181,7 @@ fn a_patch_leaving_the_configuration_invalid_is_refused_naming_what_is_wrong() {
     assert_eq!(revision(&env, repo.path()), read);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
 fn a_machine_without_configuration_is_initialized_without_a_project_identity() {
     let env = TestEnv::new();
@@ -219,7 +219,7 @@ fn a_machine_without_configuration_is_initialized_without_a_project_identity() {
         .success();
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
 fn a_project_without_configuration_is_named_after_its_folder() {
     let env = TestEnv::new();
@@ -247,7 +247,7 @@ fn a_project_without_configuration_is_named_after_its_folder() {
     env.run(repo.path(), ["config", "validate"]).success();
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
 fn a_linked_worktree_is_named_after_the_primary_worktree() {
     let env = TestEnv::new();
@@ -270,7 +270,7 @@ fn a_linked_worktree_is_named_after_the_primary_worktree() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
 fn an_empty_project_identity_is_refused() {
     let env = TestEnv::new();
@@ -280,7 +280,7 @@ fn an_empty_project_identity_is_refused() {
     assert!(!repo.path().join("instrukt.yaml").exists());
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
 fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
@@ -291,7 +291,7 @@ fn existing_configuration_at_the_current_schema_is_kept() {
     assert_eq!(repo.read("instrukt.yaml"), layer);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE2
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
 fn existing_configuration_of_a_newer_schema_is_refused() {
     let env = TestEnv::new();
@@ -306,7 +306,7 @@ fn existing_configuration_of_a_newer_schema_is_refused() {
     assert_eq!(repo.read("instrukt.yaml"), layer);
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/configuration-editing UC-CE1
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn a_patched_on_or_off_setting_is_written_as_a_string_every_yaml_reader_keeps() {
     let env = TestEnv::new();

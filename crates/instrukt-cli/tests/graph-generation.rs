@@ -1,5 +1,5 @@
 //! Graph generation per pushed revision of main
-//! (`docs/local/spec/feature/blueprint/graph-generation.md`): a push hands
+//! (`docs/project/spec/feature/blueprint/graph-generation.md`): a push hands
 //! the revision to a detached generation through instrukt's pre-push
 //! section, answers follow the mapped revision and name it, and a failed
 //! generation leaves the last complete map in place.
@@ -41,7 +41,7 @@ fn second_map() -> Value {
     )
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn a_push_completes_before_the_map_and_answers_then_reflect_the_pushed_revision() {
     let env = machine();
@@ -67,7 +67,7 @@ fn a_push_completes_before_the_map_and_answers_then_reflect_the_pushed_revision(
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn revisions_pushed_while_one_is_mapped_wait_and_only_the_newest_is_mapped_next() {
     let env = machine();
@@ -102,7 +102,7 @@ fn revisions_pushed_while_one_is_mapped_wait_and_only_the_newest_is_mapped_next(
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn a_failed_generation_leaves_answers_on_the_last_complete_map_and_is_named() {
     let env = machine();
@@ -129,7 +129,7 @@ fn a_failed_generation_leaves_answers_on_the_last_complete_map_and_is_named() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn without_the_shipped_engine_installed_the_status_says_what_to_install() {
     let env = machine_without_graphify();
@@ -147,7 +147,7 @@ fn without_the_shipped_engine_installed_the_status_says_what_to_install() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn a_mapping_that_finished_but_is_not_yet_recorded_reads_as_running_then_mapped() {
     let env = machine();
@@ -190,7 +190,7 @@ fn a_mapping_that_finished_but_is_not_yet_recorded_reads_as_running_then_mapped(
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn an_interrupted_mapping_is_reported_and_answers_stay_on_the_last_complete_map() {
     let env = machine();
@@ -225,7 +225,7 @@ fn an_interrupted_mapping_is_reported_and_answers_stay_on_the_last_complete_map(
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn an_engine_left_running_by_an_interrupted_worker_is_never_joined_by_a_second() {
     let env = machine();
@@ -256,7 +256,7 @@ fn an_engine_left_running_by_an_interrupted_worker_is_never_joined_by_a_second()
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
 #[test]
 fn an_engine_left_hanging_past_its_time_limit_is_ended_for_the_next_revision() {
     let mut env = machine();

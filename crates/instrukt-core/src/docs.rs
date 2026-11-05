@@ -1,5 +1,5 @@
 //! The docs context: the snippet model, its structural validation and
-//! pending documentation (`docs/local/spec/domain/docs.md`).
+//! pending documentation (`docs/project/spec/domain/docs.md`).
 //!
 //! Callers ask for the parsed documentation of a repository
 //! ([`Corpus::load`], or [`Corpus::from_sources`] for a committed
@@ -150,7 +150,7 @@ pub enum DocsError {
     #[error(transparent)]
     Config(#[from] ConfigError),
     /// A project needs a domain no adopted docs repository publishes on
-    /// this computer (`local/projects/instrukt/spec/feature/publication/docs-repositories`).
+    /// this computer (`project/instrukt/spec/feature/publication/docs-repositories`).
     #[error(
         "domain `{domain}` is not published on this computer, but {required_by} needs it; adopt a docs repository that publishes it"
     )]

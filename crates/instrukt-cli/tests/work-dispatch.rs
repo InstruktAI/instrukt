@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/runner/work-dispatch`: a wake-up
+//! `project/instrukt/spec/feature/runner/work-dispatch`: a wake-up
 //! dispatches eligible work into the procedure declaring its lane's
 //! orchestrator role when the project chose automatic pickup, and leaves
 //! it for a deliberate start otherwise; with both the todos and events
@@ -19,7 +19,7 @@ use common::TestEnv;
 use flavor::Tracked;
 use runtime::{FakeRuntime, global_layer};
 
-// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn with_automatic_pickup_eligible_work_is_dispatched_to_an_agent() {
     let project = Tracked::new(true);
@@ -53,7 +53,7 @@ fn create_change(project: &Tracked) {
     ]);
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn a_project_choosing_automatic_pickup_in_its_own_layer_is_dispatched_by_the_machines_wake_up() {
     // The machine's global layer leaves work tracking off; only the
@@ -66,7 +66,7 @@ fn a_project_choosing_automatic_pickup_in_its_own_layer_is_dispatched_by_the_mac
     assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() {
     let mut project = Tracked::new(true);
@@ -85,7 +85,7 @@ fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() 
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command_reflects_the_claim()
  {
@@ -119,7 +119,7 @@ fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command
     assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD1
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
     let project = Tracked::new(false);
@@ -137,7 +137,7 @@ fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
     assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/work-dispatch UC-RD2
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD2
 #[test]
 fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both() {
     let env = TestEnv::new();

@@ -4,7 +4,7 @@
 //! One rendering takes a text through, in order: the frontmatter strip, the
 //! `@include` expansion, the planned lens, the `@config` configured values,
 //! the inline references and the `Required reads` strip
-//! (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`, read
+//! (`project/instrukt/spec/feature/docs/progressive-retrieval`, read
 //! pipeline). The lens goes before `@config`, so hidden content is never
 //! resolved. Nothing runs a command: a leftover `@exec` stays inert text.
 //!

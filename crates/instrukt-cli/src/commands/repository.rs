@@ -50,7 +50,7 @@ pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 fn part_label(part: InitPart) -> String {
     match part {
         InitPart::ProjectLayer => "project layer (instrukt.yaml)".to_owned(),
-        InitPart::DocsFolders => "docs folders (docs/global/, docs/local/)".to_owned(),
+        InitPart::DocsFolders => "docs folders (docs/global/, docs/project/)".to_owned(),
         InitPart::Master => format!("master ({MASTER_FILE})"),
         InitPart::LocalBaseline => format!("local baseline ({LOCAL_BASELINE})"),
         InitPart::DocsFilter => format!(
@@ -70,7 +70,7 @@ fn part_outcome(part: InitPart, outcome: PartOutcome) -> String {
         PartOutcome::AlreadyPresent => "already present".to_owned(),
         PartOutcome::Withheld => match part {
             InitPart::Master => format!(
-                "not seeded: {GENERATED_FILE} is hand-written; move its content into a docs/local snippet, remove {GENERATED_FILE} (it becomes generated) and run `instrukt init` again"
+                "not seeded: {GENERATED_FILE} is hand-written; move its content into a docs/project snippet, remove {GENERATED_FILE} (it becomes generated) and run `instrukt init` again"
             ),
             _ => "not written".to_owned(),
         },
