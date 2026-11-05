@@ -7,28 +7,25 @@ visibility: 'public'
 
 ## Rules
 
-- Use inline `@` references only for **static Required reads declarations** in published agent artifacts and documentation snippets. They are expanded when those artifacts are assembled.
-- Runtime-generated briefs, formatter messages, and peer messages must never use inline `@` references. Name the canonical snippet ID and, when needed, the `instrukt docs get <id>` invocation instead. Expanding a reference into an already-running session duplicates context and bypasses that session's own required-read discipline.
-- Global doc references use the tilde form `@~/.instrukt/docs/...`, as
-  committed. The `instrukt-docs` git smudge filter expands `@~/.instrukt` to
-  `@$HOME/.instrukt` in the working tree and restores the tilde form on commit.
-  No home variable appears in docs.
-- A published domain's generated baseline bundle is a valid global Required Read at
-  `@~/.instrukt/docs/<domain>/bundle.md`. This exact generated-artifact
-  shape is the sole exception to the taxonomy-segment requirement. Validation accepts it only
-  for a published domain, and publication generates it before compiling agent entrypoints.
-- A generated global documentation artifact resolves to the published generation, never to a
-  publisher source tree. The global index and every published domain's baseline bundle are the
-  artifacts this covers; every authored global snippet resolves to the project that owns it.
-- Local doc references use `@docs/local/...`, relative to the root of the
-  project that holds both the referencing and the referenced snippet.
-- A published snippet never references local material, neither as a Required
+- A reference names a snippet by its id — `general/policy/leadership`,
+  `sdlc/spec/domain-spec`, `project/<slug>/spec/domain/<context>` — in
+  `## Required reads`, in See Also and in prose citations alike. It never names
+  a file path or a home location; the CLI resolves the id. A code reference
+  stays a repository-relative path.
+- A `## Required reads` entry may name a domain by its bare name (`sdlc`). It
+  stands for that domain's `expanded` set with its closure, the content
+  `instrukt docs get --domain <x>` renders in full.
+- Required reads are static declarations in documentation snippets. A runtime-generated brief, formatter message, or peer message that needs a snippet read names its id and, when needed, the `instrukt docs get <id>` invocation, so the receiving session performs the read under its own required-read discipline.
+- A required read names only what the snippet needs beyond the closure of its
+  other required reads. A read another read already implies is a validation
+  finding that names the read implying it.
+- A published snippet never references project material, neither as a Required
   read nor as a citation. It states the general contract. How one project realizes
-  that contract lives in the project's own local snippets, which agents working
+  that contract lives in the project's own snippets, which agents working
   there load themselves.
-- A local snippet references its own project's local snippets or published ones,
-  never another project's local snippets.
-- A placeholder pattern that names the reader's own project — `local/projects/<slug>/…`
+- A project snippet references its own project's snippets or published ones,
+  never another project's snippets.
+- A placeholder pattern that names the reader's own project — `project/<slug>/…`
   where `<slug>` is the reader's project — is a pattern, not a reference, and may
   appear in any snippet.
 - Third-party sources must appear under **See also** only (soft references).
@@ -58,13 +55,18 @@ visibility: 'public'
 
 ## Rationale
 
-- Inline `@` references are the single enforced mechanism for mandatory reading declared by a static artifact. Runtime instructions name the required snippet without expanding it so the receiving session controls the read once.
-- A stable global root (`~/.instrukt/docs`, committed in the tilde form)
-  prevents ambiguity across repos. The smudge filter expands it per machine, so
-  refs remain machine-local but consistent within one operator's environment.
-- Repo‑relative `@docs/...` keeps project docs portable and consistent.
-- A published snippet is read in every project, and a local snippet only in its
-  own. A citation into local material is a dead end for every other reader, and
+- Required reads are the single enforced mechanism for mandatory reading declared by a static artifact. Runtime instructions name the required snippet without rendering it so the receiving session controls the read once.
+- An id is the same from every location and every computer, while a path names
+  one machine's layout. Resolving ids in the CLI keeps snippets free of home
+  paths and lets the same text be read anywhere.
+- A domain's `expanded` set is what everything in that domain needs; naming the
+  domain keeps the dependency on that set as it changes, where copying its ids
+  would go stale.
+- A closure is additive: a reader receives everything every read implies. A
+  read that another read already implies adds no knowledge and hides which
+  read the snippet actually depends on.
+- A published snippet is read in every project, and a project snippet only in its
+  own. A citation into project material is a dead end for every other reader, and
   it ties the general contract to one project's implementation. The dependency runs
   from the specific toward the general, never the reverse.
 - Soft references prevent third-party docs from being auto-included in agent context.
@@ -74,24 +76,17 @@ visibility: 'public'
 - A citation is only reviewed when something touches it. Reviewing every
   citation in a changed snippet, and every citer of a changed owner, catches
   drift from both directions without opening review to unrelated content.
-- An authored global snippet resolves to its publisher source because that source is readable
-  before a host has published anything. A generated artifact has no such source, so the same
-  mapping substitutes a file nothing regenerates for the one the reference names. The substitute
-  keeps resolving, so the reference looks healthy while its content stops tracking the sources it
-  was generated from, and every artifact compiled from it inherits the stale copy with no check
-  failing.
 
 ## Scope
 
 - Applies to all AI agents, all repositories, and all documentation references in static artifacts or runtime messages.
-- Static-declaration rules apply to `AGENTS.md`, baseline indexes, and any doc snippet that requires prerequisites.
+- Static-declaration rules apply to every doc snippet that requires prerequisites and to the `index.yaml` entries that name snippets.
 
 ## Enforcement
 
 - Static Required reads must appear in a `Required reads` section immediately after the H1 title.
-- Static Required reads must use inline `@` references only.
-- Runtime brief, formatter, and peer-message output containing an inline `@` documentation reference is a defect.
-- Soft references must appear in a `See also` section at the bottom and must not use `@`.
+- Validation reports a Required read that is not a known id or domain, and a read another read's closure already implies.
+- Soft references must appear in a `See also` section at the bottom.
 - Reviewers treat a restated rule whose owner is another snippet as a finding and
   replace it with a citation.
 - A change to a snippet extends reference review to the whole of that snippet:

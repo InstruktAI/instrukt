@@ -100,7 +100,7 @@ qualifications, and verbatim excerpts of the owner rules the lane needs; the
 finding rules of step 4; and the result it returns: findings in the step 4
 format, or clean-pass evidence, plus any gap it could not close. On a disputed
 point the brief gives the evidence and the question, never the finding to reach
-or avoid, and it states no preferred verdict. You hold the domain bundle and cut
+or avoid, and it states no preferred verdict. You hold the domain's rendering and cut
 each brief from it. The brief is the lane subagent's complete mandate: it reads
 only the sources its question requires, follows only the Required reads those
 sources need, and reports missing context as a gap. It investigates and returns

@@ -77,8 +77,9 @@ every production default ships silently from the applicable baseline.
 6. **Create the project, then scaffold inside it.** Create the project's
    folder and its git repository, then run `instrukt init` in it. It writes
    `instrukt.yaml` with the `project` slug taken from the folder name,
-   `docs/global` and `docs/local`, `AGENTS.master.md` if absent, the smudge
-   filter and the hook sections, and never overwrites. Scaffold inside that
+   `docs/project/`, `AGENTS.master.md` if absent, the hook sections and — when
+   the sdlc domain is published on the computer — `docs/project/schema.yaml`
+   copied from sdlc's schema, and never overwrites. Scaffold inside that
    folder via the flavor's own generator, aimed at the existing folder, then
    wire the quality gates and CI _before_ feature work. The flavor selects its
    scaffolding procedure:

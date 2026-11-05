@@ -28,12 +28,12 @@ tooling.
 ## Preconditions
 
 - Snippet taxonomy and schema references available.
-- Target docs folder determined.
+- Target position and folder determined (step 1).
 - Authoring authority established in Step 0.
 
 ## Steps
 
-Before committing, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed.
+Authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed.
 
 0.  **Establish authoring authority, then earn the snippet.** Load this procedure
     when a snippet first enters consideration, before drafting its shape. A
@@ -55,14 +55,22 @@ Before committing, run `instrukt docs validate` on the authored docs. Sync refus
     source. Apply `general/policy/snippet-value-contract` rigorously: the default
     is **skip unless justified**, not "produce when applicable."
 
-1.  Place the file at the correct path per the artifact-scope policy — the path determines `id`/`type`/`scope`/`domain` (publication derives and materializes them; you do not author them). In a project whose domain specs follow `sdlc/spec/domain-spec`, a new design snippet is listed, in the same change, in the domain spec of the context it governs or in the context map when it is cross-cutting.
+1.  Place the file at the correct path — the path determines `id`/`type`/`scope`/`domain` (publication derives and materializes them; you do not author them). Choose the position first (`general/policy/artifact-scope`): `docs/general/` for what every agent on every computer needs, `docs/domain/<x>/` for the body of knowledge one domain is the authority on, `docs/project/` for this project's own knowledge. Then choose the folder within the position whose overview the snippet belongs under. A new domain is named after what it is about, never after a category it belongs to, and never `general` or `project` (`general/spec/snippet-authoring-schema`). In a project whose domain specs follow `sdlc/spec/domain-spec`, a new design snippet is listed, in the same change, in the domain spec of the context it governs or in the context map when it is cross-cutting.
 2.  Author top-down: broader context should point to narrower details, not the other way around. Name the role of the reader this snippet's load path reaches, and write the reality wanted from that role (`general/policy/agent-facing-text`).
 
 3.  Add frontmatter: `description` (required) and `visibility`; `id`/`type`/`scope`/`domain` are derived from the path and must NOT be authored. `visibility` has no behavior or classification guidance. Repository-local identity is not embedded: internal snippets also use semantic placeholders for computer, user, host, path, and topology values, then direct readers to the runtime discovery surface. Repository privacy is reviewed semantically; never create or request a prose scanner for it.
 
 4.  Write H1 title with correct type suffix.
-5.  Add Required reads if the snippet depends on other snippets.
-6.  Add all required sections for the taxonomy type.
+5.  **Required reads follow the folder.** Require the overview of the folder
+    the snippet sits in, when the folder has one and the snippet is not it. Add a further read only when it is specific to this
+    snippet and not already in the overview's closure, naming it by id
+    (`general/policy/referencing-doc-snippets`). What every snippet in an area
+    needs goes into that area's overview, never into each snippet. When a
+    reader would need "the overview minus a few", split the overview into the
+    parts readers need separately and require the parts that apply; never
+    subtract.
+6.  Run `instrukt docs schema <folder>` for the target folder and author the
+    sections it names for the snippet's type, starting from its skeleton.
 7.  Organize content inside those valid sections. Use subordinate headings such as `###` when they improve readability; do not flatten useful structure just to avoid internal headings.
 8.  If validation rejects a heading, first ask whether it should be downgraded under an existing schema section rather than deleted or flattened.
 
@@ -71,9 +79,28 @@ Before committing, run `instrukt docs validate` on the authored docs. Sync refus
     main after a commit, merge, rebase or checkout, and `instrukt sync`, run in
     the project, republishes it. No path publishes a working tree. This step supplies neither authoring nor commit
     authority.
-10. Do not author index files; publication writes the indexes into the home, and no index file lives in a repository.
+10. **Decide what the position's `index.yaml` carries.** A snippet reaches
+    agents through `expanded`, `listed` or `agents` in its position's
+    `index.yaml`, or through another snippet's required reads; one with none of
+    these is found only through `instrukt docs index`. Every `expanded` entry,
+    with its whole closure, and every `listed` line is read by every agent the
+    position reaches — for `docs/general/`, every agent on every adopting
+    computer — and an `agents` entry by every session of that CLI, before any
+    task begins (`general/policy/snippet-value-contract`, Manual in the
+    always-on set). Put a snippet in `expanded` only when every one of those
+    agents acts on it in ordinary work; put it in `listed` when they need to
+    know it exists and fetch it when it applies; otherwise leave it out and
+    let the overview or the procedure that needs it require it. Keep a `listed`
+    id out of the closure of `expanded`. An `agents` entry is a correction for
+    one agent CLI's observed default, written as a `policy` snippet. Never
+    edit the generated documentation index; publication writes it.
 
-11. Avoid creating index.md files; only baseline.md manifests are allowed.
+11. **Give a procedure an `activation_trigger` only when a user will ask for it
+    by name.** Every trigger is a line in every agent's context on every
+    computer that adopts its domain (`general/policy/snippet-value-contract`,
+    Manual in the always-on set). A procedure a workflow, a dispatcher or
+    another procedure starts is reached through that starter and carries no
+    trigger.
 12. **Changing an existing snippet — bounded, wholesale, or retired.** A live snippet is never overwritten or deleted in place to describe a change before it is delivered. Match the pending carrier to the shape of the change: bounded additions, replacements, and removals stay in body markers; wholesale reworks use a companion; retiring the whole snippet uses an empty companion. The pending carrier names the delivering `<slug>`.
 
             - **Present-tense body (governs both forms).** Author the wrapped or companion body as the **future live contract**, in present tense, exactly as it must read once delivered. On delivery the marker lines vanish (ADD) or the companion replaces the parent (REPLACE) and the body stays **verbatim** — so it must already read as correct current-state contract with nothing stripped. The delivering `<slug>` is carried by the planned marker or the companion filename. A slug names work and a snippet body states contract, so **no slug appears in body prose**. Do not write "Pending `<slug>`, …", "the new surface is …", "will", "is planned", or any history/rationale narration inside the body (see the Narration anti-pattern in `general/policy/snippet-value-contract`). DON'T: `Pending <slug>, the manual-parking surface is: …`. DO: `The manual-parking surface is: …` — wrapped in `<!-- planned:<slug> -->`, which is the only place the slug appears.

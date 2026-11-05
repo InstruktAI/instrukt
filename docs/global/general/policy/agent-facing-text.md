@@ -19,11 +19,12 @@ visibility: 'public'
   wanted from its reader — the job, what the job takes in, what it produces,
   and where everything else goes.
 - **The load path sets the reader's role.** A text's reader is whoever the
-  path that delivers it reaches — a baseline, a command's required reads, a
-  dispatch brief, a refusal — not whoever the text is about.
-- **Text an executor loads is written for the executor.** A baseline reaches
-  every role in its scope, executors among them, so baseline text is written
-  for the executor. What only a judge, governor, or maintainer needs lives in
+  path that delivers it reaches — an always-on rendering, a command's required
+  reads, a dispatch brief, a refusal — not whoever the text is about.
+- **Text an executor loads is written for the executor.** An always-on
+  rendering — a global agent file, a domain's `instrukt docs get --domain`
+  rendering, a project's `AGENTS.md` — reaches every role in its scope,
+  executors among them, so its text is written for the executor. What only a judge, governor, or maintainer needs lives in
   snippets those roles load on demand. Where an executor's job includes
   judging its own output, as an author self-reviews before committing, the
   executor holds the judge's role for that step and reads the judge's text

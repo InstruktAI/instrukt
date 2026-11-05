@@ -44,8 +44,10 @@ What the graph is and which revision it reflects belong to
    where the configured adapter offers them. When the intended change starts
    from a use case rather than a source file, run
    `instrukt specs trace <spec_id> <UC-id>` for the tests binding it and the
-   code they reach; its links are evidence, not proof that every reached symbol
-   implements the behavior.
+   code they reach. To see the use cases the change puts at stake, run
+   `instrukt specs trace --file <a> [--file <b> …]` with every file the change
+   touches; it groups the use cases by the folder of their spec. Trace links
+   are evidence, not proof that every reached symbol implements the behavior.
 6. Ground your change surface — or your plan, or your understanding of the
    codebase — in the verified candidate set from steps 3–4.
 
