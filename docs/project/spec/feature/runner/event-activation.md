@@ -28,6 +28,10 @@ session operations that receive the resulting assignment.
 
 ### Sources and reactions
 
+The five source names remain unchanged as the runner domain's explicit naming
+map records. Their canonical envelopes carry a stable occurrence ID, project
+origin and typed subject; external source payloads remain open domain facts.
+
 | Origin | Source | Runner-facing meaning |
 | --- | --- | --- |
 | Workflow | `workflow.finalized` | Finalize-ready work wakes the subscribed standing integrator. |

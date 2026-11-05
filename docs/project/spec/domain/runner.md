@@ -201,6 +201,25 @@ retryable publication status and coordinates so a committed fact is published
 later with its original ID. This supplies no separate outbox/inbox service and
 no accepted ingress buffering during a cluster outage.
 
+### Event naming and producer declarations
+
+Existing vocabulary is retained explicitly: `runner.upstream_changed` →
+`runner.upstream_changed`, `runner.main_ahead` → `runner.main_ahead`,
+`runner.ci_completed` → `runner.ci_completed`, `runner.main_failing` →
+`runner.main_failing`, and `workflow.finalized` → `workflow.finalized`.
+The producing contexts remain owners of these five facts; subscriptions keep
+these names. Event-platform types ported from `teleclaude.*` use `instrukt.*`.
+No compatibility alias or second occurrence is emitted.
+
+The canonical received boundary is the open event envelope, not a closed enum
+of those five facts. The four runner declarations use project origin;
+upstream changes name the observed repository/ref as a configuration reference,
+main-ahead and main-failing name a repository-qualified commit, and CI completion
+names the candidate commit (including the `no_ci` observation). Finalize-ready
+uses project origin and a todo subject. The existing occurrence-key columns
+below determine stable IDs, including producer type, independently of payload
+serialization. Producer declarations expose the existing payloads as typed data.
+
 ### Domain events emitted
 
 The first build reads watched upstream refs with `git ls-remote` and uses
