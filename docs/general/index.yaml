@@ -1,0 +1,45 @@
+expanded:
+  - general/principle/stewardship
+  - general/principle/autonomy
+  - general/principle/attunement
+  - general/principle/calibration
+  - general/principle/grounding
+  - general/principle/trust-and-guardrails
+  - general/concept/lineage-vs-authorship
+  - general/policy/leadership
+  - general/policy/human-contract
+  - general/policy/context-retrieval
+  - general/policy/documentation-discipline
+  - general/policy/conflict-resolution
+  - general/policy/no-output-turn
+listed:
+  - general/principle/evolution
+  - general/principle/continuity
+  - general/principle/intelligence-boundaries
+  - general/policy/referencing-doc-snippets
+  - general/policy/adr-discipline
+  - general/policy/commits
+  - general/spec/snippet-authoring-schema
+  - general/spec/third-party-docs
+  - general/concept/failure-modes
+  - general/design/peer-discussion
+  - general/policy/grounding
+  - general/policy/orchestrator-jurisdiction
+  - general/policy/shared-machine-resources
+  - general/principle/expansion
+  - general/principle/parallel-work
+  - general/principle/verification-independence
+  - general/procedure/adr-authoring
+  - general/procedure/ai-to-ai-operations
+  - general/procedure/brainstorming
+  - general/procedure/event-handling/interruptible
+  - general/procedure/git-repo-ingestion
+  - general/procedure/knowledge-authoring
+  - general/procedure/upstream-watch
+agents:
+  claude:
+    - general/policy/agents/claude
+  codex:
+    - general/policy/agents/codex
+  gemini:
+    - general/policy/agents/gemini
