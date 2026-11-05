@@ -329,6 +329,10 @@ fn records_posted_without_write_access_never_change_the_work_and_collaborators_s
 #[test]
 fn switching_todos_on_for_code_hosted_elsewhere_is_refused_in_plain_words() {
     let env = TestEnv::new();
+    // The machine has a runtime for todo dispatch: only where the code is
+    // kept stands in the way.
+    let rt = runtime::FakeRuntime::new(&env, "rt", false);
+    runtime::global_layer(&env, "todos: false", &[&rt]);
     let repo = hosted_elsewhere(&env);
     let before = repo.read("instrukt.yaml");
     let revision = config_revision(&env, repo.path());
