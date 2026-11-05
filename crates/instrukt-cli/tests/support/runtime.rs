@@ -241,14 +241,44 @@ impl FakeRuntime {
 }
 
 /// Writes the global layer: `modules` switches, then the runtimes;
-/// anomaly notification is left at its default.
+/// anomaly notification is left at its default. The disk-headroom guard
+/// is off: its reports go through the same notification, and the free
+/// space of the machine running the tests is not these tests' subject.
 pub fn global_layer(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime]) {
     global_layer_with(env, modules, runtimes, "");
 }
 
 /// As [`global_layer`], with `extra` YAML appended (an agent order).
 pub fn global_layer_with(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime], extra: &str) {
-    let mut text = format!("schema_version: 1\nmodules: {{{modules}}}\nruntimes:\n");
+    write_global_layer(env, modules, runtimes, "disk_headroom: 'off'", extra);
+}
+
+/// As [`global_layer`], with the disk-headroom guard set to `headroom`
+/// (`runner.disk_headroom`, as YAML).
+pub fn global_layer_with_headroom(
+    env: &TestEnv,
+    modules: &str,
+    runtimes: &[&FakeRuntime],
+    headroom: &str,
+) {
+    write_global_layer(
+        env,
+        modules,
+        runtimes,
+        &format!("disk_headroom: {headroom}"),
+        "",
+    );
+}
+
+fn write_global_layer(
+    env: &TestEnv,
+    modules: &str,
+    runtimes: &[&FakeRuntime],
+    runner: &str,
+    extra: &str,
+) {
+    let mut text =
+        format!("schema_version: 1\nmodules: {{{modules}}}\nrunner:\n  {runner}\nruntimes:\n");
     for runtime in runtimes {
         text.push_str(&runtime.entry());
     }

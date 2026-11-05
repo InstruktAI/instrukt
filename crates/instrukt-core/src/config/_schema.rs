@@ -22,6 +22,29 @@ pub const SHIPPED_BLUEPRINT_ENGINES: [&str; 1] = ["graphify"];
 /// The default `github.api_url`.
 pub(crate) const DEFAULT_GITHUB_API_URL: &str = "https://api.github.com";
 
+/// The default `runner.disk_headroom.warn`: below it the guard warns.
+pub(crate) const DEFAULT_HEADROOM_WARN: &str = "30GiB";
+
+/// The default `runner.disk_headroom.floor`: below it the guard reclaims.
+pub(crate) const DEFAULT_HEADROOM_FLOOR: &str = "10GiB";
+
+/// The bytes a `runner.disk_headroom` size (`30GiB`, `0.5GiB`) stands for;
+/// `None` for anything else.
+pub(crate) fn gib_bytes(text: &str) -> Option<u64> {
+    let number = text.trim().strip_suffix("GiB")?;
+    let well_formed = !number.is_empty()
+        && number.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && number.chars().filter(|c| *c == '.').count() <= 1
+        && !number.starts_with('.')
+        && !number.ends_with('.');
+    if !well_formed {
+        return None;
+    }
+    let gib: f64 = number.parse().ok()?;
+    // `as` saturates: a size beyond u64 is larger than any volume.
+    Some((gib * f64::from(1u32 << 30)).round() as u64)
+}
+
 /// One of the two layers of configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayerKind {
@@ -87,6 +110,8 @@ enum Shape {
     AgentOrder,
     ThinkingMode,
     Identity,
+    /// `off`, or `{warn, floor, roots}` (`runner.disk_headroom`).
+    DiskHeadroom,
 }
 
 enum Node {
@@ -155,6 +180,7 @@ fn schema() -> Node {
                 ("notify", Leaf(GlobalOnly, Shape::Str)),
                 ("runtime", Leaf(GlobalOnly, Shape::Str)),
                 ("autostart", Leaf(Both, Shape::Autostart)),
+                ("disk_headroom", Leaf(GlobalOnly, Shape::DiskHeadroom)),
             ]),
         ),
         ("runtimes", Leaf(GlobalOnly, Shape::Runtimes)),
@@ -373,6 +399,7 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                 "expected true, false or a mapping of kind to true or false",
             )),
         },
+        Shape::DiskHeadroom => check_disk_headroom(value, path, out),
         Shape::StrList => {
             if !value
                 .as_sequence()
@@ -453,6 +480,71 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
             }
             None => out.push(invalid("expected a list of runtime entries")),
         },
+    }
+}
+
+/// `runner.disk_headroom`: `off`, or a map of `warn` and `floor` sizes and
+/// `roots` directories, whose floor is positive and below the warn level
+/// (each unset size at its default).
+fn check_disk_headroom(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+    let map = match value {
+        Value::String(text) if text == "off" => return,
+        Value::Mapping(map) => map,
+        _ => {
+            out.push(KeyFinding::new(
+                path,
+                FindingKind::InvalidValue,
+                "expected `off` or a mapping of `warn`, `floor` and `roots`",
+            ));
+            return;
+        }
+    };
+    let mut sizes = [DEFAULT_HEADROOM_WARN, DEFAULT_HEADROOM_FLOOR].map(gib_bytes);
+    for (key, field_value) in map {
+        let name = key_text(key);
+        let child = join(path, &name);
+        let slot = match name.as_str() {
+            "warn" => 0,
+            "floor" => 1,
+            "roots" => {
+                if !field_value
+                    .as_sequence()
+                    .is_some_and(|seq| seq.iter().all(Value::is_string))
+                {
+                    out.push(KeyFinding::new(
+                        &child,
+                        FindingKind::InvalidValue,
+                        "expected a list of directories",
+                    ));
+                }
+                continue;
+            }
+            _ => {
+                out.push(KeyFinding::new(
+                    &child,
+                    FindingKind::UnknownKey,
+                    "unknown key",
+                ));
+                continue;
+            }
+        };
+        sizes[slot] = field_value.as_str().and_then(gib_bytes);
+        if sizes[slot].is_none() {
+            out.push(KeyFinding::new(
+                &child,
+                FindingKind::InvalidValue,
+                "expected a size in GiB, such as `30GiB`",
+            ));
+        }
+    }
+    if let [Some(warn), Some(floor)] = sizes
+        && (floor == 0 || floor >= warn)
+    {
+        out.push(KeyFinding::new(
+            &join(path, "floor"),
+            FindingKind::InvalidValue,
+            "the floor must be positive and below the warn level",
+        ));
     }
 }
 
@@ -658,6 +750,20 @@ fn json_shape(shape: Shape) -> serde_json::Value {
                 { "type": "object", "additionalProperties": { "type": "boolean" } },
             ],
         }),
+        Shape::DiskHeadroom => json!({
+            "anyOf": [
+                { "const": "off" },
+                {
+                    "type": "object",
+                    "properties": {
+                        "warn": { "type": "string" },
+                        "floor": { "type": "string" },
+                        "roots": { "type": "array", "items": { "type": "string" } },
+                    },
+                    "additionalProperties": false,
+                },
+            ],
+        }),
         Shape::StrList => json!({ "type": "array", "items": { "type": "string" } }),
         Shape::ModuleList => {
             let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
@@ -702,6 +808,10 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 text(DEFAULT_GITHUB_API_URL),
             );
             insert_at(&mut root, &["runner", "autostart"], Value::Bool(false));
+            let headroom = |key| ["runner", "disk_headroom", key];
+            insert_at(&mut root, &headroom("warn"), text(DEFAULT_HEADROOM_WARN));
+            insert_at(&mut root, &headroom("floor"), text(DEFAULT_HEADROOM_FLOOR));
+            insert_at(&mut root, &headroom("roots"), Value::Sequence(Vec::new()));
         }
         LayerKind::Project => {
             insert_at(&mut root, &["board"], Value::Bool(false));
@@ -742,7 +852,7 @@ mod tests {
 
     const GLOBAL_ONLY: &str = "runtimes: []\n\
         agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
-        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
+        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true, disk_headroom: 'off'}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
         requires: [todos]\nactions: {test: make test, lint: {command: lint, takes_files: true}}\n\
@@ -874,8 +984,43 @@ mod tests {
                 ("ticks", N),
                 ("runner.notify", N),
                 ("runner.runtime", N),
+                ("runner.disk_headroom", N),
                 ("github.api_url", N),
             ]
+        );
+    }
+
+    #[test]
+    fn a_headroom_size_is_a_number_of_gib() {
+        assert_eq!(gib_bytes("30GiB"), Some(30 << 30));
+        assert_eq!(gib_bytes("0.5GiB"), Some(1 << 29));
+        assert_eq!(gib_bytes("30"), None);
+        assert_eq!(gib_bytes("30GB"), None);
+        assert_eq!(gib_bytes("-1GiB"), None);
+        assert_eq!(gib_bytes(".5GiB"), None);
+    }
+
+    #[test]
+    fn a_headroom_floor_at_or_above_the_warn_level_is_a_finding() {
+        let findings = check(
+            &yaml("schema_version: 1\nrunner: {disk_headroom: {warn: 20GiB, floor: 20GiB}}\n"),
+            LayerKind::Global,
+        );
+        assert_eq!(
+            judged(&findings),
+            [("runner.disk_headroom.floor", FindingKind::InvalidValue)]
+        );
+    }
+
+    #[test]
+    fn a_headroom_floor_is_judged_against_the_default_warn_level() {
+        let findings = check(
+            &yaml("schema_version: 1\nrunner: {disk_headroom: {floor: 40GiB}}\n"),
+            LayerKind::Global,
+        );
+        assert_eq!(
+            judged(&findings),
+            [("runner.disk_headroom.floor", FindingKind::InvalidValue)]
         );
     }
 

@@ -19,6 +19,7 @@
 //!   order and task due times.
 //! - [`anomaly`], [`ticks`] and [`install`] — notification, wake-up
 //!   accounting and the OS scheduler registration.
+//! - [`headroom`] — the disk-headroom standing job.
 
 pub mod agents;
 pub mod anomaly;
@@ -27,6 +28,7 @@ pub mod dispatch;
 pub mod event_log;
 pub mod events;
 pub mod executions;
+pub mod headroom;
 pub mod install;
 pub mod interfaces;
 pub mod launch;

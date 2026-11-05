@@ -1,0 +1,15 @@
+---
+source: crates/instrukt-cli/tests/disk-headroom.rs
+expression: "machine.status_at(\"2030-01-06T09:00:30Z\")"
+---
+last wake-up: 2030-01-06T09:00:00Z
+disk headroom: floor, <size> free (last run 2030-01-06T09:00:00Z)
+last report (2030-01-06T09:00:00Z): floor, <size> free; warn below <size>, floor <size>
+  removed:
+    <size>  [TMP]/workspace/app-idle/target  (checkout [TMP]/workspace/app-idle)
+    <size>  [TMP]/workspace/app-idle/web/node_modules  (checkout [TMP]/workspace/app-idle)
+    <size>  [TMP]/workspace/app-idle/.venv  (checkout [TMP]/workspace/app-idle)
+  skipped as in use:
+    <size>  [TMP]/workspace/app-busy/target  (checkout [TMP]/workspace/app-busy)
+  free after: <size>
+  headroom could not be restored

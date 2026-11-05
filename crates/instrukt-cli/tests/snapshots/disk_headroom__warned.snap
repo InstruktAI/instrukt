@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/disk-headroom.rs
+expression: "machine.status_at(\"2030-01-06T09:05:30Z\")"
+---
+last wake-up: 2030-01-06T09:05:00Z
+disk headroom: warn, <size> free (last run 2030-01-06T09:05:00Z)
+last report (2030-01-06T09:00:00Z): warn, <size> free; warn below <size>, floor <size>
+  largest regenerable directories:
+    <size>  [TMP]/workspace/app-busy/target  (checkout [TMP]/workspace/app-busy)
+    <size>  [TMP]/workspace/app-idle/target  (checkout [TMP]/workspace/app-idle)
+    <size>  [TMP]/workspace/app-idle/web/node_modules  (checkout [TMP]/workspace/app-idle)
+    <size>  [TMP]/workspace/app-idle/.venv  (checkout [TMP]/workspace/app-idle)
