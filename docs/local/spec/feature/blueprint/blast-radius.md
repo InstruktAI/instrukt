@@ -70,4 +70,5 @@ available and to explore by hand; no dependents are presented as an answer.
 ## See Also
 
 - docs/local/spec/domain/blueprint.md — the blueprint context.
+- docs/local/spec/feature/blueprint/use-case-trace.md — the use cases the same changed files put at stake.
 - ~/.instrukt/docs/sdlc/procedure/blast-radius-discovery.md — how agents use the answer.
