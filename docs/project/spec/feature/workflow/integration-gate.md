@@ -20,6 +20,11 @@ branch protection.
 
 ### Candidate and verification
 
+The finalized candidate is the todo branch head after its finalizer role
+worktree has completed its fast-forward handoff under
+`project/instrukt/spec/feature/workflow/delivery-cycle`. The integrator reads
+that branch and stamped commit; it does not inherit a shared todo worktree.
+
 The integrator merges finalized candidates into its own integration worktree
 and pushes the resulting commit to `integrate`. It may batch
 candidates according to its judgment. A merge conflict remains work for the

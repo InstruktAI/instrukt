@@ -114,9 +114,12 @@ And review findings return to the responsible author for revision
 
 ## Known caveats
 
-- Follow-up dispatch that needs a runtime capability the selected adapter
-  lacks stays pending with that gap reported. A preparation handoff does not
-  establish that execution dispatch can attach to an existing worktree.
+- Preparation handoff retains its branch and worktree evidence; it does not
+  assign one shared worktree to subsequent roles. On T3, execution roles use
+  separate worktrees at the todo branch's current head under
+  `project/instrukt/spec/feature/workflow/delivery-cycle`. Attachment-dependent
+  workflows are refused at enablement; the shipped sdlc workflow needs creation
+  only.
 
 ## See Also
 
