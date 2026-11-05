@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+expression: run.out
+---
+docs/domain/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id
+notice: docs/project/adr/0049-choice.md: unreferenced-snippet: project/demo/adr/0049-choice
+notice: docs/project/design/retired.md: unreferenced-snippet: project/demo/design/retired

@@ -1,5 +1,5 @@
 //! The publication context: committed-state publication into the home,
-//! index patching by owner, entrypoint compilation and the eval fingerprint
+//! index patching by owner, agent-file rendering and the eval fingerprint
 //! (`docs/project/spec/domain/publication.md`).
 //!
 //! What a project publishes follows from what its committed main holds:
@@ -9,16 +9,16 @@
 //! One operation, [`sync`]: publish the project the caller stands in from
 //! its canonical main, or do nothing when that commit is already
 //! published. What it reads (the committed tree), how it patches the
-//! index, stages and swaps the published tree, compiles entrypoints and
+//! index, stages and swaps the published tree, renders agent files and
 //! undoes a failed run stays behind that call. Readers of its state use
 //! [`PublishedRecord`] and [`EvalFingerprint`].
 
 mod _adoption;
 mod _agents;
-mod _compile;
 mod _editor;
 mod _fingerprint;
 mod _patch;
+mod _render;
 mod _source;
 mod _sync;
 mod _tree;
@@ -85,8 +85,8 @@ pub enum PublicationError {
     DanglingLink { path: PathBuf },
     #[error("{} cannot take the entrypoint-loading key: {reason}", path.display())]
     Settings { path: PathBuf, reason: String },
-    #[error("cannot compile {file}: {reason}")]
-    Compile { file: String, reason: String },
+    #[error("cannot render {file}: {reason}")]
+    Rendering { file: String, reason: String },
     #[error("cannot access {}: {source}", path.display())]
     Io {
         path: PathBuf,

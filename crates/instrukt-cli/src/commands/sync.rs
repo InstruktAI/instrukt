@@ -17,9 +17,12 @@ pub struct SyncArgs {
 
 /// Publishes the project the caller stands in from its canonical main.
 ///
-/// Prints one line naming the outcome, then one line per editor schema or
-/// modeline a publishing sync changed in the primary worktree, then one
-/// line per leftover copy of an earlier publication that could not be
+/// Prints one line naming the outcome, then one `notice:` line per notice
+/// of a publishing sync (a domain without `index.yaml`, a root master
+/// without `docs/project/index.yaml`), one line per global agent file a
+/// retraction left in place because its content is not what instrukt
+/// wrote, one line per editor schema or modeline a publishing sync changed
+/// in the primary worktree, then one line per leftover copy of an earlier publication that could not be
 /// removed (a later sync removes it; it does not fail this one). A refusal or a failure exits non-zero:
 /// validation findings are printed one per line, the leftovers likewise,
 /// then the refusal or failure is reported on stderr.
@@ -36,6 +39,8 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         outcome,
         leftovers,
         editor,
+        notices,
+        kept,
     } = match synced {
         Ok(report) => report,
         Err(SyncError { error, leftovers }) => {
@@ -66,6 +71,15 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             Some(format!("{project} at {commit} is not published: {refusal}"))
         }
     };
+    for notice in &notices {
+        ctx.out.line(&format!("notice: {notice}"))?;
+    }
+    for path in &kept {
+        ctx.out.line(&format!(
+            "kept {}: its content is no longer what instrukt wrote; move it out of the way",
+            path.display()
+        ))?;
+    }
     for line in crate::commands::repository::editor_lines(&editor) {
         ctx.out.line(&line)?;
     }

@@ -127,8 +127,9 @@ pub fn preview_claims(
     })
 }
 
-/// The installed agent CLIs' global files, and those of them that exist
-/// without the current owner of `docs/general/` having written them.
+/// The installed agent CLIs' global files, and those of them holding
+/// content the current owner of `docs/general/` did not leave there — the
+/// predicate the sync's overwrite guard refuses by.
 fn rendered_global_files(
     home: &Home,
     owners: &std::collections::BTreeMap<DomainName, ProjectSlug>,
@@ -137,8 +138,8 @@ fn rendered_global_files(
         .ok()
         .and_then(|general| owners.get(&general))
     {
-        Some(owner) => Outputs::load(home, owner)?.entrypoints,
-        None => Vec::new(),
+        Some(owner) => Outputs::load(home, owner)?,
+        None => Outputs::default(),
     };
     let user_home = home.user_home();
     let mut agents = Vec::new();
@@ -149,7 +150,7 @@ fn rendered_global_files(
         }
         let rel = Path::new(target.dir).join(target.entrypoint);
         let path = user_home.join(&rel);
-        if resolved(user_home, &rel)?.exists() && !written.contains(&rel) {
+        if written.foreign(user_home, &rel)? {
             foreign.push(path.clone());
         }
         agents.push((target.name, path));

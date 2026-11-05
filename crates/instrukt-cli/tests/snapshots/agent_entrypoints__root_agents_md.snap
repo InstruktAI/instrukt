@@ -1,34 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/agent-entrypoints.rs
-assertion_line: 85
 expression: "repo.read(\"AGENTS.md\")"
 ---
-id: project/demo/policy/house
-
-# House — Policy
-
-## Rules
-
-House: Rules.
-
-## Rationale
-
-House: Rationale.
-
-## Scope
-
-House: Scope.
-
-## Enforcement
-
-House: Enforcement.
-
-## Exceptions
-
-House: Exceptions.
-
----
-
 ## Purpose
 
 The demo project.
@@ -45,14 +18,47 @@ Written as ``@docs/project/policy/house.md`` it is quoted.
 @docs/project/policy/not-a-snippet.md
 ```
 
-<!-- @docs/project/policy/house.md stays a comment -->
+# Project
 
----
+## Care — Principle
 
-## Project baseline index — load via `instrukt docs get <id>` when relevant
+### Principle
 
-- `project/demo/policy/style` — About Style.
+Care: Principle.
 
-## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
+### Rationale
 
-- `project/demo/procedure/release` — About Release. — When cutting a release.
+Care: Rationale.
+
+### Implications
+
+Care: Implications.
+
+### Tensions
+
+Care: Tensions.
+
+## House — Policy
+
+### Rules
+
+House: Rules.
+
+### Rationale
+
+House: Rationale.
+
+### Scope
+
+House: Scope.
+
+### Enforcement
+
+House: Enforcement.
+
+### Exceptions
+
+House: Exceptions.
+
+- project/demo/policy/style: About Style. — `instrukt docs get project/demo/policy/style`
+- project/demo/procedure/release: About Release. — when: When cutting a release. — `instrukt docs get project/demo/procedure/release --closure`

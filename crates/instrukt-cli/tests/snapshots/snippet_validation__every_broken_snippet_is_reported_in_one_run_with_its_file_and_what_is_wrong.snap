@@ -2,6 +2,7 @@
 source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: run.out
 ---
+AGENTS.master.md: master-required-reads: the root master holds only `## Purpose`; `docs/project/index.yaml` selects what the root AGENTS.md includes
 AGENTS.master.md: directive-exec: touch ran
 AGENTS.master.md: directive-config-runtime-compiled: runtime.conversation
 docs/domain/acme/baseline-progressive.md: baseline-line-invalid: not a reference

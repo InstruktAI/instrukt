@@ -2,7 +2,7 @@
 //! worktree, its canonical main and the committed files of that commit.
 //!
 //! Publication never reads the working tree's documentation: every file it
-//! publishes or compiles comes from the commit canonical main points at,
+//! publishes or renders comes from the commit canonical main points at,
 //! read through git's object store.
 
 use std::collections::BTreeMap;
@@ -96,8 +96,7 @@ pub(super) fn canonical_main(primary: &Path) -> Result<(String, CommitSha), Publ
 }
 
 /// The committed files of one commit that publication reads: the
-/// documentation, the project layer, the global master and addenda under
-/// `agents/`, and every master. Regular files only; symbolic links and
+/// documentation, the project layer and every master. Regular files only; symbolic links and
 /// submodules are never followed.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Committed {
@@ -218,10 +217,7 @@ fn is_master(path: &str) -> bool {
 }
 
 fn is_read(path: &str) -> bool {
-    path == CONFIG_FILE_NAME
-        || path.starts_with("docs/")
-        || path.starts_with("agents/")
-        || is_master(path)
+    path == CONFIG_FILE_NAME || path.starts_with("docs/") || is_master(path)
 }
 
 /// Splits one `cat-file --batch` record off `output`: its contents and

@@ -59,30 +59,28 @@ fn layer(slug: &str, extra: &str) -> String {
     format!("schema_version: 1\nproject: {slug}\n{extra}")
 }
 
-/// A docs repository `name` on its remote, publishing `general` and
-/// `sdlc` with a global master and a baseline per domain; `rule` is the
-/// wording of its sdlc policy.
+/// A docs repository `name` on its remote, publishing each of `domains`
+/// with an index that expands its one policy; `rule` is the wording of
+/// those policies.
 fn docs_repository(env: &TestEnv, name: &str, domains: &[&str], rule: &str) -> std::path::PathBuf {
     let remote = env.bare_remote(name);
     let author = env.git_repo(&format!("{name}-author"));
     author.write("instrukt.yaml", &layer(name, ""));
     for domain in domains {
+        let description = if *domain == "general" {
+            String::new()
+        } else {
+            format!("description: The {domain} doctrine\n")
+        };
         author
             .write(
                 &format!("{}/policy/rules.md", common::position_dir(domain)),
                 &policy(&format!("{domain} rules"), rule),
             )
             .write(
-                &format!("{}/baseline.md", common::position_dir(domain)),
-                &format!("@~/.instrukt/docs/{domain}/policy/rules.md\n"),
+                &format!("{}/index.yaml", common::position_dir(domain)),
+                &format!("{description}expanded:\n  - {domain}/policy/rules\n"),
             );
-    }
-    if domains.contains(&"general") {
-        author.write(
-            "agents/AGENTS.global.md",
-            "# Global baseline\n\n## Required reads\n\n@~/.instrukt/docs/general/bundle.md\n\n\
-             ## Working here\n\nFollow the doctrine.\n",
-        );
     }
     author.commit("doctrine");
     author.git(["remote", "add", "origin", remote.to_str().unwrap()]);
@@ -99,14 +97,21 @@ fn adopt(env: &TestEnv, remote: &Path, name: &str) -> (Repo, Assert) {
     (clone, synced)
 }
 
-/// A project that is not a docs repository: its master requires the sdlc
-/// bundle.
+/// A project that is not a docs repository: its index expands a concept
+/// of its own that requires the sdlc domain.
 fn consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
-    app.write("instrukt.yaml", &layer("app", "")).write(
-        "AGENTS.master.md",
-        "## Purpose\n\nThe app.\n\n## Required reads\n\n@~/.instrukt/docs/sdlc/bundle.md\n",
-    );
+    app.write("instrukt.yaml", &layer("app", ""))
+        .write("AGENTS.master.md", "## Purpose\n\nThe app.\n")
+        .write(
+            "docs/project/index.yaml",
+            "expanded:\n  - project/app/concept/way\n",
+        )
+        .write(
+            "docs/project/concept/way.md",
+            "---\ndescription: How the app is built.\n---\n\n# Way — Concept\n\n\
+             ## Required reads\n\n- sdlc\n\n## What\n\nOur way.\n\n## Why\n\nTo ship.\n",
+        );
     app.commit("app");
     app
 }
@@ -164,7 +169,7 @@ fn every_installed_agent_starts_with_the_doctrines_global_baseline() {
     let codex = std::fs::read_to_string(env.home().join(".codex/AGENTS.md")).unwrap();
     assert_eq!(
         codex, claude,
-        "without addenda every agent reads the same baseline"
+        "without agents snippets every agent reads the same file"
     );
 }
 
@@ -241,10 +246,15 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
 #[test]
 fn publishing_a_project_whose_master_needs_an_unpublished_domain_names_it() {
     let env = machine();
-    let app = consumer(&env);
+    let app = env.git_repo("app");
+    app.write("instrukt.yaml", &layer("app", "")).write(
+        "tools/AGENTS.master.md",
+        "## Tools\n\nThe tools.\n\n## Required reads\n\n- sdlc\n",
+    );
+    app.commit("app");
 
     let refused = env.run(app.path(), ["sync"]).failure();
-    insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `sdlc` is not published on this computer, but AGENTS.master.md needs it; adopt a docs repository that publishes it");
+    insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `sdlc` is not published on this computer, but tools/AGENTS.master.md needs it; adopt a docs repository that publishes it");
 }
 
 /// A project with `todos` on whose `workflow.domain` names `flows`, which
