@@ -3,6 +3,11 @@
 # (docs/local/policy/testing.md). Needs shellcheck and the Rust toolchain.
 # Enable once per clone with `make hooks`.
 set -e
+# Checkouts sharing one CARGO_TARGET_DIR take turns: the whole check runs
+# under the target directory's lock (scripts/with-build-lock.sh).
+if [ -z "${INSTRUKT_BUILD_LOCKED:-}" ]; then
+    INSTRUKT_BUILD_LOCKED=1 exec scripts/with-build-lock.sh "$0" "$@"
+fi
 shellcheck scripts/*.sh .githooks/pre-commit
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
