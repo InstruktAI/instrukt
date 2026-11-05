@@ -60,8 +60,7 @@ impl Home {
     }
 
     /// `~/.instrukt/docs/` — the published tree: `general/` and one
-    /// directory per published domain, beside the fragments and the
-    /// third-party docs.
+    /// directory per published domain, beside the third-party docs.
     pub fn docs_dir(&self) -> PathBuf {
         self.root.join("docs")
     }
@@ -70,13 +69,6 @@ impl Home {
     /// or `general/`.
     pub fn domain_dir(&self, domain: &DomainName) -> PathBuf {
         self.docs_dir().join(domain.as_str())
-    }
-
-    /// `~/.instrukt/docs/snippets/` — published include fragments, named by
-    /// their path below a project's `docs/global/snippets/` (`@include:
-    /// docs/snippets/<name>.md` resolves to `<this>/<name>.md`).
-    pub fn fragments_dir(&self) -> PathBuf {
-        self.docs_dir().join("snippets")
     }
 
     /// `~/.instrukt/docs/third-party/` — published third-party docs, at
@@ -178,7 +170,6 @@ mod tests {
             home.global_config(),
             home.domain_dir(&domain),
             home.index_file(),
-            home.fragments_dir(),
             home.third_party_dir(),
             home.publication_state_dir(),
             home.publication_outputs_dir(),

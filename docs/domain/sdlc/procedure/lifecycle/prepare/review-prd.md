@@ -20,6 +20,7 @@ dispatch:
 @~/.instrukt/docs/sdlc/procedure/lifecycle/review.md
 @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
 @~/.instrukt/docs/sdlc/policy/definition-of-ready.md
+@~/.instrukt/docs/sdlc/policy/command-contract-read.md
 
 ## Goal
 
@@ -35,8 +36,6 @@ not review architecture, implementation mechanism, or concrete proof.
 - The reviewer is dispatched independently from the drafting context.
 
 ## Steps
-
-<!-- @include: docs/snippets/step-role-read.md -->
 
 1. Discover the todo's artifacts, then read the `input`, the drafted `prd`, and
    any `log` or deferral material that bears on product intent. Load the relevant

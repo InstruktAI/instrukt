@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stderr(&env, &refused)"
----
-instrukt: cannot read acme/procedure/blocked-through-fragment as a closure: its required read `~/.instrukt/docs/acme/spec/coming.md` is still pending

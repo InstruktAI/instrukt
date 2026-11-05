@@ -17,6 +17,10 @@ dispatch:
 
 # Third-Party Research — Procedure
 
+## Required reads
+
+- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
+
 ## Goal
 
 Collect authoritative documentation, extract actionable facts, and store a concise summary as
@@ -56,8 +60,6 @@ than a standalone snippet; publish a reusable snippet only when the research ear
 - At least one authoritative source is available (web link or Context7 snippet ID).
 
 ## Steps
-
-<!-- @include: docs/snippets/step-role-read.md -->
 
 - Identify sources (web or Context7) and record them.
 - Draft an internal snippet that captures only validated facts.

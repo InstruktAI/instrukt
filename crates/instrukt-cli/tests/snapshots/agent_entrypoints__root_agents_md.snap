@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/agent-entrypoints.rs
+assertion_line: 85
 expression: "repo.read(\"AGENTS.md\")"
 ---
 id: project/demo/policy/house
@@ -33,8 +34,6 @@ House: Exceptions.
 The demo project.
 
 ## Notes
-
-Shared guidance.
 
 ```
 demo

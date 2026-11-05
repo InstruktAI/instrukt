@@ -97,7 +97,7 @@ identifier!(
     DomainName,
     "domain",
     is_domain,
-    "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit, and not a reserved name (`project`, `snippets`, `third-party`)"
+    "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit, and not a reserved name (`project`, `third-party`)"
 );
 
 identifier!(
@@ -260,8 +260,8 @@ fn is_slug(value: &str) -> bool {
 
 /// Names the identity grammar and the home's published tree reserve; no
 /// published domain carries one. `project` opens a project snippet's id;
-/// `snippets` and `third-party` are directories of the published tree.
-const RESERVED_DOMAINS: [&str; 3] = ["project", "snippets", "third-party"];
+/// `third-party` is a directory of the published tree.
+const RESERVED_DOMAINS: [&str; 2] = ["project", "third-party"];
 
 fn is_domain(value: &str) -> bool {
     is_slug(value) && !RESERVED_DOMAINS.contains(&value)
@@ -401,7 +401,8 @@ mod tests {
     #[test]
     fn domains_refuse_reserved_names() {
         assert!(DomainName::parse("general").is_ok());
-        for bad in ["project", "snippets", "third-party", "Sdlc"] {
+        assert!(DomainName::parse("snippets").is_ok());
+        for bad in ["project", "third-party", "Sdlc"] {
             assert!(DomainName::parse(bad).is_err(), "{bad} should be refused");
         }
     }
