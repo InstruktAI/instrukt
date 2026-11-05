@@ -137,6 +137,9 @@ codes! {
     /// An `@exec` directive: the format has no directive that runs a
     /// command.
     DirectiveExec => "directive-exec",
+    /// An `@include` directive: the format has no directive that includes
+    /// another file; a shared text is a snippet named as a required read.
+    DirectiveInclude => "directive-include",
     /// A `@config` directive with a `runtime.*` path in a file publication
     /// compiles, which has no runtime session to resolve it against.
     ConfigRuntimeCompiled => "directive-config-runtime-compiled",

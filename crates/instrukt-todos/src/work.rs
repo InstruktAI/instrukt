@@ -2,7 +2,7 @@
 //! reflection (`docs/project/spec/domain/work.md`).
 //!
 //! [`Work`] is the one capability: it keeps each project's todos in
-//! `~/.instrukt/state/work/<project>/` under a per-computer writer lock,
+//! the state database `~/.instrukt/state/instrukt.db` under a per-computer writer lock,
 //! validates every change against the whole record before it commits,
 //! reflects committed changes to the project's GitHub repository (issues,
 //! native artifact versions, a record envelope comment carrying the

@@ -22,6 +22,7 @@ dispatch:
 - @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
 - @~/.instrukt/docs/sdlc/policy/state-storage.md
 - @~/.instrukt/docs/sdlc/procedure/lifecycle/work/review-build.md
+- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
 
 ## Goal
 
@@ -37,8 +38,6 @@ unsupported invention and status-quo absorption.
 - Slug is active and not delivered.
 
 ## Steps
-
-<!-- @include: docs/snippets/step-role-read.md -->
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
 

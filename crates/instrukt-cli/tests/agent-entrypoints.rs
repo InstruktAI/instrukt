@@ -48,14 +48,12 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
             "AGENTS.master.md",
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
              ## Required reads\n\n@docs/project/policy/house.md\n@docs/project/policy/future.md\n\n\
-             ## Notes\n\n<!-- @include: docs/snippets/shared.md -->\n\n\
-             <!-- @config: project -->\n\n\
+             ## Notes\n\n<!-- @config: project -->\n\n\
              Written as ``@docs/project/policy/house.md`` it is quoted.\n\n\
              ```\n@docs/project/policy/not-a-snippet.md\n```\n\n\
              <!-- @docs/project/policy/house.md stays a comment -->\n",
         )
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n")
-        .write("docs/global/snippets/shared.md", "Shared guidance.\n")
         .write(
             "docs/project/policy/house.md",
             &snippet("policy", "House", ""),

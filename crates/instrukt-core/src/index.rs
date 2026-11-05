@@ -44,10 +44,6 @@ pub struct GlobalIndex {
     /// Third-party docs, indexed apart from taxonomy snippets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub third_party: Vec<ThirdPartyEntry>,
-    /// Published include fragments, each with its owner. Not retrievable
-    /// by id; recorded so publication patches and retracts them by owner.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fragments: Vec<FragmentEntry>,
 }
 
 /// Whether an entry is of a published domain or a project's local half.
@@ -119,17 +115,6 @@ pub struct IndexDispatch {
 pub struct ThirdPartyEntry {
     pub id: ThirdPartyId,
     pub description: String,
-    /// Relative to `~/.instrukt/docs/`.
-    pub path: PathBuf,
-    pub source_project: ProjectSlug,
-}
-
-/// One published include fragment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FragmentEntry {
-    /// Its path below `docs/global/snippets/`, without `.md` (`@include:
-    /// docs/snippets/<name>.md`).
-    pub name: String,
     /// Relative to `~/.instrukt/docs/`.
     pub path: PathBuf,
     pub source_project: ProjectSlug,

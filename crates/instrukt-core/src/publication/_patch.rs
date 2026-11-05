@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::docs::{Corpus, DocDomain, Scope, Snippet, Visibility, published_destination};
 use crate::ids::{DomainName, ProjectSlug};
 use crate::index::{
-    FragmentEntry, GlobalIndex, IndexDispatch, IndexEntry, IndexParameter, IndexScope,
-    ThirdPartyEntry,
+    GlobalIndex, IndexDispatch, IndexEntry, IndexParameter, IndexScope, ThirdPartyEntry,
 };
 
 /// Why the patch refused a project's contribution.
@@ -48,19 +47,16 @@ pub(super) struct Contribution {
     pub domains: Vec<DomainName>,
     pub snippets: Vec<IndexEntry>,
     pub third_party: Vec<ThirdPartyEntry>,
-    pub fragments: Vec<FragmentEntry>,
 }
 
 impl Contribution {
     /// The entries of `corpus`: one global entry per snippet of a domain in
     /// `domains`, one local entry per local snippet (carrying its file's
-    /// absolute path in `primary`), one entry per third-party doc and one
-    /// per fragment in `fragments` (their names).
+    /// absolute path in `primary`) and one entry per third-party doc.
     pub(super) fn of(
         project: &ProjectSlug,
         corpus: &Corpus,
         domains: &[DomainName],
-        fragments: &[String],
         primary: &Path,
     ) -> Self {
         let mut snippets: Vec<IndexEntry> = corpus
@@ -86,20 +82,11 @@ impl Contribution {
             })
             .collect();
         third_party.sort_by(|a, b| a.id.cmp(&b.id));
-        let fragments = fragments
-            .iter()
-            .map(|name| FragmentEntry {
-                name: name.clone(),
-                path: Path::new("snippets").join(format!("{name}.md")),
-                source_project: project.clone(),
-            })
-            .collect();
         Self {
             project: project.clone(),
             domains: domains.to_vec(),
             snippets,
             third_party,
-            fragments,
         }
     }
 }
@@ -221,12 +208,6 @@ pub(super) fn patch(
         .filter(|e| &e.source_project != project)
         .cloned()
         .collect();
-    let mut fragments: Vec<FragmentEntry> = index
-        .fragments
-        .iter()
-        .filter(|e| &e.source_project != project)
-        .cloned()
-        .collect();
     let held: BTreeMap<&str, &ProjectSlug> = snippets
         .iter()
         .map(|e| (e.id.as_str(), &e.source_project))
@@ -234,11 +215,6 @@ pub(super) fn patch(
             third_party
                 .iter()
                 .map(|e| (e.id.as_str(), &e.source_project)),
-        )
-        .chain(
-            fragments
-                .iter()
-                .map(|e| (e.name.as_str(), &e.source_project)),
         )
         .collect();
     let new_ids = contribution
@@ -254,24 +230,13 @@ pub(super) fn patch(
             });
         }
     }
-    for fragment in &contribution.fragments {
-        if let Some(other) = fragments.iter().find(|e| e.name == fragment.name) {
-            return Err(Claim::DuplicateId {
-                id: other.path.display().to_string(),
-                owner: other.source_project.clone(),
-            });
-        }
-    }
     snippets.extend(contribution.snippets.iter().cloned());
     third_party.extend(contribution.third_party.iter().cloned());
-    fragments.extend(contribution.fragments.iter().cloned());
     snippets.sort_by(|a, b| a.id.cmp(&b.id));
     third_party.sort_by(|a, b| a.id.cmp(&b.id));
-    fragments.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(GlobalIndex {
         snippets,
         third_party,
-        fragments,
     })
 }
 
@@ -329,7 +294,6 @@ mod tests {
             domains: domains.iter().map(|d| domain(d)).collect(),
             snippets: ids.iter().map(|id| entry(id, project)).collect(),
             third_party: Vec::new(),
-            fragments: Vec::new(),
         }
     }
 

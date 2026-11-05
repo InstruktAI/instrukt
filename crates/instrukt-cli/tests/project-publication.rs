@@ -275,6 +275,21 @@ fn a_domain_named_after_a_reserved_name_is_refused_naming_its_directory_and_the_
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB9
+#[test]
+fn a_domain_named_after_no_reserved_name_publishes_and_is_read() {
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["snippets"]);
+    sync(&env, &repo).success();
+    let read = env
+        .run(repo.path(), ["docs", "get", "snippets/policy/rules"])
+        .success();
+    insta::assert_snapshot!(
+        "unreserved_domain_read",
+        without_tmp(&env, &read.get_output().stdout, &[])
+    );
+}
+
 /// Every file of the project's working tree outside `.git`, with its
 /// content.
 fn project_tree(repo: &Repo) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -440,32 +455,22 @@ fn without_tmp(env: &TestEnv, bytes: &[u8], shas: &[&str]) -> String {
 
 // spec: project/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
-fn a_bundle_left_with_a_reference_fails_the_sync() {
+fn an_instruction_file_left_with_a_reference_fails_the_sync() {
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
     let published = repo.head();
     sync(&env, &repo).success();
     let before = published_tree(&env);
     repo.write(
-        "docs/domain/acme/policy/noted.md",
-        &policy("Noted", "").replace(
-            "Follow Noted.\n",
-            "Follow Noted.\n\n<!-- @include: docs/snippets/note.md -->\n",
-        ),
+        "AGENTS.master.md",
+        "## Purpose\n\nRead it (@notes/house.md) first.\n",
     )
-    .write(
-        "docs/global/snippets/note.md",
-        "Read it (@docs/project/policy/house.md) first.\n",
-    )
-    .write(
-        "docs/domain/acme/baseline.md",
-        "@~/.instrukt/docs/acme/policy/noted.md\n",
-    );
+    .write("notes/house.md", "House notes.\n");
     repo.commit("noted");
     env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/domain/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/project/policy/house.md`");
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile AGENTS.master.md: the compiled text still references `@[TMP]/demo/notes/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
 }

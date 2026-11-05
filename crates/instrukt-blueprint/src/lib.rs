@@ -12,7 +12,7 @@
 //!   module is switched on: queues a revision and starts the detached
 //!   [`run_worker`], which publishes through [`GraphStore::publish`];
 //!   [`last_generation`] is the outcome `blueprint status` shows.
-//! - [`trace_use_case`] and [`trace_file`] — use-case trace.
+//! - [`trace_use_case`] and [`trace_files`] — use-case trace.
 //!
 //! Depends on core only.
 
@@ -34,5 +34,7 @@ pub use _generation::{
     run_worker,
 };
 pub use _store::{CleanupFailure, GraphStore, LatestGraph, Published, StoreError};
-pub use _trace::{ReachingTest, UseCaseTrace, trace_file, trace_use_case};
+pub use _trace::{
+    AtStake, FileTrace, SpecFolder, UntracedFile, UseCaseTrace, trace_files, trace_use_case,
+};
 pub use _traversal::Direction;
