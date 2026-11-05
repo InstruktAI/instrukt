@@ -9,18 +9,22 @@ delivered_by: [instrukt-first-build]
 
 The configuration context owns `instrukt.yaml`: one schema, read in two layers
 on git's model of a user file and a repository file. The global layer
-(`~/.instrukt/instrukt.yaml`) holds a machine's defaults and the settings only
-a machine may decide; the project layer (`instrukt.yaml` at a repository's
-root) holds what a project declares and its overrides. The context decides
-which key may live in which layer, validates documents, migrates older schema
-versions, edits documents safely under concurrent change, and answers values
-with interpolation — including which configured runtime the caller is running
-in. It owns no behavior the keys configure: each key's meaning belongs to the
-context or module that reads it.
+(`~/.instrukt/instrukt.yaml`) holds a machine's defaults and the settings only a
+machine may decide; the project layer (`instrukt.yaml` at a repository's root)
+holds what a project declares and its overrides. The context decides which key
+may live in which layer, validates documents, migrates older schema versions,
+edits documents safely under concurrent change, and answers values with
+interpolation — including the caller identity recognised by the explicitly
+selected runtime adapter. It owns no behavior the keys configure: each key's
+meaning belongs to the context or module that reads it.
 
 ## Canonical fields
 
-Global `agents.order` supplies the default ordered agent preferences with thinking mode. Runtime entries may declare an `available` check template. Dispatch names validate against agents the runtime mapping can start, never a fixed set. `get --revision` prints the layer revision; `get --json` renders JSON.
+Global `agents.order` supplies the default ordered agent preferences with
+thinking mode. Dispatch preferences use the selected adapter's capabilities and
+availability metadata; there are no executable runtime templates in
+configuration. `get --revision` prints the layer revision; `get --json` renders
+JSON.
 
 ### Ubiquitous language
 
@@ -56,15 +60,13 @@ removes a key, any other value replaces.
 : Expanding a value's references when it is read: `{other.key}`, `${VAR}`, and
 the derived `runtime.session_id`.
 
-**Runtime mapping**
-: The ordered `runtimes` list in the global layer: each entry says how one
-runtime identifies its sessions (`session_id_env`) and the verbs it fills,
-each a `command` template instrukt runs or an `agent` instruction the calling
-agent carries out.
+**Selected runtime**
+: The compiled adapter explicitly chosen by global `runner.runtime`, initially
+`t3`. Absence means no runtime, not a request for detection or a default.
 
-**Active runtime**
-: The first runtime-mapping entry whose `session_id_env` is set in the
-caller's environment; addressed as `runtime`.
+**Caller identity**
+: The selected adapter's recognition of the current native session. It may
+be absent outside that runtime and does not change runtime selection.
 
 **Project slug**
 : The `project` key of a project layer; the identity of the project's
@@ -74,10 +76,10 @@ caller's environment; addressed as `runtime`.
 
 - **Owns** — the `instrukt.yaml` schema; layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
-  revisions and safe patching; interpolation; selection of the active runtime.
+  revisions and safe patching; interpolation; validation of the explicit runtime choice and derived caller identity.
 - **Does not own** — what any key does: docs and publication read
   `project`; repository decides when publication runs and its commit
-  composition reads the runtime mapping and `agents.<name>.git_author` and decides the
+  composition reads adapter caller identity and `agents.<name>.git_author` and decides the
   commit author and trailers; blueprint, work, workflow and runner read the
   keys and module switches governing their capabilities; the flavor's
   procedures call `actions` by name. When migration runs during publication, publication decides when;
@@ -87,10 +89,11 @@ caller's environment; addressed as `runtime`.
   `instrukt config init [--global]`, `instrukt config validate [--global]`;
   the migration operation that `init` and publication invoke; the
   configuration schema type the editor schema of `instrukt.yaml` is generated
-  from (`project/instrukt/spec/feature/publication/editor-schemas`); the
-  active-runtime selection rule, which commit composition applies to
-  agent-CLI entries.
+  from (`project/instrukt/spec/feature/publication/editor-schemas`); the explicit runtime selection and adapter caller-identity lookup used by
+  commit composition.
 - **Allowed dependencies** — none. Configuration depends on no other context.
+  It declares the caller-identity lookup interface; CLI wiring supplies the
+  selected adapter's environment-only recognition without importing runner.
 - **Implementation roots** — the configuration module of the `instrukt-core`
   crate; its module layout is set by the architecture design.
 
@@ -99,7 +102,7 @@ caller's environment; addressed as `runtime`.
 #### Layer document (aggregate)
 
 - **Root:** Layer document (global or project).
-- **Contains:** `schema_version`; settings; the runtime mapping (global only).
+- **Contains:** `schema_version`; settings; explicit runtime choice (global only).
 - **Invariants:**
   - Every key it holds is permitted in its layer; a key of the other layer is
     a finding, and a write that would introduce one is refused.
@@ -124,10 +127,10 @@ None.
 
 ### Use cases (index of feature specs)
 
-- **layered-configuration** — `docs/project/spec/feature/configuration/layered-configuration.md` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
-- **configuration-editing** — `docs/project/spec/feature/configuration/configuration-editing.md` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
-- **interpolation** — `docs/project/spec/feature/configuration/interpolation.md` — values resolve across keys, the environment and the caller's own runtime session when read.
-- **logging** — `docs/project/spec/feature/configuration/logging.md` — every command's diagnostics are recorded where the InstruktAI logging contract puts them, readable afterwards with `instrukt-ai-logs instrukt`.
+- **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
+- **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
+- **interpolation** — `project/instrukt/spec/feature/configuration/interpolation` — values resolve across keys, the environment and the caller's own runtime session when read.
+- **logging** — `project/instrukt/spec/feature/configuration/logging` — every command's diagnostics are recorded where the InstruktAI logging contract puts them, readable afterwards with `instrukt-ai-logs instrukt`.
 
 ### Governing designs and decisions (index)
 
@@ -138,19 +141,19 @@ None yet beyond the feature specs above.
 - **Docs** — customer / supplier: configuration supplies read-time
   interpolation through the CLI.
 - **Publication** — customer / supplier: configuration supplies the project
-  slug, runtime mapping and the configuration schema type the editor schema of
+  slug, runtime choice and the configuration schema type the editor schema of
   `instrukt.yaml` is generated from. Publication also invokes configuration’s
   migration operation; it is a callable contract, not a configuration key. What a
   project publishes follows from its `docs/general/` and `docs/domain/<x>/`
   positions, never from a configuration key.
 - **Repository** — customer / supplier: configuration supplies the project
-  slug, runtime mapping and agent author settings.
+  slug, runtime choice and agent author settings.
 - **Specs** — customer / supplier: configuration supplies the project slug
   identifying the inventory and bindings.
 - **Blueprint** — customer / supplier: configuration supplies its module
   switch and engine selection.
 - **Work, workflow, runner** — customer / supplier: configuration supplies
-  board, approval gates, runtime mapping and runner settings.
+  board, approval gates, runtime choice and runner settings.
 
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship.

@@ -6,7 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## Required reads
 
-@docs/project/spec/feature/workflow/artifact-currency.md
+@project/instrukt/spec/feature/workflow/artifact-currency
 
 ## What it is
 
@@ -92,13 +92,13 @@ required review and approval bindings are current, drift obligations are
 settled, and commits authored on the canonical branch under the preparation
 claim have their required approving commit-review stamps.
 
-The orchestrator releases the claim with `instrukt todo update <slug> --unclaim` and
-ends its child sessions with `instrukt sessions end --todo <slug>`, then its
-lane with `instrukt sessions end self` as its last step, only after the
-release is confirmed. The runner owns subsequent execution dispatch.
-Manual preparation does not itself require dependency delivery; work admission
-does. Entry claims and holds are work-record and runner concerns, distinct
-from the derived preparation state.
+The orchestrator releases the claim with `instrukt todo update <slug>
+--unclaim`, confirms `claim.held` is false and records the handoff. The
+dispatcher retains conversations needed for later review rounds or human
+questions; session ending and cleanup belong to the runtime. The runner owns
+subsequent execution dispatch. Manual preparation does not itself require
+dependency delivery; work admission does. Entry claims and holds are work-record
+and runner concerns, distinct from the derived preparation state.
 
 ### Use cases
 
@@ -112,8 +112,14 @@ Then the todo is released for implementation only after its required derivations
 And review findings return to the responsible author for revision
 ```
 
+## Known caveats
+
+- Follow-up dispatch that needs a runtime capability the selected adapter
+  lacks stays pending with that gap reported. A preparation handoff does not
+  establish that execution dispatch can attach to an existing worktree.
+
 ## See Also
 
-- `general/policy/human-contract` — new intent and human-owned decisions stay with the person.
-- `general/policy/leadership` — the responsible session presents human-owned decisions in context.
-- `sdlc/principle/documentation-first-development` — preparation authors the durable behavioral contract before implementation.
+- general/policy/human-contract
+- general/policy/leadership
+- sdlc/principle/documentation-first-development

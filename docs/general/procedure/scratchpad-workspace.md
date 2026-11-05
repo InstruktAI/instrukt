@@ -8,7 +8,7 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/general/spec/scratchpad-workspaces.md
+- general/spec/scratchpad-workspaces
 
 ## Goal
 
@@ -55,8 +55,8 @@ contributors; the index is a map to the work, not a session diary
      thinking mode, role (author, peer, reviewer, dispatcher). Session ids are
      the attribution evidence (`general/concept/lineage-vs-authorship`); the
      reasoning behind a participant's files is in that session's conversation,
-     shown with this runtime's history show and the session id:
-     <!-- @config: runtime.history.show -->
+     read with `instrukt sessions conversation <session-id>`. That read supplies
+     recent runtime messages; report a gap when the required evidence is older.
    - **Files** — every file and subdirectory, a one-line purpose, and a status:
      `forming`, `converged`, `superseded by <file>`, or `promoted to <target>`.
    - **Stated by the human** — relevant intent and constraints, verbatim or

@@ -16,11 +16,11 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/session-lifecycle.md
-- @~/.instrukt/docs/general/concept/agent-characteristics.md
-- @~/.instrukt/docs/general/procedure/orchestration.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/overview.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
+- general/principle/session-lifecycle
+- general/concept/agent-characteristics
+- general/procedure/orchestration
+- sdlc/procedure/lifecycle/overview
+- sdlc/policy/preparation-artifact-quality
 
 ## Goal
 
@@ -220,11 +220,10 @@ owns work dispatch under the project's pickup policy; reconcile the existing
 build with the re-approved plan under Step 2.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
-then end the assignment children in `sessions.bound` with
-`instrukt sessions end --todo <slug>`, and end the completed lane with
-`instrukt sessions end self` as its last step. When either command answers
-that the ending is yours to do, carry out the instruction it prints; that is
-the ending.
+then record the handoff and any remaining obligations. Preserve conversations
+needed for later rounds or human input. The runtime owns session ending and
+cleanup. An unfinished human conversation keeps its context and gives up its
+claim.
 
 ## Outputs
 
@@ -245,8 +244,8 @@ the ending.
 
 ## See also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/work/build.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/work/review-build.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/fix-review-findings.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/work/finalize.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/work/deferrals.md
+- sdlc/procedure/lifecycle/work/build
+- sdlc/procedure/lifecycle/work/review-build
+- sdlc/procedure/lifecycle/fix-review-findings
+- sdlc/procedure/lifecycle/work/finalize
+- sdlc/procedure/lifecycle/work/deferrals

@@ -8,7 +8,7 @@ activation_trigger: When dispatching a session, collaborating with a peer, or re
 
 ## Required reads
 
-- @~/.instrukt/docs/general/policy/agent-facing-text.md
+- general/policy/agent-facing-text
 
 ## Goal
 
@@ -28,14 +28,15 @@ lifecycle contract.
 1. Resolve the project and assignment from the work record or explicit brief.
    Follow the existing session binding for a todo and role; do not infer
    identity from similar briefs or target another environment.
-2. Use `instrukt sessions run` to start through the runtime mapping. Write the
+2. Use `instrukt sessions run` to start through the runtime adapter. Write the
    brief as the reality wanted from the role. Preserve the returned runtime
    and session id. Selection walks `dispatch` or `agents.order`, taking the
-   first available agent; a start failure without an availability check tries
-   the next entry, and exhaustion is an anomaly.
+   first available agent where the adapter supports selection. Only a
+   rejection proven to precede creation permits fallback; ambiguous starts
+   stay pending for reconciliation. Exhaustion is an anomaly.
 3. Use `instrukt sessions send` for work, findings, operational handoffs and
    recovery. For joint reasoning, use `instrukt sessions link <a> <b>` where
-   the runtime mapping declares that capability. Human input reaches linked
+   the runtime adapter supports that capability. Human input reaches linked
    conversations with its human attribution. If linking is unsupported,
    preserve that explicit limitation; a send is no claim of a shared thread.
 4. Read the observation before responding: the identified session, event,
@@ -64,10 +65,8 @@ lifecycle contract.
    nor implicitly releases a claim. Retain workers needed for further rounds
    and retain a thread that holds a human question. Release the claim with
    `instrukt todo update <slug> --unclaim`. Remove a completed discussion link with
-   `instrukt sessions link --remove <a> <b>` and have the dispatcher end the
-   session with `instrukt sessions end <id>` once its outcome is recorded.
-   When the command answers that the ending is yours to do, carry out the
-   instruction it prints; that is the ending.
+   `instrukt sessions link --remove <a> <b>` where supported and record the
+   contribution's handoff. The runtime owns session ending and cleanup.
 
 A focused worker's outputs belong in its assigned artifacts and its own turn.
 It messages or links other sessions only where its brief authorizes that
@@ -95,8 +94,8 @@ It does not administer the session that dispatched it.
 
 ## See Also
 
-- ~/.instrukt/docs/general/policy/human-contract.md
-- ~/.instrukt/docs/general/principle/session-lifecycle.md
-- ~/.instrukt/docs/general/principle/grounding.md
-- ~/.instrukt/docs/general/principle/intelligence-boundaries.md
-- ~/.instrukt/docs/general/procedure/orchestration.md
+- general/policy/human-contract
+- general/principle/session-lifecycle
+- general/principle/grounding
+- general/principle/intelligence-boundaries
+- general/procedure/orchestration

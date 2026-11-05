@@ -28,8 +28,8 @@ home, and the flows.
 | --- | --- | --- | --- |
 | `core` | docs, configuration, publication, repository, specs | always on | files, git |
 | `blueprint` | blueprint | on/off | a graph engine adapter |
-| `todos` | work, workflow; the runner dispatching todos | on/off; `runner.autostart` | GitHub, a runtime mapping |
-| `events` | the runner's event sources and standing agents | on/off | a runtime mapping |
+| `todos` | work, workflow; the runner dispatching todos | on/off; `runner.autostart` | GitHub, a runtime adapter |
+| `events` | the runner's event sources and standing agents | on/off | a runtime adapter |
 
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
@@ -55,6 +55,12 @@ Core likewise declares the hook-generation interface; the CLI wires blueprint
 into it when enabled. Core declares the todo-existence and flavor-role lookup
 interfaces, wired by the CLI to todos only when enabled.
 
+Core declares a caller-identity lookup interface for configuration interpolation
+and commit composition. The CLI wires the explicitly selected runtime adapter
+into it; the lookup reads caller context without runtime I/O. Core never imports
+runner. Missing context or unverified agent identity stays unresolved;
+recognising a caller does not select a runtime.
+
 ### The home
 
 `~/.instrukt` is fixed and is not a git repository. Everything in it is
@@ -63,12 +69,12 @@ which are lost if the home is deleted.
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
-| `instrukt.yaml` | the global configuration layer (runtime mapping, agents' git authors, module switches, runner settings) | the user |
+| `instrukt.yaml` | the global configuration layer (runtime choice, agents' git authors, module switches, runner settings) | the user |
 | `docs/general/`, `docs/<x>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
 | `state/index.yaml` | the global index, every entry carrying its owning project; `docs/project/` entries carry the absolute path of the file in their project | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
 | `state/hooks/<project>/` | each hook section's last run outcome, shown by `instrukt hooks status` | the next hook run |
-| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent bindings and starts, held task failures, the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); the runner's state starts empty |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent binding caches, pending delivery targets, start markers and per-key locks, held task failures, the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); the runner's state starts empty |
 | `state/writer.lock`, `state/runner.lock` | the per-computer writer lock, held by each command that writes and each runner call, under which every database write runs (the database's write-isolation unit); the lock serializing runner invocations | taken again by the next writer or runner |
 | `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
@@ -109,7 +115,7 @@ commands. Docs name `-h`.
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
 | Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
-| Configured runtime | runner | the runtime mapping's verbs: `command` verbs instrukt runs; `agent` verbs `instrukt sessions` hands to the calling agent with the "yours to do" status |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`; explicit `runner.runtime`, no template mapping |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
@@ -135,7 +141,7 @@ commands. Docs name `-h`.
 - **Git hooks belong to everyone.** instrukt touches only its marked section,
   never uses `exec`, and never blocks git after the fact.
 - **A cloned repository does not decide what runs on a machine.** The runtime
-  mapping lives only in the global layer, and so does the command form of
+  choice lives only in the global layer, and so does the command form of
   `blueprint.engine`; a project layer may only name a shipped adapter.
 - **Agents read; instrukt computes.** Freshness, ownership and state are
   instrukt's to compute; agents consume answers that name what they reflect
@@ -180,16 +186,16 @@ flowchart LR
 
 ### Read
 
-`instrukt docs index` shows everything published plus the `docs/project/`
-docs of the project the caller stands in, and `--domain <x>` narrows it to one
+`instrukt docs index` shows everything published plus the `docs/project/` docs
+of the project the caller stands in, and `--domain <x>` narrows it to one
 domain; `instrukt docs get <id>` reads a snippet naming its required reads,
 `--closure` adds them transitively, each once, and `--domain <x>` renders that
-domain's `index.yaml`. Every reference is a snippet id (or a bare domain name
-in a required read) that the CLI resolves; `get` resolves `@config` directives
-in-process at read time — which is how session-bound values
-(`<!-- @config: runtime.conversation -->`) reach a snippet. No snippet runs a
-command. Authoring reads and edits the source file; `docs get` is for
-knowledge.
+domain's `index.yaml`. Every reference is a snippet id (or a bare domain name in
+a required read) that the CLI resolves; `get` resolves `@config` directives
+in-process at read time for configured values. Runtime operations go through the
+sessions facade and its compiled adapter; no snippet interpolates a runtime
+command. No snippet runs a command. Authoring reads and edits the source file;
+`docs get` is for knowledge.
 
 ### Push and map
 
@@ -225,12 +231,17 @@ passing candidate is fast-forwarded onto main.
 ### Run
 
 The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
-the switched-on modules need: it dispatches todos (when `runner.autostart`),
-and starts or wakes standing agents on events. It reaches a runtime only
-through the sessions facade (`instrukt sessions run|send|alive|conversation`).
-A step is done when the record carries its artifact and stamp, never when a
-session's reply says so. Whatever needs the human is a session asking in its
-thread; only anomalies are sent through `runner.notify`.
+the switched-on modules need: it dispatches todos (when `runner.autostart`), and
+starts or wakes standing agents on events. It reaches a runtime only through its
+Rust adapter; the retained agent-facing facade is `instrukt sessions
+run|send|alive|conversation|link|resolve-start`. Standing start-or-wake takes a
+database lock per key and discovers its exact title in T3 before considering a
+start; the local binding is a cache. Unknown list or send results leave work
+pending, and lost start replies require key recovery or explicit resolution.
+Session ending remains the runtime's responsibility. A step is done when the
+record carries its artifact and stamp, never when a session's reply says so.
+Whatever needs the human is a session asking in its thread; only anomalies are
+sent through `runner.notify`.
 
 ## Failure modes
 
@@ -255,6 +266,11 @@ thread; only anomalies are sent through `runner.notify`.
   resumes when GitHub is reachable.
 - **Main turns red anyway:** the integrator reverts the culprit first and
   repairs it in its own todo.
-- **A runtime is not configured or no session variable is set:** `runtime.*`
-  fails with a clear error; commits get no `Session:` trailer rather than a
-  guess.
+- **No runtime is chosen:** runtime-dependent module enablement refuses and
+  names `runner.runtime`; code selects none. A missing caller context makes
+  `runtime.session_id` fail and omits a commit's `Session:` trailer.
+- **Runtime identity or delivery is uncertain:** preserve the event, key and
+  any start marker; recover through listing or explicit resolution. A failed
+  observation or send never requests a replacement session.
+- **A role needs an existing worktree on T3:** its host CLI has no attachment
+  flag. Report the capability gap; creating another worktree is not recovery.
