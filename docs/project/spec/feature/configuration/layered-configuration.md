@@ -21,6 +21,16 @@ layers carry `schema_version`, and older documents are migrated.
 against the selected adapter's declared capabilities, never executable
 configuration.
 
+### Event enablement
+
+The effective `modules.events` switch is authoritative. Subscriptions remain in
+published documentation while off and produce no activation. A nonempty valid
+project `webhooks:` map adds receiver demand only while events are enabled; a
+declaration with events off produces a plain validation finding naming that
+switch. An empty map adds no receiver demand. Source declarations never silently
+enable events. Installation and withdrawal are owned by the later module
+installation contract; these schema rules install nothing.
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |
@@ -30,6 +40,9 @@ configuration.
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
+| `webhooks.native`, `webhooks.github` | project only; each takes required `secret` and optional `previous_secret` references | runner intake |
+| `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
+| `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
@@ -48,6 +61,37 @@ configuration.
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. `actions` are called by name from procedures and never
 run by hooks.
+
+### Event configuration values and cross-computer agreement
+
+`redis.cluster.url` is required for enabled transport and identifies one shared
+logical database/stream namespace, not a sharded Redis Cluster client. Local URL
+is Unix-socket-only; absence uses cluster visibly. `max_connections` and
+`socket_timeout` follow the port's connection settings, with timeout outlasting
+the blocking read. Credentials remain references and expanded values are masked
+in reads and findings. An unavailable configured local endpoint is not absence.
+
+`ingress.computer` is the existing stable instrukt machine ID. All participating
+machine global layers agree on that ID and the logical cluster Redis/namespace;
+URL spellings and ACL credentials may differ when they reach the same logical
+store with required permissions. `ingress.port` is a valid TCP port shared only
+by the ingress receiver and local edge. The bind host is fixed loopback. Local
+Redis socket paths, local credentials, runtime and ticks settings stay local.
+No shared configuration layer or new project-owner-machine routing key exists.
+
+Project identities and checkouts needed for activation must exist on the emitting
+computer, including ingress. Only ingress needs a declaring project's `.env`
+signing values. Source secret fields are exact raw `${NAME}` references;
+ingress validates their nonblank values solely in that project's `.env`, with
+no process-environment fallback. A declared previous secret follows the same
+rules as current. Configuration reads preserve references and never expand
+source signing material. Source edits apply at the next request.
+
+Invalid protocols, misplaced keys, malformed references, unreadable ingress
+values and configured sources with effective events off are findings. Unknown
+keys remain findings; no direction or `sources` subkey is accepted. The typed
+configuration also generates editor schemas. Schema validation itself starts
+no receiver, Redis or scheduler; infrastructure convergence belongs to S7.
 
 ### Runtime choice
 
@@ -220,6 +264,6 @@ introduced.
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- project/instrukt/spec/feature/configuration/configuration-editing
-- project/instrukt/spec/feature/configuration/interpolation
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/configuration-editing](configuration-editing.md)
+- [project/instrukt/spec/feature/configuration/interpolation](interpolation.md)

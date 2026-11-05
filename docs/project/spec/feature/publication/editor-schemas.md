@@ -36,6 +36,11 @@ names a home path.
   `instrukt docs validate` or `instrukt config validate` never disagree about
   which keys a file may hold. A key the schema does not declare is reported by
   the editor as it is by the validator.
+- The configuration type includes direct project `webhooks.native|github`
+  declarations with required current and optional previous secret references.
+  Project editor schemas reject global-only Redis and ingress keys; source
+  protocols and reference shapes match configuration validation. Runtime ingress
+  secret resolution remains a validation operation, not secret data in a schema.
 - The schemas are a pure function of the installed binary: the same instrukt
   version writes the same bytes on every computer.
 - `.instrukt/` is ignored through the line `instrukt init` adds to
@@ -111,8 +116,8 @@ And every file they describe still points at its schema
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/feature/docs/position-index.md — the `index.yaml` model the index schemas describe.
-- docs/project/spec/feature/docs/snippet-schema.md — the `schema.yaml` model its schema describes.
-- docs/project/spec/feature/repository/project-initialization.md — the adoption that first writes them.
-- docs/project/spec/feature/publication/project-publication.md — the sync that refreshes them.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/feature/docs/position-index](../docs/position-index.md) — the `index.yaml` model the index schemas describe.
+- [project/instrukt/spec/feature/docs/snippet-schema](../docs/snippet-schema.md) — the `schema.yaml` model its schema describes.
+- [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md) — the adoption that first writes them.
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync that refreshes them.

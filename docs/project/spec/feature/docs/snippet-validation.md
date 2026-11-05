@@ -61,6 +61,25 @@ and `sync` report a configuration finding when it names a module that is off
 under the effective switches (project over global), not the global layer in
 isolation.
 
+### Subscription declarations
+
+Subscribed procedures require nonempty shared-matcher patterns, `role` and one
+`subscription_home` (`project`, `platform`, `company`, `person`); they cannot also
+carry `activation_trigger`. Identity is `home` or `subject` (default home),
+attendance `attended` or `unattended` (default attended), delivery `sequential` or
+`batched` (default sequential), and interruptible is boolean (default false).
+These fields without subscriptions, unknown values and malformed patterns are
+findings naming file and field. A project-position subscription answers only its
+own project and must declare project home; general/domain positions reach all
+homes of the declared kind. Unsupported company/person resolution remains an
+execution capability limit rather than conversion to project/platform.
+
+Publication carries the resolved facts, owning project and position unchanged
+for routing. Pending declarations are validated structurally but never become
+active subscriptions. Authored Required reads supply handling instructions;
+delivery metadata adds no hidden dependencies. Runtime settings remain fixed
+for an initialized session; changing publication configures only new successors.
+
 ### Notices
 
 A notice is reported with its file, a stable code and the value where there is
@@ -148,7 +167,7 @@ Then those references pass, as do plain ids and bare-domain required reads
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/position-index
-- project/instrukt/spec/feature/docs/snippet-schema
-- project/instrukt/spec/feature/docs/pending-documentation
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/position-index](position-index.md)
+- [project/instrukt/spec/feature/docs/snippet-schema](snippet-schema.md)
+- [project/instrukt/spec/feature/docs/pending-documentation](pending-documentation.md)

@@ -670,6 +670,81 @@ fn a_required_read_another_required_read_already_brings_is_reported() {
     insta::assert_snapshot!("required_read_implied", run.out);
 }
 
+/// A leaf requiring an overview and the operations domain. The domain's
+/// expanded snippet itself requires another snippet, exercising closure.
+fn required_domain_tree(repo: &Repo, overview_reads: &str) {
+    valid_tree(repo);
+    repo.write(
+        "docs/domain/ops/index.yaml",
+        "description: Operations.\nexpanded: [ops/concept/operations]\n",
+    )
+    .write(
+        "docs/domain/ops/concept/operations.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- acme/principle/care\n",
+        ),
+    )
+    .write(
+        "docs/project/concept/overview.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            &format!("# Sample — Concept\n\n## Required reads\n\n{overview_reads}"),
+        ),
+    )
+    .write(
+        "docs/project/concept/leaf.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- project/demo/concept/overview\n- ops\n",
+        ),
+    )
+    .write(
+        "docs/project/index.yaml",
+        "listed: [project/demo/adr/0049-choice, project/demo/design/retired, project/demo/concept/leaf]\n",
+    );
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
+#[test]
+fn a_required_domain_the_overview_already_brings_is_reported() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    required_domain_tree(&repo, "- ops\n");
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}{}", run.out, run.err);
+    insta::assert_snapshot!("required_domain_implied", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
+#[test]
+fn a_required_domain_implied_through_its_expanded_snippets_is_reported() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    required_domain_tree(&repo, "- ops/concept/operations\n");
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}{}", run.out, run.err);
+    insta::assert_snapshot!("required_domain_expansion_implied", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
+#[test]
+fn a_required_domain_only_partly_brought_by_the_overview_is_not_redundant() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    required_domain_tree(&repo, "- ops/concept/operations\n");
+    repo.write(
+        "docs/domain/ops/index.yaml",
+        "description: Operations.\nexpanded: [ops/concept/operations, ops/concept/independent]\n",
+    )
+    .write(
+        "docs/domain/ops/concept/independent.md",
+        &snippet("concept", "", ""),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}{}", run.out, run.err);
+}
+
 // spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV3
 #[test]
 fn a_snippet_nothing_names_is_a_notice_that_does_not_fail_the_run() {

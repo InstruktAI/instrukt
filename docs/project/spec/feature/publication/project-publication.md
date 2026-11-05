@@ -86,6 +86,23 @@ refuse publication and preserve the previous publication.
   pending ownership; retrieval decides what a reader sees
   (`project/instrukt/spec/domain/docs`).
 
+### Subscription entries and index identity
+
+The same atomic owner-scoped index patch carries a delivered procedure's validated
+patterns, home kind, identity, attendance, delivery settings, role, required-read
+references and position reach. Pending entries retain their pending marker and
+are excluded by activation. Project-local subscription reach is preserved for
+the owning project; general/domain entries reach all origins of their declared
+kind. Index rendering lists subscribed procedures as configured responsibilities
+with patterns, never self-service triggered procedures. Events-off leaves those
+entries present and inert.
+
+Removing or editing a subscription changes the index identity at publication;
+the next routed event reloads it without a separate trigger. Invalid declaration
+refuses publication and keeps the last good index. A runtime read failure clears
+the active subscription set rather than keeping stale entries. Publication
+registers no runtime session and executes no event reaction.
+
 ### Claims and patching
 
 Under the docs lock, sync checks the project's claims against the ownership
@@ -273,6 +290,6 @@ And the previously published documentation is unchanged
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/domain/docs.md — the `index.yaml` model and what is read from the home and how.
-- docs/project/spec/feature/publication/editor-schemas.md — the editor schemas and modelines a sync refreshes.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/domain/docs](../../domain/docs.md) — the `index.yaml` model and what is read from the home and how.
+- [project/instrukt/spec/feature/publication/editor-schemas](editor-schemas.md) — the editor schemas and modelines a sync refreshes.

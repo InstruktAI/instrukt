@@ -40,9 +40,10 @@ the meaning and the writes of the runner tables.
 - Only instrukt writes, and it validates every change before committing it.
   Writing the database with any other tool is outside this contract.
 - Every write transaction runs while its process holds the per-computer
-  writer lock `~/.instrukt/state/writer.lock`. A command that writes the work
-  record, and a runner call, hold it as they did before; SQLite's own locking
-  is not the serialization contract.
+  writer lock `~/.instrukt/state/writer.lock` for its local transaction.
+  Network waits and reaction execution run outside that section, so a blocked
+  consumer holds no unrelated local write hostage. SQLite's own locking is not
+  the serialization contract.
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -201,25 +202,43 @@ becomes a local item or no longer appears in the listing.
 Owned by the runner and written only by it, in the same transactions as the
 reactions they record.
 
-**`events`** — the event log, oldest first.
+**`events`** — the local event log, oldest first. `seq` is a monotone local
+position, never a transport or occurrence identity. Rows hold the stable event
+`id`, `type`, full canonical envelope including opaque `data`, `logged_at` and
+optional project association derived from explicit origin. Platform and unknown
+origins require no project value. Locally emitted rows additionally hold their
+producer occurrence key, target publication scope, pending/confirmed publication
+state and last failure. Transport coordinates identify endpoint/database, stream
+and entry ID; one occurrence can have multiple transport coordinates. Observed
+records are distinct from local publication obligations and are not republished.
+Confirmed publication records acceptance only, not reaction completion.
 
-| Column | Meaning |
-| --- | --- |
-| `seq` | Position in the log, from 1, increasing by one per appended event. Key. |
-| `name` | The event's vocabulary name, such as `runner.upstream_changed`. |
-| `project` | The project it concerns. |
-| `payload` | The event's payload, as the runner domain defines it. |
-| `idempotency_key` | The event's key; unique, so appending an event already logged changes nothing. |
-| `logged_at` | When it was appended. |
+**`consumer_cursors`** — settled local accounting partitioned by logical consumer
+and transport source. It records contiguous settled progress and its associated
+transport coordinate. It neither substitutes for nor advances a Redis group's
+position. A higher observed entry alone cannot move a cursor past unsettled work.
 
-**`consumer_cursors`** — per consumer (`<procedure>@<project>`), the highest
-`seq` up to which every event the consumer selects is handled. Key:
-`consumer`. A cursor never moves back. Columns: `consumer`, `seq`.
+**`handled_events`** — occurrence protection keyed by `(consumer, event_id)` on
+this computer, with `handled_at` and an optional local sequence reference. Two
+stream entries carrying one ID share the mark. Successful local reaction outcome,
+handled mark and settled cursor commit together before Redis ACK. Seven-day
+retention is distinct from the local log and stream retention.
 
-**`handled_events`** — per consumer, each event it was handed. Key:
-`(consumer, seq)`. Columns: `consumer`, `seq`, `handled_at`. The mark commits
-with the delivery's outcome and the consumer's cursor, in one transaction;
-an event with a mark is never handed to that consumer again.
+A parked outcome is distinct from a successful handled mark. Retry and parking
+stage recovery retain enough identity to recognize completed stages after a
+crash; no later event settles past unfinished parking. Raw malformed entries
+remain diagnosable at the transport boundary.
+
+Redis itself owns stream payloads, group pending entries, transport progress,
+source-scoped ingress claims and dead letters. These are not alternate work
+records or database tables. Redis and SQLite have no shared transaction.
+
+**`procedure_activations`** — durable acceptance keyed by `(event_id, procedure,
+exact_home)`, where home includes kind and slug or platform. Retains immutable
+event, accepted identity/attendance/delivery declaration, procedure-read references,
+acceptance state and visible failure/outcome. A duplicate key returns its existing
+acceptance. Submission failures leave the consumer unsettled; accepted rows precede the final consumer-outcome, handled-mark and cursor transaction before Redis ACK. Later runtime execution is separate; session/delivery-table realization is
+owned by S6, within this same database.
 
 **`standing_deliveries`** — pending deliveries with a fixed runtime target.
 Key: `(consumer, seq)`, referring to the event's consumer and event-log sequence.
@@ -292,8 +311,9 @@ delivery and handled mark. A task failure's row is kept after its hold is
 released, so the same failed run never sets the hold again, and is replaced by
 the task's next failed run. Validators, deferrals, watched-ref observations
 and listing copies are replaced in place. Key-lock rows are reused with
-ownership cleared on release; they are not event history. Events, cursors and
-handled marks are kept.
+ownership cleared on release; they are not event history. Local events and settled cursors are retained as operational accounting. Redis
+stream retention separately bounds replay; occurrence duplicate marks expire
+after seven days. Local history does not backfill a newly created Redis group.
 
 ### Use cases
 
@@ -308,11 +328,15 @@ handled marks are kept.
 
 ## Known caveats
 
+- A3's existing standing bindings, starts, fixed delivery targets and key locks
+  below retain their project-keyed adapter contract. S6 reconciles these with
+  exact home/subject identities and durable procedure delivery. They create no
+  second path independently executing Redis events from SQLite cursors.
+
+
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
-- The event log and its handled marks grow without a retention rule; each
-  row is one distinct observation (a ref revision, a candidate result, a
-  finalized todo), so growth follows activity.
+- The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
 - Work recorded only in an earlier build's file store is not read. Reflect
   it to GitHub with that build before upgrading; after the upgrade it enters
   the database again by pull-through.
@@ -325,8 +349,8 @@ handled marks are kept.
 
 ## See Also
 
-- project/instrukt/spec/domain/work
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/work/github-record
-- project/instrukt/spec/feature/runner/event-activation
-- sdlc/policy/state-storage
+- [project/instrukt/spec/domain/work](../../domain/work.md)
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/work/github-record](github-record.md) — reflection of the work tables to GitHub
+- [project/instrukt/spec/feature/runner/event-activation](../runner/event-activation.md) — the event log's events and consumers
+- [sdlc/policy/state-storage](../../../../domain/sdlc/policy/state-storage.md)

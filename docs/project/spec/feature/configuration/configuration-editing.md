@@ -48,6 +48,19 @@ default and the global layer with `--global`.
   directing the caller to `init`. A project-layer patch outside a project is
   refused.
 
+### Webhook and transport edits
+
+The same revision-checked patch validates raw source references before
+interpolation and checks the full effective event switch. Invalid source shapes,
+protocols, layer placement or a source with events off refuse atomically.
+Only ingress requires the declared project's nonblank `.env` values;
+non-ingress configuration may carry reference names without values. Secret
+resolution errors name project and reference, never value. `get`, `get --json`,
+revision reports and patch diagnostics retain or mask secret references;
+expanded signing/Redis credentials never enter their output. Reference text is
+stored unexpanded. No config read or patch installs services. The next received
+request observes a valid source change without receiver restart.
+
 ### Revision
 
 A revision is an opaque digest of the layer document's content. Two reads of
@@ -92,5 +105,5 @@ Then initialization is refused and the developer is directed to upgrade instrukt
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- project/instrukt/spec/feature/configuration/layered-configuration
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)

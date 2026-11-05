@@ -44,8 +44,10 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -91,6 +93,18 @@ pub struct CannedResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Value,
+}
+
+/// A request whose response is held until this guard is dropped.
+pub struct RequestPause {
+    reached: Receiver<()>,
+    _release: Sender<()>,
+}
+
+impl RequestPause {
+    pub fn wait_until_received(&self, timeout: Duration) -> bool {
+        self.reached.recv_timeout(timeout).is_ok()
+    }
 }
 
 /// How an issue is seeded.
@@ -362,6 +376,23 @@ impl FakeGitHub {
         });
     }
 
+    /// Holds the next matching response at the network boundary. Dropping
+    /// the returned guard lets the server answer, including during unwind.
+    pub fn pause_once(&self, method: &str, path_suffix: &str) -> RequestPause {
+        let (reached, received) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        self.lock().pauses.push_back(PausedRequest {
+            method: method.to_owned(),
+            path_suffix: path_suffix.to_owned(),
+            reached,
+            released,
+        });
+        RequestPause {
+            reached: received,
+            _release: release,
+        }
+    }
+
     /// Answers the next `count` requests of any kind as GitHub's primary
     /// rate limit does: `403` with `x-ratelimit-remaining: 0` and
     /// `x-ratelimit-reset: <reset_epoch_seconds>` (Unix seconds, as GitHub
@@ -524,6 +555,13 @@ struct Canned {
     response: CannedResponse,
 }
 
+struct PausedRequest {
+    method: String,
+    path_suffix: String,
+    reached: Sender<()>,
+    released: Receiver<()>,
+}
+
 struct State {
     base: String,
     login: String,
@@ -532,6 +570,7 @@ struct State {
     repos: BTreeMap<String, Repo>,
     requests: Vec<RecordedRequest>,
     canned: VecDeque<Canned>,
+    pauses: VecDeque<PausedRequest>,
     poll_interval: Option<u64>,
     /// GitHub projects (Projects v2), served through `/graphql`.
     projects: Vec<Project>,
@@ -547,6 +586,7 @@ impl State {
             repos: BTreeMap::new(),
             requests: Vec::new(),
             canned: VecDeque::new(),
+            pauses: VecDeque::new(),
             poll_interval: None,
             projects: Vec::new(),
         }
@@ -1069,6 +1109,11 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         }
         reply.headers.push(("ETag".into(), etag));
     }
+    let pause = guard
+        .pauses
+        .iter()
+        .position(|p| p.method == method && path.ends_with(&p.path_suffix))
+        .and_then(|at| guard.pauses.remove(at));
     guard.requests.push(RecordedRequest {
         method,
         path,
@@ -1078,6 +1123,13 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         status,
     });
     drop(guard);
+    if let Some(pause) = pause
+        && pause.reached.send(()).is_ok()
+    {
+        // The test owns the response boundary; disconnect releases it
+        // even if an assertion in the test unwinds.
+        let _released = pause.released.recv();
+    }
 
     let mut response = if status == 304 || reply.body.is_none() {
         tiny_http::Response::from_string(String::new()).with_status_code(status)
