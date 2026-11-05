@@ -17,6 +17,10 @@
 //!   and [`Snippet::view`], which applies a [`Lens`] — the current contract
 //!   or one todo's future — through the pending gate, the companion and the
 //!   planned blocks;
+//! - the [`Position`]s documentation lives in, and the documents a
+//!   position carries at its root: its [`PositionIndex`] (`index.yaml`)
+//!   and its [`PositionSchema`] (`schema.yaml`), parsed with the keys
+//!   each position allows;
 //! - [`BaselineManifest`]s, [`ThirdPartyDoc`]s, fragments
 //!   ([`Corpus::fragment`]) and whether a reference resolves
 //!   ([`Corpus::resolves`]).
@@ -73,6 +77,7 @@ mod _fold;
 mod _frontmatter;
 mod _identity;
 mod _markers;
+mod _position;
 mod _refs;
 mod _render;
 mod _retrieval;
@@ -92,6 +97,11 @@ pub use _frontmatter::{
     Dispatch, EventDelivery, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
 };
 pub use _identity::{BaselineOwner, DocDomain, Scope, Taxonomy};
+pub use _position::{
+    AgentCli, DomainIndex, FolderSections, GENERAL, GeneralIndex, INDEX_FILE, Position,
+    PositionIndex, PositionSchema, ProjectIndex, RESERVED_DOMAIN_FOLDERS, SCHEMA_FILE,
+    is_reserved_domain_folder,
+};
 pub use _refs::{RefTarget, Reference};
 pub use _render::{ConfigRefusal, Fragments, RenderContext, Rendered, Values, render};
 pub use _retrieval::{GetRequest, IndexRequest, Reading, get, index};
