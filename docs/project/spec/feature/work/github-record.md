@@ -16,7 +16,9 @@ needing the conversation that produced them.
 
 ### Local-leading pull-through
 
-A *local item* is a todo present in this computer's local record. Reads and
+The local record is the work tables of this computer's state database
+(`project/instrukt/spec/feature/work/state-database`): the local store
+in front of the GitHub reflection. A *local item* is a todo present in it. Reads and
 listings of work not in this computer's local record read GitHub directly
 and store nothing. An item enters the local record when dispatched here or
 when a command changes it here. Reads and writes of local items use that local
@@ -26,9 +28,11 @@ locally accepted write. The record distinguishes pending reflection from a
 confirmed remote revision; local success does not claim remote completion. While GitHub is unreachable, listings show local items only and say that
 GitHub is unreachable.
 
-GitHub is required, rather than a selectable storage backend. For local items, GitHub changes
+GitHub is required, rather than a selectable storage backend: it is the
+reflected store from which work is recovered and through which it moves
+between computers. For local items, GitHub changes
 are pulled with a conditional request on every runner tick and before any
-command on that item, entering the local store before readers consume them. Rebuilding
+command on that item, committed to the state database before readers consume them. Rebuilding
 from GitHub recovers reflected work, subject to the artifact history GitHub
 still serves. Unreflected local writes have no remote recovery guarantee.
 
@@ -62,6 +66,9 @@ the integration gate; pull-request state alone never proves delivery.
 
 Artifacts and stamps are the published work evidence. Conversational turns,
 approval questions and other back-and-forth remain in the configured runtime.
+Reflection bookkeeping and the runner's state stay in the state database and
+are never reflected. Neither the work record nor any temporary work state is
+committed to the project's repository.
 An evidence reference may identify the originating conversation without
 copying it into GitHub.
 
@@ -96,8 +103,8 @@ refuse and name that key.
 and `gh auth token`, and is never stored. With none, reflection reports
 "pending: no credentials" and the local record continues.
 
-A per-computer writer lock serializes reflection; no separate writer process
-runs. Every command that writes the record and every runner tick flushes
+A per-computer writer lock serializes reflection and every write to the
+state database; no separate writer process runs. Every command that writes the record and every runner tick flushes
 pending reflection under that lock. Writes check the item's known
 remote revision before replacing it. A newer remote revision is a conflict,
 not permission to overwrite it with a stale local snapshot. The local change
@@ -107,8 +114,8 @@ agent re-applies its change.
 
 Remote serialization retains the extracted GitHub store’s record and revision
 envelopes, artifact-version references and stamp ledger within the
-artifacts-and-stamps boundary. A mutation spanning several todos is reflected
-per item, not atomically.
+artifacts-and-stamps boundary. A mutation spanning several todos commits
+locally in one transaction and is reflected per item, not atomically.
 
 A record comment is applied only when GitHub reports its author's association
 with the repository as owner, member or collaborator; a record comment by

@@ -1,13 +1,14 @@
 ---
-description: Instrukt's nine bounded contexts, their module placement and directed relationships.
+description: Instrukt's ten bounded contexts, their module placement and directed relationships.
 delivered_by: [instrukt-first-build]
 ---
 # Context Map — Spec
 
 ## What it is
 
-The semantic map of instrukt: nine bounded contexts with separate ownership,
-assembled into modules with downward dependencies. Contexts own behavior;
+The semantic map of instrukt: ten bounded contexts with separate ownership,
+nine assembled into modules with downward dependencies and one, distribution,
+outside the binary. Contexts own behavior;
 modules determine which capabilities are enabled. The map indexes their domain
 contracts and the designs governing their relationships.
 
@@ -19,13 +20,14 @@ contracts and the designs governing their relationships.
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
 | configuration | Layered settings, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
-| publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims and editor schemas | `project/instrukt/spec/domain/publication` |
+| publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local-leading work record, GitHub reflection, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources and scheduled ticks | `project/instrukt/spec/domain/runner` |
+| distribution | The release, the release installer and the Claude plugin with its cockpit skill and startup hook | `project/instrukt/spec/domain/distribution` |
 
 ### Modules
 
@@ -35,6 +37,9 @@ contracts and the designs governing their relationships.
 | blueprint | blueprint | Switchable; uses core repository information and a graph engine |
 | todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime mapping required; runner autostart or manual concerns todos only |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime mapping required; shares the single runner process |
+
+Distribution is in no module: it is release tooling and plugin files beside
+the binary, reaching it only through its command surface.
 
 Events are a module switch within the runner's semantic boundary, not a tenth
 bounded context. The runner's work follows the enabled modules; events do not
@@ -76,6 +81,9 @@ not permission for an upstream module to depend on its consumer.
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
 | runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits |
+| repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
+| publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
+| configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
 
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
@@ -90,7 +98,8 @@ relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime mapping and event-source boundary translate
 session operations and external notifications. These are boundary locations,
-not additional contexts.
+not additional contexts. Distribution is **Conformist** to Claude Code's
+plugin and marketplace formats and to GitHub's release assets.
 
 ### Cross-cutting designs and rulings
 

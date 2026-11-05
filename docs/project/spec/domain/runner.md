@@ -43,7 +43,11 @@ authorization and derived workflow state.
 
 **Runtime mapping**
 : Global configuration connecting facade operations and declared capabilities
-  to the configured runtime.
+  to the runtime the developer chose, as command templates instrukt fills
+  for the calls it makes, plus agent-facing history templates. A feature is
+  available only when the chosen runtime fills every template it needs.
+  instrukt ships an entry for T3 Code that a developer may choose; no code
+  detects or chooses a runtime.
 
 **Linked-session input**
 : Human words typed in one session also reaching a linked session with their
@@ -69,13 +73,22 @@ authorization and derived workflow state.
 - **Owns:** Module-aware runner execution; todo dispatch policy; procedure
   activation from events; the sessions facade and session reuse behavior;
   runtime capability translation, including linked-session input; time
-  eligibility and missed-run decisions; anomaly-notification routing.
+  eligibility and missed-run decisions; anomaly-notification routing; the
+  meaning and writes of its tables in the state database (the event log,
+  consumer cursors and handled marks, request validators, watched-ref
+  observations, executions, standing-agent bindings and starts, held task
+  failures and the last wake-up), whose schema is published in
+  `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
-  conversations and native session execution, supplied by the runtime.
+  session lifecycle, input delivery, restart, revival, handover,
+  transcripts and their search, cleanup and subscriptions to session
+  activity, all owned by the runtime and reached only through the runtime
+  mapping's templates. Events, schedules and dispatch decisions are the
+  runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, `instrukt sessions
   run|send|alive|conversation|link|end`, `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
   (procedure required except setup-only `run --worktree <name> --brief <file|->`;
@@ -86,7 +99,8 @@ authorization and derived workflow state.
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and
   project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
-  supplies records and session identity, and workflow supplies assignments; the runtime and
+  supplies records and session identity, and the state database's file,
+  writer lock and migrations; workflow supplies assignments; the runtime and
   GitHub supply execution and external observations. These
   relationships are specified in the context map position below.
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
@@ -110,9 +124,9 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 - **Identifier:** The invocation itself; no new durable invocation identifier
   is established by this contract.
 - **Lifecycle:** Begins at a runner entry point and ends when that invocation
-  exits. One runner lock per machine serializes invocations; a tick exits
-  at once while `instrukt run` holds it. The lock and last wake-up live in
-  `state/runner/`.
+  exits. One runner lock per machine, `~/.instrukt/state/runner.lock`,
+  serializes invocations; a tick exits at once while `instrukt run` holds it.
+  The last wake-up is a row of the state database.
 
 #### Standing-agent session binding
 
@@ -136,8 +150,10 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
   not authorization to reconcile the fork.
 - **Identifier:** Event identity and subscribed responsibility; the standing-agent session is keyed by (subscribing procedure, project).
 - **Lifecycle:** A source supplies an event, the runner resolves subscriptions
-  and starts or wakes the responsible session. The event log in `state/runner/` retains idempotency keys and per-consumer
-  cursors across restarts; handlers reconcile their subject idempotently.
+  and starts or wakes the responsible session. The event log in the state
+  database retains idempotency keys, per-consumer cursors and per-consumer
+  handled marks across restarts, so each consumer is handed an event once;
+  handlers reconcile their subject idempotently.
 
 #### Task timing
 
@@ -175,8 +191,10 @@ tick; it does not carry authoritative state or require reliable delivery.
 | --- | --- | --- | --- | --- |
 | `workflow.finalized` | work’s finalize-ready stamp, expressing workflow’s handoff | Project, todo, finalized revision | Project, todo, finalized revision | Wake the subscribed standing integrator for finalize-ready work |
 
-The log in `state/runner/` persists these events with per-consumer cursors and
-idempotency keys. Consumers resume from their cursors and reconcile their
+The state database's event log persists these events with per-consumer
+cursors, handled marks and idempotency keys; a consumer's handled mark
+commits with the record of its delivery. Consumers resume from their cursors
+and reconcile their
 subject against current state. Runtime session observations supply the five
 facade states; they do not expand the first-build event vocabulary or replace
 record-backed completion.
@@ -186,8 +204,10 @@ record-backed completion.
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
-  — session reuse, five-state observation and sharing a human clarification
-  with linked collaborators.
+  — session reuse, five-state observation, sharing a human clarification
+  with linked collaborators, working on T3 Code once it is chosen, looking up
+  earlier conversations, and refusing a feature the chosen runtime cannot
+  carry.
 - **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
@@ -210,11 +230,16 @@ record-backed completion.
 | runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
+| work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
 | runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits; `runner.main_failing` wakes it to restore a failing canonical branch |
 
 The runtime mapping and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are
-external boundaries, not additional bounded contexts.
+external boundaries, not additional bounded contexts. The runtime side of the
+ACL is configuration only: each runtime, including the T3 Code entry instrukt
+ships, is reached through its mapping entry's templates, never through a code
+path of its own
+(`project/instrukt/spec/feature/runner/session-continuity`).
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract

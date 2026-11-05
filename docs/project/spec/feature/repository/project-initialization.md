@@ -19,9 +19,17 @@ sections.
 
 ## Canonical fields
 
-When a hand-written root `AGENTS.md` exists without a master, init seeds no
-master and reports that its content must first move into a `docs/project/`
-snippet; the next run seeds the master.
+Adoption replaces whole instruction files and never injects into existing
+ones. A project's root `AGENTS.md` is taken over by adoption: when a
+hand-written root `AGENTS.md` exists without a master, init seeds the master
+with that file's content as its `## Purpose` (the file's own headings demoted
+under it), so nothing the developer wrote is lost, and from the first sync
+the root `AGENTS.md` is rendered by instrukt. Init reports that the file is now
+generated and that its tracked copy is to be removed from version control in
+the same commit as the master (`git rm --cached AGENTS.md`); it never deletes
+or edits the file itself. User-scope agent files are the adopter's decision:
+sync refuses one instrukt did not write and names it
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 ### What init establishes
 
@@ -82,6 +90,16 @@ Then the repository has a project configuration named after its primary checkout
 And it has a project documentation folder with an empty index and a master stating the project's purpose
 And instrukt's hooks are installed beside any hooks the repository had
 And nothing has been committed
+```
+
+#### UC-IN5: A developer adopting a repository with its own agent instructions keeps what they wrote
+
+```gherkin
+Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
+When the developer initializes instrukt in it
+Then the project's master states the purpose with everything the file said
+And the developer is told that the instruction file is generated from now on and how to stop tracking it
+And the file itself is left as it was until the first publication renders it
 ```
 
 #### UC-IN2: Initializing again completes an adoption without touching the developer's files

@@ -109,4 +109,10 @@ whose purpose that is.
 
 ## Exceptions
 
-- None.
+- **Writers that take turns under one lock.** A tool with no background
+  process, whose every write runs inside a bounded invocation — a command, or
+  a scheduled run that exits — holding one per-computer writer lock, already
+  makes all its writers wait on each other. That lock is its write-isolation
+  unit, so its operational state may share one database across its domains:
+  separate stores under the same lock would isolate nothing. The architecture
+  names the lock as the unit and the invocations that hold it.

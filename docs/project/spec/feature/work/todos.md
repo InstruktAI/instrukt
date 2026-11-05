@@ -26,7 +26,8 @@ delivered one is shown as `<slug> (delivered)`.
 `instrukt todo create <slug> <content> --kind <kind>` requires substantive
 content and an explicit kind. Without `--approved`, it prints the admission
 questions and creates nothing. With `--approved`, creation writes the entry, initial state and
-first input-artifact version together in the local store. Invalid content,
+first input-artifact version in one transaction of the state database
+(`project/instrukt/spec/feature/work/state-database`). Invalid content,
 kind, dependency or grouping rejects creation before partial work is recorded.
 `--icebox` creates the todo in the icebox. For a task, `--agent <name>
 [--thinking slow|med|fast]` sets its optional agent preference, which

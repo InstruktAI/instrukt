@@ -392,7 +392,7 @@ to pre-satisfy:
   When the delivery removes a capability that a whole live snippet describes,
   or the last dispatcher of a command artifact, the plan names each retiring
   file and verifies its empty companion was authored on `main` under this slug
-  (`general/procedure/doc-snippet-authoring` step 12). A retiring file with no
+  (`general/procedure/doc-snippet-authoring` step 13). A retiring file with no
   companion, a task that deletes it, or a removal left to an act after
   delivery is a Requirement-Violation.
 - **ADR discipline (hard gate)**: any ADR the plan schedules, or that prepare

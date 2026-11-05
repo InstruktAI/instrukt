@@ -61,7 +61,8 @@ supplies session execution; instrukt owns the task calendar.
 
 `instrukt ticks status` shows the last wake-up and warns when no wake-up has
 arrived for five minutes. It reports "no wake-up ever recorded" when none
-has been recorded. The last wake-up is stored in `state/runner/`. A wake-up is evidence that the runner was invoked,
+has been recorded. The last wake-up is a row of the state database
+(`project/instrukt/spec/feature/work/state-database`). A wake-up is evidence that the runner was invoked,
 not evidence that any task finished. Completion follows the record contract
 in `project/instrukt/spec/feature/runner/session-continuity`.
 
