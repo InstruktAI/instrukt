@@ -107,7 +107,7 @@ fn procedure(name: &str, role: &str, parameters: bool) -> (String, String) {
         format!("role: {role}\n")
     };
     (
-        format!("docs/global/acme/procedure/{name}.md"),
+        format!("docs/domain/acme/procedure/{name}.md"),
         snippet(
             "procedure",
             name,
@@ -171,9 +171,9 @@ impl Tracked {
                  publishes:\n  - slug: acme\n    trigger: When working on acme.\n"
             ),
         );
-        repo.write("docs/global/acme/workflow/actions.yaml", ACTIONS);
-        repo.write("docs/global/acme/workflow/prepare.yaml", PREPARE);
-        repo.write("docs/global/acme/workflow/work.yaml", WORK);
+        repo.write("docs/domain/acme/workflow/actions.yaml", ACTIONS);
+        repo.write("docs/domain/acme/workflow/prepare.yaml", PREPARE);
+        repo.write("docs/domain/acme/workflow/work.yaml", WORK);
         for template in [
             "draft-plan",
             "prepare-task",
@@ -182,7 +182,7 @@ impl Tracked {
             "await-task-runner",
         ] {
             repo.write(
-                &format!("docs/global/acme/workflow/templates/{template}.md"),
+                &format!("docs/domain/acme/workflow/templates/{template}.md"),
                 &format!("{template} for {{slug}}\n"),
             );
         }
@@ -198,7 +198,7 @@ impl Tracked {
         }
         if integrator {
             repo.write(
-                "docs/global/acme/procedure/integrate.md",
+                "docs/domain/acme/procedure/integrate.md",
                 &snippet(
                     "procedure",
                     "Integrate",

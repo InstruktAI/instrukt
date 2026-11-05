@@ -310,5 +310,5 @@ None.
   configuration path in-process, and a leftover `@exec` is inert text and a
   validation finding.
 - With no publication yet, `index` says nothing is published and directs the caller to `instrukt sync` in a project; `get` fails as for an unknown id.
-- The pre-release layout (`docs/global/`, `docs/project/`, baseline manifests, bundles) has no compatibility path: a snippet left there yields no identity, which is a validation finding.
+- The pre-release layout (`docs/global/`, `docs/local/`, baseline manifests, bundles) has no compatibility path: a snippet left there yields no identity, which is a validation finding.
 - A prose citation is not checked: validation does not judge prose, so a cited id that names nothing passes.

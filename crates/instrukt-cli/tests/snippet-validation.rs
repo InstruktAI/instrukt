@@ -77,9 +77,9 @@ fn project(env: &TestEnv) -> Repo {
 /// required reads of every valid form, a baseline, a fragment, a
 /// third-party doc and every pending carrier.
 fn valid_tree(repo: &Repo) {
-    repo.write("docs/global/acme/principle/care.md", &snippet("principle", "", ""))
+    repo.write("docs/domain/acme/principle/care.md", &snippet("principle", "", ""))
         .write(
-            "docs/global/acme/policy/rules.md",
+            "docs/domain/acme/policy/rules.md",
             &snippet(
                 "policy",
                 "visibility: public\neval: true\n",
@@ -91,7 +91,7 @@ fn valid_tree(repo: &Repo) {
             ),
         )
         .write(
-            "docs/global/acme/procedure/work/overview.md",
+            "docs/domain/acme/procedure/work/overview.md",
             &snippet(
                 "procedure",
                 "role: worker\nactivation_trigger: When work arrives.\n\
@@ -101,7 +101,7 @@ fn valid_tree(repo: &Repo) {
             ),
         )
         .write(
-            "docs/global/acme/procedure/listen.md",
+            "docs/domain/acme/procedure/listen.md",
             &snippet(
                 "procedure",
                 "role: listener\nsubscriptions: ['acme.events.*']\nevent_delivery: batched\n",
@@ -109,7 +109,7 @@ fn valid_tree(repo: &Repo) {
             ),
         )
         .write(
-            "docs/global/acme/baseline.md",
+            "docs/domain/acme/baseline.md",
             "@~/.instrukt/docs/acme/policy/rules.md\n@~/.instrukt/docs/acme/procedure/listen.md\n",
         )
         .write("docs/global/snippets/shared.md", "Shared text.\n")
@@ -151,7 +151,7 @@ fn valid_tree(repo: &Repo) {
             "---\ndescription: A choice.\ndate: 2026-01-02\nnumber: 0049\n---\n\n# Choice — ADR\n\n\
              ## Context\n\n## Decision\n\n## Consequences\n",
         )
-        .write("docs/global/acme/_drafts/notes.md", "no frontmatter at all\n");
+        .write("docs/domain/acme/_drafts/notes.md", "no frontmatter at all\n");
 }
 
 struct Run {
@@ -192,7 +192,7 @@ fn a_snippet_without_a_description_is_reported_not_left_out() {
     let repo = project(&env);
     valid_tree(&repo);
     repo.write(
-        "docs/global/acme/concept/bare.md",
+        "docs/domain/acme/concept/bare.md",
         "---\nvisibility: public\n---\n\n# Bare — Concept\n\n## What\n\nx\n\n## Why\n\ny\n",
     );
     let run = validate(&env, &repo, &[]);
@@ -207,15 +207,15 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
     let repo = project(&env);
     valid_tree(&repo);
     // Identity
-    repo.write("docs/global/acme/notes/idea.md", &snippet("concept", "", ""))
-        .write("docs/global/loose.md", &snippet("concept", "", ""))
+    repo.write("docs/domain/acme/notes/idea.md", &snippet("concept", "", ""))
+        .write("docs/domain/loose.md", &snippet("concept", "", ""))
         .write(
-            "docs/global/acme/policy/authored.md",
+            "docs/domain/acme/policy/authored.md",
             &snippet("policy", "id: acme/policy/authored\ntype: policy\n", ""),
         )
         // Frontmatter
         .write(
-            "docs/global/acme/concept/fields.md",
+            "docs/domain/acme/concept/fields.md",
             &snippet(
                 "concept",
                 "visibility: secret\neval: often\nrole: helper\n",
@@ -223,7 +223,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             ),
         )
         .write(
-            "docs/global/acme/procedure/both.md",
+            "docs/domain/acme/procedure/both.md",
             &snippet(
                 "procedure",
                 "activation_trigger: Now.\nsubscriptions: ['a.*']\nparameters: [{name: x}]\n",
@@ -231,7 +231,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             ),
         )
         .write(
-            "docs/global/acme/procedure/ghostly.md",
+            "docs/domain/acme/procedure/ghostly.md",
             &snippet(
                 "procedure",
                 "role: haunter\nactivation_trigger: At night.\n\
@@ -252,13 +252,13 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         .write("docs/project/adr/0002-pending.later.md", "")
         // Structure
         .write(
-            "docs/global/acme/principle/shape.md",
+            "docs/domain/acme/principle/shape.md",
             "---\ndescription: Misshapen.\n---\n\nIntro first.\n\n# Shape — Concept\n\n## Principle\n\n\
              ## See also\n\n## Rationale\n\n## Implications\n\n## Extra\n",
         )
         // References
         .write(
-            "docs/global/acme/policy/refs.md",
+            "docs/domain/acme/policy/refs.md",
             &snippet(
                 "policy",
                 "",
@@ -266,7 +266,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             )
             .replace(
                 "# Sample — Policy\n",
-                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- @docs/global/acme/principle/care.md\n\
+                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- @docs/domain/acme/principle/care.md\n\
                  - @~/.instrukt/docs/acme/principle/missing.md\n- @docs/project/design/shape.md\n",
             ),
         )
@@ -284,7 +284,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         .write("docs/project/spec/pending.Not_A_Slug.md", &snippet("spec", "", ""))
         // Baselines
         .write(
-            "docs/global/acme/baseline-progressive.md",
+            "docs/domain/acme/baseline-progressive.md",
             "@~/.instrukt/docs/acme/policy/rules.md\n@~/.instrukt/docs/acme/principle/shape.md\nnot a reference\n",
         )
         .write(
@@ -293,7 +293,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
              @~/.instrukt/docs/acme/principle/care.md\n",
         )
         // Workflow flavor
-        .write("docs/global/acme/workflow/actions.yaml", "roles: not-a-list\n")
+        .write("docs/domain/acme/workflow/actions.yaml", "roles: not-a-list\n")
         // Third-party
         .write(
             "docs/third-party/tool/broken.md",
@@ -301,12 +301,12 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         )
         // Directives
         .write(
-            "docs/global/acme/concept/runs.md",
+            "docs/domain/acme/concept/runs.md",
             &snippet("concept", "", "\n<!-- @exec: touch ran -->\n"),
         )
         .write("docs/global/snippets/runs.md", "<!-- @exec: touch ran -->\n")
         .write(
-            "docs/global/acme/principle/session.md",
+            "docs/domain/acme/principle/session.md",
             &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),
         )
         .write(
@@ -326,7 +326,7 @@ fn findings_print_as_a_json_list_with_file_code_and_value() {
     let repo = project(&env);
     valid_tree(&repo);
     repo.write(
-        "docs/global/acme/concept/fields.md",
+        "docs/domain/acme/concept/fields.md",
         &snippet("concept", "visibility: secret\n", ""),
     );
     let run = validate(&env, &repo, &["--json"]);
@@ -347,26 +347,26 @@ fn named_paths_limit_the_run_to_those_files_and_their_cross_snippet_checks() {
     let repo = project(&env);
     valid_tree(&repo);
     repo.write(
-        "docs/global/acme/concept/one.md",
+        "docs/domain/acme/concept/one.md",
         &snippet("concept", "visibility: x\n", ""),
     )
     .write(
-        "docs/global/acme/concept/two.md",
+        "docs/domain/acme/concept/two.md",
         &snippet("concept", "visibility: y\n", ""),
     )
     .write(
-        "docs/global/acme/procedure/rival.md",
+        "docs/domain/acme/procedure/rival.md",
         &snippet("procedure", "role: worker\nactivation_trigger: Also.\n", ""),
     );
-    let one = validate(&env, &repo, &["docs/global/acme/concept/one.md"]);
+    let one = validate(&env, &repo, &["docs/domain/acme/concept/one.md"]);
     assert!(!one.success);
     insta::assert_snapshot!("scoped_one_file", one.out);
     // The rival shares a role with the work overview: naming either file
     // reports the collision on both.
-    let rival = validate(&env, &repo, &["docs/global/acme/procedure/rival.md"]);
+    let rival = validate(&env, &repo, &["docs/domain/acme/procedure/rival.md"]);
     assert!(!rival.success);
     insta::assert_snapshot!("scoped_role_clash", rival.out);
-    let untouched = validate(&env, &repo, &["docs/global/acme/policy/rules.md"]);
+    let untouched = validate(&env, &repo, &["docs/domain/acme/policy/rules.md"]);
     assert!(untouched.success);
     insta::assert_snapshot!("scoped_clean_file", untouched.out);
 }
@@ -377,9 +377,9 @@ fn an_entry_procedure_requiring_its_own_sub_procedure_is_reported() {
     let env = TestEnv::new();
     let repo = project(&env);
     valid_tree(&repo);
-    repo.write("docs/global/acme/procedure/work/step.md", &snippet("procedure", "", ""))
+    repo.write("docs/domain/acme/procedure/work/step.md", &snippet("procedure", "", ""))
         .write(
-            "docs/global/acme/procedure/work/overview.md",
+            "docs/domain/acme/procedure/work/overview.md",
             &snippet("procedure", "role: worker\nactivation_trigger: When work arrives.\n", "")
                 .replace(
                     "# Sample — Procedure\n",
@@ -401,7 +401,7 @@ fn references_to_domains_published_elsewhere_resolve_through_the_home() {
     std::fs::create_dir_all(&home_docs).unwrap();
     std::fs::write(home_docs.join("stewardship.md"), "published elsewhere\n").unwrap();
     repo.write(
-        "docs/global/acme/concept/borrowing.md",
+        "docs/domain/acme/concept/borrowing.md",
         &snippet("concept", "", "").replace(
             "# Sample — Concept\n",
             "# Sample — Concept\n\n## Required reads\n\n- @~/.instrukt/docs/general/principle/stewardship.md\n\
@@ -435,22 +435,22 @@ fn publish_crew_flavor(env: &TestEnv) {
             "schema_version: 1\nproject: flows\npublishes:\n  - slug: crew\n    trigger: When the crew works.\n",
         )
         .write(
-            "docs/global/crew/workflow/actions.yaml",
+            "docs/domain/crew/workflow/actions.yaml",
             "roles: [lead, reviewer, checker]\n\
              review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n",
         )
-        .write("docs/global/crew/workflow/templates/review.md", "Review {slug}.\n")
+        .write("docs/domain/crew/workflow/templates/review.md", "Review {slug}.\n")
         .write(
-            "docs/global/crew/workflow/work.yaml",
+            "docs/domain/crew/workflow/work.yaml",
             "flow: work\norchestrator: lead\ninitial: start\nstates: [start, reviewing]\n\
              transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
         )
         .write(
-            "docs/global/crew/procedure/lead.md",
+            "docs/domain/crew/procedure/lead.md",
             &snippet("procedure", "role: lead\nactivation_trigger: When work is led.\n", ""),
         )
         .write(
-            "docs/global/crew/procedure/review.md",
+            "docs/domain/crew/procedure/review.md",
             &snippet("procedure", "role: reviewer\nactivation_trigger: When work is reviewed.\n", ""),
         );
     flows.commit("publish the crew flavor");

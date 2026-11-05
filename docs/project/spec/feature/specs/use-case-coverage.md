@@ -57,7 +57,7 @@ is the scenario inventory bound, never source lines or a file mapping
 - Python arguments are string literals or names of module-level string
   constants in the same file; any other argument form is not a binding.
 - The spec id in a binding is the spec's snippet identity. A binding naming a
-  spec any other way, the pre-release `project/<slug>/…` form included,
+  spec any other way, the pre-release `local/projects/<slug>/…` form included,
   names no spec and is an orphan.
 
 ### Classification

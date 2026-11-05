@@ -4,31 +4,31 @@ expression: run.out
 ---
 AGENTS.master.md: directive-exec: touch ran
 AGENTS.master.md: directive-config-runtime-compiled: runtime.conversation
-docs/global/acme/baseline-progressive.md: baseline-line-invalid: not a reference
-docs/global/acme/baseline-progressive.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/shape.md
-docs/global/acme/baseline-progressive.md: baseline-already-carried: ~/.instrukt/docs/acme/policy/rules.md
-docs/global/acme/concept/fields.md: frontmatter-visibility-invalid: secret
-docs/global/acme/concept/fields.md: frontmatter-eval-invalid: often
-docs/global/acme/concept/fields.md: frontmatter-procedure-field-misplaced: role
-docs/global/acme/concept/runs.md: directive-exec: touch ran
-docs/global/acme/notes/idea.md: identity-unknown-taxonomy: notes
-docs/global/acme/policy/authored.md: identity-classification-authored: id, type
-docs/global/acme/policy/refs.md: structure-required-reads-not-first
-docs/global/acme/policy/refs.md: reference-outside-required-reads: ~/.instrukt/docs/acme/principle/care.md
-docs/global/acme/policy/refs.md: reference-form-invalid: docs/global/acme/principle/care.md
-docs/global/acme/policy/refs.md: reference-unresolved: ~/.instrukt/docs/acme/principle/missing.md
-docs/global/acme/policy/refs.md: reference-local-from-published: docs/project/design/shape.md
-docs/global/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id
-docs/global/acme/principle/shape.md: structure-h1-not-first
-docs/global/acme/principle/shape.md: structure-section-missing: Tensions
-docs/global/acme/principle/shape.md: structure-section-unknown: Extra
-docs/global/acme/principle/shape.md: structure-see-also-not-last
-docs/global/acme/procedure/both.md: frontmatter-activation-conflict
-docs/global/acme/procedure/both.md: frontmatter-subscriptions-without-role
-docs/global/acme/procedure/both.md: frontmatter-parameters-without-role
-docs/global/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
-docs/global/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
-docs/global/loose.md: identity-missing-domain: loose
+docs/domain/acme/baseline-progressive.md: baseline-line-invalid: not a reference
+docs/domain/acme/baseline-progressive.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/shape.md
+docs/domain/acme/baseline-progressive.md: baseline-already-carried: ~/.instrukt/docs/acme/policy/rules.md
+docs/domain/acme/concept/fields.md: frontmatter-visibility-invalid: secret
+docs/domain/acme/concept/fields.md: frontmatter-eval-invalid: often
+docs/domain/acme/concept/fields.md: frontmatter-procedure-field-misplaced: role
+docs/domain/acme/concept/runs.md: directive-exec: touch ran
+docs/domain/acme/notes/idea.md: identity-unknown-taxonomy: notes
+docs/domain/acme/policy/authored.md: identity-classification-authored: id, type
+docs/domain/acme/policy/refs.md: structure-required-reads-not-first
+docs/domain/acme/policy/refs.md: reference-outside-required-reads: ~/.instrukt/docs/acme/principle/care.md
+docs/domain/acme/policy/refs.md: reference-form-invalid: docs/domain/acme/principle/care.md
+docs/domain/acme/policy/refs.md: reference-unresolved: ~/.instrukt/docs/acme/principle/missing.md
+docs/domain/acme/policy/refs.md: reference-local-from-published: docs/project/design/shape.md
+docs/domain/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id
+docs/domain/acme/principle/shape.md: structure-h1-not-first
+docs/domain/acme/principle/shape.md: structure-section-missing: Tensions
+docs/domain/acme/principle/shape.md: structure-section-unknown: Extra
+docs/domain/acme/principle/shape.md: structure-see-also-not-last
+docs/domain/acme/procedure/both.md: frontmatter-activation-conflict
+docs/domain/acme/procedure/both.md: frontmatter-subscriptions-without-role
+docs/domain/acme/procedure/both.md: frontmatter-parameters-without-role
+docs/domain/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
+docs/domain/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
+docs/domain/loose.md: identity-missing-domain: loose
 docs/global/snippets/runs.md: directive-exec: touch ran
 docs/project/adr/0001-choice.md: frontmatter-adr-date-invalid
 docs/project/adr/0001-choice.md: frontmatter-adr-number-invalid

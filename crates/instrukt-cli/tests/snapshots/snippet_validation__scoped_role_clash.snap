@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: rival.out
 ---
-docs/global/acme/procedure/rival.md: procedure-role-shared: worker (acme/procedure/rival, acme/procedure/work/overview)
-docs/global/acme/procedure/work/overview.md: procedure-role-shared: worker (acme/procedure/rival, acme/procedure/work/overview)
+docs/domain/acme/procedure/rival.md: procedure-role-shared: worker (acme/procedure/rival, acme/procedure/work/overview)
+docs/domain/acme/procedure/work/overview.md: procedure-role-shared: worker (acme/procedure/rival, acme/procedure/work/overview)

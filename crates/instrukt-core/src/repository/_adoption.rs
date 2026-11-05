@@ -22,15 +22,17 @@ pub const MASTER_FILE: &str = "AGENTS.master.md";
 pub const GENERATED_FILE: &str = "AGENTS.md";
 /// The project's own baseline manifest a seeded master requires.
 pub const LOCAL_BASELINE: &str = "docs/project/baseline.md";
-/// The docs folders adoption creates.
-const DOCS_FOLDERS: [&str; 2] = ["docs/global", "docs/project"];
+/// The docs folders adoption creates: the project position only; a
+/// repository publishes `docs/general/` or a `docs/domain/<x>/` by holding
+/// it.
+const DOCS_FOLDERS: [&str; 1] = ["docs/project"];
 
 /// A part of adoption, in the order `init` establishes them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitPart {
     /// `instrukt.yaml` at the repository root.
     ProjectLayer,
-    /// `docs/global/` and `docs/project/`.
+    /// `docs/project/`.
     DocsFolders,
     /// `AGENTS.master.md` at the repository root.
     Master,

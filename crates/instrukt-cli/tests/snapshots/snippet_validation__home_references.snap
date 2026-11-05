@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: run.out
 ---
-docs/global/acme/concept/borrowing.md: reference-unresolved: ~/.instrukt/docs/general/principle/absent.md
-docs/global/acme/concept/borrowing.md: reference-domain-unpublished: ~/.instrukt/docs/nowhere/bundle.md: domain `nowhere` is not published on this computer; adopt a docs repository that publishes it
+docs/domain/acme/concept/borrowing.md: reference-unresolved: ~/.instrukt/docs/general/principle/absent.md
+docs/domain/acme/concept/borrowing.md: reference-domain-unpublished: ~/.instrukt/docs/nowhere/bundle.md: domain `nowhere` is not published on this computer; adopt a docs repository that publishes it

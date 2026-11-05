@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::PublicationError;
-use crate::docs::{Corpus, SourceFile};
+use crate::docs::{Corpus, SourceFile, published_origin};
 use crate::home::Home;
 use crate::ids::{CommitSha, ProjectSlug, SnippetId};
 use crate::index::{GlobalIndex, IndexScope};
@@ -156,10 +156,12 @@ pub(super) fn compute(
             }
             Err(source) => return Err(PublicationError::Io { path, source }),
         };
-        sources.push(SourceFile {
-            path: format!("docs/global/{}", entry.path.display()),
-            text,
-        });
+        // The corpus reads the file at the repository path it was published
+        // from, which is where its identity follows from.
+        let Some(origin) = published_origin(&entry.path.to_string_lossy()) else {
+            continue;
+        };
+        sources.push(SourceFile { path: origin, text });
     }
     let corpus = Corpus::from_sources(None, home, sources.iter().cloned());
     let texts: std::collections::BTreeMap<&str, &str> = sources

@@ -77,7 +77,7 @@ impl Evaluated {
         // The eval set: a review policy, published an hour later.
         project.env.set_env("INSTRUKT_NOW", "2030-01-05T09:00:00Z");
         flavor.repo.write(
-            "docs/global/crew/policy/review.md",
+            "docs/domain/crew/policy/review.md",
             &review_policy("Review every change against its requirements."),
         );
         flavor.republish(&project.env, "put the review policy in the eval set");
@@ -113,7 +113,7 @@ impl Evaluated {
     fn change_process(&self, rule: &str) {
         self.flavor
             .repo
-            .write("docs/global/crew/policy/review.md", &review_policy(rule));
+            .write("docs/domain/crew/policy/review.md", &review_policy(rule));
         self.flavor
             .republish(&self.project.env, "tighten the review policy");
     }

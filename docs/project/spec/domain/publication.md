@@ -275,7 +275,7 @@ runs it.
   `project/instrukt/spec/feature/repository/hook-sections`; the
   behind-main warning belongs to `project/instrukt/spec/domain/docs`.
 - There is no backward compatibility for the pre-release layout:
-  `docs/global/`, `docs/project/`, `publishes` and per-domain `publisher.yaml`
+  `docs/global/`, `docs/local/`, `publishes` and per-domain `publisher.yaml`
   are not read.
 
 ## See Also

@@ -14,6 +14,7 @@ use std::time::Instant;
 use instrukt_core::config::{
     self, ApprovalGate as ConfigGate, ConfigError, Configuration, Env, Module,
 };
+use instrukt_core::docs::Position;
 use instrukt_core::git::{self, GitError};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId, TodoSlug};
@@ -681,7 +682,7 @@ impl ConfigLookup for ConfigPaths<'_> {
 
 /// Core's flavor-role lookup for docs validation: the roles of the flavor
 /// the project's configuration selects. A project that authors that flavor
-/// (`docs/global/<domain>/workflow/`) is validated against its own
+/// (`docs/domain/<domain>/workflow/`, or `docs/general/workflow/`) is validated against its own
 /// authored roles, so a commit that changes them can be published; any
 /// other project reads the published flavor.
 #[derive(Debug, Clone)]
@@ -707,8 +708,7 @@ impl FlavorRoles for SelectedFlavorRoles {
             .workflow_domain()
             .map_err(|err| failed(err.to_string()))?;
         let authored = project_root
-            .join("docs/global")
-            .join(domain.as_str())
+            .join(Position::of_domain(&domain).dir())
             .join("workflow");
         let dir = if authored.is_dir() {
             authored

@@ -1,13 +1,15 @@
 //! Where a documentation file sits, and the identity that follows from it.
 //!
 //! Identity is derived, never authored (`general/spec/snippet-authoring-schema`):
-//! `<domain>/<taxonomy>/<rest>` in the published half,
-//! `project/<slug>/<taxonomy>/<rest>` in the local half.
+//! `general/<taxonomy>/<rest>` under `docs/general/`,
+//! `<domain>/<taxonomy>/<rest>` under `docs/domain/<domain>/` and
+//! `project/<slug>/<taxonomy>/<rest>` under `docs/project/`.
 
 use std::fmt;
 
 use serde::Serialize;
 
+use super::_position::{GENERAL, Position, is_reserved_domain_folder};
 use crate::ids::{DomainName, ProjectSlug, SnippetId, ThirdPartyId};
 
 /// A snippet's type, from its taxonomy directory. Ordered as listings order
@@ -103,18 +105,18 @@ impl fmt::Display for Taxonomy {
     }
 }
 
-/// The scope a snippet belongs to, from its half.
+/// The scope a snippet belongs to, from its position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
-    /// The published half: a domain snippet.
+    /// A published position: `docs/general/` or a `docs/domain/<x>/`.
     Global,
-    /// The local half: a project's own snippet.
+    /// `docs/project/`: a project's own snippet.
     Project,
 }
 
-/// A snippet's derived domain: a published domain, or the structural
-/// marker `project` of a local snippet.
+/// A snippet's derived domain: a published domain (`general` among them),
+/// or the structural marker `project` of a project snippet.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DocDomain {
     Published(DomainName),
@@ -148,7 +150,8 @@ pub(super) struct Classification {
 /// Who a baseline manifest belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BaselineOwner {
-    /// `docs/global/<domain>/baseline.md` or `baseline-progressive.md`.
+    /// `docs/general/baseline.md`, `docs/domain/<domain>/baseline.md` or
+    /// their `baseline-progressive.md`.
     Domain(DomainName),
     /// `docs/project/baseline.md`.
     Project,
@@ -159,13 +162,17 @@ pub enum BaselineOwner {
 pub(super) enum Unplaced {
     /// A taxonomy directory that is not one of the seven.
     UnknownTaxonomy(String),
-    /// A published file with no domain segment, or a domain segment that is
-    /// not a domain name.
+    /// A file directly under `docs/domain/`, or a domain folder whose name
+    /// is not a domain name.
     MissingDomain(String),
-    /// A local snippet in a repository whose `instrukt.yaml` declares no
+    /// A domain folder carrying a reserved name (`general`, `project`,
+    /// `third-party`).
+    ReservedDomain(String),
+    /// A project snippet in a repository whose `instrukt.yaml` declares no
     /// `project`.
     UndeclaredProject,
-    /// Not below a half, the third-party root or the fragment root.
+    /// Not below a position, the third-party root or the fragment root —
+    /// the pre-release layout's `docs/global/` and `docs/local/` among them.
     Outside,
 }
 
@@ -183,18 +190,21 @@ pub(super) enum Placement {
     /// A third-party doc, identified by its path below `docs/third-party/`
     /// prefixed with `third-party/`.
     ThirdParty(ThirdPartyId),
-    /// Under `docs/global/<domain>/workflow/`: not a snippet.
+    /// Under a published position's `workflow/`: not a snippet.
     Workflow,
     Unplaced(Unplaced),
 }
 
-/// Domain names an identity grammar reserves.
-const RESERVED_DOMAINS: [&str; 4] = ["local", "projects", "snippets", "third-party"];
+/// The fragment root: shared include bodies, below `docs/global/snippets/`
+/// until a later migration decides their place.
+pub const FRAGMENT_ROOT: &str = "docs/global/snippets/";
 
 /// Places the Markdown file at `rel` (`/`-separated, relative to the
 /// repository root, beginning `docs/`). `None` for a path that is not a
 /// documentation Markdown file: not below `docs/`, not `.md`, or inside a
-/// directory whose name starts with `_`.
+/// directory whose name starts with `_`. A file of the pre-release layout
+/// (`docs/global/…` outside the fragment root, `docs/local/…`) yields no
+/// identity.
 pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placement> {
     let stem = rel.strip_suffix(".md")?;
     let parts: Vec<&str> = stem.split('/').collect();
@@ -210,7 +220,22 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
         ["global", "snippets", tail @ ..] if !tail.is_empty() => {
             Placement::Fragment(tail.join("/"))
         }
-        ["global", tail @ ..] => place_published(tail),
+        [GENERAL, tail @ ..] => match DomainName::parse(GENERAL) {
+            Ok(general) => place_published(general, tail),
+            Err(_) => Placement::Unplaced(Unplaced::Outside),
+        },
+        ["domain", domain, tail @ ..] if !tail.is_empty() => {
+            if is_reserved_domain_folder(domain) {
+                return Some(Placement::Unplaced(Unplaced::ReservedDomain(
+                    (*domain).to_owned(),
+                )));
+            }
+            match DomainName::parse(domain) {
+                Ok(name) => place_published(name, tail),
+                Err(_) => Placement::Unplaced(Unplaced::MissingDomain((*domain).to_owned())),
+            }
+        }
+        ["domain", file] => Placement::Unplaced(Unplaced::MissingDomain((*file).to_owned())),
         ["project", tail @ ..] => place_project(tail, project),
         ["third-party", tail @ ..] if !tail.is_empty() => {
             match ThirdPartyId::parse(&format!("third-party/{}", tail.join("/"))) {
@@ -222,17 +247,41 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
     })
 }
 
-fn place_published(tail: &[&str]) -> Placement {
-    let [domain, after @ ..] = tail else {
-        return Placement::Unplaced(Unplaced::Outside);
-    };
-    if after.is_empty() {
-        return Placement::Unplaced(Unplaced::MissingDomain((*domain).to_owned()));
+/// The repository path of a published snippet's file: `general/…` below
+/// `docs/general/`, `<x>/…` below `docs/domain/<x>/`. `None` for a project
+/// snippet, whose file is found through its project.
+pub fn published_source(id: &SnippetId) -> Option<String> {
+    let domain = id.domain()?;
+    let rest = id.as_str().strip_prefix(domain.as_str())?;
+    Some(format!("{}{rest}.md", Position::of_domain(&domain).dir()))
+}
+
+/// The repository path a path below the home's published tree
+/// (`<x>/<rest>`, relative to `~/.instrukt/docs/`) is published from:
+/// `docs/general/<rest>` or `docs/domain/<x>/<rest>`. `None` for a path
+/// with no domain segment or one that names no domain.
+pub fn published_origin(home_rel: &str) -> Option<String> {
+    let (domain, rest) = home_rel.split_once('/')?;
+    let domain = DomainName::parse(domain).ok()?;
+    Some(format!("{}/{rest}", Position::of_domain(&domain).dir()))
+}
+
+/// Where a file below a published position (`docs/general/…`,
+/// `docs/domain/<x>/…`) is published, relative to `~/.instrukt/docs/`:
+/// `general/…` or `<x>/…`. `None` for a path outside every published
+/// position.
+pub fn published_destination(repo_rel: &str) -> Option<String> {
+    if let Some(rest) = repo_rel.strip_prefix(&format!("docs/{GENERAL}/")) {
+        return Some(format!("{GENERAL}/{rest}"));
     }
-    let domain_name = match DomainName::parse(domain) {
-        Ok(name) if !RESERVED_DOMAINS.contains(domain) => name,
-        _ => return Placement::Unplaced(Unplaced::MissingDomain((*domain).to_owned())),
-    };
+    let rest = repo_rel.strip_prefix("docs/domain/")?;
+    let (domain, _) = rest.split_once('/')?;
+    (!is_reserved_domain_folder(domain) && DomainName::parse(domain).is_ok())
+        .then(|| rest.to_owned())
+}
+
+fn place_published(domain_name: DomainName, after: &[&str]) -> Placement {
+    let domain = domain_name.as_str().to_owned();
     match after {
         ["workflow", ..] => Placement::Workflow,
         [name @ ("baseline" | "baseline-progressive")] => Placement::Baseline {
@@ -331,9 +380,13 @@ mod tests {
     }
 
     #[test]
-    fn published_and_local_halves_derive_their_identities() {
+    fn each_position_derives_its_identities() {
         assert_eq!(
-            id_of("docs/global/sdlc/policy/rust/core.md", None),
+            id_of("docs/general/policy/x.md", None),
+            id("general/policy/x")
+        );
+        assert_eq!(
+            id_of("docs/domain/sdlc/policy/rust/core.md", None),
             id("sdlc/policy/rust/core")
         );
         assert_eq!(
@@ -356,13 +409,13 @@ mod tests {
     fn paths_without_an_identity_say_why() {
         let cases = [
             (
-                "docs/global/sdlc/notes/x.md",
+                "docs/domain/sdlc/notes/x.md",
                 Unplaced::UnknownTaxonomy("notes".into()),
             ),
-            ("docs/global/x.md", Unplaced::MissingDomain("x".into())),
+            ("docs/domain/x.md", Unplaced::MissingDomain("x".into())),
             (
-                "docs/global/projects/policy/x.md",
-                Unplaced::MissingDomain("projects".into()),
+                "docs/domain/Bad/policy/x.md",
+                Unplaced::MissingDomain("Bad".into()),
             ),
             ("docs/project/spec/x.md", Unplaced::UndeclaredProject),
             ("docs/x.md", Unplaced::Outside),
@@ -373,9 +426,32 @@ mod tests {
     }
 
     #[test]
+    fn a_domain_folder_with_a_reserved_name_yields_no_identity() {
+        for name in ["general", "project", "third-party"] {
+            assert_eq!(
+                place(&format!("docs/domain/{name}/policy/x.md"), None),
+                Some(Placement::Unplaced(Unplaced::ReservedDomain(name.into()))),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pre_release_layout_yields_no_identity() {
+        let project = slug();
+        for rel in ["docs/global/sdlc/policy/x.md", "docs/local/spec/x.md"] {
+            assert_eq!(
+                place(rel, Some(&project)),
+                Some(Placement::Unplaced(Unplaced::Outside)),
+                "{rel}"
+            );
+        }
+    }
+
+    #[test]
     fn manifests_fragments_workflow_and_skipped_paths_are_recognised() {
         assert!(matches!(
-            place("docs/global/sdlc/baseline-progressive.md", None),
+            place("docs/domain/sdlc/baseline-progressive.md", None),
             Some(Placement::Baseline {
                 progressive: true,
                 ..
@@ -393,11 +469,38 @@ mod tests {
             Some(Placement::Fragment("step".into()))
         );
         assert_eq!(
-            place("docs/global/sdlc/workflow/templates/a.md", None),
+            place("docs/domain/sdlc/workflow/templates/a.md", None),
             Some(Placement::Workflow)
         );
-        assert_eq!(place("docs/global/sdlc/_drafts/policy/a.md", None), None);
-        assert_eq!(place("docs/global/sdlc/policy/a.yaml", None), None);
+        assert_eq!(place("docs/domain/sdlc/_drafts/policy/a.md", None), None);
+        assert_eq!(place("docs/domain/sdlc/policy/a.yaml", None), None);
+    }
+
+    #[test]
+    fn a_published_snippet_maps_between_its_source_and_its_home_path() {
+        let general = SnippetId::parse("general/policy/x").unwrap();
+        let sdlc = SnippetId::parse("sdlc/policy/x").unwrap();
+        assert_eq!(
+            published_source(&general).as_deref(),
+            Some("docs/general/policy/x.md")
+        );
+        assert_eq!(
+            published_source(&sdlc).as_deref(),
+            Some("docs/domain/sdlc/policy/x.md")
+        );
+        assert_eq!(
+            published_origin("sdlc/workflow/work.yaml").as_deref(),
+            Some("docs/domain/sdlc/workflow/work.yaml")
+        );
+        assert_eq!(
+            published_destination("docs/domain/sdlc/policy/x.md").as_deref(),
+            Some("sdlc/policy/x.md")
+        );
+        assert_eq!(
+            published_destination("docs/general/policy/x.md").as_deref(),
+            Some("general/policy/x.md")
+        );
+        assert_eq!(published_destination("docs/project/spec/x.md"), None);
     }
 
     #[test]
@@ -410,18 +513,17 @@ mod tests {
     }
 
     proptest! {
-        /// Every taxonomy path below a half yields exactly the identity its
-        /// segments spell, and never one beginning with the other half's
-        /// prefix.
+        /// Every taxonomy path below a position yields exactly the identity
+        /// its segments spell, a domain's without a `domain/` prefix.
         #[test]
         fn identity_follows_the_path(
             domain in "[a-z][a-z0-9-]{0,8}",
             tax in prop::sample::select(Taxonomy::ALL.to_vec()),
             rest in prop::collection::vec("[a-z0-9][a-z0-9-]{0,8}", 1..4),
         ) {
-            prop_assume!(!RESERVED_DOMAINS.contains(&domain.as_str()));
+            prop_assume!(!is_reserved_domain_folder(&domain) && DomainName::parse(&domain).is_ok());
             let rest = rest.join("/");
-            let published = id_of(&format!("docs/global/{domain}/{}/{rest}.md", tax.dir()), None);
+            let published = id_of(&format!("docs/domain/{domain}/{}/{rest}.md", tax.dir()), None);
             prop_assert_eq!(published, id(&format!("{domain}/{}/{rest}", tax.dir())));
             let local = id_of(&format!("docs/project/{}/{rest}.md", tax.dir()), Some(&slug()));
             prop_assert_eq!(local, id(&format!("project/demo/{}/{rest}", tax.dir())));

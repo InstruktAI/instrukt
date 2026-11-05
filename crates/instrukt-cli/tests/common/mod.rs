@@ -27,6 +27,16 @@
 
 pub mod github;
 
+/// The repository root of the published position `domain` addresses:
+/// `docs/general` for `general`, `docs/domain/<domain>` for any other.
+pub fn position_dir(domain: &str) -> String {
+    if domain == "general" {
+        "docs/general".to_owned()
+    } else {
+        format!("docs/domain/{domain}")
+    }
+}
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};

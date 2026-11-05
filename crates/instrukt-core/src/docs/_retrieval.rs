@@ -12,7 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use super::_corpus::{Corpus, Lens, ManifestLine, Snippet, SourceFile, View, manifest_lines};
-use super::_identity::{Scope, Taxonomy, companion_shape};
+use super::_identity::{Scope, Taxonomy, companion_shape, published_source};
+use super::_position::GENERAL;
 use super::_refs::{RefTarget, Reference};
 use super::_render::{self, Fragments, RenderContext, Values, read_confined};
 use super::DocsError;
@@ -57,9 +58,6 @@ pub struct Reading {
     pub text: String,
     pub unresolved: bool,
 }
-
-/// The domain whose owner's third-party docs are global.
-const GENERAL: &str = "general";
 
 const AREAS: &str = "principle|concept|policy|procedure|design|spec|adr";
 
@@ -531,11 +529,9 @@ impl<'i> Reader<'i> {
             IndexScope::Local => outside_repository,
         };
         let (on_disk, as_source) = match entry.scope {
-            // The home holds `docs/global/<domain>/…` at `<docs>/<domain>/…`.
-            IndexScope::Global => (
-                repo_rel.trim_start_matches("docs/global/").to_owned(),
-                repo_rel.clone(),
-            ),
+            // The home holds `docs/general/…` and `docs/domain/<x>/…` at
+            // `<docs>/general/…` and `<docs>/<x>/…`: the id's own path.
+            IndexScope::Global => (format!("{}.md", entry.id.as_str()), repo_rel.clone()),
             IndexScope::Local => (repo_rel.clone(), repo_rel.clone()),
         };
         let missing = || match entry.scope {
@@ -816,10 +812,10 @@ impl<'i> Reader<'i> {
         };
         let rendered = _render::render(&text, Lens::Current, &cx)?;
         // third-party-docs spec: `global` for the docs of the project that
-        // owns the `general` domain, `project` for any other project's. The
-        // owner is the domain's publisher, whether or not it has snippets.
+        // owns `docs/general/`, `project` for any other project's. The owner
+        // is the position's claimant, whether or not it has snippets.
         let owns_general = match DomainName::parse(GENERAL) {
-            Ok(general) => crate::publication::domain_publisher(self.home, &general)?
+            Ok(general) => crate::publication::domain_owner(self.home, &general)?
                 .is_some_and(|owner| owner == entry.source_project),
             Err(_) => false,
         };
@@ -860,8 +856,9 @@ fn outside_repository(path: PathBuf) -> DocsError {
     DocsError::OutsideRepository { path }
 }
 
-/// A global entry's file as a repository path (`docs/global/<rel>`), from
-/// the path the entry carries relative to the home's docs directory.
+/// A published entry's file as the repository path it was published from
+/// (`docs/general/…`, `docs/domain/<x>/…`), once the path the entry carries
+/// relative to the home's docs directory is its id's own path.
 fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
     let parts: Option<Vec<&str>> = entry
         .path
@@ -871,9 +868,9 @@ fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
             _ => None,
         })
         .collect();
-    let rel = parts.map(|p| format!("docs/global/{}", p.join("/")));
-    match rel {
-        Some(rel) if rel == format!("docs/global/{}.md", entry.id.as_str()) => Ok(rel),
+    let at_identity = parts.is_some_and(|p| p.join("/") == format!("{}.md", entry.id.as_str()));
+    match published_source(&entry.id) {
+        Some(rel) if at_identity => Ok(rel),
         _ => Err(DocsError::IndexMismatch {
             id: entry.id.clone(),
             path: entry.path.clone(),
@@ -993,7 +990,7 @@ mod tests {
         let placed = entry(id, IndexScope::Global, &format!("{id}.md"));
         assert_eq!(
             global_rel(&placed).unwrap(),
-            format!("docs/global/{}", placed.path.display())
+            format!("docs/domain/{}", placed.path.display())
         );
         for path in ["../../etc/passwd", "/etc/passwd", "acme/spec/b.md"] {
             assert!(

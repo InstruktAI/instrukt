@@ -18,8 +18,9 @@ project that declares the domains it `publishes` and is adopted with
 the computer, and every project there reads them. Our docs repository publishes
 `general` and `sdlc`; fork it, change it or bring your own
 (`docs/project/spec/feature/publication/docs-repositories.md`). Until it is split
-out, this repository is that docs repository: its `docs/global/` is the
-doctrine, and its `instrukt.yaml` declares `publishes`.
+out, this repository is that docs repository: its `docs/general/` and
+`docs/domain/sdlc/` are the doctrine, and its `instrukt.yaml` declares
+`publishes`.
 
 ## Development
 

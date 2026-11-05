@@ -115,9 +115,7 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     );
     let project = env.run(repo.path(), ["config", "get", "project"]).success();
     insta::assert_snapshot!(stdout(&env, &project), @"my-demo");
-    for folder in ["docs/global", "docs/project"] {
-        assert!(repo.path().join(folder).is_dir(), "{folder}");
-    }
+    assert!(repo.path().join("docs/project").is_dir(), "docs/project");
     insta::assert_snapshot!("seeded-master", repo.read("AGENTS.master.md"));
     insta::assert_snapshot!(
         "own-hook-beside-section",

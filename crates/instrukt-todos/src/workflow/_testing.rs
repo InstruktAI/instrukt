@@ -11,7 +11,7 @@ use super::_render::ConfigLookupError;
 
 /// The sdlc flavor's authoring source in this repository.
 pub(crate) fn sdlc_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/global/sdlc/workflow")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/domain/sdlc/workflow")
 }
 
 /// A flavor directory holding `files` (relative path, content).

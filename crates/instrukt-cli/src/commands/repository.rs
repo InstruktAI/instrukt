@@ -50,7 +50,7 @@ pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 fn part_label(part: InitPart) -> String {
     match part {
         InitPart::ProjectLayer => "project layer (instrukt.yaml)".to_owned(),
-        InitPart::DocsFolders => "docs folders (docs/global/, docs/project/)".to_owned(),
+        InitPart::DocsFolders => "docs folders (docs/project/)".to_owned(),
         InitPart::Master => format!("master ({MASTER_FILE})"),
         InitPart::LocalBaseline => format!("local baseline ({LOCAL_BASELINE})"),
         InitPart::DocsFilter => format!(

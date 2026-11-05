@@ -1,4 +1,4 @@
-//! The engine against the real sdlc flavor (`docs/global/sdlc/workflow/`):
+//! The engine against the real sdlc flavor (`docs/domain/sdlc/workflow/`):
 //! obligations the shipped `prepare` and `work` flows derive from facts.
 
 use std::collections::BTreeSet;

@@ -96,7 +96,10 @@ pub use _fold::{FoldOutcome, fold};
 pub use _frontmatter::{
     Dispatch, EventDelivery, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
 };
-pub use _identity::{BaselineOwner, DocDomain, Scope, Taxonomy};
+pub use _identity::{
+    BaselineOwner, DocDomain, FRAGMENT_ROOT, Scope, Taxonomy, published_destination,
+    published_origin, published_source,
+};
 pub use _position::{
     AgentCli, DomainIndex, FolderSections, GENERAL, GeneralIndex, INDEX_FILE, Position,
     PositionIndex, PositionSchema, ProjectIndex, RESERVED_DOMAIN_FOLDERS, SCHEMA_FILE,

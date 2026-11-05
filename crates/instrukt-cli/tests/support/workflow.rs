@@ -350,18 +350,18 @@ impl Flavor {
                 "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: flows\npublishes:\n  - slug: crew\n    trigger: When the crew works.\n"
             ),
         )
-        .write("docs/global/crew/workflow/actions.yaml", ACTIONS)
-        .write("docs/global/crew/workflow/prepare.yaml", &prepare_flow())
-        .write("docs/global/crew/workflow/work.yaml", &work_flow());
+        .write("docs/domain/crew/workflow/actions.yaml", ACTIONS)
+        .write("docs/domain/crew/workflow/prepare.yaml", &prepare_flow())
+        .write("docs/domain/crew/workflow/work.yaml", &work_flow());
         for (action, text) in TEMPLATES {
             repo.write(
-                &format!("docs/global/crew/workflow/templates/{action}.md"),
+                &format!("docs/domain/crew/workflow/templates/{action}.md"),
                 &format!("{text}\n"),
             );
         }
         for (name, role) in PROCEDURES {
             repo.write(
-                &format!("docs/global/crew/procedure/{name}.md"),
+                &format!("docs/domain/crew/procedure/{name}.md"),
                 &procedure(name, role),
             );
         }

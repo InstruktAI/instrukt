@@ -1,4 +1,4 @@
-//! The global index: `~/.instrukt/docs/index.yaml`, every published entry of
+//! The global index: `~/.instrukt/state/index.yaml`, every published entry of
 //! every project, each carrying its owner.
 //!
 //! This is the persisted format shared by its writer and its readers:

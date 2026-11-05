@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/project-initialization.rs
 expression: "stdout(&env, &next)"
 ---
 project layer (instrukt.yaml): already present
-docs folders (docs/global/, docs/project/): already present
+docs folders (docs/project/): already present
 master (AGENTS.master.md): created
 local baseline (docs/project/baseline.md): already present
 docs reference filter (git config filter.instrukt-docs): already present

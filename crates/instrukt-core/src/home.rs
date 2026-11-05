@@ -59,12 +59,15 @@ impl Home {
         self.root.join("instrukt.yaml")
     }
 
-    /// `~/.instrukt/docs/` — the published tree.
+    /// `~/.instrukt/docs/` — the published tree: `general/` and one
+    /// directory per published domain, beside the fragments and the
+    /// third-party docs.
     pub fn docs_dir(&self) -> PathBuf {
         self.root.join("docs")
     }
 
-    /// `~/.instrukt/docs/<domain>/` — one published domain.
+    /// `~/.instrukt/docs/<domain>/` — one published position: a domain's,
+    /// or `general/`.
     pub fn domain_dir(&self, domain: &DomainName) -> PathBuf {
         self.docs_dir().join(domain.as_str())
     }
@@ -82,9 +85,9 @@ impl Home {
         self.docs_dir().join("third-party")
     }
 
-    /// `~/.instrukt/docs/index.yaml` — the global index.
+    /// `~/.instrukt/state/index.yaml` — the global index.
     pub fn index_file(&self) -> PathBuf {
-        self.docs_dir().join("index.yaml")
+        self.state_dir().join("index.yaml")
     }
 
     /// `~/.instrukt/state/`.
@@ -96,6 +99,12 @@ impl Home {
     /// and checkout path.
     pub fn publication_state_dir(&self) -> PathBuf {
         self.state_dir().join("publication")
+    }
+
+    /// `~/.instrukt/state/publication/claims/` — the ownership record: per
+    /// published position, the project that owns it on this computer.
+    pub fn claims_dir(&self) -> PathBuf {
+        self.publication_state_dir().join("claims")
     }
 
     /// `~/.instrukt/state/hooks/<project>/` — each hook section's last run.
@@ -166,6 +175,7 @@ mod tests {
             home.third_party_dir(),
             home.publication_state_dir(),
             home.publication_outputs_dir(),
+            home.claims_dir(),
             home.hooks_state_dir(&project),
             home.runner_state_dir(),
             home.eval_fingerprint_dir(),

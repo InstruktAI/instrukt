@@ -60,7 +60,7 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
         &[
             ("instrukt.yaml", FORK_LAYER.to_owned()),
             (
-                "docs/global/fork/procedure/upstream-watch.md",
+                "docs/domain/fork/procedure/upstream-watch.md",
                 snippet(
                     "procedure",
                     "Upstream Watch",
@@ -117,7 +117,7 @@ fn a_runner_killed_while_starting_the_standing_agent_waits_for_the_developer_to_
         &[
             ("instrukt.yaml", FORK_LAYER.to_owned()),
             (
-                "docs/global/fork/procedure/upstream-watch.md",
+                "docs/domain/fork/procedure/upstream-watch.md",
                 snippet(
                     "procedure",
                     "Upstream Watch",

@@ -91,13 +91,13 @@ fn published_demo(env: &TestEnv) -> Repo {
         "demo",
         &["acme"],
         &[
-            ("docs/global/acme/spec/live.md", live),
-            ("docs/global/acme/policy/reworked.md", reworked),
-            ("docs/global/acme/policy/reworked.build-it.md", next),
-            ("docs/global/acme/spec/fresh.md", fresh),
-            ("docs/global/acme/spec/later.md", later),
-            ("docs/global/acme/concept/old.md", old),
-            ("docs/global/acme/concept/old.build-it.md", String::new()),
+            ("docs/domain/acme/spec/live.md", live),
+            ("docs/domain/acme/policy/reworked.md", reworked),
+            ("docs/domain/acme/policy/reworked.build-it.md", next),
+            ("docs/domain/acme/spec/fresh.md", fresh),
+            ("docs/domain/acme/spec/later.md", later),
+            ("docs/domain/acme/concept/old.md", old),
+            ("docs/domain/acme/concept/old.build-it.md", String::new()),
         ],
     );
     sync(env, &demo);

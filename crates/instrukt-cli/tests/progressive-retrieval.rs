@@ -38,11 +38,11 @@ const BUNDLE: &str = "- @~/.instrukt/docs/acme/bundle.md";
 fn demo_files() -> Vec<(&'static str, String)> {
     vec![
         (
-            "docs/global/acme/principle/care.md",
+            "docs/domain/acme/principle/care.md",
             snippet("principle", "Care", "Why care matters.", "", &[], "Care.\n"),
         ),
         (
-            "docs/global/acme/policy/rules.md",
+            "docs/domain/acme/policy/rules.md",
             snippet(
                 "policy",
                 "Rules",
@@ -56,7 +56,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/acme/concept/terms.md",
+            "docs/domain/acme/concept/terms.md",
             snippet(
                 "concept",
                 "Terms",
@@ -67,7 +67,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/acme/procedure/work.md",
+            "docs/domain/acme/procedure/work.md",
             snippet(
                 "procedure",
                 "Work",
@@ -78,7 +78,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/acme/procedure/start.md",
+            "docs/domain/acme/procedure/start.md",
             snippet(
                 "procedure",
                 "Start",
@@ -89,7 +89,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/beta/spec/thing.md",
+            "docs/domain/beta/spec/thing.md",
             snippet("spec", "Thing", "What a thing is.", "", &[], "A thing.\n"),
         ),
         (
@@ -98,7 +98,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
         ),
         ("docs/global/snippets/reads.md", format!("{TERMS}\n")),
         (
-            "docs/global/acme/baseline.md",
+            "docs/domain/acme/baseline.md",
             "@~/.instrukt/docs/acme/principle/care.md\n".to_owned(),
         ),
         (
@@ -253,7 +253,7 @@ fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
         &["general"],
         &[
             (
-                "docs/global/general/principle/care.md",
+                "docs/general/principle/care.md",
                 snippet("principle", "Care", "Why care matters.", "", &[], "Care.\n"),
             ),
             (
@@ -273,7 +273,7 @@ fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
-fn the_general_owner_is_known_by_its_publisher_record_even_without_snippets() {
+fn the_general_owner_is_known_by_its_claim_even_without_snippets() {
     let env = TestEnv::new();
     // `general` is published with an empty baseline and no snippet: no
     // index entry names its owner.
@@ -282,7 +282,7 @@ fn the_general_owner_is_known_by_its_publisher_record_even_without_snippets() {
         "platform",
         &["general"],
         &[
-            ("docs/global/general/baseline.md", String::new()),
+            ("docs/general/baseline.md", String::new()),
             (
                 "docs/third-party/tool/guide.md",
                 "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n"
@@ -376,7 +376,7 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
 fn refused_files() -> Vec<(&'static str, String)> {
     vec![
         (
-            "docs/global/acme/procedure/blocked.md",
+            "docs/domain/acme/procedure/blocked.md",
             snippet(
                 "procedure",
                 "Blocked",
@@ -387,7 +387,7 @@ fn refused_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/acme/procedure/blocked-through-fragment.md",
+            "docs/domain/acme/procedure/blocked-through-fragment.md",
             snippet(
                 "procedure",
                 "Blocked through fragment",
@@ -398,7 +398,7 @@ fn refused_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/acme/procedure/broken.md",
+            "docs/domain/acme/procedure/broken.md",
             snippet(
                 "procedure",
                 "Broken",
@@ -409,7 +409,7 @@ fn refused_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/global/acme/spec/coming.md",
+            "docs/domain/acme/spec/coming.md",
             snippet(
                 "spec",
                 "Coming",
@@ -571,7 +571,7 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
         &env,
         "demo",
         &["acme"],
-        &[("docs/global/acme/procedure/report.md", procedure.clone())],
+        &[("docs/domain/acme/procedure/report.md", procedure.clone())],
     );
     sync(&env, &demo);
 
@@ -610,7 +610,7 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
         &env,
         "demo",
         &["acme"],
-        &[("docs/global/acme/procedure/verify.md", procedure)],
+        &[("docs/domain/acme/procedure/verify.md", procedure)],
     );
     demo.write(
         "instrukt.yaml",
@@ -663,7 +663,7 @@ fn a_value_that_cannot_be_resolved_is_named_with_why_and_the_read_fails() {
         &env,
         "demo",
         &["acme"],
-        &[("docs/global/acme/procedure/fragile.md", fragile)],
+        &[("docs/domain/acme/procedure/fragile.md", fragile)],
     );
     sync(&env, &demo);
 
@@ -696,7 +696,7 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
         &env,
         "demo",
         &["acme"],
-        &[("docs/global/acme/procedure/runs.md", runs("Runs"))],
+        &[("docs/domain/acme/procedure/runs.md", runs("Runs"))],
     );
     let refused = env.run(demo.path(), ["sync"]).failure();
     insta::assert_snapshot!(
@@ -709,7 +709,7 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
     // A local snippet is read from the project's working tree, so a
     // command written there after publication is still met at read.
     demo.write(
-        "docs/global/acme/procedure/runs.md",
+        "docs/domain/acme/procedure/runs.md",
         &snippet("procedure", "Runs", "Runs nothing.", "", &[], "Nothing.\n"),
     )
     .write(

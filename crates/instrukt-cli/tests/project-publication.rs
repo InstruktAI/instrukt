@@ -48,7 +48,7 @@ fn project(env: &TestEnv, name: &str, domains: &[&str]) -> Repo {
     repo.write("instrukt.yaml", &layer(name, domains));
     for domain in domains {
         repo.write(
-            &format!("docs/global/{domain}/policy/rules.md"),
+            &format!("{}/policy/rules.md", common::position_dir(domain)),
             &policy("Rules", ""),
         );
     }
@@ -116,10 +116,10 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
     let committed = policy("Testing", "");
-    repo.write("docs/global/acme/policy/testing.md", &committed);
+    repo.write("docs/domain/acme/policy/testing.md", &committed);
     let sha = repo.commit("add testing");
-    repo.write("docs/global/acme/policy/testing.md", &policy("Edited", ""))
-        .write("docs/global/acme/policy/draft.md", &policy("Draft", ""));
+    repo.write("docs/domain/acme/policy/testing.md", &policy("Edited", ""))
+        .write("docs/domain/acme/policy/draft.md", &policy("Draft", ""));
 
     let run = sync(&env, &repo).success();
     insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"published demo at [SHA]");
@@ -191,7 +191,7 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
         linked.to_str().unwrap(),
     ]);
     std::fs::write(
-        linked.join("docs/global/acme/policy/feature.md"),
+        linked.join("docs/domain/acme/policy/feature.md"),
         policy("Feature", ""),
     )
     .unwrap();
@@ -235,20 +235,41 @@ fn two_projects_publish_side_by_side_and_a_claim_on_anothers_domain_is_refused()
         &layer("beta", &["beta-docs", "alpha-docs"]),
     )
     .write(
-        "docs/global/alpha-docs/policy/taken.md",
+        "docs/domain/alpha-docs/policy/taken.md",
         &policy("Taken", ""),
     );
     let sha = beta.commit("claim alpha-docs");
     let refused = sync(&env, &beta).failure();
     insta::assert_snapshot!(
         text(&refused.get_output().stderr, &[&sha]),
-        @"instrukt: beta at [SHA] is not published: domain `alpha-docs` is owned by project `alpha`; it is free to claim once `alpha` stops publishing it"
+        @"instrukt: beta at [SHA] is not published: `docs/domain/alpha-docs/` is owned by project `alpha`; it is free to claim once `alpha` stops publishing it"
     );
     assert_eq!(published_tree(&env), before);
     let record = PublishedRecord::load(&home(&env), &ProjectSlug::parse("beta").unwrap())
         .unwrap()
         .unwrap();
     assert_ne!(record.commit.as_str(), sha);
+}
+
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB9
+#[test]
+fn a_domain_named_after_a_reserved_name_is_refused_naming_its_directory_and_the_rule() {
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &["acme"]);
+    let published = repo.head();
+    sync(&env, &repo).success();
+    let before = published_tree(&env);
+    repo.write("docs/domain/general/policy/x.md", &policy("X", ""))
+        .write("docs/domain/project/policy/y.md", &policy("Y", ""));
+    let sha = repo.commit("reserved names");
+
+    let refused = sync(&env, &repo).failure();
+    insta::assert_snapshot!(
+        text(&refused.get_output().stderr, &[&sha]),
+        @"instrukt: demo at [SHA] is not published: `docs/domain/general/` and `docs/domain/project/` are named after a reserved name: `general` and `project` are reserved and `third-party` keeps its special case, so no domain may take them"
+    );
+    assert_eq!(published_tree(&env), before);
+    assert_eq!(published_commit(&env, "demo"), published);
 }
 
 /// Every file of the project's working tree outside `.git`, with its
@@ -283,7 +304,7 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     let other = project(&env, "other", &["shared"]);
     sync(&env, &other).success();
     let repo = project(&env, "demo", &["acme", "legacy"]);
-    repo.write("docs/global/acme/policy/retired.md", &policy("Retired", ""))
+    repo.write("docs/domain/acme/policy/retired.md", &policy("Retired", ""))
         .write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
     repo.commit("retired");
@@ -299,8 +320,8 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
         .filter(|(path, _)| path.starts_with("shared"))
         .collect();
 
-    std::fs::remove_file(repo.path().join("docs/global/acme/policy/retired.md")).unwrap();
-    std::fs::remove_dir_all(repo.path().join("docs/global/legacy")).unwrap();
+    std::fs::remove_file(repo.path().join("docs/domain/acme/policy/retired.md")).unwrap();
+    std::fs::remove_dir_all(repo.path().join("docs/domain/legacy")).unwrap();
     std::fs::remove_file(repo.path().join("tools/AGENTS.master.md")).unwrap();
     repo.write("instrukt.yaml", &layer("demo", &["acme"]));
     repo.commit("retire");
@@ -361,18 +382,18 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
     sync(&env, &repo).success();
     let before = published_tree(&env);
     repo.write(
-        "docs/global/acme/policy/bare.md",
+        "docs/domain/acme/policy/bare.md",
         "---\nvisibility: public\n---\n\n# Bare — Policy\n\n## Rules\n\nx\n",
     );
     let sha = repo.commit("broken");
 
     let refused = sync(&env, &repo).failure();
     insta::assert_snapshot!(text(&refused.get_output().stdout, &[&sha]), @r"
-    docs/global/acme/policy/bare.md: frontmatter-description-missing
-    docs/global/acme/policy/bare.md: structure-section-missing: Enforcement
-    docs/global/acme/policy/bare.md: structure-section-missing: Exceptions
-    docs/global/acme/policy/bare.md: structure-section-missing: Rationale
-    docs/global/acme/policy/bare.md: structure-section-missing: Scope
+    docs/domain/acme/policy/bare.md: frontmatter-description-missing
+    docs/domain/acme/policy/bare.md: structure-section-missing: Enforcement
+    docs/domain/acme/policy/bare.md: structure-section-missing: Exceptions
+    docs/domain/acme/policy/bare.md: structure-section-missing: Rationale
+    docs/domain/acme/policy/bare.md: structure-section-missing: Scope
     ");
     insta::assert_snapshot!(text(&refused.get_output().stderr, &[&sha]), @"instrukt: demo at [SHA] is not published: the committed documentation has 5 validation finding(s)");
     assert_eq!(published_tree(&env), before);
@@ -394,7 +415,7 @@ fn an_unresolvable_configured_value_fails_the_sync_and_keeps_the_previous_public
     let published = repo.head();
     sync(&env, &repo).success();
     let before = published_tree(&env);
-    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""))
+    repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""))
         .write(
             "AGENTS.master.md",
             "## Purpose\n\n<!-- @config: no.such.setting -->\n",
@@ -423,7 +444,7 @@ fn a_bundle_left_with_a_reference_fails_the_sync() {
     sync(&env, &repo).success();
     let before = published_tree(&env);
     repo.write(
-        "docs/global/acme/policy/noted.md",
+        "docs/domain/acme/policy/noted.md",
         &policy("Noted", "").replace(
             "Follow Noted.\n",
             "Follow Noted.\n\n<!-- @include: docs/snippets/note.md -->\n",
@@ -434,14 +455,14 @@ fn a_bundle_left_with_a_reference_fails_the_sync() {
         "Read it (@docs/project/policy/house.md) first.\n",
     )
     .write(
-        "docs/global/acme/baseline.md",
+        "docs/domain/acme/baseline.md",
         "@~/.instrukt/docs/acme/policy/noted.md\n",
     );
     repo.commit("noted");
     env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/global/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/project/policy/house.md`");
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/domain/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/project/policy/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
 }
@@ -457,7 +478,7 @@ fn an_output_that_is_a_symbolic_link_is_refused_and_its_target_left_alone() {
     let before = published_tree(&env);
     let git_config = repo.read(".git/config");
     repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
-        .write("docs/global/acme/policy/later.md", &policy("Later", ""));
+        .write("docs/domain/acme/policy/later.md", &policy("Later", ""));
     std::os::unix::fs::symlink(".git/config", repo.path().join("AGENTS.md")).unwrap();
     repo.commit("aliased output");
 
@@ -479,7 +500,7 @@ fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
     sync(&env, &repo).success();
     let locked = env.instrukt_home().join("docs/acme/policy");
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
-    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""));
     let sha = repo.commit("later");
 
     let run = sync(&env, &repo).success();
@@ -572,7 +593,7 @@ fn a_linked_later_output_is_refused_before_anything_is_written() {
     std::fs::rename(&current, &elsewhere).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &current).unwrap();
     let elsewhere_text = std::fs::read_to_string(&elsewhere).unwrap();
-    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""))
+    repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""))
         .write(
             "AGENTS.master.md",
             "## Purpose\n\nThe changed demo project.\n",
@@ -600,7 +621,7 @@ fn a_refused_sync_still_reports_the_leftover_it_could_not_remove() {
     sync(&env, &repo).success();
     let locked = env.instrukt_home().join("docs/acme/policy");
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
-    repo.write("docs/global/acme/policy/later.md", &policy("Later", ""));
+    repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""));
     repo.commit("later");
     sync(&env, &repo).success();
     let leftover: Vec<PathBuf> = std::fs::read_dir(env.instrukt_home())
@@ -621,7 +642,7 @@ fn a_refused_sync_still_reports_the_leftover_it_could_not_remove() {
     let elsewhere = env.path("elsewhere.yaml");
     std::fs::rename(&current, &elsewhere).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &current).unwrap();
-    repo.write("docs/global/acme/policy/again.md", &policy("Again", ""));
+    repo.write("docs/domain/acme/policy/again.md", &policy("Again", ""));
     repo.commit("again");
 
     let refused = sync(&env, &repo).failure();

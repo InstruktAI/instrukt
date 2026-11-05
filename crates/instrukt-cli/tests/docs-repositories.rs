@@ -79,11 +79,11 @@ fn docs_repository(env: &TestEnv, name: &str, domains: &[&str], rule: &str) -> s
     for domain in domains {
         author
             .write(
-                &format!("docs/global/{domain}/policy/rules.md"),
+                &format!("{}/policy/rules.md", common::position_dir(domain)),
                 &policy(&format!("{domain} rules"), rule),
             )
             .write(
-                &format!("docs/global/{domain}/baseline.md"),
+                &format!("{}/baseline.md", common::position_dir(domain)),
                 &format!("@~/.instrukt/docs/{domain}/policy/rules.md\n"),
             );
     }
@@ -222,7 +222,7 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
     refused.failure();
 
     first.write("instrukt.yaml", &layer("doctrine", &["general"], ""));
-    std::fs::remove_dir_all(first.path().join("docs/global/sdlc")).unwrap();
+    std::fs::remove_dir_all(first.path().join("docs/domain/sdlc")).unwrap();
     // Only the retirement is committed; what init added stays uncommitted.
     first.git(["add", "--all", "instrukt.yaml", "docs"]);
     first.git(["commit", "--quiet", "-m", "stop publishing sdlc"]);

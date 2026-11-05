@@ -33,7 +33,7 @@ pub fn watched_fork(env: &TestEnv) -> Repo {
         &[
             ("instrukt.yaml", FORK_LAYER.to_owned()),
             (
-                "docs/global/fork/procedure/upstream-watch.md",
+                "docs/domain/fork/procedure/upstream-watch.md",
                 snippet(
                     "procedure",
                     "Upstream Watch",

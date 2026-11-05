@@ -122,11 +122,11 @@ fn general_owner(env: &TestEnv) -> Repo {
             "## Gemini\n\nGemini-specific guidance.\n",
         )
         .write(
-            "docs/global/general/policy/care.md",
+            "docs/general/policy/care.md",
             &snippet("policy", "Care", ""),
         )
         .write(
-            "docs/global/general/baseline.md",
+            "docs/general/baseline.md",
             "@~/.instrukt/docs/general/policy/care.md\n",
         );
     repo.commit("global baseline");
@@ -187,7 +187,7 @@ fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_setti
     other
         .write("instrukt.yaml", &layer("engineering", &["sdlc"]))
         .write(
-            "docs/global/sdlc/policy/tests.md",
+            "docs/domain/sdlc/policy/tests.md",
             &snippet("policy", "Tests", ""),
         );
     other.commit("sdlc");
