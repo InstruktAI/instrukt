@@ -7,10 +7,10 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/general/concept/documentation-snippets.md
-- @~/.instrukt/docs/general/principle/intent-first-documentation.md
-- @~/.instrukt/docs/general/policy/referencing-doc-snippets.md
-- @~/.instrukt/docs/general/policy/artifact-scope.md
+- [general/concept/documentation-snippets](../concept/documentation-snippets.md)
+- [general/principle/intent-first-documentation](../principle/intent-first-documentation.md)
+- [general/policy/referencing-doc-snippets](referencing-doc-snippets.md)
+- [general/policy/artifact-scope](artifact-scope.md)
 
 ## Rules
 

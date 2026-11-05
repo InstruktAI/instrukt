@@ -200,4 +200,4 @@ evidence.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/overview.md
+- [sdlc/procedure/lifecycle/prepare/overview](overview.md)

@@ -192,9 +192,9 @@ artifact, pull-request and optional board progress are recoverable without
 claiming that a failed request had no remote effect. A retry reconciles against
 the remote record before creating duplicate evidence.
 
-### Use cases
+## Use cases
 
-#### UC-GR1: Continue recording work during a GitHub outage
+### UC-GR1: Continue recording work during a GitHub outage
 
 ```gherkin
   Given a developer has a todo available on their computer
@@ -209,7 +209,7 @@ the remote record before creating duplicate evidence.
   Then the reflection waits and completes once GitHub accepts requests again
 ```
 
-#### UC-GR2: Inspect a delivery's evidence on GitHub
+### UC-GR2: Inspect a delivery's evidence on GitHub
 
 ```gherkin
   Given a developer's delivered todo has been reflected to GitHub
@@ -218,7 +218,7 @@ the remote record before creating duplicate evidence.
   And identify the commit that delivered the work
 ```
 
-#### UC-GR3: A developer whose todo changed elsewhere is told to refresh first
+### UC-GR3: A developer whose todo changed elsewhere is told to refresh first
 
 ```gherkin
   Given a developer recorded progress on a todo while another computer recorded a change to the same todo
@@ -228,7 +228,7 @@ the remote record before creating duplicate evidence.
   And after refreshing they can record their progress against the current todo
 ```
 
-#### UC-GR4: Records posted by someone without write access never change a developer's work
+### UC-GR4: Records posted by someone without write access never change a developer's work
 
 ```gherkin
   Given a developer's project is public and its todos are reflected to GitHub
@@ -237,7 +237,7 @@ the remote record before creating duplicate evidence.
   And records posted by people with write access are still applied
 ```
 
-#### UC-GR5: A developer follows their work on a project board
+### UC-GR5: A developer follows their work on a project board
 
 ```gherkin
   Given a developer's project reflects its todos to GitHub
@@ -249,7 +249,7 @@ the remote record before creating duplicate evidence.
   Then their work appears on the new board with its current record status
 ```
 
-#### UC-GR6: A developer whose code is not on GitHub is told todos need it there
+### UC-GR6: A developer whose code is not on GitHub is told todos need it there
 
 ```gherkin
   Given a developer's project keeps its code on a host other than GitHub
@@ -258,7 +258,7 @@ the remote record before creating duplicate evidence.
   And their configuration is unchanged
 ```
 
-#### UC-GR7: A todo whose claim moves to a developer's computer is current when work starts
+### UC-GR7: A todo whose claim moves to a developer's computer is current when work starts
 
 ```gherkin
   Given a collaborator changed a todo on GitHub while another computer held it
@@ -285,3 +285,6 @@ the remote record before creating duplicate evidence.
   on a replacement computer. Native artifact availability and accepted
   content size also bound remote reflection; failure leaves the local evidence
   and pending reflection visible.
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

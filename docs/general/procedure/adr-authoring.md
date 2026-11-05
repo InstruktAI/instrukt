@@ -10,8 +10,7 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/general/policy/adr-discipline.md
-- @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
+- [general/policy/adr-discipline](../policy/adr-discipline.md)
 
 ## Goal
 

@@ -12,11 +12,11 @@ dispatch:
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/design/project-toolchain.md
-@~/.instrukt/docs/sdlc/policy/language-policy-ownership.md
-@~/.instrukt/docs/general/policy/human-contract.md
-@~/.instrukt/docs/sdlc/policy/linting-requirements.md
-@~/.instrukt/docs/general/policy/commits.md
+- [sdlc/design/project-toolchain](../design/project-toolchain.md)
+- [sdlc/policy/language-policy-ownership](../policy/language-policy-ownership.md)
+- [general/policy/human-contract](../../../general/policy/human-contract.md)
+- [sdlc/policy/linting-requirements](../policy/linting-requirements.md)
+- [general/policy/commits](../../../general/policy/commits.md)
 
 ## Goal
 

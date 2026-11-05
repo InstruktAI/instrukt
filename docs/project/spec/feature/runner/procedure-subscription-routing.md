@@ -105,9 +105,9 @@ are fixed at initialization, including revival; a new successor uses the current
 declaration. The acceptance record keeps its original declaration as evidence.
 Runtime execution and continuation belong to A3/S6, not this routing layer.
 
-### Use cases
+## Use cases
 
-#### UC-PSR1: Make a responsibility active by publishing its subscription
+### UC-PSR1: Make a responsibility active by publishing its subscription
 
 ```gherkin
 Given a developer publishes a delivered subscribed procedure and enables events
@@ -115,7 +115,7 @@ When a matching local event arrives
 Then its keyed activation is accepted without separate handler registration
 ```
 
-#### UC-PSR2: Select the declared event vocabulary
+### UC-PSR2: Select the declared event vocabulary
 
 ```gherkin
 Given a developer has procedures with exact, whole-segment and all-type patterns
@@ -124,7 +124,7 @@ Then only procedures selected by the shared matcher receive activations
 And a type matching none produces no activation and no routing failure
 ```
 
-#### UC-PSR3: Keep unrelated home kinds separate
+### UC-PSR3: Keep unrelated home kinds separate
 
 ```gherkin
 Given a developer has project and platform responsibilities
@@ -133,7 +133,7 @@ Then project matches only project and platform matches only none
 And unknown activates nothing
 ```
 
-#### UC-PSR4: Answer only where the fact was emitted
+### UC-PSR4: Answer only where the fact was emitted
 
 ```gherkin
 Given a developer holds the same published subscriptions on two computers
@@ -141,7 +141,7 @@ When one computer emits an event both read
 Then only the emitting computer accepts its procedure activations
 ```
 
-#### UC-PSR5: Keep every matched responsibility distinct
+### UC-PSR5: Keep every matched responsibility distinct
 
 ```gherkin
 Given a developer publishes two procedures and one has overlapping matching patterns
@@ -149,7 +149,7 @@ When one local event matches both
 Then one activation is accepted for each procedure and overlapping patterns do not duplicate either
 ```
 
-#### UC-PSR7: Avoid a second activation during retry
+### UC-PSR7: Avoid a second activation during retry
 
 ```gherkin
 Given a developer's event handling is interrupted after some matched activations are durably accepted
@@ -158,7 +158,7 @@ Then existing event-procedure-home keys are reused and only missing activations 
 And persistent submission failure is retried then parked visibly
 ```
 
-#### UC-PSR11: Confine a scoped responsibility to its published reach
+### UC-PSR11: Confine a scoped responsibility to its published reach
 
 ```gherkin
 Given a developer has a project-position responsibility for project demo and a domain responsibility for project origins
@@ -166,7 +166,7 @@ When another project emits a matching event
 Then only the domain responsibility can match it and the local one stays confined to demo
 ```
 
-#### UC-PSR12: Preserve the exact origin instead of inferring ownership
+### UC-PSR12: Preserve the exact origin instead of inferring ownership
 
 ```gherkin
 Given a developer receives a project event with company or person ownership and another origin with the same slug
@@ -174,7 +174,7 @@ When subscriptions are matched
 Then ownership never converts the project into another kind and home keys keep the kinds distinct
 ```
 
-#### UC-PSR13: See an unavailable execution home as a failure
+### UC-PSR13: See an unavailable execution home as a failure
 
 ```gherkin
 Given a developer has an accepted activation for a missing ingress project checkout or unsupported company or person home
@@ -182,7 +182,7 @@ When the execution boundary resolves that home
 Then it records a visible failure and never substitutes another home or computer
 ```
 
-#### UC-PSR14: Carry subject-bound responsibility without changing the fact
+### UC-PSR14: Carry subject-bound responsibility without changing the fact
 
 ```gherkin
 Given a developer publishes subscription_identity subject
@@ -191,7 +191,7 @@ Then acceptance retains the subject and declared identity unchanged for runtime 
 And the activation key remains event, procedure and exact home
 ```
 
-#### UC-PSR15: Make subscription edits effective on the next event
+### UC-PSR15: Make subscription edits effective on the next event
 
 ```gherkin
 Given a developer edits or removes a delivered subscription and publishes the changed index
@@ -199,7 +199,7 @@ When the next local event arrives
 Then routing uses the new publication without restart and a removed procedure receives no new activation
 ```
 
-#### UC-PSR16: Avoid using stale subscriptions after an index failure
+### UC-PSR16: Avoid using stale subscriptions after an index failure
 
 ```gherkin
 Given a developer's active publication index becomes unreadable or invalid
@@ -208,7 +208,7 @@ Then the cached subscriptions are cleared and a visible read failure is reported
 And a repaired index generation is read before a later match
 ```
 
-#### UC-PSR17: Keep late attention separate from a business effect
+### UC-PSR17: Keep late attention separate from a business effect
 
 ```gherkin
 Given a developer receives a distinct late or superseded domain event
@@ -217,7 +217,7 @@ Then its activation is accepted as attention due
 And routing does not assert that a domain mutation is necessary or complete
 ```
 
-#### UC-PSR18: Carry the procedure audience declaration
+### UC-PSR18: Carry the procedure audience declaration
 
 ```gherkin
 Given a developer declares attended or unattended subscription attendance
@@ -226,7 +226,7 @@ Then durable acceptance carries the resolved declaration unchanged
 And attendance changes neither selection reach nor event trust
 ```
 
-#### UC-PSR19: Carry delivery policy without reinterpreting it in routing
+### UC-PSR19: Carry delivery policy without reinterpreting it in routing
 
 ```gherkin
 Given a developer publishes sequential or batched delivery and an interruptibility setting
@@ -235,7 +235,7 @@ Then its record carries the resolved settings and effective procedure-read refer
 And runtime delivery remains a separate boundary using the continuing session's fixed settings
 ```
 
-#### UC-PSR20: Keep a project-local subscription responsive within its project
+### UC-PSR20: Keep a project-local subscription responsive within its project
 
 ```gherkin
 Given a developer publishes a subscribed procedure in project demo

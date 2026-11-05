@@ -68,9 +68,9 @@ removals and clear their markers. Preserve unrelated current and pending materia
 The integrator folds in the integration candidate before verification and
 includes the folded content in the exact commit verified.
 
-### Use cases
+## Use cases
 
-#### UC-PD1: A developer documents an intended change without misleading current readers
+### UC-PD1: A developer documents an intended change without misleading current readers
 
 ```gherkin
 Given a developer has written the intended contract of a change before building it, naming the todo that will deliver it
@@ -80,7 +80,7 @@ And it is told that pending changes exist and which todo owns them
 And the listing marks the pending material with that todo
 ```
 
-#### UC-PD2: An agent building a todo reads the documentation as it will be after delivery
+### UC-PD2: An agent building a todo reads the documentation as it will be after delivery
 
 ```gherkin
 Given a todo has pending documentation: a new snippet, a full next version of a live snippet, and additions inside another
@@ -97,5 +97,5 @@ Then the body is withheld with a notice
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/progressive-retrieval
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/progressive-retrieval](progressive-retrieval.md)

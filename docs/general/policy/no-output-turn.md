@@ -59,6 +59,5 @@ None.
 
 ## See Also
 
-- ~/.instrukt/docs/general/principle/attunement.md — silence as a valid response, and the phase reading that decides when nothing is owed.
-- ~/.instrukt/docs/general/spec/agent-shorthand.md — the enumerated output-validity contract for agent-to-agent exchanges.
-- ~/.instrukt/docs/general/policy/reminder.md — the reminder firing that closes with the sentinel.
+- [general/principle/attunement](../principle/attunement.md) — silence as a valid response, and the phase reading that decides when nothing is owed.
+- [general/spec/agent-shorthand](../spec/agent-shorthand.md) — the enumerated output-validity contract for agent-to-agent exchanges.

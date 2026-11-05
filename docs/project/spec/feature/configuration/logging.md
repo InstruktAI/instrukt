@@ -51,9 +51,9 @@ like any command, and their diagnostics would otherwise be gone with them.
   There is no degraded mode and no fallback destination; a command never runs
   blind. A later write failure is the logging crate's to report.
 
-### Use cases
+## Use cases
 
-#### UC-LG1: A developer reads what instrukt did after a command ended
+### UC-LG1: A developer reads what instrukt did after a command ended
 
 ```gherkin
 Given a developer commits to their project's main and the hook publishes its documentation
@@ -70,5 +70,5 @@ Then the command does nothing, exits with failure and names the log path it coul
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- sdlc/policy/observability
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [sdlc/policy/observability](../../../../domain/sdlc/policy/observability.md)

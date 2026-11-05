@@ -12,15 +12,12 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/intent-first-documentation.md
-- @~/.instrukt/docs/sdlc/principle/documentation-first-development.md
-- @~/.instrukt/docs/sdlc/procedure/feature-spec-authoring.md
-- @~/.instrukt/docs/sdlc/principle/domain-driven-design.md
-- @~/.instrukt/docs/general/policy/snippet-value-contract.md
-- @~/.instrukt/docs/general/procedure/doc-snippet-authoring.md
-- @~/.instrukt/docs/sdlc/policy/linting-requirements.md
-- @~/.instrukt/docs/general/policy/agent-artifact-governance.md
-- @~/.instrukt/docs/sdlc/spec/domain-spec.md
+- [sdlc/procedure/feature-spec-authoring](feature-spec-authoring.md)
+- [sdlc/principle/domain-driven-design](../principle/domain-driven-design.md)
+- [general/procedure/doc-snippet-authoring](../../../general/procedure/doc-snippet-authoring.md)
+- [sdlc/policy/linting-requirements](../policy/linting-requirements.md)
+- [general/policy/agent-artifact-governance](../../../general/policy/agent-artifact-governance.md)
+- [sdlc/spec/domain-spec](../spec/domain-spec.md)
 
 ## Goal
 
@@ -259,7 +256,7 @@ the matching case; do not improvise.
 **Case 1 — `AGENTS.master.md` exists.** Respect it. Do not modify. The
 existing source is authoritative.
 
-**Case 2 — Hand-authored `AGENTS.md` exists, no master.** Do not seed a master. Report that the content must first move into a `docs/project` snippet; the master carries only Purpose and Required reads. The next init run seeds the master.
+**Case 2 — Hand-authored `AGENTS.md` exists, no master.** Do not seed a master. Report that the content must first move into a `docs/project` snippet; the root master carries only Purpose, and `docs/project/index.yaml` selects the snippets. The next init run seeds the master.
 
 **Case 3 — Substantive standalone runtime-specific instruction file, no `AGENTS.md`.** Respect by
 default. Do not auto-create a master — a substantive standalone runtime-specific instruction file
@@ -269,7 +266,7 @@ analysis.
 
 **Case 4 (greenfield) — no `AGENTS.master.md`, no `AGENTS.md`, no
 substantive runtime-specific instruction file.** Generate a minimal project-specific
-`AGENTS.master.md` carrying only `## Purpose` with the project name and `## Required reads` naming the local baseline. Subsequent artifact distribution inflates `AGENTS.md`.
+`AGENTS.master.md` carrying only `## Purpose` with the project name. Select project snippets through `docs/project/index.yaml`; publication renders them into `AGENTS.md`.
 
 **Anomaly — both substantive `AGENTS.md` and a substantive runtime-specific instruction file.** When the configured
 runtime loads both into the same session, two authored instruction sources

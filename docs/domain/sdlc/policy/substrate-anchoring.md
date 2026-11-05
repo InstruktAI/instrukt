@@ -84,6 +84,6 @@ with what already exists.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/principle/module-depth.md — the one-sentence contract an anchor names.
-- ~/.instrukt/docs/sdlc/principle/architectural-defaults.md — the ownership invariants that decide extend versus stand beside.
-- ~/.instrukt/docs/general/policy/human-contract.md — why the input author carries no anchoring burden.
+- [sdlc/principle/module-depth](../principle/module-depth.md) — the one-sentence contract an anchor names.
+- [sdlc/principle/architectural-defaults](../principle/architectural-defaults.md) — the ownership invariants that decide extend versus stand beside.
+- [general/policy/human-contract](../../../general/policy/human-contract.md) — why the input author carries no anchoring burden.

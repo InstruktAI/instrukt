@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-@~/.instrukt/docs/general/principle/attunement.md
+- [general/principle/attunement](attunement.md)
 
 ## Principle
 
@@ -39,4 +39,4 @@ Compression is also fragile. The receiver must reliably reconstruct the intended
 
 ## See Also
 
-- ~/.instrukt/docs/general/spec/agent-shorthand.md
+- [general/spec/agent-shorthand](../spec/agent-shorthand.md)

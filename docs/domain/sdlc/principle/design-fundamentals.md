@@ -132,4 +132,4 @@ Default to immutable data. Mutable state is a liability — every mutation is a 
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/principle/module-depth.md — the arbiter when these fundamentals pull against each other.
+- [sdlc/principle/module-depth](module-depth.md) — the arbiter when these fundamentals pull against each other.

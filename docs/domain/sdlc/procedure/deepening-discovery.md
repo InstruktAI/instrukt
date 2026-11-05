@@ -7,13 +7,11 @@ activation_trigger: Use when asked to find refactoring or deepening opportunitie
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/principle/module-depth.md
-@~/.instrukt/docs/sdlc/policy/substrate-anchoring.md
-@~/.instrukt/docs/sdlc/principle/architectural-defaults.md
-@~/.instrukt/docs/general/procedure/visualizing-for-humans.md
-@~/.instrukt/docs/general/policy/human-contract.md
-@~/.instrukt/docs/sdlc/procedure/lifecycle/review.md
-@~/.instrukt/docs/general/policy/adr-discipline.md
+- [sdlc/principle/architectural-defaults](../principle/architectural-defaults.md)
+- [general/procedure/visualizing-for-humans](../../../general/procedure/visualizing-for-humans.md)
+- [general/policy/human-contract](../../../general/policy/human-contract.md)
+- [sdlc/procedure/lifecycle/review](lifecycle/review.md)
+- [general/policy/adr-discipline](../../../general/policy/adr-discipline.md)
 
 ## Goal
 
@@ -174,8 +172,8 @@ handed to the lifecycle, never at code.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/principle/module-depth.md — the vocabulary and the arbiter this procedure applies.
-- ~/.instrukt/docs/sdlc/policy/substrate-anchoring.md — why every candidate names the module it deepens.
-- ~/.instrukt/docs/general/procedure/visualizing-for-humans.md — how the candidate report is rendered.
-- ~/.instrukt/docs/general/policy/human-contract.md — why selection and design are the agent's decisions.
+- [sdlc/principle/module-depth](../principle/module-depth.md) — the vocabulary and the arbiter this procedure applies.
+- [sdlc/policy/substrate-anchoring](../policy/substrate-anchoring.md) — why every candidate names the module it deepens.
+- [general/procedure/visualizing-for-humans](../../../general/procedure/visualizing-for-humans.md) — how the candidate report is rendered.
+- [general/policy/human-contract](../../../general/policy/human-contract.md) — why selection and design are the agent's decisions.
 - https://github.com/mattpocock/skills (MIT) — prior art: the hot-spot scoping, deletion test, dependency categories, and design-it-twice pattern this procedure re-expresses under instrukt doctrine.

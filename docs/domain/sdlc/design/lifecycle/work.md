@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/design/lifecycle/overview.md
+- [sdlc/design/lifecycle/overview](overview.md)
 
 ## Purpose
 
@@ -162,5 +162,5 @@ Exit condition:
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/work/overview.md —
+- [sdlc/procedure/lifecycle/work/overview](../../procedure/lifecycle/work/overview.md) —
   operational steps for executing the work phase

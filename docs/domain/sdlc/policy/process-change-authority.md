@@ -171,7 +171,7 @@ expansion and is rejected normally.
 
 ## See Also
 
-- ~/.instrukt/docs/general/policy/human-contract.md
-- ~/.instrukt/docs/sdlc/policy/definition-of-done-lanes.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/review.md
-- ~/.instrukt/docs/sdlc/policy/linting-requirements.md
+- [general/policy/human-contract](../../../general/policy/human-contract.md)
+- [sdlc/policy/definition-of-done-lanes](definition-of-done-lanes.md)
+- [sdlc/procedure/lifecycle/review](../procedure/lifecycle/review.md)
+- [sdlc/policy/linting-requirements](linting-requirements.md)

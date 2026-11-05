@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-@~/.instrukt/docs/general/principle/intelligence-boundaries.md
+- [general/principle/intelligence-boundaries](../../../general/principle/intelligence-boundaries.md)
 
 ## Rules
 

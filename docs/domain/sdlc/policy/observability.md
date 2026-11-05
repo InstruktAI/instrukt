@@ -66,4 +66,4 @@ When a language policy absorbs these rules instead, two failures follow together
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/language-policy-ownership.md
+- [sdlc/policy/language-policy-ownership](language-policy-ownership.md)

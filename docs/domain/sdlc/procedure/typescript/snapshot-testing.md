@@ -7,9 +7,9 @@ description: TypeScript snapshot assertion and migration mechanics using the rep
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/procedure/snapshot-testing.md
-@~/.instrukt/docs/sdlc/policy/typescript/testing.md
-@~/.instrukt/docs/sdlc/policy/typescript/core.md
+- [sdlc/procedure/snapshot-testing](../snapshot-testing.md)
+- [sdlc/policy/typescript/testing](../../policy/typescript/testing.md)
+- [sdlc/policy/typescript/core](../../policy/typescript/core.md)
 
 ## Goal
 

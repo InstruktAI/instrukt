@@ -39,9 +39,9 @@ runtime.session_id` and references to it fail non-zero with a clear reason.
 Ordinary configuration reads still work. `@config` resolves values, including
 this identity where available, under the same rules.
 
-### Use cases
+## Use cases
 
-#### UC-VI2: An agent reads a configured value in its current environment
+### UC-VI2: An agent reads a configured value in its current environment
 
 ```gherkin
 Given a developer's configured value refers to another key and an environment variable
@@ -50,7 +50,7 @@ Then it receives the expanded value for its current environment
 And the stored configuration is unchanged
 ```
 
-#### UC-VI3: An agent identifies its session within the chosen runtime
+### UC-VI3: An agent identifies its session within the chosen runtime
 
 ```gherkin
 Given a developer has explicitly selected the T3 runtime adapter
@@ -61,7 +61,7 @@ But outside that runtime's caller context
 Then the read fails without guessing a runtime or session
 ```
 
-#### UC-VI1: An agent obtains the command that reads its own conversation (to retire)
+### UC-VI1: An agent obtains the command that reads its own conversation (to retire)
 
 UC-VI1 is to retire: the superseded scenario remains only while its existing
 test bindings are removed by the builder.
@@ -83,7 +83,7 @@ Then it is told that no configured runtime matches, and no command is given
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- project/instrukt/spec/feature/configuration/layered-configuration
-- project/instrukt/spec/feature/docs/progressive-retrieval
-- project/instrukt/spec/feature/runner/session-continuity
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)
+- [project/instrukt/spec/feature/docs/progressive-retrieval](../docs/progressive-retrieval.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)

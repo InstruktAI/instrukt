@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/scaffolding/typescript.md
+- [sdlc/procedure/scaffolding/typescript](../typescript.md)
 
 ## Goal
 
@@ -43,5 +43,5 @@ Workers — microsecond starts, free tier, no servers to run.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md
+- [sdlc/concept/delivery-portfolio](../../../concept/delivery-portfolio.md)
+- [sdlc/policy/ci-pipeline-conventions](../../../policy/ci-pipeline-conventions.md)

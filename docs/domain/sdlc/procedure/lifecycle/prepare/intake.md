@@ -15,11 +15,11 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/concept/intake-frameworks.md
-- @~/.instrukt/docs/sdlc/principle/architectural-defaults.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
-- @~/.instrukt/docs/sdlc/procedure/feature-spec-authoring.md
-- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
+- [sdlc/concept/intake-frameworks](../../../concept/intake-frameworks.md)
+- [sdlc/principle/architectural-defaults](../../../principle/architectural-defaults.md)
+- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
+- [sdlc/procedure/feature-spec-authoring](../../feature-spec-authoring.md)
+- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
 
 ## Goal
 

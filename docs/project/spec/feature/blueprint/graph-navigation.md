@@ -32,9 +32,9 @@ names its SHA.
 - No graph yet, an unreadable graph and the module off are answered as for
   blast radius (`project/instrukt/spec/feature/blueprint/blast-radius`).
 
-### Use cases
+## Use cases
 
-#### UC-BN1: An agent working for a person finds how one part reaches another
+### UC-BN1: An agent working for a person finds how one part reaches another
 
 ```gherkin
 Given a project whose latest pushed revision has been mapped
@@ -43,7 +43,7 @@ Then it receives the chain of relations leading from the first to the second, or
 And it sees which revision the answer reflects
 ```
 
-#### UC-BN2: An agent asks the map a looser question when the engine supports it
+### UC-BN2: An agent asks the map a looser question when the engine supports it
 
 ```gherkin
 Given a project whose latest pushed revision has been mapped by an engine that answers free questions
@@ -56,5 +56,5 @@ Then the agent is told the engine does not offer it
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
-- docs/project/spec/feature/blueprint/graph-engine.md — what an engine offers.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.
+- [project/instrukt/spec/feature/blueprint/graph-engine](graph-engine.md) — what an engine offers.

@@ -77,6 +77,6 @@ coverage that pins implementation and has to be thrown away.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/testing.md — the testing doctrine this boundary definition serves
-- ~/.instrukt/docs/sdlc/policy/definition-of-done-lanes.md — the review lane that enforces the distinction
-- ~/.instrukt/docs/sdlc/policy/language-policy-ownership.md — how language-specific testing mechanics stay with their owner
+- [sdlc/policy/testing](../policy/testing.md) — the testing doctrine this boundary definition serves
+- [sdlc/policy/definition-of-done-lanes](../policy/definition-of-done-lanes.md) — the review lane that enforces the distinction
+- [sdlc/policy/language-policy-ownership](../policy/language-policy-ownership.md) — how language-specific testing mechanics stay with their owner

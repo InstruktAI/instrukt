@@ -199,4 +199,4 @@ Anti-patterns to reject:
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/testing.md — rule 16: correctness synchronizes on observable conditions, never on real-clock sleeps. The authoring constraint this procedure's timing-failure recovery applies.
+- [sdlc/policy/testing](../policy/testing.md) — rule 16: correctness synchronizes on observable conditions, never on real-clock sleeps. The authoring constraint this procedure's timing-failure recovery applies.

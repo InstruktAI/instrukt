@@ -6,7 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## Required reads
 
-@project/instrukt/spec/feature/workflow/artifact-currency
+- [project/instrukt/spec/feature/workflow/artifact-currency](artifact-currency.md)
 
 ## What it is
 
@@ -173,9 +173,9 @@ does not create a new logical handoff. Integration is governed by
   runtime's supported cleanup path. Returned preparation work retains its
   working resources.
 
-### Use cases
+## Use cases
 
-#### UC-DC1: Deliver a prepared change for integration
+### UC-DC1: Deliver a prepared change for integration
 
 ```gherkin
 Given a developer has a prepared change whose dependencies are delivered
@@ -184,7 +184,7 @@ Then an integration candidate is handed off only after current independent appro
 And findings requiring changes return to implementation before that handoff
 ```
 
-#### UC-DC2: A fix reaches the next review and the delivered todo branch
+### UC-DC2: A fix reaches the next review and the delivered todo branch
 
 ```gherkin
 Given a developer's change has review findings requiring fixes
@@ -196,7 +196,7 @@ And the next independent review sees those corrections in its own worktree
 And the released fixer branch and worktree remain recorded as evidence
 ```
 
-#### UC-DC3: Divergent work is preserved for reconciliation
+### UC-DC3: Divergent work is preserved for reconciliation
 
 ```gherkin
 Given a developer's completed role branch diverges from the current todo branch
@@ -206,7 +206,7 @@ And the finding identifies both branches and commits for reconciliation
 And the role's work is preserved without dispatching the next role
 ```
 
-#### UC-DC4: The builder receives the completed workspace setup
+### UC-DC4: The builder receives the completed workspace setup
 
 ```gherkin
 Given a developer's prepared change needs its workspace initialized on T3
@@ -215,7 +215,7 @@ Then its committed setup reaches the todo branch by confirmed fast-forward hando
 And the builder starts in a new worktree at that advanced head only after setup is released
 ```
 
-#### UC-DC5: Deferral disposition permits finalization without changing the code
+### UC-DC5: Deferral disposition permits finalization without changing the code
 
 ```gherkin
 Given a developer's approved change has deferred items awaiting disposition
@@ -225,7 +225,7 @@ And a finalizer can start in its own worktree at the current todo head
 But missing or stale processing evidence keeps the deferrer outstanding and finalization pending
 ```
 
-#### UC-DC6: Integration receives only a candidate whose finalizer handoff is confirmed
+### UC-DC6: Integration receives only a candidate whose finalizer handoff is confirmed
 
 ```gherkin
 Given a developer's approved change has been synchronized and published by a finalizer
@@ -244,6 +244,7 @@ Then the readiness stamp and finalized event are recorded together for that cand
 
 ## See Also
 
-- sdlc/principle/design-fundamentals
-- general/principle/trust-and-guardrails
-- general/principle/intelligence-boundaries
+- [sdlc/principle/design-fundamentals](../../../../domain/sdlc/principle/design-fundamentals.md)
+- [general/principle/trust-and-guardrails](../../../../general/principle/trust-and-guardrails.md)
+- [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md)
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

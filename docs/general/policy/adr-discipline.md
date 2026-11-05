@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
+- [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
 
 ## Rules
 
@@ -56,4 +56,4 @@ When in doubt, write none. Doubt is the signal that no decision worth recording 
 
 ## See Also
 
-- ~/.instrukt/docs/general/procedure/adr-authoring.md
+- [general/procedure/adr-authoring](../procedure/adr-authoring.md)

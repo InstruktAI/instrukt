@@ -170,6 +170,6 @@ standing integrator's subscription and activation routes carry that wake-up.
 
 ## See also
 
-- sdlc/procedure/lifecycle/prepare/overview
-- sdlc/procedure/lifecycle/work/overview
-- sdlc/procedure/lifecycle/integrate
+- [sdlc/procedure/lifecycle/prepare/overview](prepare/overview.md)
+- [sdlc/procedure/lifecycle/work/overview](work/overview.md)
+- [sdlc/procedure/lifecycle/integrate](integrate.md)

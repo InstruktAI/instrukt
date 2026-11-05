@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/policy/testing.md
+- [sdlc/policy/testing](../testing.md)
 
 ## Rules
 

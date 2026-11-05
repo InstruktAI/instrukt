@@ -83,4 +83,4 @@ Use strict typing to keep behavior explicit and refactors safe.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/typescript/logging.md — the structured-field and boundary-output rules for TypeScript production logging.
+- [sdlc/policy/typescript/logging](logging.md) — the structured-field and boundary-output rules for TypeScript production logging.

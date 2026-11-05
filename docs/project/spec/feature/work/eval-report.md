@@ -84,9 +84,9 @@ separate logging service.
 - **Human intervention:** stamps marked `human_involved`, human approvals,
   change requests, and acts whose actor is a person or a GitHub actor.
 
-### Use cases
+## Use cases
 
-#### UC-ER1: Compare delivery quality across process changes
+### UC-ER1: Compare delivery quality across process changes
 
 ```gherkin
   Given a developer has recorded work spanning different process fingerprints
@@ -94,3 +94,6 @@ separate logging service.
   Then they receive a readable report comparing the available outcomes over time
   And can distinguish process-document changes from changes in the model used
 ```
+
+## See Also
+- [project/instrukt/spec/domain/work](../../domain/work.md)

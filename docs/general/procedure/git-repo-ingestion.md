@@ -10,7 +10,7 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/general/spec/history-log.md
+- [general/spec/history-log](../spec/history-log.md)
 
 ## Goal
 

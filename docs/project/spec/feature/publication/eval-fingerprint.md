@@ -43,6 +43,12 @@ and the report procedure itself are outside this shipped process set.
   publication. A sync that does nothing (main equals the published commit)
   leaves it as it is.
 
+## Use cases
+
+The sync scenarios in
+`project/instrukt/spec/feature/publication/project-publication` exercise
+fingerprint computation as part of publication.
+
 ## Known caveats
 
 - Only published snippets (from `docs/general/` and `docs/domain/<x>/`) with `eval: true` enter the fingerprint; `docs/project/` snippets do not.
@@ -50,5 +56,5 @@ and the report procedure itself are outside this shipped process set.
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/feature/publication/project-publication.md — the sync that computes it.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync that computes it.

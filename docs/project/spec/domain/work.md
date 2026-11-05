@@ -14,9 +14,7 @@ evaluation reports within the optional todos module. It owns the record and
 its GitHub reflection; workflow owns derivation and execution decisions, the
 runner owns dispatch, and the configured runtime owns conversations.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Todo**
 : A uniquely identified piece of project work with explicit intent and kind.
@@ -69,7 +67,7 @@ runner owns dispatch, and the configured runtime owns conversations.
 **Eval fingerprint**
 : The identity of the process-document set in force when evidence is stamped.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns:** todo identity and record mutations; artifact versions; stamp
   evidence; approvals and intent-check records; prerequisite and group facts;
@@ -99,6 +97,8 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 Direct-commit review verdicts belong to repository git notes through
 `instrukt repo stamp`, not a todo or a separate work record.
+
+## Canonical fields
 
 ### Aggregates
 
@@ -149,7 +149,13 @@ the runner owns its event vocabulary.
 Work consumes no events in the first build. GitHub changes reconcile into
 local records and workflow results enter as evidence-bound mutations.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
+`workflow.finalized`, concerning the todo in its project origin
+(`project/instrukt/spec/domain/workflow`).
+
+## Use cases
 
 - **Todos** — `project/instrukt/spec/feature/work/todos` — record work
   with its kind and recover withdrawn intent and evidence.
@@ -168,12 +174,14 @@ local records and workflow results enter as evidence-bound mutations.
 - **Evaluation report** — `project/instrukt/spec/feature/work/eval-report`
   — compare delivery outcomes across process and model changes.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 The feature contracts above carry this context's settled design. No separate
 owning design snippet or decision record is declared.
 
-### Context map position
+- `project/instrukt/design/architecture/overview` — the module boundaries and shared publication, retrieval and integration flows.
+
+## Context map position
 
 - **Configuration → work** — customer-supplier. Work consumes project settings.
 - **Publication → work** — customer-supplier. Work consumes the fingerprint

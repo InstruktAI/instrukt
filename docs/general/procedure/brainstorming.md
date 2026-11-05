@@ -9,7 +9,7 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/general/procedure/scratchpad-workspace.md
+- [general/procedure/scratchpad-workspace](scratchpad-workspace.md)
 
 ## Goal
 

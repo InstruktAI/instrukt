@@ -137,5 +137,5 @@ skip that section; everything else always applies.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md
+- [sdlc/concept/delivery-portfolio](../concept/delivery-portfolio.md)
+- [sdlc/policy/ci-pipeline-conventions](ci-pipeline-conventions.md)

@@ -64,9 +64,9 @@ lock, reaches no network and starts no session.
   an unconfigured computer or an unadopted repository is an answer, not a
   failure.
 
-### Use cases
+## Use cases
 
-#### UC-IS1: An agent learns where this computer and repository stand with instrukt in one read
+### UC-IS1: An agent learns where this computer and repository stand with instrukt in one read
 
 ```gherkin
 Given a developer's computer is configured with a runtime, has the todos module on and publishes domains from two adopted projects
@@ -79,7 +79,7 @@ And every published domain with its owner, and the other adopted project
 And nothing on the computer has changed
 ```
 
-#### UC-IS2: A developer on a fresh computer sees that nothing is set up yet
+### UC-IS2: A developer on a fresh computer sees that nothing is set up yet
 
 ```gherkin
 Given a developer has just installed instrukt on a computer with no instrukt configuration
@@ -90,7 +90,7 @@ And that this repository is not adopted
 And the command succeeds
 ```
 
-#### UC-IS3: A developer sees which modules their runtime can carry before switching one on
+### UC-IS3: A developer sees which modules their runtime can carry before switching one on
 
 ```gherkin
 Given a developer's runtime adapter supports standing agents but lacks anomaly notification
@@ -99,7 +99,7 @@ Then the report shows standing agents available on that runtime
 And shows anomaly notification unavailable, naming the missing capability
 ```
 
-#### UC-IS4: A developer sees that a repository would claim a domain another project owns
+### UC-IS4: A developer sees that a repository would claim a domain another project owns
 
 ```gherkin
 Given a developer's computer publishes a domain owned by one project
@@ -119,7 +119,7 @@ And shows that this repository's publication of it would be refused
 
 ## See Also
 
-- project/instrukt/spec/domain/publication
-- project/instrukt/spec/feature/distribution/agent-skill
-- project/instrukt/spec/feature/configuration/layered-configuration
-- project/instrukt/spec/feature/repository/project-initialization
+- [project/instrukt/spec/domain/publication](../../domain/publication.md)
+- [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
+- [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)

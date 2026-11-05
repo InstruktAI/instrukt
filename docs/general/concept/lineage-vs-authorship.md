@@ -46,4 +46,4 @@ it. Both failures come from treating an authority record as a precondition.
 
 ## See Also
 
-- ~/.instrukt/docs/general/policy/human-involvement-recording.md — which facts carry a human-involvement record, and why the declaration is never derived from identity.
+- [general/policy/human-involvement-recording](../policy/human-involvement-recording.md) — which facts carry a human-involvement record, and why the declaration is never derived from identity.

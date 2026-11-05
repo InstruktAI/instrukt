@@ -69,9 +69,9 @@ activate on ingress. A missing declared project home there fails visibly; anothe
 computer holding that checkout is not an implicit fallback. Other explicitly
 admitted consumers retain their own source-selection contracts.
 
-### Use cases
+## Use cases
 
-#### UC-SIT-1: Make external facts available throughout a private cluster
+### UC-SIT-1: Make external facts available throughout a private cluster
 
 ```gherkin
 Given a developer has private computers consuming one cluster stream
@@ -79,7 +79,7 @@ When a provider delivers a valid signed project webhook to ingress
 Then each running computer can read the resulting fact without exposing an inbound listener
 ```
 
-#### UC-SIT-2: Accept a verified fact even with no local reaction
+### UC-SIT-2: Accept a verified fact even with no local reaction
 
 ```gherkin
 Given a developer has no matching procedure or runtime available on ingress
@@ -87,7 +87,7 @@ When a valid signed delivery arrives
 Then ingress still publishes it to cluster Redis and acknowledges acceptance
 ```
 
-#### UC-SIT-3: Reject unauthenticated external input at intake
+### UC-SIT-3: Reject unauthenticated external input at intake
 
 ```gherkin
 Given a developer exposes only the loopback receiver through an edge
@@ -95,7 +95,7 @@ When an invalidly signed request arrives
 Then it is rejected without publishing or dispatching a reaction
 ```
 
-#### UC-SIT-4: Keep external listeners off other computers
+### UC-SIT-4: Keep external listeners off other computers
 
 ```gherkin
 Given a developer selects one stable ingress machine ID
@@ -103,7 +103,7 @@ When the receiver is started on another computer or its computer loses ingress p
 Then it serves no external endpoint
 ```
 
-#### UC-SIT-5: Serve all declared projects and protocols through one ingress
+### UC-SIT-5: Serve all declared projects and protocols through one ingress
 
 ```gherkin
 Given a developer declares native and GitHub sources for multiple projects
@@ -111,7 +111,7 @@ When each sends valid signed input to its derived path
 Then one ingress verifies each against its own project and publishes it
 ```
 
-#### UC-SIT-6: Consume a relayed fact as an ordinary platform event
+### UC-SIT-6: Consume a relayed fact as an ordinary platform event
 
 ```gherkin
 Given a developer receives a verified external fact
@@ -119,7 +119,7 @@ When their consumer reads it
 Then it carries ingress source, declaring-project origin, typed source subject, occurrence ID, time and original data
 ```
 
-#### UC-SIT-7: Subscribe to an external vocabulary without registering every name
+### UC-SIT-7: Subscribe to an external vocabulary without registering every name
 
 ```gherkin
 Given a developer publishes an enabled matching procedure for a project
@@ -127,7 +127,7 @@ When a new well-formed external type reaches that project
 Then its event name can select the procedure without adding a catalog declaration
 ```
 
-#### UC-SIT-8: Avoid false session attribution from external headers
+### UC-SIT-8: Avoid false session attribution from external headers
 
 ```gherkin
 Given a developer receives a webhook carrying session or identity headers
@@ -135,7 +135,7 @@ When ingress publishes its event
 Then no session reference is inferred from those headers
 ```
 
-#### UC-SIT-10: Retain native provenance for provider-looking names
+### UC-SIT-10: Retain native provenance for provider-looking names
 
 ```gherkin
 Given a developer sends a signed native event named github.push
@@ -143,7 +143,7 @@ When it reaches stream consumers
 Then its subject still identifies the native source and it receives no GitHub provider treatment
 ```
 
-#### UC-SIT-11: Distinguish the same facts received through different protocols
+### UC-SIT-11: Distinguish the same facts received through different protocols
 
 ```gherkin
 Given a developer receives the same type, project and payload through native and GitHub endpoints

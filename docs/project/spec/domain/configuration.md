@@ -18,15 +18,7 @@ interpolation — including the caller identity recognised by the explicitly
 selected runtime adapter. It owns no behavior the keys configure: each key's
 meaning belongs to the context or module that reads it.
 
-## Canonical fields
-
-Global `agents.order` supplies the default ordered agent preferences with
-thinking mode. Dispatch preferences use the selected adapter's capabilities and
-availability metadata; there are no executable runtime templates in
-configuration. `get --revision` prints the layer revision; `get --json` renders
-JSON.
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Layer**
 : One `instrukt.yaml` document: the **global layer** of the machine or the
@@ -72,7 +64,7 @@ be absent outside that runtime and does not change runtime selection.
 : The `project` key of a project layer; the identity of the project's
 `docs/project/` documentation (ids `project/<slug>/…`) and of its index entries.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns** — the `instrukt.yaml` schema; layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
@@ -96,6 +88,14 @@ be absent outside that runtime and does not change runtime selection.
   selected adapter's environment-only recognition without importing runner.
 - **Implementation roots** — the configuration module of the `instrukt-core`
   crate; its module layout is set by the architecture design.
+
+## Canonical fields
+
+Global `agents.order` supplies the default ordered agent preferences with
+thinking mode. Dispatch preferences use the selected adapter's capabilities and
+availability metadata; there are no executable runtime templates in
+configuration. `get --revision` prints the layer revision; `get --json` renders
+JSON.
 
 ### Aggregates
 
@@ -125,18 +125,23 @@ None. instrukt runs no daemon and emits no events from this context.
 
 None.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+This context emits no events.
+
+## Use cases
 
 - **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
 - **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
+- **configuration-skill** — [project/instrukt/spec/feature/configuration/configuration-skill](../feature/configuration/configuration-skill.md) — one skill coordinates local configuration and infrastructure verification across participating computers through the selected runtime, or locally without a route.
 - **interpolation** — `project/instrukt/spec/feature/configuration/interpolation` — values resolve across keys, the environment and the caller's own runtime session when read.
 - **logging** — `project/instrukt/spec/feature/configuration/logging` — every command's diagnostics are recorded where the InstruktAI logging contract puts them, readable afterwards with `instrukt-ai-logs instrukt`.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
-None yet beyond the feature specs above.
+- `project/instrukt/design/architecture/overview` — the module boundaries and shared publication, retrieval and integration flows.
 
-### Context map position
+## Context map position
 
 - **Docs** — customer / supplier: configuration supplies read-time
   interpolation through the CLI.

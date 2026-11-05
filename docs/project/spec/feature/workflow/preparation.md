@@ -6,7 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## Required reads
 
-@project/instrukt/spec/feature/workflow/artifact-currency
+- [project/instrukt/spec/feature/workflow/artifact-currency](artifact-currency.md)
 
 ## What it is
 
@@ -100,9 +100,9 @@ subsequent execution dispatch. Manual preparation does not itself require
 dependency delivery; work admission does. Entry claims and holds are work-record
 and runner concerns, distinct from the derived preparation state.
 
-### Use cases
+## Use cases
 
-#### UC-PR1: Prepare an intended feature for implementation
+### UC-PR1: Prepare an intended feature for implementation
 
 ```gherkin
 Given a developer has recorded the feature they want in their project
@@ -123,6 +123,7 @@ And review findings return to the responsible author for revision
 
 ## See Also
 
-- general/policy/human-contract
-- general/policy/leadership
-- sdlc/principle/documentation-first-development
+- [general/policy/human-contract](../../../../general/policy/human-contract.md)
+- [general/policy/leadership](../../../../general/policy/leadership.md)
+- [sdlc/principle/documentation-first-development](../../../../domain/sdlc/principle/documentation-first-development.md)
+- [project/instrukt/spec/domain/workflow](../../domain/workflow.md)

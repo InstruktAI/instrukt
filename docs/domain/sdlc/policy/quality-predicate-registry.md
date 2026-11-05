@@ -89,6 +89,6 @@ govern it.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/testing.md
-- ~/.instrukt/docs/sdlc/policy/definition-of-done-lanes.md
-- ~/.instrukt/docs/sdlc/concept/functional-test-boundary.md
+- [sdlc/policy/testing](testing.md)
+- [sdlc/policy/definition-of-done-lanes](definition-of-done-lanes.md)
+- [sdlc/concept/functional-test-boundary](../concept/functional-test-boundary.md)

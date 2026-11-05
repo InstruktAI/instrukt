@@ -7,8 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/principle/externalized-structural-context.md
-- @~/.instrukt/docs/sdlc/design/lifecycle/overview.md
+- [sdlc/design/lifecycle/overview](lifecycle/overview.md)
 
 ## Purpose
 
@@ -116,7 +115,7 @@ supplies the substrate that makes those judgments less guess-driven.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/spec/code-intelligence-schema.md —
+- [sdlc/spec/code-intelligence-schema](../spec/code-intelligence-schema.md) —
   canonical fact model and result contract
-- ~/.instrukt/docs/sdlc/design/code-intelligence-sdlc-integration.md —
+- [sdlc/design/code-intelligence-sdlc-integration](code-intelligence-sdlc-integration.md) —
   how the capability feeds SDLC stages

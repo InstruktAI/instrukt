@@ -48,4 +48,4 @@ same chain of custody holds.
 
 ## See Also
 
-- ~/.instrukt/docs/general/procedure/orchestration.md
+- [general/procedure/orchestration](../procedure/orchestration.md)

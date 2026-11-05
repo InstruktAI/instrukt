@@ -59,4 +59,4 @@ None. If a deviation is required, document the rationale and get explicit approv
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/python/tooling.md
+- [sdlc/policy/python/tooling](tooling.md)

@@ -9,11 +9,11 @@ role: diagnosis-driver
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/bundle.md
-- @~/.instrukt/docs/sdlc/procedure/debugging.md
-- @~/.instrukt/docs/sdlc/policy/process-change-authority.md
-- @~/.instrukt/docs/general/policy/human-involvement-recording.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
+- sdlc
+- [sdlc/procedure/debugging](../../debugging.md)
+- [sdlc/policy/process-change-authority](../../../policy/process-change-authority.md)
+- [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
+- [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
 
 ## Goal
 
