@@ -221,6 +221,16 @@ reactions they record.
 with the delivery's outcome and the consumer's cursor, in one transaction;
 an event with a mark is never handed to that consumer again.
 
+**`standing_deliveries`** — pending deliveries with a fixed runtime target.
+Key: `(consumer, seq)`, referring to the event's consumer and event-log sequence.
+Columns: `consumer`, `seq`, `session` (the selected `<runtime>:<id>`).
+Commit the target before `send`; a failed or interrupted send retries that
+same session. A later absent or conflicting runtime listing cannot retarget
+it or start a replacement. Delete the row in the transaction that records
+accepted delivery and its handled mark. A start with an unknown result keeps
+its start marker until its session can be recovered, then records this target
+before any recovery send.
+
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
 unchanged `304` reuses).
@@ -237,12 +247,34 @@ is released. Key: `(project, todo_id, role)`. Columns: `project`, `todo_id`,
 `role`, `session`, `workflow_state` (the state at the last look),
 `recovery_sent`, `anomaly_raised`.
 
-**`standing_bindings`** — standing-agent sessions. Key:
-`(procedure, project)`. Columns: `procedure`, `project`, `session`.
+**`standing_bindings`** — cached standing-agent sessions. Key:
+`(procedure, project)`. Columns: `procedure`, `project`, `session`, `key_title`.
+A binding is repaired from the runtime thread's exact key title before a new
+start is considered; deleting this cache never establishes absence in T3.
+
+**`runtime_key_locks`** — one standing-agent starter/deliverer per runtime
+and singleton key. Key: `(runtime, project, procedure)`.
+
+| Column | Meaning |
+| --- | --- |
+| `runtime`, `project`, `procedure` | The compiled adapter name and singleton scope. |
+| `owner` | Owning runner invocation token; `NULL` when released. |
+| `acquired_at` | Acquisition time, for diagnosis; not a timeout permitting takeover. |
+
+Acquisition is an atomic conditional write under the existing writer lock. Only
+the recorded owner can perform the key's list/start/send sequence and release
+the row. No database transaction spans a runtime command. A successor holding
+the machine runner lock can recover dead invocation ownership; unresolved
+`standing_starts` remains in force after that recovery. Every standing
+start-or-wake goes through this row, even with a cached binding.
 
 **`standing_starts`** — standing-agent starts recorded before the runtime
 was asked and not yet bound or resolved. Key: `(procedure, project)`.
-Columns: `procedure`, `project`, `begun_at`, `reported`.
+Columns: `procedure`, `project`, `runtime`, `key_title`, `begun_at`, `reported`.
+The marker commits before the external start. A later keyed runtime match can
+resolve it without a replacement start; an empty list alone cannot clear an
+ambiguous marker. Explicit resolution or proof of rejection before creation
+is required before trying a new start.
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
@@ -255,10 +287,13 @@ set for).
 
 A removed todo's rows are purged with it when its recovery window expires.
 An execution's row goes when its todo is released; a standing start's when it
-is bound or resolved; a task failure's is kept after its hold is released, so the same failed run
-never sets the hold again, and is replaced by the task's next failed run. Validators,
-deferrals, watched-ref observations and listing copies are replaced in place.
-Events, cursors and handled marks are kept.
+is bound or resolved. A pending standing delivery's row goes with its accepted
+delivery and handled mark. A task failure's row is kept after its hold is
+released, so the same failed run never sets the hold again, and is replaced by
+the task's next failed run. Validators, deferrals, watched-ref observations
+and listing copies are replaced in place. Key-lock rows are reused with
+ownership cleared on release; they are not event history. Events, cursors and
+handled marks are kept.
 
 ### Use cases
 
@@ -283,13 +318,15 @@ Events, cursors and handled marks are kept.
   the database again by pull-through.
 - Deleting the database loses work-record writes not yet reflected to
   GitHub. Reflected work returns by pull-through; the runner's state starts
-  empty, so standing agents start new sessions and watched refs are observed
-  afresh.
+  empty, so watched refs are observed afresh. Before any new standing-agent
+  start, the adapter discovers the thread's key title in T3; existing keyed
+  threads are rebound rather than duplicated. A lost ambiguous start marker
+  cannot be reconstructed when the runtime has no discoverable matching thread.
 
 ## See Also
 
 - project/instrukt/spec/domain/work
 - project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/work/github-record — reflection of the work tables to GitHub
-- project/instrukt/spec/feature/runner/event-activation — the event log's events and consumers
+- project/instrukt/spec/feature/work/github-record
+- project/instrukt/spec/feature/runner/event-activation
 - sdlc/policy/state-storage

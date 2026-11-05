@@ -143,7 +143,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   their findings, structural validation, `instrukt docs get --domain` and
   every other read of the home (docs,
   `project/instrukt/spec/domain/docs`); the layered configuration, its
-  schema migration and the runtime mapping (configuration,
+  schema migration and runtime choice (configuration,
   `project/instrukt/spec/domain/configuration`); the hook sections that
   start a sync, adoption and its claims report (repository,
   `project/instrukt/spec/domain/repository`);
@@ -163,7 +163,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   (`project/instrukt/spec/feature/publication/instrukt-status`).
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
-  runtime mapping, its migration operation, and the configuration schema type
+  runtime choice, its migration operation, and the configuration schema type
   the editor schema of `instrukt.yaml` is generated from, as customer);
   for `instrukt status` only, repository (hook-section state, as customer).
 - **Implementation roots** — `crates/instrukt-core/` (publication);
@@ -231,12 +231,12 @@ runs it.
 
 ### Use cases (index of feature specs)
 
-- **project-publication** — `docs/project/spec/feature/publication/project-publication.md` — a project's committed positions reach the agents on this computer, side by side with other projects' docs, without either taking the other's.
-- **agent-entrypoints** — `docs/project/spec/feature/publication/agent-entrypoints.md` — the project's `AGENTS.md` is its purpose and the rendering of `docs/project/index.yaml`, and the `docs/general/` owner gives every supported agent CLI a rendered global file without overwriting one it did not write.
-- **eval-fingerprint** — `docs/project/spec/feature/publication/eval-fingerprint.md` — every publishing sync leaves a digest of the evaluated doctrine for stamps to carry.
-- **editor-schemas** — `docs/project/spec/feature/publication/editor-schemas.md` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
-- **docs-repositories** — `docs/project/spec/feature/publication/docs-repositories.md` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
-- **instrukt-status** — `docs/project/spec/feature/publication/instrukt-status.md` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
+- **project-publication** — `project/instrukt/spec/feature/publication/project-publication` — a project's committed positions reach the agents on this computer, side by side with other projects' docs, without either taking the other's.
+- **agent-entrypoints** — `project/instrukt/spec/feature/publication/agent-entrypoints` — the project's `AGENTS.md` is its purpose and the rendering of `docs/project/index.yaml`, and the `docs/general/` owner gives every supported agent CLI a rendered global file without overwriting one it did not write.
+- **eval-fingerprint** — `project/instrukt/spec/feature/publication/eval-fingerprint` — every publishing sync leaves a digest of the evaluated doctrine for stamps to carry.
+- **editor-schemas** — `project/instrukt/spec/feature/publication/editor-schemas` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
+- **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
+- **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
 
 ### Governing designs and decisions (index)
 
@@ -252,7 +252,7 @@ runs it.
   index that retrieval reads, and the published commit the behind-main
   warning compares with.
 - **configuration** — Customer / Supplier. Configuration supplies the project
-  slug, the runtime mapping and the migration operation invoked before
+  slug, the runtime choice and the migration operation invoked before
   publication.
 - **repository** — Customer / Supplier. Repository's hook sections run
   `instrukt sync`; publication decides what a run does. Publication supplies
@@ -290,5 +290,5 @@ runs it.
 
 ## See Also
 
-- docs/project/spec/domain/context-map.md — the bounded contexts and their relationships.
-- docs/project/design/architecture/overview.md — the publish flow and the home layout.
+- project/instrukt/spec/domain/context-map
+- project/instrukt/design/architecture/overview

@@ -7,8 +7,8 @@ description: Decide whether a todo should exist, audit that decision at preparat
 
 ## Required reads
 
-@~/.instrukt/docs/general/policy/documentation-discipline.md
-@~/.instrukt/docs/general/policy/human-contract.md
+- general/policy/documentation-discipline
+- general/policy/human-contract
 
 ## Rules
 
@@ -309,24 +309,23 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     recorded sessions. Before releasing
     the claim, make the todo tell the truth by either holding it with the log
     entry above or amending `input` to carry the reconciliation. Only then run `instrukt todo update <slug> --unclaim` and confirm
-    its outcome, then end the settled child sessions with
-    `instrukt sessions end --todo <slug>` and the lane last with
-    `instrukt sessions end self`. A bare release is forbidden: it
+    its outcome, then record the settled assignments and handoff. The runtime
+    owns session ending and cleanup. A bare release is forbidden: it
     returns the suspect premise to the runner with less context and recreates
     the same preparation waste.
   - **Retract.** For work that is truly invalid — including doc-only work,
     process work defensible from neither authorized intent nor applicable
     principles, or a confirmed duplicate — settle the claimant's children, run
-    `instrukt todo update <slug> --unclaim` and confirm release, then end the settled
-    child sessions with `instrukt sessions end --todo <slug>`. Run
+    `instrukt todo update <slug> --unclaim` and confirm release, then record the
+    child assignments' disposition. Run
     `instrukt todo remove <slug>`. Inspect the command outcome and record;
     a refusal leaves the work unwithdrawn. Removal retains the item and its
     evidence during the work record's recovery window and releases working
     resources. The withdrawing agent removes that slug's pending markers in a doc commit;
     nothing removes them automatically. Record unresolved cleanup rather than
-    claiming it complete. End the settled lane session with
-    `instrukt sessions end self` as its last step; removal alone ends no
-    runtime conversation.
+    claiming it complete. Record the lane's handoff; the runtime owns session
+    ending and cleanup. Removal changes the work record, not a conversation's
+    lifecycle.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —
@@ -363,8 +362,8 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   and settle their current work before release and removal. A hold brakes
   future dispatch and does not establish that current work stopped. Once the
   claim is released through `instrukt todo update <slug> --unclaim` and release is
-  confirmed, end the settled claimant and worker sessions with
-  `instrukt sessions end <id>`, then run `instrukt todo remove <slug>` and
+  confirmed, record the claimant and worker handoffs, then run
+  `instrukt todo remove <slug>` and
   inspect its outcome. The withdrawing agent removes the slug's pending
   markers in a doc commit; nothing does so automatically.
 

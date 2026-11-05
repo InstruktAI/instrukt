@@ -95,10 +95,10 @@ refused once implementation starts. Dependency and group changes follow
 A lifecycle phase is derived from evidence by the workflow engine. Editing a
 displayed phase does not establish approval, readiness or delivery.
 
-`instrukt todo update <slug> --unclaim` releases the execution claim, the counterpart
-of the claim recorded before dispatch. Ending the todo's child sessions and
-the lane's own is separate: `instrukt sessions end --todo <slug>`, then
-`instrukt sessions end self`.
+`instrukt todo update <slug> --unclaim` releases the execution claim, the
+counterpart of the claim recorded before dispatch. Session bindings remain
+evidence of the assignment's conversations. The runtime owns ending those
+sessions; release changes the claim, not their lifecycle.
 
 ### Supported metadata and listing selections
 
@@ -196,3 +196,9 @@ Claim release and session cleanup belong to the work lane before handoff.
 ## Known caveats
 
 None.
+
+## See Also
+
+- project/instrukt/spec/domain/work
+- project/instrukt/spec/feature/runner/session-continuity
+- project/instrukt/spec/feature/work/state-database

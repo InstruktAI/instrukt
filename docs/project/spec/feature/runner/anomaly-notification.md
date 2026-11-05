@@ -28,19 +28,20 @@ from a waiting thread or supply a separate approval channel.
 ### Configuration ownership
 
 A notification carries only a reference to the session holding the anomaly,
-preferably a deep link that opens it. The anomaly content stays in that
-session; nothing is copied into logs, status output or the notification.
-The command receives the session reference and a deep link when the runtime
-mapping can build one.
+preferably a deep link that opens it. The anomaly content stays in that session;
+nothing is copied into logs, status output or the notification. The command
+receives the session reference and a deep link when the runtime adapter supplies
+one.
 
 `runner.notify` is a command in global configuration; `runner.notify: off`
-disables notification. It controls whether and
-how the runner reports anomalies. When unset, the runner defaults to the
-notification the runtime mapping says that runtime offers, including mobile
-notification where that capability is available.
+disables notification. It controls whether and how the runner reports anomalies.
+When unset, the runner defaults to the notification the runtime adapter declares
+supported, including mobile notification where that capability is available.
 
-The runtime entry's optional `notify` command template declares capability; the runner setting chooses anomaly
-reporting policy. The project layer does not supply this machine-level
+The adapter's optional `notify` capability declares support; the runner setting
+chooses anomaly-reporting policy. T3's published host CLI has no notification
+operation, so its default is unavailable; an explicit `runner.notify` command
+can provide it. The project layer does not supply this machine-level
 notification command.
 
 ### Use cases
@@ -62,3 +63,9 @@ notification command.
 - When no session could start (the dispatch order is exhausted), the runner
   releases its own claim and sets no hold; the notification references the
   work item instead of a session.
+
+## See Also
+
+- project/instrukt/spec/domain/runner
+- project/instrukt/spec/feature/runner/session-continuity
+- project/instrukt/spec/feature/configuration/layered-configuration

@@ -21,13 +21,14 @@ message that writes them itself is refused.
 
 | Fact | Source | Unresolved |
 | --- | --- | --- |
-| Active runtime and its session id | the first runtime mapping entry whose session variable is set in the caller's environment (`project/instrukt/spec/domain/configuration`) | no `Session:` trailer |
-| Active agent | the first agent CLI entry of the runtime mapping whose session variable is set | the git user's own identity as author |
+| Active runtime and its session id | the explicitly selected adapter's recognition of the caller's native session (`project/instrukt/spec/domain/configuration`) | no `Session:` trailer |
+| Active agent | the selected adapter's reported agent identity, when it can resolve one | the git user's own identity as author |
 | Agent author | the global layer's `agents.<name>.git_author` for the active agent | refuse and name `agents.<name>.git_author` |
 
-A runtime that hosts agent CLIs and an agent CLI can both be set at once; the
-runtime mapping's order decides the active runtime, and the active agent is
-resolved from the agent CLI entries alone.
+The runtime choice is explicit; recognising caller identity does not select one.
+An adapter may identify the provider of its recognised session, but an unknown
+agent identity stays unresolved rather than being inferred from an ordered
+configuration entry. The adapter's metadata carries the observation.
 
 ### The message
 
@@ -135,5 +136,5 @@ And integration stops at the first commit without an accepting outcome
 
 ## See Also
 
-- docs/project/spec/domain/repository.md — the repository context.
-- docs/project/spec/domain/configuration.md — the runtime mapping and the agents' git authors.
+- project/instrukt/spec/domain/repository
+- project/instrukt/spec/domain/configuration
