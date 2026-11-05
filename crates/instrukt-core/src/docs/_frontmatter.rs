@@ -1,12 +1,13 @@
 //! Authored frontmatter: the typed fields every consumer reads, and the
 //! checks that decide where each field is allowed.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_finding::FindingCode;
 use super::_identity::Taxonomy;
 use crate::ids::TodoSlug;
+use crate::subscription::{SubscriptionAttendance, SubscriptionHome, SubscriptionIdentity};
 
 /// `visibility`: recorded metadata that filters nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
@@ -44,7 +45,7 @@ pub struct Dispatch {
 }
 
 /// How pending events reach a subscribed procedure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EventDelivery {
     #[default]
@@ -60,6 +61,9 @@ pub struct ProcedureEntry {
     pub role: Option<String>,
     pub activation_trigger: Option<String>,
     pub subscriptions: Vec<String>,
+    pub subscription_home: Option<SubscriptionHome>,
+    pub subscription_identity: SubscriptionIdentity,
+    pub subscription_attendance: SubscriptionAttendance,
     pub parameters: Vec<Parameter>,
     pub dispatch: Option<Dispatch>,
     pub event_delivery: EventDelivery,
@@ -92,9 +96,12 @@ pub struct Frontmatter {
     pub raw: Mapping,
 }
 
-const PROCEDURE_FIELDS: [&str; 7] = [
+const PROCEDURE_FIELDS: [&str; 10] = [
     "activation_trigger",
     "subscriptions",
+    "subscription_home",
+    "subscription_identity",
+    "subscription_attendance",
     "role",
     "parameters",
     "dispatch",
@@ -197,6 +204,14 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
         role,
         activation_trigger,
         subscriptions,
+        subscription_home: get(raw, "subscription_home")
+            .and_then(|v| serde_yaml_ng::from_value(v.clone()).ok()),
+        subscription_identity: get(raw, "subscription_identity")
+            .and_then(|v| serde_yaml_ng::from_value(v.clone()).ok())
+            .unwrap_or_default(),
+        subscription_attendance: get(raw, "subscription_attendance")
+            .and_then(|v| serde_yaml_ng::from_value(v.clone()).ok())
+            .unwrap_or_default(),
         parameters,
         dispatch,
         event_delivery,
@@ -400,7 +415,19 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
     if subscriptions.is_some() && role.is_none() {
         issues.push((FindingCode::SubscriptionsWithoutRole, None));
     }
-    for field in ["event_delivery", "interruptible"] {
+    if subscriptions.is_some() && !raw.contains_key("subscription_home") {
+        issues.push((
+            FindingCode::SubscriptionHomeMissing,
+            Some("subscription_home".into()),
+        ));
+    }
+    for field in [
+        "subscription_home",
+        "subscription_identity",
+        "subscription_attendance",
+        "event_delivery",
+        "interruptible",
+    ] {
         let Some(value) = get(raw, field) else {
             continue;
         };
@@ -412,6 +439,12 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
             continue;
         }
         let valid = match field {
+            "subscription_home" => matches!(
+                value.as_str(),
+                Some("project" | "platform" | "company" | "person")
+            ),
+            "subscription_identity" => matches!(value.as_str(), Some("home" | "subject")),
+            "subscription_attendance" => matches!(value.as_str(), Some("attended" | "unattended")),
             "event_delivery" => matches!(value.as_str(), Some("sequential" | "batched")),
             _ => value.is_bool(),
         };
@@ -547,6 +580,7 @@ mod tests {
                 FindingCode::SubscriptionsInvalid,
                 FindingCode::ActivationConflict,
                 FindingCode::SubscriptionsWithoutRole,
+                FindingCode::SubscriptionHomeMissing,
                 FindingCode::DeliverySettingInvalid,
                 FindingCode::ParametersWithoutRole,
                 FindingCode::DispatchWithoutRole,

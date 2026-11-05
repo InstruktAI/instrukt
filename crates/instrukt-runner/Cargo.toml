@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hmac.workspace = true
+hex.workspace = true
+form_urlencoded.workspace = true
+tiny_http.workspace = true
 instrukt-core.workspace = true
 jiff.workspace = true
 redis.workspace = true

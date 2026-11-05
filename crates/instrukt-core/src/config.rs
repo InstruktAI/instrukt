@@ -21,6 +21,7 @@ mod _runtime;
 mod _schema;
 mod _shipped;
 mod _validate;
+mod _webhooks;
 
 use std::path::Path;
 
@@ -40,6 +41,7 @@ pub use _runtime::{Env, RuntimeEntry, Verb, VerbKind, VerbName};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};
 pub use _shipped::names as shipped_runtimes;
 pub use _validate::validate;
+pub use _webhooks::{Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources};
 
 use crate::home::Home;
 use crate::ids::ProjectSlug;

@@ -150,6 +150,12 @@ impl<'a> Interpolator<'a> {
         value: &Value,
         stack: &mut Vec<String>,
     ) -> Result<String, ConfigError> {
+        if path.starts_with("webhooks.") {
+            return value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or(ConfigError::NotScalar { path });
+        }
         if stack.contains(&path) {
             let mut chain = stack.clone();
             chain.push(path);
@@ -347,9 +353,12 @@ fn missing(path: &str, segment: &str, parent: &str) -> ConfigError {
     }
 }
 
-/// Whether `path` addresses the stored runtime mapping or a part of it.
+/// Stored runtime templates and webhook references are answered unexpanded.
 fn is_stored_mapping(path: &str) -> bool {
-    path == "runtimes" || path.starts_with("runtimes.")
+    path == "runtimes"
+        || path.starts_with("runtimes.")
+        || path == "webhooks"
+        || path.starts_with("webhooks.")
 }
 
 fn is_runtime_field(field: &str) -> bool {

@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    blueprint, config, docs, eval, events, repository, runner, specs, sync, todo,
+    blueprint, config, docs, eval, events, repository, runner, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -52,6 +52,8 @@ enum Command {
     Eval(eval::EvalArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
+    /// Internal signed loopback webhook receiver (installation is separate).
+    Webhooks(webhooks::WebhooksArgs),
     /// Run the runner until stopped.
     Run(runner::RunArgs),
     /// One runner wake-up, as the OS scheduler invokes it.
@@ -83,6 +85,7 @@ fn main() -> ExitCode {
         Command::Todo(args) => todo::run(args, &mut ctx),
         Command::Eval(args) => eval::run(args, &mut ctx),
         Command::Events(args) => events::run(args, &mut ctx),
+        Command::Webhooks(args) => webhooks::run(args, &mut ctx),
         Command::Run(args) => runner::run_run(args, &mut ctx),
         Command::Tick(args) => runner::run_tick(args, &mut ctx),
         Command::Ticks(args) => runner::run_ticks(args, &mut ctx),

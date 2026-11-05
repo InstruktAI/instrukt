@@ -36,7 +36,7 @@ pub fn watched_fork(env: &TestEnv) -> Repo {
                     "procedure",
                     "Upstream Watch",
                     "Report upstream changes and offer a reconciliation that keeps local changes.",
-                    "role: upstream-watcher\nsubscriptions:\n  - runner.upstream_changed\n",
+                    "role: upstream-watcher\nsubscription_home: project\nsubscriptions:\n  - runner.upstream_changed\n",
                     &[],
                     "Report the upstream change and offer reconciliation.\n",
                 ),

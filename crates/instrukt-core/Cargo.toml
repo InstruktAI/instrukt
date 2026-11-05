@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+dotenvy.workspace = true
 hex.workspace = true
 indexmap.workspace = true
 jiff.workspace = true

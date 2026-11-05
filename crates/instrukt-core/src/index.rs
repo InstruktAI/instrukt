@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::fsx::FsError;
 use crate::home::Home;
 use crate::ids::{ProjectSlug, SnippetId, ThirdPartyId, TodoSlug};
+use crate::subscription::{SubscriptionAttendance, SubscriptionHome, SubscriptionIdentity};
 
 /// The global index could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -37,9 +38,9 @@ pub enum IndexError {
 
 /// The whole global index.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalIndex {
     /// Taxonomy snippets, global and local.
-    #[serde(default)]
     pub snippets: Vec<IndexEntry>,
     /// Third-party docs, indexed apart from taxonomy snippets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -83,6 +84,14 @@ pub struct IndexEntry {
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subscriptions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription_home: Option<SubscriptionHome>,
+    #[serde(default)]
+    pub subscription_identity: SubscriptionIdentity,
+    #[serde(default)]
+    pub subscription_attendance: SubscriptionAttendance,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_reads: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameters: Vec<IndexParameter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

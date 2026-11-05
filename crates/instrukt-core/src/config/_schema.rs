@@ -71,6 +71,9 @@ impl Rule {
 enum Shape {
     Version,
     RedisTimeout,
+    Webhooks,
+    MachineId,
+    Port,
     Credential,
     LocalRedisUrl,
     Slug,
@@ -152,6 +155,14 @@ fn schema() -> Node {
             map(vec![
                 ("cluster", redis_scope(false)),
                 ("local", redis_scope(true)),
+            ]),
+        ),
+        ("webhooks", Leaf(ProjectOnly, Shape::Webhooks)),
+        (
+            "ingress",
+            map(vec![
+                ("computer", Leaf(GlobalOnly, Shape::MachineId)),
+                ("port", Leaf(GlobalOnly, Shape::Port)),
             ]),
         ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
@@ -342,6 +353,28 @@ enum Field {
 fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     let invalid = |message: &str| KeyFinding::new(path, FindingKind::InvalidValue, message);
     match shape {
+        Shape::Webhooks => {
+            if let Err(error) = super::_webhooks::parse(Some(value)) {
+                out.push(invalid(&error.to_string()));
+            }
+        }
+        Shape::MachineId => {
+            if value
+                .as_str()
+                .and_then(crate::machine::MachineId::parse)
+                .is_none()
+            {
+                out.push(invalid("expected an existing stable machine ID"));
+            }
+        }
+        Shape::Port => {
+            if value
+                .as_u64()
+                .is_none_or(|port| !(1..=65535).contains(&port))
+            {
+                out.push(invalid("expected a TCP port from 1 to 65535"));
+            }
+        }
         Shape::Credential => {
             if !value
                 .as_str()
@@ -768,6 +801,9 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         })
     };
     match shape {
+        Shape::Webhooks => super::_webhooks::editor_schema(),
+        Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
+        Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),
         Shape::Credential | Shape::LocalRedisUrl => json!({ "type": "string" }),
         Shape::RedisTimeout => json!({ "type": "integer", "minimum": 11 }),
         Shape::Version => json!({ "type": "integer", "minimum": 1 }),

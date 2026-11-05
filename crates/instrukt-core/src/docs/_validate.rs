@@ -314,6 +314,21 @@ fn check_version(
         ) {
             push(out, path, code, value);
         }
+        if class.scope == Scope::Project
+            && !version.frontmatter().entry.subscriptions.is_empty()
+            && version
+                .frontmatter()
+                .entry
+                .subscription_home
+                .is_some_and(|home| home != crate::subscription::SubscriptionHome::Project)
+        {
+            push(
+                out,
+                path,
+                FindingCode::SubscriptionReachInvalid,
+                Some("subscription_home: project required at project position".into()),
+            );
+        }
         if let Some(dispatch) = &version.frontmatter().entry.dispatch {
             for agent in dispatch.agents.iter().filter(|a| !env.agents.contains(*a)) {
                 push(

@@ -579,6 +579,15 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
     }
     .render();
     out.push(section.trim_end().to_owned());
+    if let Some(configured) = super::_selection::responsibilities(
+        index
+            .snippets
+            .iter()
+            .filter(|entry| entry.scope == IndexScope::Global && entry.domain == domain.as_str()),
+    ) {
+        out.push(String::new());
+        out.push(configured);
+    }
     tracing::debug!(
         event = "docs_get_domain_completed",
         domain = %domain,
@@ -1245,6 +1254,10 @@ mod tests {
             activation_trigger: None,
             role: None,
             subscriptions: Vec::new(),
+            subscription_home: None,
+            subscription_identity: Default::default(),
+            subscription_attendance: Default::default(),
+            required_reads: Vec::new(),
             parameters: Vec::new(),
             dispatch: None,
             event_delivery: None,

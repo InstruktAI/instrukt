@@ -120,12 +120,21 @@ impl Configuration {
     pub fn get(&self, path: Option<&str>, env: &Env) -> Result<Value, ConfigError> {
         let mut value = self.value.clone();
         super::_redis::redact(&mut value, "");
+        super::_webhooks::redact(&mut value);
         Interpolator::new(&value, &self.runtimes, Mode::Expand(env)).get(path)
     }
 
     /// Read machine-owned Redis settings, resolving credential references for I/O.
     pub fn redis(&self, env: &Env) -> Result<super::RedisSettings, ConfigError> {
         super::_redis::settings(self, env)
+    }
+
+    pub fn webhooks(&self) -> Result<super::WebhookSources, ConfigError> {
+        super::_webhooks::parse(self.value.get("webhooks"))
+    }
+
+    pub fn ingress(&self) -> Result<super::Ingress, ConfigError> {
+        super::_webhooks::ingress(self.value.get("ingress"))
     }
 
     pub(super) fn redis_raw(&self) -> Option<&Value> {

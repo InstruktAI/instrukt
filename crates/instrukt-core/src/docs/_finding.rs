@@ -53,6 +53,8 @@ codes! {
     ActivationTriggerInvalid => "frontmatter-activation-trigger-invalid",
     SubscriptionsInvalid => "frontmatter-subscriptions-invalid",
     /// A procedure declaring `subscriptions` without a `role`.
+    SubscriptionHomeMissing => "frontmatter-subscription-home-missing",
+    SubscriptionReachInvalid => "frontmatter-subscription-reach-invalid",
     SubscriptionsWithoutRole => "frontmatter-subscriptions-without-role",
     /// `event_delivery` or `interruptible` without `subscriptions`.
     DeliverySettingMisplaced => "frontmatter-delivery-setting-misplaced",

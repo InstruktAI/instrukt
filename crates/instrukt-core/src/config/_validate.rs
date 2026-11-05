@@ -31,6 +31,27 @@ pub(crate) fn findings_for(
     if let Layer::Project(root) = layer {
         found.extend(code_on_github(root, value, global.as_ref())?);
     }
+    if let Layer::Project(root) = layer {
+        let effective = effective_value(global.as_ref(), Some(value));
+        if let Ok(ingress) = super::_webhooks::ingress(effective.get("ingress"))
+            && std::fs::read_to_string(home.machine_id_file())
+                .ok()
+                .as_deref()
+                .map(str::trim)
+                == Some(ingress.computer.as_str())
+            && let Ok(sources) = super::_webhooks::parse(value.get("webhooks"))
+        {
+            for source in sources.values() {
+                if let Err(error) = source.resolve(root) {
+                    found.push(KeyFinding::new(
+                        "webhooks",
+                        FindingKind::UnresolvedReference,
+                        error.to_string(),
+                    ));
+                }
+            }
+        }
+    }
     Ok(found
         .into_iter()
         .map(|finding| Finding {
@@ -125,6 +146,20 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
     }
     feature_verbs(value, &effective, &mut found);
     references(value, kind, &effective, &mut found);
+    if let Some(sources) = value.get("webhooks").and_then(Value::as_mapping)
+        && !sources.is_empty()
+        && effective
+            .get("modules")
+            .and_then(|m| m.get("events"))
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        found.push(KeyFinding::new(
+            "webhooks",
+            FindingKind::ModuleSwitchedOff,
+            "webhook sources require modules.events enabled",
+        ));
+    }
     found
 }
 
@@ -283,6 +318,9 @@ fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<K
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
+        if path == "webhooks" || path.starts_with("webhooks.") {
+            continue;
+        }
         let error = candidates.iter().find_map(|active| {
             Interpolator::new(effective, &entries, Mode::Check(*active))
                 .expand_text(&text, Some(&path))

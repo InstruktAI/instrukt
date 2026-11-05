@@ -114,7 +114,7 @@ fn valid_tree(repo: &Repo) {
         "docs/domain/acme/procedure/listen.md",
         &snippet(
             "procedure",
-            "role: listener\nsubscriptions: ['acme.events.*']\nevent_delivery: batched\n",
+            "role: listener\nsubscription_home: project\nsubscriptions: ['acme.events.*']\nevent_delivery: batched\n",
             "",
         ),
     )
@@ -294,7 +294,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             "docs/domain/acme/procedure/both.md",
             &snippet(
                 "procedure",
-                "activation_trigger: Now.\nsubscriptions: ['a.*']\nparameters: [{name: x}]\n",
+                "activation_trigger: Now.\nsubscription_home: project\nsubscriptions: ['a.*']\nparameters: [{name: x}]\n",
                 "",
             ),
         )

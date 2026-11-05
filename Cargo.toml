@@ -24,6 +24,9 @@ instrukt-todos = { path = "crates/instrukt-todos" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 hex = "0.4"
+hmac = "=0.12.1"
+form_urlencoded = "=1.2.2"
+dotenvy = "=0.15.7"
 indexmap = { version = "2", features = ["serde"] }
 jiff = { version = "0.2", features = ["serde"] }
 redis = { version = "=1.8.1", default-features = false, features = ["streams", "script", "tls-rustls", "tls-rustls-webpki-roots"] }
@@ -33,7 +36,7 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
-sha2 = "0.10"
+sha2 = "=0.10.9"
 tempfile = "3"
 thiserror = "2"
 tracing = "0.1"
@@ -46,7 +49,7 @@ assert_cmd = "2"
 insta = { version = "1", features = ["yaml", "json"] }
 predicates = "3"
 proptest = "1"
-tiny_http = "0.12"
+tiny_http = "=0.12.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

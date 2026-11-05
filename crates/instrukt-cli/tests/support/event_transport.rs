@@ -56,7 +56,9 @@ impl Computer {
                 "procedure",
                 "Respond",
                 "Accept the selected facts.",
-                &format!("subscriptions: ['{pattern}']\nrole: responder\n"),
+                &format!(
+                    "subscription_home: project\nsubscriptions: ['{pattern}']\nrole: responder\n"
+                ),
                 &[],
                 "Accept the selected occurrence.\n",
             ),

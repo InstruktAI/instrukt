@@ -89,6 +89,7 @@ mod _render;
 mod _retrieval;
 mod _schema;
 mod _selection;
+pub(crate) use _selection::responsibilities;
 mod _text;
 mod _transfer;
 mod _validate;

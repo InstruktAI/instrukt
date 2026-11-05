@@ -127,6 +127,15 @@ fn entry(
         activation_trigger: procedure.activation_trigger.clone(),
         role: procedure.role.clone(),
         subscriptions: procedure.subscriptions.clone(),
+        subscription_home: procedure.subscription_home,
+        subscription_identity: procedure.subscription_identity,
+        subscription_attendance: procedure.subscription_attendance,
+        required_reads: snippet
+            .current()
+            .required_reads()
+            .iter()
+            .map(|read| read.raw.clone())
+            .collect(),
         parameters: procedure
             .parameters
             .iter()
@@ -281,6 +290,10 @@ mod tests {
             activation_trigger: None,
             role: None,
             subscriptions: Vec::new(),
+            subscription_home: None,
+            subscription_identity: Default::default(),
+            subscription_attendance: Default::default(),
+            required_reads: Vec::new(),
             parameters: Vec::new(),
             dispatch: None,
             event_delivery: None,

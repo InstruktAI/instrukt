@@ -40,9 +40,6 @@ pub(super) struct Renderer<'a> {
     /// computer, by the domain name it is addressed by (`general`
     /// included); a position without one is absent.
     pub indexes: &'a BTreeMap<DomainName, PositionIndex>,
-    /// Whether the events module is on: configured responsibilities are
-    /// listed in the root `AGENTS.md`.
-    pub events: bool,
     pub values: &'a Values<'a>,
 }
 
@@ -96,6 +93,14 @@ impl Renderer<'_> {
             }
             .render(),
         ];
+        if let Some(configured) = docs::responsibilities(
+            self.index
+                .snippets
+                .iter()
+                .filter(|entry| global_of(entry, &general)),
+        ) {
+            blocks.push(configured);
+        }
         for (domain, index) in self.indexes {
             if domain == &general {
                 continue;
@@ -112,6 +117,14 @@ impl Renderer<'_> {
                 docs::heading(domain.as_str()),
                 lines.join("\n")
             ));
+        }
+        if let Some(configured) = docs::responsibilities(
+            self.index
+                .snippets
+                .iter()
+                .filter(|entry| entry.scope == IndexScope::Global && entry.domain != docs::GENERAL),
+        ) {
+            blocks.push(configured);
         }
         if let Some(PositionIndex::General(general_index)) = index
             && let Some(ids) = general_index.agents.get(&cli)
@@ -142,7 +155,7 @@ impl Renderer<'_> {
 
     /// The root `AGENTS.md`: the master's text, then the rendering of
     /// `docs/project/index.yaml` (or, without one, the project's triggered
-    /// procedures) and, with events on, the configured responsibilities.
+    /// procedures) and the configured responsibilities.
     pub(super) fn root_agents(
         &self,
         file: &str,
@@ -171,27 +184,10 @@ impl Renderer<'_> {
                 .render(),
             );
         }
-        if self.events {
-            let configured: Vec<String> = self
-                .index
-                .snippets
-                .iter()
-                .filter(|e| self.local(e) && live_procedure(e) && !e.subscriptions.is_empty())
-                .map(|e| {
-                    format!(
-                        "- {}: {} — answers: {}",
-                        e.id,
-                        e.description.trim(),
-                        e.subscriptions.join(", ")
-                    )
-                })
-                .collect();
-            if !configured.is_empty() {
-                blocks.push(format!(
-                    "## Configured Responsibilities — started when their events arrive\n\n{}",
-                    configured.join("\n")
-                ));
-            }
+        if let Some(configured) =
+            docs::responsibilities(self.index.snippets.iter().filter(|entry| self.local(entry)))
+        {
+            blocks.push(configured);
         }
         let text = finish(&blocks.join("\n\n"));
         self_contained(file, &text)?;

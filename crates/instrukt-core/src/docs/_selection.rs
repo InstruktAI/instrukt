@@ -166,3 +166,34 @@ fn in_full(snippet: &InFull) -> String {
         _ => format!("{line}\n\n{body}"),
     }
 }
+
+/// Subscribed procedures are configured responsibilities, including while events
+/// are off; listing their declaration does not activate them.
+pub(crate) fn responsibilities<'a>(
+    entries: impl Iterator<Item = &'a crate::index::IndexEntry>,
+) -> Option<String> {
+    let mut entries: Vec<_> = entries
+        .filter(|entry| {
+            entry.taxonomy == "procedure"
+                && entry.delivered_by.is_empty()
+                && !entry.subscriptions.is_empty()
+        })
+        .collect();
+    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    if entries.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## Configured Responsibilities — started when their events arrive\n\n{}",
+        entries
+            .into_iter()
+            .map(|entry| format!(
+                "- {}: {} — answers: {}",
+                entry.id,
+                entry.description.trim(),
+                entry.subscriptions.join(", ")
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ))
+}

@@ -348,7 +348,6 @@ fn publish(
         owned: &owned,
         index: &patched,
         indexes: &indexes,
-        events: config.module_enabled(Module::Events)?,
         values: &values,
     };
     let mut agents = Vec::new();

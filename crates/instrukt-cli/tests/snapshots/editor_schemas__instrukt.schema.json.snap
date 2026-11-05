@@ -142,6 +142,46 @@ expression: "String::from_utf8(bytes).unwrap()"
       },
       "additionalProperties": false
     },
+    "webhooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "native": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "secret"
+          ],
+          "properties": {
+            "secret": {
+              "type": "string",
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            },
+            "previous_secret": {
+              "type": "string",
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            }
+          }
+        },
+        "github": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "secret"
+          ],
+          "properties": {
+            "secret": {
+              "type": "string",
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            },
+            "previous_secret": {
+              "type": "string",
+              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            }
+          }
+        }
+      }
+    },
     "blueprint": {
       "type": "object",
       "properties": {

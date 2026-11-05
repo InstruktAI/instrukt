@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+expression: stdout
+---
+[PROJECT]/instrukt.yaml: webhooks: `webhooks` expected only native/github source maps with required secret and optional previous_secret

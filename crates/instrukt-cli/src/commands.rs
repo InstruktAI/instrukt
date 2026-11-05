@@ -14,6 +14,7 @@ pub mod specs_trace;
 pub mod sync;
 pub mod todo;
 pub mod todo_flow;
+pub mod webhooks;
 
 use std::process::ExitCode;
 

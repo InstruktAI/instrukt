@@ -20,3 +20,5 @@ pub mod publication;
 pub mod repository;
 pub mod specs;
 pub mod state_db;
+
+pub mod subscription;

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+expression: "String::from_utf8_lossy(&result.get_output().stdout).replace(computer.project.path().to_str().unwrap(),\n\"[PROJECT]\")"
+---
+[PROJECT]/instrukt.yaml: webhooks: webhook sources require modules.events enabled
