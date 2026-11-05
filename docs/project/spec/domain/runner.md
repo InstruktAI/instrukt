@@ -1,5 +1,5 @@
 ---
-description: Module-aware work dispatch, event activation, session capabilities, task timing, the disk-headroom standing job and anomaly reporting without a daemon.
+description: Module-aware work dispatch, event activation, session capabilities, task timing and anomaly reporting without a daemon.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -9,8 +9,7 @@ delivered_by: [instrukt-first-build]
 
 The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the sessions facade, event-source
-translation and time eligibility, including anomaly reporting, and its own
-standing jobs. It executes
+translation and time eligibility, including anomaly reporting. It executes
 the enabled modules' work in one process, entered through `instrukt run` or
 `instrukt tick` and woken by the OS scheduler. It has no daemon. The work
 context owns work content, artifacts and stamps; workflow owns
@@ -51,11 +50,6 @@ authorization and derived workflow state.
   verb it needs. instrukt ships an entry for T3 Code that a developer may
   choose; no code detects or chooses a runtime.
 
-**Standing job**
-: Work the runner performs itself on its wake-ups, on its own cadence, with
-  no todo, task record, authorization or agent session; the disk-headroom
-  guard is one.
-
 **Linked-session input**
 : Human words typed in one session also reaching a linked session with their
   human attribution, when the runtime mapping supports that capability.
@@ -81,12 +75,10 @@ authorization and derived workflow state.
   activation from events; the sessions facade and session reuse behavior;
   runtime capability translation, including linked-session input; time
   eligibility and missed-run decisions; anomaly-notification routing; the
-  disk-headroom standing job, which keeps the shared volume above its
-  headroom; the meaning and writes of its tables in the state database (the
+  meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, standing-agent bindings and starts,
-  held task failures, the last wake-up, and the disk guard's last level and
-  last report), whose schema is published in
+  held task failures and the last wake-up), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -105,8 +97,7 @@ authorization and derived workflow state.
   `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
   (procedure required except setup-only `run --worktree <name> --brief <file|->`;
   the runtime creates/reattaches it and the binding records its path as `worktree.path`), `instrukt sessions link --remove <a> <b>`, `instrukt ticks status`, and the wake-up
-  registration performed by `instrukt install`; `runner.disk_headroom` and the
-  guard's last run in `instrukt ticks status`; the five-state session
+  registration performed by `instrukt install`; the five-state session
   contract; every sessions facade command accepts `--json`; linked-session input capability; instrukt event vocabulary,
   including `runner.upstream_changed`, `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
   `workflow.finalized`.
@@ -227,9 +218,6 @@ record-backed completion.
   — arrange future work and recover missed recurring occurrences.
 - **Anomaly notification** — `project/instrukt/spec/feature/runner/anomaly-notification`
   — notice unattended failures while keeping questions in their threads.
-- **Disk headroom** — `project/instrukt/spec/feature/runner/disk-headroom`
-  — learn the shared volume runs low before builds fail, and reclaim
-  regenerable output from idle checkouts at the floor.
 
 ### Governing designs and decisions (index)
 
@@ -266,4 +254,8 @@ per-role session bindings. Work owns validation and persistence of those writes.
 
 ## Known caveats
 
-None beyond those recorded in the feature specs.
+- UC-HR1 is retired: machine maintenance is outside instrukt; its id is not reused.
+- UC-HR2 is retired: machine maintenance is outside instrukt; its id is not reused.
+- UC-HR3 is retired: machine maintenance is outside instrukt; its id is not reused.
+- UC-HR4 is retired: machine maintenance is outside instrukt; its id is not reused.
+- Other caveats are recorded in the feature specs.

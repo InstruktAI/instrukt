@@ -32,7 +32,6 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
-| `runner.disk_headroom` (`off`, or `warn`, `floor` and `roots`) | global only | the runner's disk-headroom guard |
 | `runner.runtime` (the chosen runtime: an entry of `runtimes` or a shipped entry; default: first entry of `runtimes`) | global only | runner |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
@@ -238,7 +237,6 @@ And the configuration is unchanged
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (the install registers the wake-up; `off` opts out). |
 | `runner.runtime` | name of a `runtimes` entry or a shipped entry (`t3`) | the first entry of `runtimes`; with none, no runtime |
-| `runner.disk_headroom` | `off`, or a map: `warn`, `floor` (sizes in GiB, `0 < floor < warn`), `roots` (directories) | `warn: 30GiB`, `floor: 10GiB`, `roots: []` (`project/instrukt/spec/feature/runner/disk-headroom`) |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |

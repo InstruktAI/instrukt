@@ -233,12 +233,4 @@ CREATE TABLE task_failures (
 CREATE TABLE wakeups (
     last_at TEXT NOT NULL
 );
-
-CREATE TABLE disk_headroom (
-    run_at      TEXT NOT NULL,
-    level       TEXT NOT NULL,
-    free_bytes  INTEGER,
-    report      TEXT,
-    reported_at TEXT
-);
 "#;
