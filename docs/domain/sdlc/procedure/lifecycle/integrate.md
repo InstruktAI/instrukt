@@ -12,6 +12,7 @@ subscriptions:
   - runner.ci_completed
   - runner.main_ahead
   - runner.main_failing
+subscription_home: project
 ---
 
 # Integration — Procedure
