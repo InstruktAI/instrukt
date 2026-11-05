@@ -89,7 +89,6 @@ fn published_demo(env: &TestEnv) -> Repo {
     let demo = project(
         env,
         "demo",
-        &["acme"],
         &[
             ("docs/domain/acme/spec/live.md", live),
             ("docs/domain/acme/policy/reworked.md", reworked),

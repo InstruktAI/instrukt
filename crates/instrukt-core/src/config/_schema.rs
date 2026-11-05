@@ -86,7 +86,6 @@ enum Shape {
     AgentOrder,
     ThinkingMode,
     Identity,
-    Publishes,
 }
 
 enum Node {
@@ -111,7 +110,6 @@ fn schema() -> Node {
     map(vec![
         ("schema_version", Leaf(Both, Shape::Version)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
-        ("publishes", Leaf(ProjectOnly, Shape::Publishes)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("actions", Leaf(ProjectOnly, Shape::Actions)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
@@ -428,32 +426,6 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
             }
             None => out.push(invalid("expected a mapping of action name to command")),
         },
-        Shape::Publishes => match value.as_sequence() {
-            Some(seq) => {
-                let mut seen: Vec<&str> = Vec::new();
-                for (i, item) in seq.iter().enumerate() {
-                    let item_path = join(path, &i.to_string());
-                    check_record(
-                        item,
-                        &item_path,
-                        &[("slug", Field::Domain), ("trigger", Field::NonEmptyStr)],
-                        &[],
-                        out,
-                    );
-                    if let Some(slug) = item.get("slug").and_then(Value::as_str) {
-                        if seen.contains(&slug) {
-                            out.push(KeyFinding::new(
-                                &join(&item_path, "slug"),
-                                FindingKind::DuplicateDomain,
-                                format!("domain `{slug}` is published twice"),
-                            ));
-                        }
-                        seen.push(slug);
-                    }
-                }
-            }
-            None => out.push(invalid("expected a list of `{slug, trigger}`")),
-        },
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {
@@ -656,7 +628,7 @@ mod tests {
         agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
         ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
         github: {api_url: 'http://x'}\n";
-    const PROJECT_ONLY: &str = "project: demo\npublishes: [{slug: sdlc, trigger: code}]\n\
+    const PROJECT_ONLY: &str = "project: demo\n\
         requires: [todos]\nactions: {test: make test, lint: {command: lint, takes_files: true}}\n\
         board: acme/7\ngithub: {approvers: [me]}\napprovals: {prd: peer, task: human}\n\
         workflow: {domain: sdlc}\nevents: {watch: [{remote: origin, ref: main}]}\n\
@@ -721,7 +693,7 @@ mod tests {
             &yaml(&format!("schema_version: 1\n{PROJECT_ONLY}")),
             LayerKind::Global,
         );
-        assert_eq!(findings.len(), 10, "{findings:?}");
+        assert_eq!(findings.len(), 9, "{findings:?}");
         assert!(
             findings
                 .iter()
@@ -797,32 +769,12 @@ mod tests {
     }
 
     #[test]
-    fn publishes_is_a_list_of_distinct_domains_with_their_trigger() {
+    fn publishes_is_an_unknown_key() {
         let findings = check(
-            &yaml(
-                "schema_version: 1\npublishes:\n  - {slug: sdlc, trigger: code}\n  \
-                 - {slug: sdlc, trigger: again}\n  - {slug: project, trigger: x}\n  \
-                 - {slug: ok, trigger: '  '}\n  - {slug: other}\n  \
-                 - {slug: more, trigger: t, extra: 1}\n",
-            ),
+            &yaml("schema_version: 1\npublishes: [{slug: sdlc, trigger: code}]\n"),
             LayerKind::Project,
         );
-        use FindingKind::{DuplicateDomain as D, InvalidValue as I, Missing as M, UnknownKey as U};
-        assert_eq!(
-            judged(&findings),
-            [
-                ("publishes.1.slug", D),
-                ("publishes.2.slug", I),
-                ("publishes.3.trigger", I),
-                ("publishes.4.trigger", M),
-                ("publishes.5.extra", U),
-            ]
-        );
-        let mapping = check(
-            &yaml("schema_version: 1\npublishes: {sdlc: code}\n"),
-            LayerKind::Project,
-        );
-        assert_eq!(judged(&mapping), [("publishes", I)]);
+        assert_eq!(judged(&findings), [("publishes", FindingKind::UnknownKey)]);
     }
 
     #[test]

@@ -32,17 +32,8 @@ fn snippet(taxonomy: &str, title: &str, extra: &str) -> String {
     text
 }
 
-fn layer(slug: &str, domains: &[&str]) -> String {
-    let mut text = format!("schema_version: 1\nproject: {slug}\n");
-    if !domains.is_empty() {
-        text.push_str("publishes:\n");
-        for domain in domains {
-            text.push_str(&format!(
-                "  - slug: {domain}\n    trigger: When working on {domain}.\n"
-            ));
-        }
-    }
-    text
+fn layer(slug: &str) -> String {
+    format!("schema_version: 1\nproject: {slug}\n")
 }
 
 // spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
@@ -52,7 +43,7 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
     // Codex is installed: it reads the project override file.
     std::fs::create_dir_all(env.home().join(".codex")).unwrap();
     let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", &layer("demo", &[]))
+    repo.write("instrukt.yaml", &layer("demo"))
         .write(
             "AGENTS.master.md",
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
@@ -103,7 +94,7 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
 /// addendum per agent, and a general baseline.
 fn general_owner(env: &TestEnv) -> Repo {
     let repo = env.git_repo("platform");
-    repo.write("instrukt.yaml", &layer("platform", &["general"]))
+    repo.write("instrukt.yaml", &layer("platform"))
         .write(
             "agents/AGENTS.global.md",
             "# Global baseline\n\n## Required reads\n\n@~/.instrukt/docs/general/bundle.md\n\n\
@@ -184,12 +175,10 @@ fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_setti
     .unwrap();
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     let other = env.git_repo("engineering");
-    other
-        .write("instrukt.yaml", &layer("engineering", &["sdlc"]))
-        .write(
-            "docs/domain/sdlc/policy/tests.md",
-            &snippet("policy", "Tests", ""),
-        );
+    other.write("instrukt.yaml", &layer("engineering")).write(
+        "docs/domain/sdlc/policy/tests.md",
+        &snippet("policy", "Tests", ""),
+    );
     other.commit("sdlc");
     env.run(other.path(), ["sync"]).success();
     let platform = general_owner(&env);

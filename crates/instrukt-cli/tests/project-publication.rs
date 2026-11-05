@@ -27,25 +27,16 @@ fn policy(title: &str, extra: &str) -> String {
     )
 }
 
-/// A project layer declaring `slug` and publishing `domains`.
-fn layer(slug: &str, domains: &[&str]) -> String {
-    let mut text = format!("schema_version: 1\nproject: {slug}\n");
-    if !domains.is_empty() {
-        text.push_str("publishes:\n");
-        for domain in domains {
-            text.push_str(&format!(
-                "  - slug: {domain}\n    trigger: When working on {domain}.\n"
-            ));
-        }
-    }
-    text
+/// A project layer declaring `slug`.
+fn layer(slug: &str) -> String {
+    format!("schema_version: 1\nproject: {slug}\n")
 }
 
 /// A repository `name` declaring project `name`, publishing `domains`, with
 /// one committed policy per domain and one local spec.
 fn project(env: &TestEnv, name: &str, domains: &[&str]) -> Repo {
     let repo = env.git_repo(name);
-    repo.write("instrukt.yaml", &layer(name, domains));
+    repo.write("instrukt.yaml", &layer(name));
     for domain in domains {
         repo.write(
             &format!("{}/policy/rules.md", common::position_dir(domain)),
@@ -230,11 +221,7 @@ fn two_projects_publish_side_by_side_and_a_claim_on_anothers_domain_is_refused()
     assert_eq!(alpha_after, alpha_entries);
 
     let before = published_tree(&env);
-    beta.write(
-        "instrukt.yaml",
-        &layer("beta", &["beta-docs", "alpha-docs"]),
-    )
-    .write(
+    beta.write("instrukt.yaml", &layer("beta")).write(
         "docs/domain/alpha-docs/policy/taken.md",
         &policy("Taken", ""),
     );
@@ -323,7 +310,7 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     std::fs::remove_file(repo.path().join("docs/domain/acme/policy/retired.md")).unwrap();
     std::fs::remove_dir_all(repo.path().join("docs/domain/legacy")).unwrap();
     std::fs::remove_file(repo.path().join("tools/AGENTS.master.md")).unwrap();
-    repo.write("instrukt.yaml", &layer("demo", &["acme"]));
+    repo.write("instrukt.yaml", &layer("demo"));
     repo.commit("retire");
     sync(&env, &repo).success();
 

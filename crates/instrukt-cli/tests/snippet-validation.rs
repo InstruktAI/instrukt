@@ -432,7 +432,7 @@ fn publish_crew_flavor(env: &TestEnv) {
     flows
         .write(
             "instrukt.yaml",
-            "schema_version: 1\nproject: flows\npublishes:\n  - slug: crew\n    trigger: When the crew works.\n",
+            "schema_version: 1\nproject: flows\n",
         )
         .write(
             "docs/domain/crew/workflow/actions.yaml",

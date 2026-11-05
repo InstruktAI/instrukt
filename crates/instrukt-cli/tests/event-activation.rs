@@ -16,7 +16,6 @@ use documented::{project, snippet, sync};
 use runtime::{FakeRuntime, global_layer};
 
 const FORK_LAYER: &str = "schema_version: 1\nproject: fork\n\
-publishes:\n  - slug: fork\n    trigger: When working on the fork.\n\
 events:\n  watch:\n    - {remote: upstream, ref: refs/heads/main}\n";
 
 /// An upstream repository at `<test>/upstream.git` with one commit.
@@ -56,7 +55,6 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
     let fork = project(
         &env,
         "fork",
-        &[],
         &[
             ("instrukt.yaml", FORK_LAYER.to_owned()),
             (
@@ -113,7 +111,6 @@ fn a_runner_killed_while_starting_the_standing_agent_waits_for_the_developer_to_
     let fork = project(
         &env,
         "fork",
-        &[],
         &[
             ("instrukt.yaml", FORK_LAYER.to_owned()),
             (

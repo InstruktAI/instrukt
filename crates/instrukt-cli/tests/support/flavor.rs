@@ -167,8 +167,7 @@ impl Tracked {
             &format!(
                 "schema_version: 1\nproject: demo\nmodules: {{{project_modules}}}\n\
                  runner: {{autostart: {autostart}}}\nworkflow: {{domain: acme}}\n\
-                 github: {{repository: {REPOSITORY}}}\n\
-                 publishes:\n  - slug: acme\n    trigger: When working on acme.\n"
+                 github: {{repository: {REPOSITORY}}}\n"
             ),
         );
         repo.write("docs/domain/acme/workflow/actions.yaml", ACTIONS);

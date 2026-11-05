@@ -129,7 +129,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
 
 /// Project `demo`, committed and published.
 fn published_demo(env: &TestEnv) -> Repo {
-    let demo = project(env, "demo", &["acme", "beta"], &demo_files());
+    let demo = project(env, "demo", &demo_files());
     sync(env, &demo);
     demo
 }
@@ -186,7 +186,6 @@ fn an_agent_sees_its_own_project_and_reads_another_projects_local_documentation(
     let other = project(
         &env,
         "other",
-        &[],
         &[(
             "docs/project/concept/notes.md",
             snippet("concept", "Notes", "Other's notes.", "", &[], "Notes.\n"),
@@ -250,7 +249,6 @@ fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
     let platform = project(
         &env,
         "platform",
-        &["general"],
         &[
             (
                 "docs/general/principle/care.md",
@@ -280,7 +278,6 @@ fn the_general_owner_is_known_by_its_claim_even_without_snippets() {
     let platform = project(
         &env,
         "platform",
-        &["general"],
         &[
             ("docs/general/baseline.md", String::new()),
             (
@@ -434,7 +431,7 @@ fn refused_files() -> Vec<(&'static str, String)> {
 fn published_closures(env: &TestEnv) -> Repo {
     let mut files = demo_files();
     files.extend(refused_files());
-    let demo = project(env, "demo", &["acme", "beta"], &files);
+    let demo = project(env, "demo", &files);
     sync(env, &demo);
     demo
 }
@@ -570,7 +567,6 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
     let demo = project(
         &env,
         "demo",
-        &["acme"],
         &[("docs/domain/acme/procedure/report.md", procedure.clone())],
     );
     sync(&env, &demo);
@@ -609,17 +605,16 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
     let demo = project(
         &env,
         "demo",
-        &["acme"],
         &[("docs/domain/acme/procedure/verify.md", procedure)],
     );
     demo.write(
         "instrukt.yaml",
-        "schema_version: 1\nproject: demo\npublishes:\n  - slug: acme\n    trigger: When working on acme.\n\
+        "schema_version: 1\nproject: demo\n\
          actions:\n  test: make test\n",
     );
     demo.commit("chore: the test action");
     sync(&env, &demo);
-    let other = project(&env, "other", &[], &[]);
+    let other = project(&env, "other", &[]);
     other.write(
         "instrukt.yaml",
         "schema_version: 1\nproject: other\nactions:\n  test: cargo test --workspace\n",
@@ -662,7 +657,6 @@ fn a_value_that_cannot_be_resolved_is_named_with_why_and_the_read_fails() {
     let demo = project(
         &env,
         "demo",
-        &["acme"],
         &[("docs/domain/acme/procedure/fragile.md", fragile)],
     );
     sync(&env, &demo);
@@ -695,7 +689,6 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
     let demo = project(
         &env,
         "demo",
-        &["acme"],
         &[("docs/domain/acme/procedure/runs.md", runs("Runs"))],
     );
     let refused = env.run(demo.path(), ["sync"]).failure();

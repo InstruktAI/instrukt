@@ -15,7 +15,6 @@ use crate::documented::{project, snippet, sync};
 pub const STANDING_AGENT: &str = "fork/procedure/upstream-watch@fork";
 
 const FORK_LAYER: &str = "schema_version: 1\nproject: fork\n\
-publishes:\n  - slug: fork\n    trigger: When working on the fork.\n\
 events:\n  watch:\n    - {remote: upstream, ref: refs/heads/main}\n";
 
 /// A published fork whose watched upstream has one commit; returns the
@@ -29,7 +28,6 @@ pub fn watched_fork(env: &TestEnv) -> Repo {
     let fork = project(
         env,
         "fork",
-        &[],
         &[
             ("instrukt.yaml", FORK_LAYER.to_owned()),
             (

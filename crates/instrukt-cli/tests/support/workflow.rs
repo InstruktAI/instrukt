@@ -346,9 +346,7 @@ impl Flavor {
         let repo = env.git_repo("flows");
         repo.write(
             "instrukt.yaml",
-            &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: flows\npublishes:\n  - slug: crew\n    trigger: When the crew works.\n"
-            ),
+            &format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: flows\n"),
         )
         .write("docs/domain/crew/workflow/actions.yaml", ACTIONS)
         .write("docs/domain/crew/workflow/prepare.yaml", &prepare_flow())

@@ -63,25 +63,16 @@ pub fn snippet(
     text
 }
 
-/// A project layer declaring `slug` and publishing `domains`.
-fn layer(slug: &str, domains: &[&str]) -> String {
-    let mut text = format!("schema_version: 1\nproject: {slug}\n");
-    if !domains.is_empty() {
-        text.push_str("publishes:\n");
-        for domain in domains {
-            text.push_str(&format!(
-                "  - slug: {domain}\n    trigger: When working on {domain}.\n"
-            ));
-        }
-    }
-    text
+/// A project layer declaring `slug`.
+fn layer(slug: &str) -> String {
+    format!("schema_version: 1\nproject: {slug}\n")
 }
 
-/// A repository `slug` declaring that project and publishing `domains`,
-/// with `files` committed on main.
-pub fn project(env: &TestEnv, slug: &str, domains: &[&str], files: &[(&str, String)]) -> Repo {
+/// A repository `slug` declaring that project, with `files` committed on
+/// main.
+pub fn project(env: &TestEnv, slug: &str, files: &[(&str, String)]) -> Repo {
     let repo = env.git_repo(slug);
-    repo.write("instrukt.yaml", &layer(slug, domains));
+    repo.write("instrukt.yaml", &layer(slug));
     for (path, text) in files {
         repo.write(path, text);
     }

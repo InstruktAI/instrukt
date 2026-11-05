@@ -13,14 +13,13 @@ The repository is documentation-first. Start with
 
 instrukt ships no doctrine of its own. The principles, policies, procedures and
 workflow definitions agents follow come from a docs repository: an ordinary
-project that declares the domains it `publishes` and is adopted with
-`instrukt init`. Its sync publishes those domains into `~/.instrukt/docs/` on
-the computer, and every project there reads them. Our docs repository publishes
+project whose `docs/general/` and `docs/domain/<x>/` folders are what it
+publishes, adopted with `instrukt init`. Its sync publishes them into
+`~/.instrukt/docs/` on the computer, and every project there reads them. Our docs repository publishes
 `general` and `sdlc`; fork it, change it or bring your own
 (`docs/project/spec/feature/publication/docs-repositories.md`). Until it is split
 out, this repository is that docs repository: its `docs/general/` and
-`docs/domain/sdlc/` are the doctrine, and its `instrukt.yaml` declares
-`publishes`.
+`docs/domain/sdlc/` are the doctrine it publishes.
 
 ## Development
 

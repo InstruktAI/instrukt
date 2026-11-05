@@ -54,19 +54,9 @@ fn policy(title: &str, rule: &str) -> String {
     )
 }
 
-/// A project layer declaring `slug`, publishing `domains`, with `extra`
-/// lines.
-fn layer(slug: &str, domains: &[&str], extra: &str) -> String {
-    let mut text = format!("schema_version: 1\nproject: {slug}\n{extra}");
-    if !domains.is_empty() {
-        text.push_str("publishes:\n");
-        for domain in domains {
-            text.push_str(&format!(
-                "  - slug: {domain}\n    trigger: When working on {domain}.\n"
-            ));
-        }
-    }
-    text
+/// A project layer declaring `slug`, with `extra` lines.
+fn layer(slug: &str, extra: &str) -> String {
+    format!("schema_version: 1\nproject: {slug}\n{extra}")
 }
 
 /// A docs repository `name` on its remote, publishing `general` and
@@ -75,7 +65,7 @@ fn layer(slug: &str, domains: &[&str], extra: &str) -> String {
 fn docs_repository(env: &TestEnv, name: &str, domains: &[&str], rule: &str) -> std::path::PathBuf {
     let remote = env.bare_remote(name);
     let author = env.git_repo(&format!("{name}-author"));
-    author.write("instrukt.yaml", &layer(name, domains, ""));
+    author.write("instrukt.yaml", &layer(name, ""));
     for domain in domains {
         author
             .write(
@@ -113,7 +103,7 @@ fn adopt(env: &TestEnv, remote: &Path, name: &str) -> (Repo, Assert) {
 /// bundle.
 fn consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
-    app.write("instrukt.yaml", &layer("app", &[], "")).write(
+    app.write("instrukt.yaml", &layer("app", "")).write(
         "AGENTS.master.md",
         "## Purpose\n\nThe app.\n\n## Required reads\n\n@~/.instrukt/docs/sdlc/bundle.md\n",
     );
@@ -221,7 +211,7 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
     let (mine, refused) = adopt(&env, &own, "mydocs");
     refused.failure();
 
-    first.write("instrukt.yaml", &layer("doctrine", &["general"], ""));
+    first.write("instrukt.yaml", &layer("doctrine", ""));
     std::fs::remove_dir_all(first.path().join("docs/domain/sdlc")).unwrap();
     // Only the retirement is committed; what init added stays uncommitted.
     first.git(["add", "--all", "instrukt.yaml", "docs"]);
@@ -263,11 +253,7 @@ fn workflow_consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
     app.write(
         "instrukt.yaml",
-        &layer(
-            "app",
-            &[],
-            "modules: {todos: true}\nworkflow: {domain: flows}\n",
-        ),
+        &layer("app", "modules: {todos: true}\nworkflow: {domain: flows}\n"),
     )
     .write("docs/project/policy/house.md", &policy("House", "Be kind."));
     app.commit("app");
@@ -301,7 +287,7 @@ fn publishing_reads_the_todos_switch_from_committed_main_not_the_working_tree() 
     let app = workflow_consumer(&env);
     app.write(
         "instrukt.yaml",
-        &layer("app", &[], "workflow: {domain: flows}\n"),
+        &layer("app", "workflow: {domain: flows}\n"),
     );
 
     let refused = env.run(app.path(), ["sync"]).failure();
@@ -312,7 +298,7 @@ fn publishing_reads_the_todos_switch_from_committed_main_not_the_working_tree() 
 /// repository on the computer publishes.
 fn dependent_consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
-    app.write("instrukt.yaml", &layer("app", &[], "")).write(
+    app.write("instrukt.yaml", &layer("app", "")).write(
         "docs/project/concept/flow.md",
         "---\ndescription: How work flows here.\n---\n\n# Flow — Concept\n\n\
          ## Required reads\n\n- @~/.instrukt/docs/flows/policy/rules.md\n\n\
