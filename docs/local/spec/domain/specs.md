@@ -20,9 +20,11 @@ the structural graph, or the decision of who may author a use case.
 ### Ubiquitous language
 
 **Use case**
-:  A user-goal scenario in a feature spec: an identifying heading
-   `#### UC-<area><n>:` followed by exactly one fenced Gherkin block. Its
-   identity is its spec's identity plus its id.
+:  A user-goal scenario in a feature spec: an identifying heading carrying a
+   use-case id, followed by exactly one fenced Gherkin block. sdlc's
+   feature-spec shape writes it as `### UC-<area><n>:` under `## Use cases`;
+   the reader accepts the heading at any level from 2 to 6. Its identity is
+   its spec's identity plus its id.
 
 **Use-case id**
 :  The `UC-` token on a use case's definition line, recognized as `UC-`, then a
@@ -45,10 +47,18 @@ the structural graph, or the decision of who may author a use case.
 :  A use-case heading left without a Gherkin block. Its id stays taken.
 
 **Spec id**
-:  A feature spec's snippet identity, derived from its path and the project's
-   declared slug (`local/projects/<slug>/spec/feature/<context>/<concept>` for
-   the local half; `<domain>/spec/feature/<context>/<concept>` for the
-   published half).
+:  A feature spec's snippet identity, derived from its position and its path
+   within that position: `project/<slug>/<path>` for a spec under
+   `docs/project/`, with the project's declared slug; `<domain>/<path>` under
+   `docs/domain/<domain>/`; `general/<path>` under `docs/general/`. `<path>` is
+   the file's path below its position without `.md`, such as
+   `spec/feature/blueprint/use-case-trace`. The pre-release form
+   `local/projects/<slug>/…` names no spec.
+
+**Spec folder**
+:  The repository-relative folder that holds a feature spec file. Trace groups
+   use cases by it; instrukt attaches no further meaning to it. Under sdlc's
+   convention it is the bounded context.
 
 **Binding**
 :  A test's declaration that it realizes one use case: the pair spec id and
@@ -82,8 +92,8 @@ the structural graph, or the decision of who may author a use case.
 
 **Trace**
 :  The join of a use case's bindings with the structural graph: the tests
-   binding it and the code they reach, or, from a file, the tests reaching it
-   and the use cases they bind.
+   binding it and the code they reach, or, from one or more files, the use
+   cases bound by the tests reaching any of them, grouped by spec folder.
 
 ### Ownership boundary
 
@@ -100,7 +110,8 @@ the structural graph, or the decision of who may author a use case.
   (repository, `local/projects/instrukt/spec/domain/repository`).
 - **Published contracts** — `instrukt specs coverage [--check] [--update-baseline]`,
   `instrukt specs reserve --slug <slug> --binding <spec_id>:<UC-id>…`;
-  the inventory and bindings consumed by blueprint trace.
+  the inventory (with each use case's spec file) and bindings consumed by
+  blueprint trace.
 - **Allowed dependencies** — docs (spec identity and pending markers) and
   configuration (project slug), both Customer / Supplier
   relationships with specs as customer.

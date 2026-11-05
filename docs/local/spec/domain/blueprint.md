@@ -77,7 +77,7 @@ use-case bindings that trace joins with the graph, or the engine's extraction.
   flavor's documentation).
 - **Published contracts** — `instrukt blueprint affected <files…>`,
   `instrukt blueprint path <A> <B>`, `instrukt blueprint query`,
-  `instrukt blueprint explain`; `instrukt blueprint status`; `instrukt specs trace <spec_id> <UC-id>` and `instrukt specs trace --file <path>`; the generation entry repository hooks start for pushes and pulls advancing main; forward and backward traversal over the latest graph, used by
+  `instrukt blueprint explain`; `instrukt blueprint status`; `instrukt specs trace <spec_id> <UC-id>` and `instrukt specs trace --file <path> [--file <path> …]`; the generation entry repository hooks start for pushes and pulls advancing main; forward and backward traversal over the latest graph, used by
   blueprint trace.
 - **Allowed dependencies** — configuration (switch, engine, project slug); specs (published inventory and bindings for trace);
   repository (hook invocation for push or pull advances of main and the obtained SHA); the configured engine through
@@ -132,7 +132,7 @@ through this context's generation entry, not by an event.
 - **blast-radius** — `docs/local/spec/feature/blueprint/blast-radius.md` — the dependents of changed files from the latest graph, naming its SHA.
 - **graph-navigation** — `docs/local/spec/feature/blueprint/graph-navigation.md` — path between two parts, and query and explain where the engine offers them.
 
-- **use-case-trace** — `docs/local/spec/feature/blueprint/use-case-trace.md` — joins the specs inventory and bindings to graph traversal; UC-ST1 and UC-ST2.
+- **use-case-trace** — `docs/local/spec/feature/blueprint/use-case-trace.md` — joins the specs inventory and bindings to graph traversal: a use case to the code its tests reach, and a change's files to the use cases at stake, grouped by spec folder.
 
 ### Governing designs and decisions (index)
 

@@ -20,13 +20,16 @@ is the scenario inventory bound, never source lines or a file mapping
 ### The inventory
 
 - **Which specs.** Every feature spec of the project the caller stands in, in
-  both halves: `docs/local/spec/feature/…` and
-  `docs/global/<domain>/spec/feature/…`. Each file is one spec; its spec id is
-  its snippet identity (`local/projects/instrukt/spec/domain/specs`).
+  each position: `docs/project/spec/feature/…`, `docs/general/spec/feature/…`
+  and `docs/domain/<domain>/spec/feature/…`. Each file is one spec; its spec
+  id is its snippet identity, `project/<slug>/…`, `general/…` or `<domain>/…`
+  (`local/projects/instrukt/spec/domain/specs`).
 - **Use cases.** Every use-case id that appears on a definition line — an ATX
   heading of level 2 to 6, or a Gherkin `Scenario:` line. The id is the first
   token of the form `UC-` followed by a letter or digit and then letters,
-  digits or hyphens. Within one file an id counts once.
+  digits or hyphens. Within one file an id counts once. sdlc's feature-spec
+  shape puts use cases at level 3 under `## Use cases`; a spec written one
+  level deeper reads the same.
 - **Anonymous scenarios.** Gherkin with no use-case id: a heading section
   whose heading carries no use-case id and whose body holds a `When` line
   inside a fenced Gherkin block. A `Scenario:` line without an id inherits the
@@ -54,7 +57,8 @@ is the scenario inventory bound, never source lines or a file mapping
 - Python arguments are string literals or names of module-level string
   constants in the same file; any other argument form is not a binding.
 - The spec id in a binding is the spec's snippet identity. A binding naming a
-  spec any other way names no spec and is an orphan.
+  spec any other way, the pre-release `local/projects/<slug>/…` form included,
+  names no spec and is an orphan.
 
 ### Classification
 
