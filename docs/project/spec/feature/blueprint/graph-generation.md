@@ -77,5 +77,5 @@ receiving answers from the last complete map, naming that map's revision.
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
-- docs/project/spec/domain/repository.md — the pre-push section.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.
+- [project/instrukt/spec/domain/repository](../../domain/repository.md) — the pre-push section.

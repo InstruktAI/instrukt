@@ -8,14 +8,14 @@ description: Shared review execution contract for lanes, evidence, citations, se
 ## Required reads
 
 - @~/.instrukt/docs/sdlc/bundle.md
-- @~/.instrukt/docs/sdlc/policy/definition-of-done-lanes.md
-- @~/.instrukt/docs/sdlc/policy/process-change-authority.md
-- @~/.instrukt/docs/general/policy/human-involvement-recording.md
-- @~/.instrukt/docs/sdlc/policy/quality-predicate-registry.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/principle-violation-hunt.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/silent-failure-audit.md
-- @~/.instrukt/docs/sdlc/principle/module-depth.md
-- @~/.instrukt/docs/sdlc/policy/substrate-anchoring.md
+- [sdlc/policy/definition-of-done-lanes](../../policy/definition-of-done-lanes.md)
+- [sdlc/policy/process-change-authority](../../policy/process-change-authority.md)
+- [general/policy/human-involvement-recording](../../../../general/policy/human-involvement-recording.md)
+- [sdlc/policy/quality-predicate-registry](../../policy/quality-predicate-registry.md)
+- [sdlc/procedure/lifecycle/work/principle-violation-hunt](work/principle-violation-hunt.md)
+- [sdlc/procedure/lifecycle/work/silent-failure-audit](work/silent-failure-audit.md)
+- [sdlc/principle/module-depth](../../principle/module-depth.md)
+- [sdlc/policy/substrate-anchoring](../../policy/substrate-anchoring.md)
 
 ## Goal
 

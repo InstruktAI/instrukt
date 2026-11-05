@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/priming.md
+- [general/principle/priming](../principle/priming.md)
 
 ## Rules
 

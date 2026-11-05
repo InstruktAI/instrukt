@@ -153,6 +153,6 @@ And nothing is downloaded or written
 
 ## See Also
 
-- project/instrukt/spec/domain/distribution
-- project/instrukt/spec/feature/distribution/agent-skill
-- project/instrukt/design/architecture/overview
+- [project/instrukt/spec/domain/distribution](../../domain/distribution.md)
+- [project/instrukt/spec/feature/distribution/agent-skill](agent-skill.md)
+- [project/instrukt/design/architecture/overview](../../../design/architecture/overview.md)

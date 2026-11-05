@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/scaffolding/typescript.md
+- [sdlc/procedure/scaffolding/typescript](../typescript.md)
 
 ## Goal
 
@@ -45,5 +45,5 @@ when app requirements (auth, payments, per-user rendering) amortize it.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
-- ~/.instrukt/docs/sdlc/policy/frontend-production-baseline.md
+- [sdlc/concept/delivery-portfolio](../../../concept/delivery-portfolio.md)
+- [sdlc/policy/frontend-production-baseline](../../../policy/frontend-production-baseline.md)

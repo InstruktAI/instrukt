@@ -6,8 +6,8 @@ description: 'Prepare phase design: one driving session loads phase-scoped proce
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/principle/externalized-structural-context.md
-- @~/.instrukt/docs/sdlc/design/lifecycle/overview.md
+- [sdlc/principle/externalized-structural-context](../../principle/externalized-structural-context.md)
+- [sdlc/design/lifecycle/overview](overview.md)
 
 ## Purpose
 
@@ -159,8 +159,8 @@ PREPARED terminal requires fresh grounding.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/overview.md —
+- [sdlc/procedure/lifecycle/prepare/overview](../../procedure/lifecycle/prepare/overview.md) —
   the executable procedure for driving the prepare lifecycle
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/intake.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/architecture.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/plan-draft.md
+- [sdlc/procedure/lifecycle/prepare/intake](../../procedure/lifecycle/prepare/intake.md)
+- [sdlc/procedure/lifecycle/prepare/architecture](../../procedure/lifecycle/prepare/architecture.md)
+- [sdlc/procedure/lifecycle/prepare/plan-draft](../../procedure/lifecycle/prepare/plan-draft.md)

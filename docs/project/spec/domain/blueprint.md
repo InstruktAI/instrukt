@@ -127,12 +127,12 @@ through this context's generation entry, not by an event.
 
 ### Use cases (index of feature specs)
 
-- **graph-engine** — `docs/project/spec/feature/blueprint/graph-engine.md` — the graph contract, the shipped adapter and a project's own engine command.
-- **graph-generation** — `docs/project/spec/feature/blueprint/graph-generation.md` — a graph per push- or pull-obtained revision of main, detached from the push, stored per SHA, one at a time, never replaced by an interrupted run.
-- **blast-radius** — `docs/project/spec/feature/blueprint/blast-radius.md` — the dependents of changed files from the latest graph, naming its SHA.
-- **graph-navigation** — `docs/project/spec/feature/blueprint/graph-navigation.md` — path between two parts, and query and explain where the engine offers them.
+- **graph-engine** — `project/instrukt/spec/feature/blueprint/graph-engine` — the graph contract, the shipped adapter and a project's own engine command.
+- **graph-generation** — `project/instrukt/spec/feature/blueprint/graph-generation` — a graph per push- or pull-obtained revision of main, detached from the push, stored per SHA, one at a time, never replaced by an interrupted run.
+- **blast-radius** — `project/instrukt/spec/feature/blueprint/blast-radius` — the dependents of changed files from the latest graph, naming its SHA.
+- **graph-navigation** — `project/instrukt/spec/feature/blueprint/graph-navigation` — path between two parts, and query and explain where the engine offers them.
 
-- **use-case-trace** — `docs/project/spec/feature/blueprint/use-case-trace.md` — joins the specs inventory and bindings to graph traversal: a use case to the code its tests reach, and a change's files to the use cases at stake, grouped by spec folder.
+- **use-case-trace** — `project/instrukt/spec/feature/blueprint/use-case-trace` — joins the specs inventory and bindings to graph traversal: a use case to the code its tests reach, and a change's files to the use cases at stake, grouped by spec folder.
 
 ### Governing designs and decisions (index)
 

@@ -199,6 +199,6 @@ None.
 
 ## See Also
 
-- project/instrukt/spec/domain/work
-- project/instrukt/spec/feature/runner/session-continuity
-- project/instrukt/spec/feature/work/state-database
+- [project/instrukt/spec/domain/work](../../domain/work.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+- [project/instrukt/spec/feature/work/state-database](state-database.md)

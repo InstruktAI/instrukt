@@ -14,8 +14,8 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/review.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
+- [sdlc/procedure/lifecycle/review](../review.md)
+- [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
 
 ## Goal
 

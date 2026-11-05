@@ -131,6 +131,6 @@ And a change that only leaves use cases unbound passes the check
 
 ## See Also
 
-- docs/project/spec/domain/specs.md — the specs context.
-- ~/.instrukt/docs/sdlc/policy/testing.md — what a test is and how it binds a use case.
-- ~/.instrukt/docs/sdlc/policy/rust/testing.md — the Rust binding comment.
+- [project/instrukt/spec/domain/specs](../../domain/specs.md) — the specs context.
+- [sdlc/policy/testing](../../../../domain/sdlc/policy/testing.md) — what a test is and how it binds a use case.
+- [sdlc/policy/rust/testing](../../../../domain/sdlc/policy/rust/testing.md) — the Rust binding comment.

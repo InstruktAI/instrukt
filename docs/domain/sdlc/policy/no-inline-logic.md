@@ -85,6 +85,6 @@ makes the accretion visible while it is still cheap to move.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/design/project-toolchain.md
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md — the workflow catalog whose pipelines this policy keeps thin.
-- ~/.instrukt/docs/sdlc/policy/shell/core.md — the language owner for shell-script safety and linting.
+- [sdlc/design/project-toolchain](../design/project-toolchain.md)
+- [sdlc/policy/ci-pipeline-conventions](ci-pipeline-conventions.md) — the workflow catalog whose pipelines this policy keeps thin.
+- [sdlc/policy/shell/core](shell/core.md) — the language owner for shell-script safety and linting.

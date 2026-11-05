@@ -297,8 +297,8 @@ And other Markdown links and code examples remain as authored
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/position-index
-- project/instrukt/spec/feature/docs/pending-documentation
-- project/instrukt/spec/feature/configuration/interpolation
-- project/instrukt/spec/feature/publication/agent-entrypoints
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/position-index](position-index.md)
+- [project/instrukt/spec/feature/docs/pending-documentation](pending-documentation.md)
+- [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)
+- [project/instrukt/spec/feature/publication/agent-entrypoints](../publication/agent-entrypoints.md)

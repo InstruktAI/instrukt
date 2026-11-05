@@ -49,6 +49,6 @@ A refusal is nonetheless the moment judgment becomes reachable. An agent that me
 
 ## See Also
 
-- ~/.instrukt/docs/general/policy/human-involvement-recording.md — which facts record whether a human was in the loop, and why the declaration is audit-only and never an authorization input.
-- ~/.instrukt/docs/general/concept/lineage-vs-authorship.md — why the identity on a record never answers who acted, and never authorizes.
-- ~/.instrukt/docs/general/principle/intelligence-boundaries.md — why judgment belongs in the brief rather than in code that grades it.
+- [general/policy/human-involvement-recording](../policy/human-involvement-recording.md) — which facts record whether a human was in the loop, and why the declaration is audit-only and never an authorization input.
+- [general/concept/lineage-vs-authorship](../concept/lineage-vs-authorship.md) — why the identity on a record never answers who acted, and never authorizes.
+- [general/principle/intelligence-boundaries](intelligence-boundaries.md) — why judgment belongs in the brief rather than in code that grades it.

@@ -74,5 +74,5 @@ existing use case, it is refused as unknown and is never reported as free.
 
 ## See Also
 
-- docs/project/spec/domain/specs.md — the specs context.
-- ~/.instrukt/docs/sdlc/policy/testing.md — reservation at prepare, on main, before the build binds.
+- [project/instrukt/spec/domain/specs](../../domain/specs.md) — the specs context.
+- [sdlc/policy/testing](../../../../domain/sdlc/policy/testing.md) — reservation at prepare, on main, before the build binds.

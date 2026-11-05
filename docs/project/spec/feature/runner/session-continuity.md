@@ -367,10 +367,10 @@ test bindings are removed by the builder.
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/work/state-database
-- project/instrukt/spec/feature/runner/event-activation
-- project/instrukt/spec/feature/runner/work-dispatch
-- project/instrukt/spec/feature/runner/anomaly-notification
-- project/instrukt/spec/feature/configuration/layered-configuration
-- project/instrukt/spec/feature/configuration/interpolation
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
+- [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
+- [project/instrukt/spec/feature/runner/work-dispatch](work-dispatch.md)
+- [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
+- [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)

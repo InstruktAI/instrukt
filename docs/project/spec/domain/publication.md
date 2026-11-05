@@ -290,5 +290,5 @@ runs it.
 
 ## See Also
 
-- project/instrukt/spec/domain/context-map
-- project/instrukt/design/architecture/overview
+- [project/instrukt/spec/domain/context-map](context-map.md)
+- [project/instrukt/design/architecture/overview](../../design/architecture/overview.md)

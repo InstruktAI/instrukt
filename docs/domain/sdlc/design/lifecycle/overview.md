@@ -7,7 +7,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/principle/externalized-structural-context.md
+- [sdlc/principle/externalized-structural-context](../../principle/externalized-structural-context.md)
 
 ## Purpose
 
@@ -173,5 +173,5 @@ These are continuous pressures across the lifecycle, not isolated later phases:
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/overview.md —
+- [sdlc/procedure/lifecycle/overview](../../procedure/lifecycle/overview.md) —
   operational steps and state machine commands for executing this lifecycle

@@ -7,7 +7,7 @@ description: TypeScript production logging rules for structured fields, interpol
 
 ## Required reads
 
-@~/.instrukt/docs/sdlc/policy/typescript/core.md
+- [sdlc/policy/typescript/core](core.md)
 
 ## Rules
 
@@ -36,4 +36,4 @@ TypeScript's console and template-literal syntax makes unstructured diagnostics 
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/policy/observability.md
+- [sdlc/policy/observability](../observability.md)

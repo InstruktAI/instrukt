@@ -77,4 +77,4 @@ map; agents continue receiving answers from the previous complete map.
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.

@@ -18,8 +18,8 @@ subscriptions:
 
 ## Required reads
 
-- general/principle/session-lifecycle
-- general/procedure/event-handling/overview
+- [general/principle/session-lifecycle](../../../../general/principle/session-lifecycle.md)
+- [general/procedure/event-handling/overview](../../../../general/procedure/event-handling/overview.md)
 
 ## Goal
 

@@ -56,5 +56,5 @@ Then the agent is told the engine does not offer it
 
 ## See Also
 
-- docs/project/spec/domain/blueprint.md — the blueprint context.
-- docs/project/spec/feature/blueprint/graph-engine.md — what an engine offers.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the blueprint context.
+- [project/instrukt/spec/feature/blueprint/graph-engine](graph-engine.md) — what an engine offers.

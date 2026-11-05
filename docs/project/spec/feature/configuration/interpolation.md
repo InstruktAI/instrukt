@@ -83,7 +83,7 @@ Then it is told that no configured runtime matches, and no command is given
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- project/instrukt/spec/feature/configuration/layered-configuration
-- project/instrukt/spec/feature/docs/progressive-retrieval
-- project/instrukt/spec/feature/runner/session-continuity
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)
+- [project/instrukt/spec/feature/docs/progressive-retrieval](../docs/progressive-retrieval.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)

@@ -97,5 +97,5 @@ Then the body is withheld with a notice
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/progressive-retrieval
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/progressive-retrieval](progressive-retrieval.md)

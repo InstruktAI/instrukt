@@ -13,8 +13,8 @@ dispatch:
 
 ## Required reads
 
-@~/.instrukt/docs/general/principle/continuity.md
-@~/.instrukt/docs/sdlc/spec/todo-kind-task.md
+- [general/principle/continuity](../../../../../general/principle/continuity.md)
+- [sdlc/spec/todo-kind-task](../../../spec/todo-kind-task.md)
 
 ## Goal
 

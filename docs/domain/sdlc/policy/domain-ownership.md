@@ -7,7 +7,7 @@ description: Single bounded-context ownership for every domain decision, behavio
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/principle/domain-driven-design.md
+- [sdlc/principle/domain-driven-design](../principle/domain-driven-design.md)
 
 ## Rules
 

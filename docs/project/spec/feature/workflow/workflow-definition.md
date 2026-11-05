@@ -159,5 +159,5 @@ And changing those choices requires no change to the evaluation engine
 
 ## See Also
 
-- `sdlc/principle/design-fundamentals` — separation of evaluation, evidence and execution responsibilities.
-- `general/principle/intelligence-boundaries` — agent judgment supplies semantic classifications.
+- [sdlc/principle/design-fundamentals](../../../../domain/sdlc/principle/design-fundamentals.md) — separation of evaluation, evidence and execution responsibilities.
+- [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md) — agent judgment supplies semantic classifications.

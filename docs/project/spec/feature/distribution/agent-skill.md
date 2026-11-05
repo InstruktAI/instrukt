@@ -182,9 +182,9 @@ Then the agent installs the binary of the skill's release and reports instrukt's
 
 ## See Also
 
-- project/instrukt/spec/domain/distribution
-- project/instrukt/spec/feature/distribution/release-installer
-- project/instrukt/spec/feature/publication/instrukt-status
-- project/instrukt/spec/feature/publication/agent-entrypoints
-- project/instrukt/spec/feature/repository/project-initialization
-- project/instrukt/spec/feature/configuration/configuration-editing
+- [project/instrukt/spec/domain/distribution](../../domain/distribution.md)
+- [project/instrukt/spec/feature/distribution/release-installer](release-installer.md)
+- [project/instrukt/spec/feature/publication/instrukt-status](../publication/instrukt-status.md)
+- [project/instrukt/spec/feature/publication/agent-entrypoints](../publication/agent-entrypoints.md)
+- [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)
+- [project/instrukt/spec/feature/configuration/configuration-editing](../configuration/configuration-editing.md)

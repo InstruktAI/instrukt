@@ -54,6 +54,6 @@ fashion.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/greenfield-intake.md — the intake that drives this table.
-- ~/.instrukt/docs/sdlc/policy/frontend-production-baseline.md — what every frontend delivery contains.
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md — the button contract and reusable pipelines.
+- [sdlc/procedure/greenfield-intake](../procedure/greenfield-intake.md) — the intake that drives this table.
+- [sdlc/policy/frontend-production-baseline](../policy/frontend-production-baseline.md) — what every frontend delivery contains.
+- [sdlc/policy/ci-pipeline-conventions](../policy/ci-pipeline-conventions.md) — the button contract and reusable pipelines.

@@ -211,6 +211,6 @@ And the domain's snippets are still found by listing that domain
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/feature/publication/project-publication.md — the sync these outputs are part of.
-- docs/project/spec/domain/docs.md — the `index.yaml` model these renderings follow.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync these outputs are part of.
+- [project/instrukt/spec/domain/docs](../../domain/docs.md) — the `index.yaml` model these renderings follow.

@@ -124,6 +124,6 @@ handoff, the reference repo, or a baseline already answers is a violation.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/concept/delivery-portfolio.md
-- ~/.instrukt/docs/sdlc/policy/frontend-production-baseline.md
-- ~/.instrukt/docs/sdlc/policy/ci-pipeline-conventions.md
+- [sdlc/concept/delivery-portfolio](../concept/delivery-portfolio.md)
+- [sdlc/policy/frontend-production-baseline](../policy/frontend-production-baseline.md)
+- [sdlc/policy/ci-pipeline-conventions](../policy/ci-pipeline-conventions.md)

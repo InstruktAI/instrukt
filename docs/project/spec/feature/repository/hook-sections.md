@@ -133,5 +133,5 @@ And the developer's own hook content and hook files remain unchanged
 
 ## See Also
 
-- docs/project/spec/domain/repository.md — the repository context.
-- docs/project/spec/feature/publication/project-publication.md — what a started sync does.
+- [project/instrukt/spec/domain/repository](../../domain/repository.md) — the repository context.
+- [project/instrukt/spec/feature/publication/project-publication](../publication/project-publication.md) — what a started sync does.

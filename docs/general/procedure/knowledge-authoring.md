@@ -19,10 +19,10 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/procedure/doc-snippet-authoring.md
-- @~/.instrukt/docs/general/procedure/scratchpad-workspace.md
-- @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
-- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
+- [general/procedure/doc-snippet-authoring](doc-snippet-authoring.md)
+- [general/procedure/scratchpad-workspace](scratchpad-workspace.md)
+- [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
+- [sdlc/policy/command-contract-read](../../domain/sdlc/policy/command-contract-read.md)
 
 ## Goal
 

@@ -285,11 +285,11 @@ None.
 
 ### Use cases (index of feature specs)
 
-- **progressive-retrieval** — `docs/project/spec/feature/docs/progressive-retrieval.md` — an agent finds what to read, reads it with its required reads or a domain on demand, and sees values computed in its own context.
-- **position-index** — `docs/project/spec/feature/docs/position-index.md` — a publisher chooses per position what agents read in full and what is listed, and learns what the index cannot say.
-- **snippet-schema** — `docs/project/spec/feature/docs/snippet-schema.md` — a position adds sections to a folder's snippets, and an author learns the shape a folder requires and who imposes it.
-- **snippet-validation** — `docs/project/spec/feature/docs/snippet-validation.md` — a developer learns which snippets break the snippet contract before committing.
-- **pending-documentation** — `docs/project/spec/feature/docs/pending-documentation.md` — intended changes are written ahead of the build without misleading readers of the current contract.
+- **progressive-retrieval** — `project/instrukt/spec/feature/docs/progressive-retrieval` — an agent finds what to read, reads it with its required reads or a domain on demand, and sees values computed in its own context.
+- **position-index** — `project/instrukt/spec/feature/docs/position-index` — a publisher chooses per position what agents read in full and what is listed, and learns what the index cannot say.
+- **snippet-schema** — `project/instrukt/spec/feature/docs/snippet-schema` — a position adds sections to a folder's snippets, and an author learns the shape a folder requires and who imposes it.
+- **snippet-validation** — `project/instrukt/spec/feature/docs/snippet-validation` — a developer learns which snippets break the snippet contract before committing.
+- **pending-documentation** — `project/instrukt/spec/feature/docs/pending-documentation` — intended changes are written ahead of the build without misleading readers of the current contract.
 
 ### Governing designs and decisions (index)
 

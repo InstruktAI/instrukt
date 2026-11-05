@@ -131,7 +131,7 @@ And that a docs repository publishing it must be adopted
 
 ## See Also
 
-- project/instrukt/spec/domain/publication
-- project/instrukt/spec/feature/publication/project-publication
-- project/instrukt/spec/feature/publication/agent-entrypoints
-- project/instrukt/spec/feature/workflow/workflow-definition
+- [project/instrukt/spec/domain/publication](../../domain/publication.md)
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md)
+- [project/instrukt/spec/feature/publication/agent-entrypoints](agent-entrypoints.md)
+- [project/instrukt/spec/feature/workflow/workflow-definition](../workflow/workflow-definition.md)

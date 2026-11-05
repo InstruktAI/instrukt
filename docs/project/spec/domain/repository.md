@@ -204,4 +204,4 @@ None. Git invokes hook files; a developer or agent invokes the commands.
 
 ## See Also
 
-- project/instrukt/spec/domain/context-map
+- [project/instrukt/spec/domain/context-map](context-map.md)

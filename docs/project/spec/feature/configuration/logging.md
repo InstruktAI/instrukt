@@ -70,5 +70,5 @@ Then the command does nothing, exits with failure and names the log path it coul
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- sdlc/policy/observability
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [sdlc/policy/observability](../../../../domain/sdlc/policy/observability.md)

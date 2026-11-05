@@ -66,6 +66,6 @@ notification command.
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/session-continuity
-- project/instrukt/spec/feature/configuration/layered-configuration
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)

@@ -156,6 +156,6 @@ And a teammate validating the same commit on another computer gets the same find
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/snippet-validation
-- project/instrukt/spec/feature/repository/project-initialization
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/snippet-validation](snippet-validation.md)
+- [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)

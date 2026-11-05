@@ -157,8 +157,8 @@ None.
 
 ### Use cases (index of feature specs)
 
-- **use-case-coverage** — `docs/project/spec/feature/specs/use-case-coverage.md` — a project sees which use cases its tests bind, and its check refuses new orphan or anonymous debt.
-- **binding-reservation** — `docs/project/spec/feature/specs/binding-reservation.md` — a todo's planned bindings are checked against the use cases other todos already hold.
+- **use-case-coverage** — `project/instrukt/spec/feature/specs/use-case-coverage` — a project sees which use cases its tests bind, and its check refuses new orphan or anonymous debt.
+- **binding-reservation** — `project/instrukt/spec/feature/specs/binding-reservation` — a todo's planned bindings are checked against the use cases other todos already hold.
 
 ### Governing designs and decisions (index)
 

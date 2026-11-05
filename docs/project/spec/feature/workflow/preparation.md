@@ -6,7 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## Required reads
 
-@project/instrukt/spec/feature/workflow/artifact-currency
+- [project/instrukt/spec/feature/workflow/artifact-currency](artifact-currency.md)
 
 ## What it is
 
@@ -120,6 +120,6 @@ And review findings return to the responsible author for revision
 
 ## See Also
 
-- general/policy/human-contract
-- general/policy/leadership
-- sdlc/principle/documentation-first-development
+- [general/policy/human-contract](../../../../general/policy/human-contract.md)
+- [general/policy/leadership](../../../../general/policy/leadership.md)
+- [sdlc/principle/documentation-first-development](../../../../domain/sdlc/principle/documentation-first-development.md)

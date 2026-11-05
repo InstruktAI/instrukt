@@ -10,14 +10,14 @@ visibility: public
 
 ## Required reads
 
-- @~/.instrukt/docs/general/concept/documentation-snippets.md
-- @~/.instrukt/docs/general/policy/artifact-scope.md
-- @~/.instrukt/docs/general/policy/agent-facing-text.md
-- @~/.instrukt/docs/general/principle/intent-first-documentation.md
-- @~/.instrukt/docs/sdlc/principle/documentation-first-development.md
-- @~/.instrukt/docs/general/policy/referencing-doc-snippets.md
-- @~/.instrukt/docs/general/policy/snippet-value-contract.md
-- @~/.instrukt/docs/general/spec/snippet-authoring-schema.md
+- [general/concept/documentation-snippets](../concept/documentation-snippets.md)
+- [general/policy/artifact-scope](../policy/artifact-scope.md)
+- [general/policy/agent-facing-text](../policy/agent-facing-text.md)
+- [general/principle/intent-first-documentation](../principle/intent-first-documentation.md)
+- [sdlc/principle/documentation-first-development](../../domain/sdlc/principle/documentation-first-development.md)
+- [general/policy/referencing-doc-snippets](../policy/referencing-doc-snippets.md)
+- [general/policy/snippet-value-contract](../policy/snippet-value-contract.md)
+- [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
 
 ## Goal
 

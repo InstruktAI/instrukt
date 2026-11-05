@@ -50,5 +50,5 @@ and the report procedure itself are outside this shipped process set.
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/feature/publication/project-publication.md — the sync that computes it.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync that computes it.

@@ -101,7 +101,7 @@ And the run does not fail on that alone
 
 ## See Also
 
-- project/instrukt/spec/domain/docs
-- project/instrukt/spec/feature/docs/progressive-retrieval
-- project/instrukt/spec/feature/docs/snippet-validation
-- project/instrukt/spec/feature/publication/agent-entrypoints
+- [project/instrukt/spec/domain/docs](../../domain/docs.md)
+- [project/instrukt/spec/feature/docs/progressive-retrieval](progressive-retrieval.md)
+- [project/instrukt/spec/feature/docs/snippet-validation](snippet-validation.md)
+- [project/instrukt/spec/feature/publication/agent-entrypoints](../publication/agent-entrypoints.md)

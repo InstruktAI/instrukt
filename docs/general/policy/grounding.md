@@ -130,6 +130,6 @@ reasoning, or conversational hypothesis.
 
 ## See Also
 
-- ~/.instrukt/docs/general/principle/grounding.md — the disposition this policy enforces.
-- ~/.instrukt/docs/general/principle/intelligence-boundaries.md — why the violation is read by intelligence rather than graded by code.
-- ~/.instrukt/docs/general/policy/context-retrieval.md — the adjacent obligation to load domain context before entering a domain.
+- [general/principle/grounding](../principle/grounding.md) — the disposition this policy enforces.
+- [general/principle/intelligence-boundaries](../principle/intelligence-boundaries.md) — why the violation is read by intelligence rather than graded by code.
+- [general/policy/context-retrieval](context-retrieval.md) — the adjacent obligation to load domain context before entering a domain.

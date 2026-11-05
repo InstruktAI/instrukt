@@ -11,16 +11,16 @@ dispatch:
 
 ## Required reads
 
-- sdlc/procedure/lifecycle/prepare/overview
-- sdlc/procedure/lifecycle/work/overview
-- sdlc/procedure/lifecycle/work/build
-- sdlc/procedure/lifecycle/work/review-build
-- sdlc/procedure/lifecycle/work/finalize
-- sdlc/procedure/lifecycle/work/deferrals
-- sdlc/procedure/lifecycle/integrate
-- sdlc/policy/todo-creation-discipline
-- general/policy/conflict-resolution
-- general/policy/human-contract
+- [sdlc/procedure/lifecycle/prepare/overview](prepare/overview.md)
+- [sdlc/procedure/lifecycle/work/overview](work/overview.md)
+- [sdlc/procedure/lifecycle/work/build](work/build.md)
+- [sdlc/procedure/lifecycle/work/review-build](work/review-build.md)
+- [sdlc/procedure/lifecycle/work/finalize](work/finalize.md)
+- [sdlc/procedure/lifecycle/work/deferrals](work/deferrals.md)
+- [sdlc/procedure/lifecycle/integrate](integrate.md)
+- [sdlc/policy/todo-creation-discipline](../../policy/todo-creation-discipline.md)
+- [general/policy/conflict-resolution](../../../../general/policy/conflict-resolution.md)
+- [general/policy/human-contract](../../../../general/policy/human-contract.md)
 
 ## Goal
 

@@ -136,5 +136,5 @@ And integration stops at the first commit without an accepting outcome
 
 ## See Also
 
-- project/instrukt/spec/domain/repository
-- project/instrukt/spec/domain/configuration
+- [project/instrukt/spec/domain/repository](../../domain/repository.md)
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)

@@ -161,6 +161,6 @@ Then no project schema is written and the developer is told why
 
 ## See Also
 
-- docs/project/spec/domain/repository.md — the repository context.
-- docs/project/spec/feature/repository/hook-sections.md — the hook sections init installs.
-- docs/project/spec/feature/publication/editor-schemas.md — the editor schemas and modelines init writes.
+- [project/instrukt/spec/domain/repository](../../domain/repository.md) — the repository context.
+- [project/instrukt/spec/feature/repository/hook-sections](hook-sections.md) — the hook sections init installs.
+- [project/instrukt/spec/feature/publication/editor-schemas](../publication/editor-schemas.md) — the editor schemas and modelines init writes.

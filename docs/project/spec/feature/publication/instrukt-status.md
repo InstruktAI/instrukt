@@ -119,7 +119,7 @@ And shows that this repository's publication of it would be refused
 
 ## See Also
 
-- project/instrukt/spec/domain/publication
-- project/instrukt/spec/feature/distribution/agent-skill
-- project/instrukt/spec/feature/configuration/layered-configuration
-- project/instrukt/spec/feature/repository/project-initialization
+- [project/instrukt/spec/domain/publication](../../domain/publication.md)
+- [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
+- [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)

@@ -6,7 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## Required reads
 
-@project/instrukt/spec/feature/workflow/artifact-currency
+- [project/instrukt/spec/feature/workflow/artifact-currency](artifact-currency.md)
 
 ## What it is
 
@@ -153,6 +153,6 @@ And findings requiring changes return to implementation before that handoff
 
 ## See Also
 
-- sdlc/principle/design-fundamentals
-- general/principle/trust-and-guardrails
-- general/principle/intelligence-boundaries
+- [sdlc/principle/design-fundamentals](../../../../domain/sdlc/principle/design-fundamentals.md)
+- [general/principle/trust-and-guardrails](../../../../general/principle/trust-and-guardrails.md)
+- [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md)

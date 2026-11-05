@@ -87,6 +87,6 @@ And it sees which revision the answer reflects
 
 ## See Also
 
-- docs/project/spec/domain/specs.md — the specs context.
-- docs/project/spec/domain/blueprint.md — the graph and its traversals.
-- docs/project/spec/feature/blueprint/blast-radius.md — the structural dependents of the same changed files.
+- [project/instrukt/spec/domain/specs](../../domain/specs.md) — the specs context.
+- [project/instrukt/spec/domain/blueprint](../../domain/blueprint.md) — the graph and its traversals.
+- [project/instrukt/spec/feature/blueprint/blast-radius](blast-radius.md) — the structural dependents of the same changed files.

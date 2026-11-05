@@ -7,8 +7,8 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/design/code-intelligence.md
-- @~/.instrukt/docs/sdlc/design/lifecycle/overview.md
+- [sdlc/design/code-intelligence](code-intelligence.md)
+- [sdlc/design/lifecycle/overview](lifecycle/overview.md)
 
 ## Purpose
 
@@ -108,9 +108,9 @@ When code intelligence is partial or unsupported:
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/design/lifecycle/prepare.md —
+- [sdlc/design/lifecycle/prepare](lifecycle/prepare.md) —
   prepare-phase artifact production and rigor model
-- ~/.instrukt/docs/sdlc/design/lifecycle/work.md —
+- [sdlc/design/lifecycle/work](lifecycle/work.md) —
   work-phase build/review/fix loops
-- ~/.instrukt/docs/sdlc/design/lifecycle/integration.md —
+- [sdlc/design/lifecycle/integration](lifecycle/integration.md) —
   concurrency-aware landing and sequencing

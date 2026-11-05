@@ -15,11 +15,11 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/intelligence-boundaries.md
-- @~/.instrukt/docs/sdlc/principle/architectural-defaults.md
-- @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
-- @~/.instrukt/docs/sdlc/policy/state-storage.md
-- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
+- [general/principle/intelligence-boundaries](../../../../../general/principle/intelligence-boundaries.md)
+- [sdlc/principle/architectural-defaults](../../../principle/architectural-defaults.md)
+- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
+- [sdlc/policy/state-storage](../../../policy/state-storage.md)
+- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
 
 ## Goal
 
@@ -293,4 +293,4 @@ the absence or treat it as a veto.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/intake.md
+- [sdlc/procedure/lifecycle/prepare/intake](intake.md)

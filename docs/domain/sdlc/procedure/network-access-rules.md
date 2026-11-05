@@ -165,7 +165,7 @@ is inert — that is a no-op, never a step to work around.
 
 ## See Also
 
-- ~/.instrukt/docs/sdlc/procedure/macos-stable-code-signing.md — the identity half: a rule survives a rebuild only when the binary's identity does.
+- [sdlc/procedure/macos-stable-code-signing](macos-stable-code-signing.md) — the identity half: a rule survives a rebuild only when the binary's identity does.
 - https://help.obdev.at/littlesnitch6/adv-lsrules-file-format — Little Snitch `.lsrules` format reference.
 - https://help.obdev.at/littlesnitch6/adv-code-identity — Little Snitch code identity: team identifier and signing identifier.
 - https://docs.brew.sh/Formula-Cookbook — Homebrew's Cellar: one folder per installed formula version.

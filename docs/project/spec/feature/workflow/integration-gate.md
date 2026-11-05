@@ -159,5 +159,5 @@ And it can read each commit's latest review verdict
 
 ## See Also
 
-- `general/principle/trust-and-guardrails` — admission protects the shared work object.
-- `general/principle/intelligence-boundaries` — the integrator interprets failures and selects remediation.
+- [general/principle/trust-and-guardrails](../../../../general/principle/trust-and-guardrails.md) — admission protects the shared work object.
+- [general/principle/intelligence-boundaries](../../../../general/principle/intelligence-boundaries.md) — the integrator interprets failures and selects remediation.
