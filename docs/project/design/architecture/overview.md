@@ -9,10 +9,11 @@ delivered_by: [instrukt-first-build]
 
 instrukt is a context-engineering module: a single
 CLI that makes documentation the way agents are instructed and, when switched
-on, runs the work those docs describe. It has no daemon and no API. Every
-behavior is a command that starts, does its work against files, git, GitHub or
-a runtime, and ends; whatever must happen later is triggered by git hooks, the
-operating system's scheduler, or an event delivered to a command. Doctrine
+on, runs the work those docs describe. It has no consumer daemon. Core operations are commands; enabled events also
+have a narrow standalone loopback webhook receiver on the designated ingress.
+Commands and independent event readers work against files, git, GitHub, scoped
+Redis and the chosen runtime. Later work is triggered by git hooks, the OS
+scheduler or retained events. Doctrine
 comes from adopted docs repositories, not from instrukt.
 
 The modules and their bounded contexts are listed in
@@ -29,7 +30,7 @@ home, and the flows.
 | `core` | docs, configuration, publication, repository, specs | always on | files, git |
 | `blueprint` | blueprint | on/off | a graph engine adapter |
 | `todos` | work, workflow; the runner dispatching todos | on/off; `runner.autostart` | GitHub, a runtime mapping |
-| `events` | the runner's event sources and standing agents | on/off | a runtime mapping |
+| `events` | runner sources, scoped transport, independent consumers and procedure activation | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
 
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
@@ -117,9 +118,10 @@ commands. Docs name `-h`.
 
 ## Invariants
 
-- **No daemon.** No process of instrukt outlives the work it was started for,
-  except `instrukt run` when a user chooses a long-lived runner; nothing
-  depends on one running.
+- **Explicit execution lifetimes.** `run` hosts long-lived independent readers;
+  scheduled `tick` drains pending then new entries within a bounded invocation.
+  The separately installed ingress receiver outlives runner downtime. There is
+  no additional consumer daemon; scheduled-only reactions wait for the next wake.
 - **Each project publishes only its own part.** Publication never reads
   another project's repository; the global index is patched by owner, never
   rebuilt from all sources. Reading is different: `docs get` reads another
@@ -227,10 +229,41 @@ passing candidate is fast-forwarded onto main.
 The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
 the switched-on modules need: it dispatches todos (when `runner.autostart`),
 and starts or wakes standing agents on events. It reaches a runtime only
-through the sessions facade (`instrukt sessions run|send|alive|conversation`).
+through the selected runtime adapter. Procedure activation crosses A3's code
+adapter at the S6 delivery-feasibility boundary.
 A step is done when the record carries its artifact and stamp, never when a
 session's reply says so. Whatever needs the human is a session asking in its
 thread; only anomalies are sent through `runner.notify`.
+
+### Event platform
+
+```mermaid
+flowchart LR
+  W[Signed native / GitHub request] --> I[One loopback ingress receiver]
+  I --> C[Cluster Redis: claimed append]
+  P[Local source fact + SQLite event row] --> H[Retry publication with stable ID]
+  H --> R[Redis selected by scope]
+  C --> Q[Independent retained consumer groups]
+  R --> Q
+  Q --> A[One procedure matcher per emitting computer]
+  X[Published index: declarations and reach] --> A
+  A --> D[SQLite keyed activation acceptance]
+  D --> T[A3 runtime handoff: S6 feasibility gate]
+```
+
+Local commit and stream acceptance are separate. Existing event rows supply a
+retryable publication handover; ingress accepts only after cluster append or a
+recognized source-scoped duplicate. Redis groups own transport positions and
+bounded replay. SQLite retains local settled accounting, seven-day occurrence
+marks and keyed activations. Consumer outcomes commit before Redis ACK; neither
+is a business-effect completion. Ordered retries park persistently failing events
+with evidence and announcement before ACK, independently of other consumers.
+
+Subscription validation belongs to docs, registration/index replacement to
+publication, selection and acceptance to runner. Only the emitting computer
+activates; external procedures run on ingress and unavailable homes fail there.
+Runtime delivery retains procedure-first briefing, untrusted event provenance and
+session-fixed eligibility/cardinality; realizing it through A3 is S6's gate.
 
 ## Failure modes
 

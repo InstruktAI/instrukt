@@ -161,6 +161,6 @@ Then protocol-qualified source subjects keep them distinguishable and their clai
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework
-- project/instrukt/spec/feature/runner/event-transport
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework](inbound-webhook-endpoint-framework.md)
+- [project/instrukt/spec/feature/runner/event-transport](event-transport.md)

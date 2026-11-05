@@ -15,6 +15,15 @@ changed upstream without a CI pipeline driving the response.
 
 ### Subscription contract
 
+The owning routing contract is
+`project/instrukt/spec/feature/runner/procedure-subscription-routing`. Docs validates
+the declaration and publication supplies its resolved facts and reach through
+the generated index. The matcher is one independent retained consumer, with
+per-procedure acceptance keys rather than another group or SQLite scan for each
+procedure. General/domain and project-local subscription reach follow that
+contract. Pending declarations stay inactive; event-source data selects no route.
+
+
 Procedure frontmatter carries subscriptions. They travel with the
 documentation even when events are disabled. The runner reads an event, resolves matching published subscriptions and durably accepts keyed activations. The runtime adapter owns the subsequent start or wake.
 
@@ -127,6 +136,6 @@ reacts at the next wake while retained entries remain available.
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/work/state-database
-- project/instrukt/spec/feature/runner/event-transport
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
+- [project/instrukt/spec/feature/runner/event-transport](event-transport.md)

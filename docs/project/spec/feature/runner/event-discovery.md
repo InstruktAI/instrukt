@@ -60,5 +60,5 @@ Then only that owner's declared types are listed
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/event-envelope
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/event-envelope](event-envelope.md)

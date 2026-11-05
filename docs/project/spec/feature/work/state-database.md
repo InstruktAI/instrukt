@@ -233,6 +233,13 @@ Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
 records or database tables. Redis and SQLite have no shared transaction.
 
+**`procedure_activations`** — durable acceptance keyed by `(event_id, procedure,
+exact_home)`, where home includes kind and slug or platform. Retains immutable
+event, accepted identity/attendance/delivery declaration, procedure-read references,
+acceptance state and visible failure/outcome. A duplicate key returns its existing
+acceptance. Submission failures leave the consumer unsettled; accepted rows precede the final consumer-outcome, handled-mark and cursor transaction before Redis ACK. Later runtime execution is separate; session/delivery-table realization is
+owned by S6, within this same database.
+
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
 unchanged `304` reuses).
@@ -300,8 +307,8 @@ after seven days. Local history does not backfill a newly created Redis group.
 
 ## See Also
 
-- project/instrukt/spec/domain/work
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/work/github-record — reflection of the work tables to GitHub
-- project/instrukt/spec/feature/runner/event-activation — the event log's events and consumers
-- sdlc/policy/state-storage
+- [project/instrukt/spec/domain/work](../../domain/work.md)
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/work/github-record](github-record.md) — reflection of the work tables to GitHub
+- [project/instrukt/spec/feature/runner/event-activation](../runner/event-activation.md) — the event log's events and consumers
+- [sdlc/policy/state-storage](../../../../domain/sdlc/policy/state-storage.md)

@@ -105,5 +105,5 @@ Then initialization is refused and the developer is directed to upgrade instrukt
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- project/instrukt/spec/feature/configuration/layered-configuration
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)

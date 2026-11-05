@@ -310,6 +310,6 @@ introduced.
 
 ## See Also
 
-- project/instrukt/spec/domain/configuration
-- project/instrukt/spec/feature/configuration/configuration-editing
-- project/instrukt/spec/feature/configuration/interpolation
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/configuration-editing](configuration-editing.md)
+- [project/instrukt/spec/feature/configuration/interpolation](interpolation.md)

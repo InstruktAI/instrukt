@@ -134,16 +134,16 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 
 #### Standing-agent session binding
 
-- **Root entity:** The assignment's session binding.
-- **Contains:** Subscribing procedure and project, configured runtime identity and
-  runtime-native session identity.
-- **Invariants:** Binding lookup plus `alive` determines reuse. Completion
-  requires the work record's artifact and stamp. Linked-session input is a
-  declared runtime capability.
-- **Identifier:** (subscribing procedure, project). Todo-role bindings belong to work, not this aggregate.
-- **Lifecycle:** A start records session identity; subsequent dispatch observes
-  it before reuse. Missing completion evidence after execution ends, or a gone
-  session, causes one send to the same session, then an anomaly if still missing.
+- **Root entity:** The continuing responsibility's runtime binding.
+- **Contains:** Canonical procedure, exact home, subject when identity is subject,
+  and the configured runtime's session identity.
+- **Invariants:** Activation acceptance is distinct from runtime resolution and
+  event delivery. Domain completion requires its owning work record's evidence.
+- **Identifier:** Procedure and exact home, plus subject when declared; todo-role
+  bindings remain work-owned.
+- **Lifecycle:** A3/S6 owns serialized resolution and continuation through the
+  runtime adapter. Routing retains pending accepted work and does not infer a
+  replacement session from a failed observation or delivery.
 
 #### Event activation
 
@@ -152,12 +152,12 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 - **Invariants:** Subscriptions use instrukt's vocabulary. Event enablement
   determines activation independently of todo pickup. An upstream event is
   not authorization to reconcile the fork.
-- **Identifier:** Event identity and subscribed responsibility; the standing-agent session is keyed by (subscribing procedure, project).
-- **Lifecycle:** A source supplies an event, the runner resolves subscriptions
-  and starts or wakes the responsible session. The event log in the state
-  database retains idempotency keys, per-consumer cursors and per-consumer
-  handled marks across restarts, with bounded transport replay and seven-day occurrence duplicate protection;
-  handlers reconcile their subject idempotently.
+- **Identifier:** Activation acceptance is keyed by occurrence ID, canonical procedure and exact home. Continuing responsibility identity includes procedure/home and subject when declared; runtime resolution belongs to A3/S6.
+- **Lifecycle:** A source supplies a fact; one independent matcher durably accepts
+  keyed activations from the current published index. Runtime execution follows
+  that acceptance through A3/S6. Local publication, transport progress, activation
+  acceptance and procedure delivery are distinct completion boundaries; handlers
+  reconcile domain effects idempotently.
 
 #### Task timing
 
@@ -213,7 +213,7 @@ No compatibility alias or second occurrence is emitted.
 
 The canonical received boundary is the open event envelope, not a closed enum
 of those five facts. The four runner declarations use project origin;
-upstream changes name the observed repository/ref as a configuration reference,
+upstream changes name the observed repository revision as a commit reference,
 main-ahead and main-failing name a repository-qualified commit, and CI completion
 names the candidate commit (including the `no_ci` observation). Finalize-ready
 uses project origin and a todo subject. The existing occurrence-key columns
@@ -274,6 +274,15 @@ record-backed completion.
 - **Anomaly notification** — `project/instrukt/spec/feature/runner/anomaly-notification`
   — notice unattended failures while keeping questions in their threads.
 
+- **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
+- **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
+- **Scoped transport and publication recovery** — `project/instrukt/spec/feature/runner/event-transport`.
+- **Independent retained reactions** — `project/instrukt/spec/feature/runner/event-consumers`.
+- **Signed project sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
+- **Single cluster intake** — `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`.
+- **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
+- **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
+
 ### Governing designs and decisions (index)
 
 - `project/instrukt/design/architecture/overview` — module boundaries
@@ -292,13 +301,12 @@ record-backed completion.
 | work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
 | runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits; `runner.main_failing` wakes it to restore a failing canonical branch |
 
-The runtime mapping and event-source boundary form an **Anti-corruption layer
-(ACL)** translating session operations and external observations. These are
-external boundaries, not additional bounded contexts. The runtime side of the
-ACL is configuration only: each runtime, including the T3 Code entry instrukt
-ships, is reached through its mapping entry's verbs, never through a code
-path of its own
-(`project/instrukt/spec/feature/runner/session-continuity`).
+The runtime adapter and event-source boundary form an **Anti-corruption layer
+(ACL)** translating runtime operations and external observations, rather than
+additional bounded contexts. Event-driven start or wake uses A3's selected Rust
+adapter; runtime lifecycle and delivery remain with the runtime. S6 establishes
+that handoff's delivery feasibility. The wider session facade is owned by
+`project/instrukt/spec/feature/runner/session-continuity`.
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract
@@ -313,8 +321,7 @@ per-role session bindings. Work owns validation and persistence of those writes.
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization through A3's published runtime boundary is the S6 feasibility gate;
   ordinary conversational JSON is not evidence of equivalence.
-- This slice does not implement company/person homes, a consumer daemon,
-  conversation channels, help desks or runtime lifecycle.
+- Company/person home execution, conversation channels and help desks are unavailable in this port; runtime lifecycle remains runtime-owned.
 
 
 - UC-HR1 is retired: machine maintenance is outside instrukt; its id is not reused.

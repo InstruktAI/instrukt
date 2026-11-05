@@ -116,8 +116,8 @@ And every file they describe still points at its schema
 
 ## See Also
 
-- docs/project/spec/domain/publication.md — the publication context.
-- docs/project/spec/feature/docs/position-index.md — the `index.yaml` model the index schemas describe.
-- docs/project/spec/feature/docs/snippet-schema.md — the `schema.yaml` model its schema describes.
-- docs/project/spec/feature/repository/project-initialization.md — the adoption that first writes them.
-- docs/project/spec/feature/publication/project-publication.md — the sync that refreshes them.
+- [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+- [project/instrukt/spec/feature/docs/position-index](../docs/position-index.md) — the `index.yaml` model the index schemas describe.
+- [project/instrukt/spec/feature/docs/snippet-schema](../docs/snippet-schema.md) — the `schema.yaml` model its schema describes.
+- [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md) — the adoption that first writes them.
+- [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync that refreshes them.

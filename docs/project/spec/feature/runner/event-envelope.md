@@ -226,11 +226,11 @@ And events for one failure and recovery preserve that thing and origin
 
 ## Known caveats
 
-- Company/person homes are vocabulary only for execution in this release; resolution fails visibly.
+- Company/person homes are vocabulary only for execution in this release; resolution fails visibly. Unavailable project-owner metadata is unresolved and supplies no new owner registry.
 - Reference vocabulary does not install the subsystems it names. Signal emitters and correlation are outside this port.
 - Cross-version compatibility is between compatible instrukt codecs; no TeleClaude fleet negotiation or pre-release legacy-wire compatibility is claimed.
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/event-discovery
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/event-discovery](event-discovery.md)

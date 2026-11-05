@@ -106,6 +106,6 @@ Then the ordinary platform event has github dot header type, that project origin
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework
-- project/instrukt/spec/feature/runner/event-envelope
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework](inbound-webhook-endpoint-framework.md)
+- [project/instrukt/spec/feature/runner/event-envelope](event-envelope.md)

@@ -173,6 +173,6 @@ Then it receives subsequent occurrences without replaying stream or local-log hi
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/event-transport
-- project/instrukt/spec/feature/work/state-database
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/event-transport](event-transport.md)
+- [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
