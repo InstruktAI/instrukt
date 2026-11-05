@@ -68,12 +68,13 @@ commands.
    association).
 
 **Active runtime**
-:  The first entry of the runtime mapping whose session variable is set in
-   the caller's environment (`project/instrukt/spec/domain/configuration`).
+: The explicitly selected adapter recognising the caller's native session
+  (`project/instrukt/spec/domain/configuration`). No recognised caller means
+  no session attribution, not a different runtime choice.
 
 **Active agent**
-:  The first agent CLI entry of the runtime mapping whose session variable is
-   set in the caller's environment.
+: The agent identity the selected adapter can resolve from its caller
+  metadata. An unresolved identity remains unknown.
 
 ### Ownership boundary
 
@@ -91,7 +92,7 @@ commands.
   `project/instrukt/spec/feature/publication/editor-schemas`); graph
   generation for a
   remote-main revision (blueprint, `project/instrukt/spec/domain/blueprint`);
-  the project layer's schema, the runtime mapping and the agents' git authors
+  the project layer's schema, the runtime choice and the agents' git authors
   (configuration, `project/instrukt/spec/domain/configuration`); a work
   item's existence (work, `project/instrukt/spec/domain/work`); the
   project's lint, test and other hooks and actions (the project).
@@ -102,7 +103,7 @@ commands.
   `instrukt repo stamp <sha…> --verdict exempt --reason <text>`;
   `instrukt init --slug <slug>`; the claims report; the section markers;
   the trailer keys.
-- **Allowed dependencies** — configuration (project slug, runtime mapping,
+- **Allowed dependencies** — configuration (project slug, runtime choice,
   agents' git authors, module switches, as customer); publication (the ownership record the claims report reads, the
   published `sdlc` `schema.yaml` init copies, and the editor-schema
   operation init invokes, as customer); publication and
@@ -172,9 +173,9 @@ None. Git invokes hook files; a developer or agent invokes the commands.
 
 ### Use cases (index of feature specs)
 
-- **hook-sections** — `docs/project/spec/feature/repository/hook-sections.md` — instrukt's hook sections live beside the project's own hooks and keep publication current without blocking git.
-- **attributed-commit** — `docs/project/spec/feature/repository/attributed-commit.md` — an agent's commit names the agent, its session and the human's involvement; outside a session it is the developer's own.
-- **project-initialization** — `docs/project/spec/feature/repository/project-initialization.md` — a developer adopts instrukt in a repository in one idempotent step and sees what it will claim.
+- **hook-sections** — `project/instrukt/spec/feature/repository/hook-sections` — instrukt's hook sections live beside the project's own hooks and keep publication current without blocking git.
+- **attributed-commit** — `project/instrukt/spec/feature/repository/attributed-commit` — an agent's commit names the agent, its session and the human's involvement; outside a session it is the developer's own.
+- **project-initialization** — `project/instrukt/spec/feature/repository/project-initialization` — a developer adopts instrukt in a repository in one idempotent step and sees what it will claim.
 
 ### Governing designs and decisions (index)
 
@@ -185,7 +186,7 @@ None. Git invokes hook files; a developer or agent invokes the commands.
 ### Context map position
 
 - **configuration** — Customer / Supplier. Configuration supplies the project
-  slug, the runtime mapping, the agents' git authors and the blueprint switch.
+  slug, the runtime choice, the agents' git authors and the blueprint switch.
 - **publication** — Customer / Supplier. Post-hook runs start
   `instrukt sync`; publication decides what it does. Publication supplies the
   ownership record and published `sdlc` schema that `init` reads, and the
@@ -203,4 +204,4 @@ None. Git invokes hook files; a developer or agent invokes the commands.
 
 ## See Also
 
-- docs/project/spec/domain/context-map.md — the bounded contexts and their relationships.
+- project/instrukt/spec/domain/context-map

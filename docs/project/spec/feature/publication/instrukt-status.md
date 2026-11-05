@@ -1,5 +1,5 @@
 ---
-description: "`instrukt status` reports in one read where this computer and this repository stand with instrukt: the machine's configuration, the runtime and which of its verbs are filled, the features that makes available, the modules, this repository's adoption and whether its code is on GitHub, the published domains and their owners, and the other adopted projects. It changes nothing."
+description: "`instrukt status` reports in one read where this computer and this repository stand with instrukt: the machine's configuration, the selected runtime adapter and its capabilities, the features that makes available, the modules, this repository's adoption and whether its code is on GitHub, the published domains and their owners, and the other adopted projects. It changes nothing."
 delivered_by: [instrukt-first-build]
 ---
 # instrukt Status — Spec
@@ -34,8 +34,8 @@ lock, reaches no network and starts no session.
 | --- | --- |
 | `instrukt` | the running binary's version and the path it runs from |
 | `machine` | whether the global layer `~/.instrukt/instrukt.yaml` exists, its `schema_version`, and its validation findings (`project/instrukt/spec/feature/configuration/layered-configuration`) |
-| `runtime` | each runtime-mapping entry by name, which entry an OS-started runner uses (`runner.runtime`), the active runtime of the caller when there is one, and, per entry, each verb the runtime mapping defines, marked empty or filled with its kind (`command` or `agent`) |
-| `modules` | each module (`blueprint`, `todos`, `events`) on or off in the effective configuration and in which layer that was decided; per feature the runtime mapping gates, whether the selected runtime fills every verb it needs, naming each missing one |
+| `runtime` | the explicit `runner.runtime` choice, or none; the compiled adapter's capabilities and recognised caller identity when available; no verb templates or entry list |
+| `modules` | each module (`blueprint`, `todos`, `events`) on or off in the effective configuration and in which layer that was decided; per runtime-dependent feature, whether the selected adapter supports its required capabilities, naming each missing one or that no runtime is chosen |
 | `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
 | `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
 | `projects` | every other project publication state records: its slug, checkout path and published commit |
@@ -47,7 +47,7 @@ lock, reaches no network and starts no session.
 - For a position the repository holds that another project owns, the report
   names that owner: the conflict the repository's first sync would be
   refused on (`project/instrukt/spec/feature/repository/project-initialization`).
-- Which verbs a feature needs is the runtime mapping's contract
+- Which capabilities a feature needs is the runtime adapter's contract
   (`project/instrukt/spec/feature/runner/session-continuity`); status
   reports that judgment and adds none of its own.
 
@@ -72,7 +72,7 @@ lock, reaches no network and starts no session.
 Given a developer's computer is configured with a runtime, has the todos module on and publishes domains from two adopted projects
 And the developer works in one of those projects
 When an agent acting for them reads instrukt's status
-Then it learns in one answer the instrukt version, that the machine is configured, which runtime is used and which of its verbs are filled
+Then it learns in one answer the instrukt version, that the machine is configured, which runtime adapter is selected and which capabilities it supports
 And which modules are on and what the runtime lets them do
 And that this repository is adopted, what it publishes and whether its last commit is published
 And every published domain with its owner, and the other adopted project
@@ -85,7 +85,7 @@ And nothing on the computer has changed
 Given a developer has just installed instrukt on a computer with no instrukt configuration
 And they stand in a git repository instrukt has never seen
 When they read instrukt's status
-Then it reports that the machine is not configured, that no runtime is mapped, that every module is off and that nothing is published
+Then it reports that the machine is not configured, that no runtime is chosen, that every module is off and that nothing is published
 And that this repository is not adopted
 And the command succeeds
 ```
@@ -93,10 +93,10 @@ And the command succeeds
 #### UC-IS3: A developer sees which modules their runtime can carry before switching one on
 
 ```gherkin
-Given a developer's runtime mapping fills the verbs standing agents need but not the one anomaly notification needs
+Given a developer's runtime adapter supports standing agents but lacks anomaly notification
 When they read instrukt's status
 Then the report shows standing agents available on that runtime
-And shows anomaly notification unavailable, naming the verb that is empty
+And shows anomaly notification unavailable, naming the missing capability
 ```
 
 #### UC-IS4: A developer sees that a repository would claim a domain another project owns
@@ -114,8 +114,8 @@ And shows that this repository's publication of it would be refused
 - A repository adopted with `instrukt init` but never synced is unknown to
   publication state: it appears in `projects` only after its first sync.
   Inside that repository the repository section still reports it.
-- Status reports configuration as written; whether a filled verb works
-  is learned only by running it.
+- Status reports configuration as written; declared capabilities do not establish runtime reachability. Operational
+  failures are learned when the adapter is called.
 
 ## See Also
 

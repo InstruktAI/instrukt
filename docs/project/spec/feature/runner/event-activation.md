@@ -24,9 +24,9 @@ or wake the responsible agent.
 Todo pickup settings do not govern these activations.
 
 Procedures subscribe to instrukt's vocabulary. Event-source adapters translate
-native deliveries; procedures do not subscribe directly to one runtime's
-native vocabulary. A runtime integration pairs an event source with the
-session operations that receive the resulting assignment.
+native deliveries; procedures do not subscribe directly to one runtime's native
+vocabulary. The runtime adapter receives the resulting assignment; event-source
+translation remains independent of session execution.
 
 ### Sources and reactions
 
@@ -103,13 +103,21 @@ Conditional-request validators are kept in the state database per project
 and request, so a later invocation asks only for what changed, beside each
 watched ref's last observed revision.
 
-A start is recorded before the runtime is asked, and its handled marks
-commit with the session it binds. A start whose result never
-arrived (the invocation ended after the runtime may have created the session)
-is never repeated, so no second standing session is created for the same
-agent: it is reported once as an anomaly naming the exact command line that
-resolves it, `instrukt sessions resolve-start <procedure>@<project> --session
-<runtime:id>` or `--none`, and the standing agent waits until it is resolved.
+Standing activation calls the compiled adapter's `start_or_wake` under its
+per-key database lock. A complete successful runtime listing, matched by exact
+key title, is required before starting; the local binding is only a cache. A
+found thread receives the event through `send`, including when busy. List or
+send failure leaves the event pending and starts no replacement.
+
+A start marker commits before the runtime is asked; handled marks commit with
+its binding and acknowledged delivery. A lost reply is reconciled by listing for
+the key and binding the single thread found. An unresolved start with no match
+stays pending and reports once the command that resolves it, `instrukt sessions
+resolve-start <procedure>@<project> --session <runtime:id>` or `--none`. An
+empty list alone never permits repeating an ambiguous start. A repeated send
+after a lost acknowledgement can redeliver an event; handlers reconcile
+idempotently. The complete adapter algorithm is
+`project/instrukt/spec/feature/runner/session-continuity`.
 
 ### Use cases
 
@@ -122,3 +130,13 @@ resolves it, `instrukt sessions resolve-start <procedure>@<project> --session
   Then a standing agent reports the changes
   And offers reconciliation that retains the fork's local modifications
 ```
+
+## Known caveats
+
+- Standing activation inherits the adapter's key-title discovery and ambiguous-start limits. Event delivery can repeat after a lost acknowledgement; handlers reconcile idempotently.
+
+## See Also
+
+- project/instrukt/spec/domain/runner
+- project/instrukt/spec/feature/runner/session-continuity
+- project/instrukt/spec/feature/work/state-database

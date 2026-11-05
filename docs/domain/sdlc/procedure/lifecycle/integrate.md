@@ -18,8 +18,8 @@ subscriptions:
 
 ## Required reads
 
-- @~/.instrukt/docs/general/principle/session-lifecycle.md
-- @~/.instrukt/docs/general/procedure/event-handling/overview.md
+- general/principle/session-lifecycle
+- general/procedure/event-handling/overview
 
 ## Goal
 
@@ -211,7 +211,5 @@ binding.
 - A candidate already promoted needs delivery-record reconciliation, not
   another merge. Execute delivery and cleanup through the shipped flavor's
   workflow bindings. Release an owed claim with `instrukt todo update <slug> --unclaim`
-  and end the todo's bound sessions with `instrukt sessions end --todo <slug>`.
-  When the command answers that the ending is yours to do, carry out the
-  instruction it prints; that is the ending. A failed ending stays unresolved
-  rather than counting as successful cleanup.
+  and confirm the released claim. Record the handoff and remaining cleanup;
+  the runtime owns session ending. A failed cleanup remains unresolved.

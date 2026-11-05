@@ -39,10 +39,10 @@ A graph is one JSON object:
 ### Engine selection
 
 `blueprint.engine` selects the engine
-(`project/instrukt/spec/domain/configuration`). Either layer may name a
-shipped adapter. The command form is permitted only in the global layer: a
-command in a project layer is a validation finding and is ignored, as
-project-layer `runtimes` are.
+(`project/instrukt/spec/domain/configuration`). Either layer may name a shipped
+adapter. The command form is permitted only in the global layer: a command in a
+project layer is a validation finding and is ignored, as project-layer
+`runner.runtime` is.
 
 | Value | Engine |
 | --- | --- |

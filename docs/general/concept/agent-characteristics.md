@@ -11,9 +11,9 @@ This is the baseline knowledge an agent uses to choose which agent CLI runs
 which work and to compose ordered preferences. The global `agents.order` holds
 the default order and thinking mode; a procedure's `dispatch` frontmatter
 overrides those defaults where its work needs a different choice. Valid agent
-names come from the configured runtime mapping, rather than a fixed catalog.
-The agents a runtime can start are a separate set from those to which
-instructions are deployed.
+names come from the configured runtime adapter, rather than a fixed catalog. The
+agents a runtime can start are a separate set from those to which instructions
+are deployed.
 
 ### Selection paradigm
 
