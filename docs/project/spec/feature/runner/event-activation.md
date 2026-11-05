@@ -129,3 +129,4 @@ reacts at the next wake while retained entries remain available.
 
 - project/instrukt/spec/domain/runner
 - project/instrukt/spec/feature/work/state-database
+- project/instrukt/spec/feature/runner/event-transport

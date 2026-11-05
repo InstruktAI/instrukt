@@ -241,11 +241,11 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 | --- | --- | --- | --- | --- |
 | `workflow.finalized` | work’s finalize-ready stamp, expressing workflow’s handoff | Project, todo, finalized revision | Project, todo, finalized revision | Wake the subscribed standing integrator for finalize-ready work |
 
-The state database's event log persists these events with per-consumer
-cursors, handled marks and idempotency keys; a consumer's handled mark
-commits with the record of its delivery. Consumers resume from their cursors
-and reconcile their
-subject against current state. Runtime session observations supply the five
+The local event log preserves source facts and retryable publication with stable
+occurrence IDs. Scoped Redis groups own transport progress; settled SQLite
+cursors retain local accounting. A consumer's occurrence mark commits with its
+accepted outcome before ACK. Replay and duplicate protection are bounded, and
+handlers reconcile their subject against current state. Runtime session observations supply the five
 facade states; they do not expand the first-build event vocabulary or replace
 record-backed completion.
 

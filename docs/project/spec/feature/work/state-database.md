@@ -40,9 +40,10 @@ the meaning and the writes of the runner tables.
 - Only instrukt writes, and it validates every change before committing it.
   Writing the database with any other tool is outside this contract.
 - Every write transaction runs while its process holds the per-computer
-  writer lock `~/.instrukt/state/writer.lock`. A command that writes the work
-  record, and a runner call, hold it as they did before; SQLite's own locking
-  is not the serialization contract.
+  writer lock `~/.instrukt/state/writer.lock` for its local transaction.
+  Network waits and reaction execution run outside that section, so a blocked
+  consumer holds no unrelated local write hostage. SQLite's own locking is not
+  the serialization contract.
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -201,25 +202,31 @@ becomes a local item or no longer appears in the listing.
 Owned by the runner and written only by it, in the same transactions as the
 reactions they record.
 
-**`events`** — the event log, oldest first.
+**`events`** — the local event log, oldest first. `seq` is a monotone local
+position, never a transport or occurrence identity. Rows hold the stable event
+`id`, `type`, full canonical envelope including opaque `data`, `logged_at` and
+optional project association derived from explicit origin. Platform and unknown
+origins require no project value. Locally emitted rows additionally hold their
+producer occurrence key, target publication scope, pending/confirmed publication
+state and last failure. Transport coordinates identify endpoint/database, stream
+and entry ID; one occurrence can have multiple transport coordinates. Observed
+records are distinct from local publication obligations and are not republished.
+Confirmed publication records acceptance only, not reaction completion.
 
-| Column | Meaning |
-| --- | --- |
-| `seq` | Position in the log, from 1, increasing by one per appended event. Key. |
-| `name` | The event's vocabulary name, such as `runner.upstream_changed`. |
-| `project` | The project it concerns. |
-| `payload` | The event's payload, as the runner domain defines it. |
-| `idempotency_key` | The event's key; unique, so appending an event already logged changes nothing. |
-| `logged_at` | When it was appended. |
+**`consumer_cursors`** — settled local accounting partitioned by logical consumer
+and transport source. It records contiguous settled progress and its associated
+transport coordinate. It neither substitutes for nor advances a Redis group's
+position. A higher observed entry alone cannot move a cursor past unsettled work.
 
-**`consumer_cursors`** — per consumer (`<procedure>@<project>`), the highest
-`seq` up to which every event the consumer selects is handled. Key:
-`consumer`. A cursor never moves back. Columns: `consumer`, `seq`.
+**`handled_events`** — occurrence protection keyed by `(consumer, event_id)` on
+this computer, with `handled_at` and an optional local sequence reference. Two
+stream entries carrying one ID share the mark. Successful local reaction outcome,
+handled mark and settled cursor commit together before Redis ACK. Seven-day
+retention is distinct from the local log and stream retention.
 
-**`handled_events`** — per consumer, each event it was handed. Key:
-`(consumer, seq)`. Columns: `consumer`, `seq`, `handled_at`. The mark commits
-with the delivery's outcome and the consumer's cursor, in one transaction;
-an event with a mark is never handed to that consumer again.
+Redis itself owns stream payloads, group pending entries, transport progress,
+source-scoped ingress claims and dead letters. These are not alternate work
+records or database tables. Redis and SQLite have no shared transaction.
 
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
