@@ -112,7 +112,7 @@ analyzer solely because the same provenance remains unavailable. Changes to
 the artifact, evidence or unresolved-reference condition require a new
 assessment; cosmetic settlement is not a timeless waiver.
 
-### Use cases
+## Use cases
 
 Currency is a supporting contract for preparation and delivery. Its
 comparisons, invalidation and settlement steps introduce no separate user

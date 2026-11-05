@@ -15,9 +15,7 @@ by another todo (reservation). It writes no spec, no test and no marker; it
 reads them. It does not own the snippet model, the pending markers' grammar,
 the structural graph, or the decision of who may author a use case.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Use case**
 :  A user-goal scenario in a feature spec: an identifying heading carrying a
@@ -95,7 +93,7 @@ the structural graph, or the decision of who may author a use case.
    binding it and the code they reach, or, from one or more files, the use
    cases bound by the tests reaching any of them, grouped by spec folder.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns** — use-case identification in feature specs; the binding forms read
   from tests; the coverage classification (bound, unbound, orphan, anonymous,
@@ -117,6 +115,8 @@ the structural graph, or the decision of who may author a use case.
   relationships with specs as customer.
 - **Implementation roots** — `crates/instrukt-core/` (inventory, bindings,
   coverage, reservation); `crates/instrukt-cli/` (command surface).
+
+## Canonical fields
 
 ### Aggregates
 
@@ -155,17 +155,21 @@ None. Every answer is a command's output.
 
 None.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+This context emits no events.
+
+## Use cases
 
 - **use-case-coverage** — `project/instrukt/spec/feature/specs/use-case-coverage` — a project sees which use cases its tests bind, and its check refuses new orphan or anonymous debt.
 - **binding-reservation** — `project/instrukt/spec/feature/specs/binding-reservation` — a todo's planned bindings are checked against the use cases other todos already hold.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 - **`project/instrukt/design/architecture/overview`** — `specs` is part of the always-on core; trace is available only with the blueprint module on.
 - **`project/instrukt/policy/testing`** — this repository binds its own tests to use cases and checks them with `instrukt specs coverage --check`.
 
-### Context map position
+## Context map position
 
 - **docs** — Customer / Supplier. Docs supplies spec identity and the pending-marker grammar; specs reads feature specs through them.
 - **blueprint** — Customer / Supplier. Specs supplies inventory and bindings; blueprint owns their trace join.

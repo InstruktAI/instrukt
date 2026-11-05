@@ -23,9 +23,7 @@ what a project publishes. Publication writes published files, the global index
 and every rendered agent file, and reads only its own repository; reading a
 configured value is configuration's work.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Position**
 : One of the three places a repository's documentation lives:
@@ -163,7 +161,7 @@ set.
 : The commit of a project's canonical main that publication last published;
 recorded by publication.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns** — the snippet model (positions, identity derivation, the domain
   definition and reserved names, taxonomy, frontmatter fields and where each
@@ -201,6 +199,8 @@ recorded by publication.
   wired by the CLI when `todos` is enabled).
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
+
+## Canonical fields
 
 ### Aggregates
 
@@ -283,7 +283,11 @@ None. instrukt runs no daemon and emits no events from this context.
 
 None.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+This context emits no events.
+
+## Use cases
 
 - **progressive-retrieval** — `project/instrukt/spec/feature/docs/progressive-retrieval` — an agent finds what to read, reads it with its required reads or a domain on demand, and sees values computed in its own context.
 - **position-index** — `project/instrukt/spec/feature/docs/position-index` — a publisher chooses per position what agents read in full and what is listed, and learns what the index cannot say.
@@ -291,13 +295,13 @@ None.
 - **snippet-validation** — `project/instrukt/spec/feature/docs/snippet-validation` — a developer learns which snippets break the snippet contract before committing.
 - **pending-documentation** — `project/instrukt/spec/feature/docs/pending-documentation` — intended changes are written ahead of the build without misleading readers of the current contract.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 - **`general/spec/snippet-authoring-schema`** — the snippet schema this context enforces.
 - **`general/procedure/doc-snippet-authoring`** — how authors use the pending carriers this context reads.
 - **`general/policy/context-retrieval`** — how agents are directed to retrieve documentation.
 
-### Context map position
+## Context map position
 
 - **Publication** — customer / supplier. Publication supplies the home's
   published files, global index and published commit. Docs supplies

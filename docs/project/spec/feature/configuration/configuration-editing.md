@@ -66,9 +66,9 @@ request observes a valid source change without receiver restart.
 A revision is an opaque digest of the layer document's content. Two reads of
 an unchanged document give the same revision; any change gives another.
 
-### Use cases
+## Use cases
 
-#### UC-CE1: An agent changes a setting for a developer without losing anyone else's change
+### UC-CE1: An agent changes a setting for a developer without losing anyone else's change
 
 ```gherkin
 Given an agent acting for a developer has read the project's configuration
@@ -80,7 +80,7 @@ But when the change would leave the configuration invalid
 Then the change is refused, nothing is written, and the agent is told what is wrong
 ```
 
-#### UC-CE2: A developer sets up configuration for a machine or a project
+### UC-CE2: A developer sets up configuration for a machine or a project
 
 ```gherkin
 Given a developer starts using instrukt on a machine or in a project without configuration

@@ -94,9 +94,9 @@ the author's own-stamp exemption and reason for a commit requiring no review.
 The integrator takes commits whose latest stamp is `approve` or `exempt`,
 stopping at the first commit that is not.
 
-### Use cases
+## Use cases
 
-#### UC-RC1: An agent acting for a person commits its work under its own name
+### UC-RC1: An agent acting for a person commits its work under its own name
 
 ```gherkin
 Given an agent working for a developer in a session of a configured runtime
@@ -109,7 +109,7 @@ When the agent's message itself contains a session line
 Then nothing is committed and the agent is told how to supply that fact
 ```
 
-#### UC-RC2: A developer committing outside any agent session keeps their own identity
+### UC-RC2: A developer committing outside any agent session keeps their own identity
 
 ```gherkin
 Given a developer at a terminal with no agent session in its environment
@@ -119,7 +119,7 @@ And the commit records no session
 And the commit records whether a human was involved as the developer declared
 ```
 
-#### UC-RC3: A developer makes settled direct work available for integration
+### UC-RC3: A developer makes settled direct work available for integration
 
 ```gherkin
 Given a developer has direct commits ready to join the shared baseline

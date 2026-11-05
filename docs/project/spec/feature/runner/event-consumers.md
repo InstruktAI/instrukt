@@ -77,9 +77,9 @@ bounded backlog; current-state owners recover their authoritative source before
 resuming after gaps, while transient presentation intentionally omits missed
 frames. That distinction creates no UI, correlation or notification consumer.
 
-### Use cases
+## Use cases
 
-#### UC-EC1: Keep one responsibility responsive while another fails
+### UC-EC1: Keep one responsibility responsive while another fails
 
 ```gherkin
 Given a developer has two independent consumers interested in an occurrence
@@ -87,7 +87,7 @@ When one reaction fails or remains slow
 Then the other receives and settles it without waiting for the first
 ```
 
-#### UC-EC2: Avoid acting twice on a retained occurrence
+### UC-EC2: Avoid acting twice on a retained occurrence
 
 ```gherkin
 Given a developer has a successful reaction recorded for an event ID
@@ -96,7 +96,7 @@ Then the reaction is skipped and transport acknowledgment is retried
 But after the handled record expires the repeat may be handled again
 ```
 
-#### UC-EC3: Resume handling that was interrupted
+### UC-EC3: Resume handling that was interrupted
 
 ```gherkin
 Given a developer has a pending reaction when instrukt stops
@@ -105,7 +105,7 @@ Then work without a committed handled record is offered again
 And a handled commit made before a lost ACK prevents another effect
 ```
 
-#### UC-EC4: Act only where a procedure event was emitted
+### UC-EC4: Act only where a procedure event was emitted
 
 ```gherkin
 Given a developer runs an own-computer consumer on two computers
@@ -113,7 +113,7 @@ When one emits a matching occurrence
 Then only that computer is handed it for reaction
 ```
 
-#### UC-EC5: Select a vocabulary branch precisely
+### UC-EC5: Select a vocabulary branch precisely
 
 ```gherkin
 Given a developer subscribes to erp.invoice.*
@@ -122,7 +122,7 @@ Then both are selected
 And erp.invoice and erp.invoices.paid are not selected
 ```
 
-#### UC-EC6: Correct an invalid event selection before publication
+### UC-EC6: Correct an invalid event selection before publication
 
 ```gherkin
 Given a developer declares a partial or embedded wildcard or an empty-segment type pattern
@@ -130,7 +130,7 @@ When the declaration is validated
 Then it is refused naming the invalid pattern and cannot become an active subscription
 ```
 
-#### UC-EC7: Route the same facts independently of opaque payloads
+### UC-EC7: Route the same facts independently of opaque payloads
 
 ```gherkin
 Given a developer receives events with the same selection attributes but different opaque data
@@ -138,7 +138,7 @@ When consumer interest is evaluated
 Then selection is identical and only the selected reaction interprets data
 ```
 
-#### UC-EC8: Inspect a persistent failure while later work proceeds
+### UC-EC8: Inspect a persistent failure while later work proceeds
 
 ```gherkin
 Given a developer has an event that fails through the attempt ceiling, including a malformed entry
@@ -148,7 +148,7 @@ And later entries proceed
 But any failed parking stage leaves it unsettled and resumes the unfinished stages after interruption
 ```
 
-#### UC-EC9: Catch up an existing responsibility after downtime
+### UC-EC9: Catch up an existing responsibility after downtime
 
 ```gherkin
 Given a developer stops a retained consumer while events arrive
@@ -157,7 +157,7 @@ Then its pending entries precede new entries within the retained stream
 And missing trimmed payloads remain a visible recovery limit rather than successful handling
 ```
 
-#### UC-EC10: Start a newly registered reaction from the present
+### UC-EC10: Start a newly registered reaction from the present
 
 ```gherkin
 Given a developer registers a new retained consumer after older events exist

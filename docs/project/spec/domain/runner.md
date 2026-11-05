@@ -15,9 +15,7 @@ the enabled modules' work in one process, entered through `instrukt run` or
 context owns work content, artifacts and stamps; workflow owns
 authorization and derived workflow state.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Runner invocation**
 : One execution that performs the available work of enabled modules.
@@ -72,7 +70,7 @@ and reports optional capabilities. Configuration contains no runtime verbs.
 **Anomaly**
 : A failure requiring attention that waits in no agent thread.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns:** Module-aware runner execution; todo dispatch policy; procedure
   activation from events; the runtime-adapter trait, the sessions facade and session reuse behavior;
@@ -116,6 +114,8 @@ and reports optional capabilities. Configuration contains no runtime verbs.
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
 Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
+
+## Canonical fields
 
 ### Aggregates
 
@@ -265,7 +265,15 @@ handlers reconcile their subject against current state. Runtime session observat
 facade states; they do not expand the first-build event vocabulary or replace
 record-backed completion.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+The source events above concern a watched ref, a main revision or an
+integrate candidate in their project origin. The event declarations define
+their typed subjects (`project/instrukt/spec/feature/runner/event-envelope`).
+`instrukt.system.event.dead_lettered` concerns the failing stream entry and
+has no origin, as declared in Canonical fields.
+
+## Use cases
 
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
@@ -290,12 +298,12 @@ record-backed completion.
 - **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module boundaries
   and the CLI's execution shape.
 
-### Context map position
+## Context map position
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |

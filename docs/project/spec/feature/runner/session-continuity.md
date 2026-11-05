@@ -212,9 +212,9 @@ same id; continued absence raises an anomaly. Observation failure retries
 observation instead. Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
 
-### Use cases
+## Use cases
 
-#### UC-SS1: Share a clarification with a linked collaborator
+### UC-SS1: Share a clarification with a linked collaborator
 
 ```gherkin
 Given a developer is working with linked conversations
@@ -223,7 +223,7 @@ When the developer types a clarification in one conversation
 Then the clarification reaches the linked conversation identified as the developer's words
 ```
 
-#### UC-SS2: A developer settles a standing agent whose start was interrupted
+### UC-SS2: A developer settles a standing agent whose start was interrupted
 
 ```gherkin
 Given a standing agent's start result was lost and listing cannot recover its thread
@@ -233,7 +233,7 @@ But when the developer identifies the keyed thread that was created
 Then instrukt verifies and binds that thread without starting another
 ```
 
-#### UC-SS3: A developer on T3 Code has agents work after choosing T3 as their runtime
+### UC-SS3: A developer on T3 Code has agents work after choosing T3 as their runtime
 
 ```gherkin
 Given a developer has chosen T3 Code as the runtime on this computer
@@ -243,7 +243,7 @@ And subsequent work reaches that recorded conversation
 And an agent can read its recent messages through instrukt
 ```
 
-#### UC-SS5: A developer switches on a feature their runtime cannot carry
+### UC-SS5: A developer switches on a feature their runtime cannot carry
 
 ```gherkin
 Given a developer's selected runtime adapter lacks a capability a feature needs
@@ -254,7 +254,7 @@ But when the adapter provides all the required capabilities
 Then the feature can be enabled
 ```
 
-#### UC-SS6: A developer who has chosen no runtime is never given one
+### UC-SS6: A developer who has chosen no runtime is never given one
 
 ```gherkin
 Given T3 Code is installed but the developer has chosen no runtime
@@ -263,7 +263,7 @@ Then instrukt refuses saying that no runtime is chosen
 And no runtime is picked for them
 ```
 
-#### UC-SS8: Events keep one standing agent through a runtime outage
+### UC-SS8: Events keep one standing agent through a runtime outage
 
 ```gherkin
 Given a standing agent already has a keyed T3 conversation
@@ -275,7 +275,7 @@ Then instrukt finds the keyed conversation and sends it the event
 And a second conversation is not started
 ```
 
-#### UC-SS9: A standing agent receives new work in its existing conversation
+### UC-SS9: A standing agent receives new work in its existing conversation
 
 ```gherkin
 Given a standing agent has an existing keyed conversation
@@ -285,7 +285,7 @@ And the events reach the existing conversation, including as a next turn when bu
 And no additional conversation is started for that key
 ```
 
-#### UC-SS10: Failed delivery retains the standing agent's identity
+### UC-SS10: Failed delivery retains the standing agent's identity
 
 ```gherkin
 Given instrukt has found a standing agent's keyed conversation
@@ -294,7 +294,7 @@ Then the event remains pending for delivery to that same conversation
 And no replacement conversation is started
 ```
 
-#### UC-SS11: Recover a created standing agent after its start reply was lost
+### UC-SS11: Recover a created standing agent after its start reply was lost
 
 ```gherkin
 Given T3 created a standing agent's keyed conversation but instrukt lost the start reply
@@ -303,7 +303,7 @@ Then it binds the single keyed conversation it finds
 And retries unconfirmed event delivery there without creating another conversation
 ```
 
-#### UC-SS12: Conflicting standing-agent identities are made visible
+### UC-SS12: Conflicting standing-agent identities are made visible
 
 ```gherkin
 Given the runtime lists two conversations with one standing-agent key
@@ -312,7 +312,7 @@ Then instrukt reports the identity conflict and leaves the event pending
 And neither conversation is chosen arbitrarily and no third conversation is started
 ```
 
-#### UC-SS4: An agent looks up what an earlier conversation said (to retire)
+### UC-SS4: An agent looks up what an earlier conversation said (to retire)
 
 UC-SS4 is to retire: the superseded scenario remains only while its existing
 test bindings are removed by the builder.
@@ -326,7 +326,7 @@ test bindings are removed by the builder.
   Then it is told which verb is missing, and no search is made
 ```
 
-#### UC-SS7: An agent told that an ending is its to do ends the sessions itself (to retire)
+### UC-SS7: An agent told that an ending is its to do ends the sessions itself (to retire)
 
 UC-SS7 is to retire: the superseded scenario remains only while its existing
 test bindings are removed by the builder.

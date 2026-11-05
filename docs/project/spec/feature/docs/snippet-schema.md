@@ -116,9 +116,9 @@ the rule: `instrukt root rules`, or the `schema.yaml` file and its path key.
 - A `schema.yaml` with findings makes it print those findings and exit
   non-zero.
 
-### Use cases
+## Use cases
 
-#### UC-SH1: An author learns the shape a folder's snippets must take
+### UC-SH1: An author learns the shape a folder's snippets must take
 
 ```gherkin
 Given a developer is about to write a snippet in a folder of their project
@@ -128,7 +128,7 @@ And for each section what imposes it, the built-in rules or their project's sche
 And a skeleton they can start the snippet from
 ```
 
-#### UC-SH2: A publisher adds a section to a folder's snippets
+### UC-SH2: A publisher adds a section to a folder's snippets
 
 ```gherkin
 Given a developer's position schema requires an extra section for the snippets under one folder
@@ -139,7 +139,7 @@ But when their schema makes optional a section the built-in rules or a shorter f
 Then the schema itself is reported, naming the section and the rule it would drop
 ```
 
-#### UC-SH3: A project's snippets are judged the same on every computer
+### UC-SH3: A project's snippets are judged the same on every computer
 
 ```gherkin
 Given a developer's project carries its own schema

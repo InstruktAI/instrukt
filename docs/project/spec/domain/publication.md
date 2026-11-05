@@ -24,9 +24,7 @@ projects, and does nothing when main equals the commit it last published. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Home**
 :  `~/.instrukt`, the fixed place on this computer that holds publication and
@@ -122,7 +120,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 :  The home-wide lock under which every write to the home's publication
    happens, so syncs of different projects never interleave.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns** — reading a project's committed main for publication; the
   published-commit and checkout-path record and the no-op; the ownership
@@ -168,6 +166,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   for `instrukt status` only, repository (hook-section state, as customer).
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
+
+## Canonical fields
 
 ### Aggregates
 
@@ -229,7 +229,11 @@ records.
 None. A sync starts when a developer, an agent or a repository hook section
 runs it.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+This context emits no events.
+
+## Use cases
 
 - **project-publication** — `project/instrukt/spec/feature/publication/project-publication` — a project's committed positions reach the agents on this computer, side by side with other projects' docs, without either taking the other's.
 - **agent-entrypoints** — `project/instrukt/spec/feature/publication/agent-entrypoints` — the project's `AGENTS.md` is its purpose and the rendering of `docs/project/index.yaml`, and the `docs/general/` owner gives every supported agent CLI a rendered global file without overwriting one it did not write.
@@ -238,13 +242,13 @@ runs it.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
 - **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 - **`project/instrukt/design/architecture/overview`** — the publish
   flow, the home layout, and the invariant that each project publishes only
   its own part from committed state.
 
-### Context map position
+## Context map position
 
 - **docs** — Customer / Supplier, both ways. Docs supplies the snippet model,
   the `index.yaml` and `schema.yaml` model and validation publication renders

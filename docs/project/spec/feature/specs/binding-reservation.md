@@ -52,9 +52,9 @@ marker the todo authors.
 - The slug is checked for form only; whether it names an existing todo is
   checked only when the `todos` module is on.
 
-### Use cases
+## Use cases
 
-#### UC-SR1: An agent preparing work for a person confirms its planned use cases are free
+### UC-SR1: An agent preparing work for a person confirms its planned use cases are free
 
 ```gherkin
 Given an agent preparing a todo for a person, whose plan will bind several use cases

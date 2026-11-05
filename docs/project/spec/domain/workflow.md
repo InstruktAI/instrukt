@@ -13,9 +13,7 @@ configured actions and effects. Durable evidence belongs to the work record,
 session capabilities to the configured runtime, and event delivery to the
 runner and event capability. Workflow stores no phase.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Flavor**
 : The selected documentation and configuration defining how a project works.
@@ -52,7 +50,7 @@ runner and event capability. Workflow stores no phase.
 **Canonical branch**
 : The shared branch advanced only through the integration gate.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns:** definition evaluation, condition semantics, fact interpretation for
   workflow progression, review and drift currency, kind-specific preparation,
@@ -185,6 +183,8 @@ the counts and marked baseline commit are informational. Drift facts
 come from recorded provenance and current evidence; semantic classifications
 remain agent judgments.
 
+## Canonical fields
+
 ### Aggregates
 
 #### Workflow definition
@@ -273,7 +273,12 @@ the engine's derived state.
 - **Not observed:** a red result on a commit that is no longer the head. The
   head's own CI covers the combined state.
 
-### Use cases
+## Event subjects and origins
+
+`workflow.finalized` concerns the todo in its project origin; its payload
+names the finalized commit (`project/instrukt/spec/feature/runner/event-envelope`).
+
+## Use cases
 
 - **Workflow definition** — `project/instrukt/spec/feature/workflow/workflow-definition` — adopt a flavor and configure project obligations independently of the engine.
 - **Artifact currency** — `project/instrukt/spec/feature/workflow/artifact-currency` — shared evidence and re-derivation contract for preparation and delivery.
@@ -281,11 +286,11 @@ the engine's derived state.
 - **Delivery cycle** — `project/instrukt/spec/feature/workflow/delivery-cycle` — implement, review and finalize prepared work for integration.
 - **Integration gate** — `project/instrukt/spec/feature/workflow/integration-gate` — admit verified candidates and restore a failed shared baseline.
 
-### Governing designs and decisions
+## Governing designs and decisions
 
 The context map indexes the cross-cutting architecture design.
 
-### Context map position
+## Context map position
 
 - **Work → workflow — Customer / Supplier:** work supplies artifacts, stamps,
   provenance and recorded approvals; workflow owns gate requirements and kind routing.

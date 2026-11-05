@@ -85,9 +85,9 @@ names a home path.
   published commit, so the next sync tries again
   (`project/instrukt/spec/feature/publication/project-publication`).
 
-### Use cases
+## Use cases
 
-#### UC-ES1: A developer's editor checks instrukt's files as they type
+### UC-ES1: A developer's editor checks instrukt's files as they type
 
 ```gherkin
 Given a developer has initialized instrukt in their repository
@@ -97,7 +97,7 @@ And that schema admits exactly the keys validation admits for that file, so the 
 And no file in the repository names a path in the developer's home
 ```
 
-#### UC-ES2: A developer's editor follows the instrukt they have installed
+### UC-ES2: A developer's editor follows the instrukt they have installed
 
 ```gherkin
 Given a developer's repository whose editor schemas were written by an older instrukt

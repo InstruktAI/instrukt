@@ -122,9 +122,9 @@ when both `modules.todos` and `modules.events` are off, and then name both;
 with either on, they serve that module's work. `install` and `ticks status` always
 work; `eval report` needs no switch and reports only the record it can access.
 
-### Use cases
+## Use cases
 
-#### UC-RD1: Delegate todo pickup at the project's chosen pace
+### UC-RD1: Delegate todo pickup at the project's chosen pace
 
 ```gherkin
 Scenario Outline: Choose how development work is picked up
@@ -139,7 +139,7 @@ Scenario Outline: Choose how development work is picked up
     | deliberate | awaits the developer's deliberate start  |
 ```
 
-#### UC-RD2: A developer is told how to enable the runner
+### UC-RD2: A developer is told how to enable the runner
 
 ```gherkin
 Given a developer's project has work tracking and event responses both switched off

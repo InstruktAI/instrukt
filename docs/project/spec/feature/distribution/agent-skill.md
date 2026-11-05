@@ -113,9 +113,9 @@ changing instrukt.
 newer release replaces the installed skill; its cockpit then offers the
 matching binary. The skill never upgrades the binary on its own.
 
-### Use cases
+## Use cases
 
-#### UC-CP1: A developer installs instrukt into their agents with one sentence
+### UC-CP1: A developer installs instrukt into their agents with one sentence
 
 ```gherkin
 Given a developer uses one or more agent CLIs on a supported computer without instrukt
@@ -127,7 +127,7 @@ And in their next session, in any of those agent CLIs, opening the skill reports
 
 UC-CP2 is retired: no startup hook announces instrukt.
 
-#### UC-CP3: A developer adopts a repository through an interview the agent guides
+### UC-CP3: A developer adopts a repository through an interview the agent guides
 
 ```gherkin
 Given a developer has instrukt installed and a repository that is not adopted
@@ -139,7 +139,7 @@ When they ask the same for a repository that is already adopted
 Then the agent says it is adopted and what it publishes, and changes nothing
 ```
 
-#### UC-CP4: A developer switches on a module the runtime can carry
+### UC-CP4: A developer switches on a module the runtime can carry
 
 ```gherkin
 Given a developer's computer is configured with a runtime
@@ -151,7 +151,7 @@ But when the adapter lacks a required capability
 Then the agent names the missing capability, and the module stays off
 ```
 
-#### UC-CP5: A developer changes their setup later through the same skill
+### UC-CP5: A developer changes their setup later through the same skill
 
 ```gherkin
 Given a developer set instrukt up through the instrukt skill some time ago
@@ -160,7 +160,7 @@ Then the agent reads the current state, asks for the new choice and changes inst
 And the skill itself is unchanged, and opening it again shows the new state
 ```
 
-#### UC-CP6: A developer who installed the skill first still gets the binary
+### UC-CP6: A developer who installed the skill first still gets the binary
 
 ```gherkin
 Given a developer installed the instrukt skill but not the instrukt binary

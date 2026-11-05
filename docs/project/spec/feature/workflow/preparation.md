@@ -100,9 +100,9 @@ subsequent execution dispatch. Manual preparation does not itself require
 dependency delivery; work admission does. Entry claims and holds are work-record
 and runner concerns, distinct from the derived preparation state.
 
-### Use cases
+## Use cases
 
-#### UC-PR1: Prepare an intended feature for implementation
+### UC-PR1: Prepare an intended feature for implementation
 
 ```gherkin
 Given a developer has recorded the feature they want in their project

@@ -44,9 +44,9 @@ command says so and the agent explores by hand.
   unavailable answer.
 - **Module off:** the command says the blueprint module is off.
 
-### Use cases
+## Use cases
 
-#### UC-BA1: An agent changing files for a person learns what depends on them
+### UC-BA1: An agent changing files for a person learns what depends on them
 
 ```gherkin
 Given a project whose latest pushed revision has been mapped

@@ -145,9 +145,9 @@ The workflow is enabled with the work-record capability. A project uses one
 workflow engine at a time. Event delivery is a separate capability; it does
 not drive the engine's state calculation.
 
-### Use cases
+## Use cases
 
-#### UC-WD1: Adopt a project workflow
+### UC-WD1: Adopt a project workflow
 
 ```gherkin
 Given a developer is adopting instrukt for a project

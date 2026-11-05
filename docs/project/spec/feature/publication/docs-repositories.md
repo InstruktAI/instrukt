@@ -92,9 +92,9 @@ instrukt's repository is a consumer like any adopting project: it carries
 `docs/project/` and takes its doctrine from whichever docs repository
 publishes it on the developer's computer.
 
-### Use cases
+## Use cases
 
-#### UC-DOR1: A developer gives their computer its doctrine
+### UC-DOR1: A developer gives their computer its doctrine
 
 ```gherkin
 Given a developer has instrukt and a docs repository holding always-on doctrine and doctrine domains
@@ -104,7 +104,7 @@ And every supported agent on the computer starts with the always-on doctrine and
 And agents in the developer's other projects read that doctrine
 ```
 
-#### UC-DOR2: A developer brings their own doctrine
+### UC-DOR2: A developer brings their own doctrine
 
 ```gherkin
 Given a developer's computer publishes a domain from one docs repository
@@ -114,7 +114,7 @@ When the first repository removes that domain and their own repository publishes
 Then their projects read their own repository's version of the domain
 ```
 
-#### UC-DOR3: A project needing doctrine the computer lacks is told what to adopt
+### UC-DOR3: A project needing doctrine the computer lacks is told what to adopt
 
 ```gherkin
 Given a developer's project needs a domain that no adopted docs repository publishes on their computer

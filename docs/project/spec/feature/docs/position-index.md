@@ -73,9 +73,9 @@ A notice is reported with its file and code and never fails the run.
 - **An unreferenced snippet** is reported by snippet validation
   (`project/instrukt/spec/feature/docs/snippet-validation`).
 
-### Use cases
+## Use cases
 
-#### UC-PI1: A publisher learns what their index cannot say before publishing
+### UC-PI1: A publisher learns what their index cannot say before publishing
 
 ```gherkin
 Given a developer has written the index of a position they publish
@@ -86,7 +86,7 @@ And a listed snippet that the expanded snippets already bring in is reported, na
 And the run reports failure while any of these remains
 ```
 
-#### UC-PI2: A publisher is told a domain has no index
+### UC-PI2: A publisher is told a domain has no index
 
 ```gherkin
 Given a developer publishes a domain that has no index

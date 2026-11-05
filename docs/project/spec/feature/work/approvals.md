@@ -88,9 +88,9 @@ observed source session; GitHub approvals arrive by pull with GitHub attribution
 Carry retains the earlier attribution and evidence under the current independent
 reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
 
-### Use cases
+## Use cases
 
-#### UC-AP1: Authorize a reviewed outcome
+### UC-AP1: Authorize a reviewed outcome
 
 ```gherkin
   Given a developer's todo is waiting at a human approval moment
@@ -100,7 +100,7 @@ reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
   And binds the approval to the evidence they approved
 ```
 
-#### UC-AP2: Hand off intent without repeating the request
+### UC-AP2: Hand off intent without repeating the request
 
 ```gherkin
   Given a developer's request has been recorded by its author
@@ -109,7 +109,7 @@ reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
   And subsequent recipients can accept it without asking the developer to repeat it
 ```
 
-#### UC-AP3: An earlier approval carries to a revised outcome only under a current review
+### UC-AP3: An earlier approval carries to a revised outcome only under a current review
 
 ```gherkin
   Given a developer approved an outcome that was later revised
@@ -120,7 +120,7 @@ reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
   Then the carry is refused and names the missing review
 ```
 
-#### UC-AP4: A peer approves where the project allows it, with its reason on record
+### UC-AP4: A peer approves where the project allows it, with its reason on record
 
 ```gherkin
   Given a developer's project lets a peer approve a gate

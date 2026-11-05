@@ -97,9 +97,9 @@ judgment (`sdlc/policy/testing`), so it is reported, never failed.
 - A count below its baseline passes and says the baseline can be tightened.
 - The check never fails on unbound or multi-bound use cases.
 
-### Use cases
+## Use cases
 
-#### UC-SC1: A developer sees which of the project's use cases are tested
+### UC-SC1: A developer sees which of the project's use cases are tested
 
 ```gherkin
 Given a project whose feature specs hold use cases and whose tests bind some of them
@@ -109,7 +109,7 @@ And they see each test that cites a use case that does not exist
 And they see each scenario that has no use-case id yet
 ```
 
-#### UC-SC2: A developer's check refuses new spec-coverage debt
+### UC-SC2: A developer's check refuses new spec-coverage debt
 
 ```gherkin
 Given a project with a committed record of its orphan and anonymous counts

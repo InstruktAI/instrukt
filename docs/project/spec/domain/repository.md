@@ -22,9 +22,7 @@ and the work item when given. It does not decide what a sync publishes or a
 graph contains, owns no lint or test hook, and never runs the project's own
 commands.
 
-## Canonical fields
-
-### Ubiquitous language
+## Ubiquitous language
 
 **Hook file**
 :  An executable file in the repository's hooks directory that git runs at
@@ -76,7 +74,7 @@ commands.
 : The agent identity the selected adapter can resolve from its caller
   metadata. An unresolved identity remains unknown.
 
-### Ownership boundary
+## Ownership boundary
 
 - **Owns** — repository adoption and its claims report; the copy of the
   published `sdlc` `schema.yaml` into a new project; instrukt's section in
@@ -111,6 +109,8 @@ commands.
   the core-declared interface wired by the CLI only when todos is enabled).
 - **Implementation roots** — `crates/instrukt-core/` (repository);
   `crates/instrukt-cli/` (command surface).
+
+## Canonical fields
 
 ### Aggregates
 
@@ -171,19 +171,23 @@ None. Hook runs start other contexts' commands directly.
 
 None. Git invokes hook files; a developer or agent invokes the commands.
 
-### Use cases (index of feature specs)
+## Event subjects and origins
+
+This context emits no events.
+
+## Use cases
 
 - **hook-sections** — `project/instrukt/spec/feature/repository/hook-sections` — instrukt's hook sections live beside the project's own hooks and keep publication current without blocking git.
 - **attributed-commit** — `project/instrukt/spec/feature/repository/attributed-commit` — an agent's commit names the agent, its session and the human's involvement; outside a session it is the developer's own.
 - **project-initialization** — `project/instrukt/spec/feature/repository/project-initialization` — a developer adopts instrukt in a repository in one idempotent step and sees what it will claim.
 
-### Governing designs and decisions (index)
+## Governing designs and decisions
 
 - **`project/instrukt/design/architecture/overview`** — git hooks
   belong to everyone; instrukt touches only its marked section and never
   blocks git after the fact.
 
-### Context map position
+## Context map position
 
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice, the agents' git authors and the blueprint switch.

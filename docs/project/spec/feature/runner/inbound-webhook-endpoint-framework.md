@@ -95,9 +95,9 @@ source-scoped delivery. It is independent of subscription matches or runtime
 availability. Signature validity authenticates a source; event content remains
 untrusted data, not authorization to mutate work.
 
-### Use cases
+## Use cases
 
-#### UC-IF5: Use native and GitHub sources without a provider handshake
+### UC-IF5: Use native and GitHub sources without a provider handshake
 
 ```gherkin
 Given a developer has declared a native or GitHub endpoint
@@ -105,7 +105,7 @@ When a caller attempts a subscription verification handshake
 Then no challenge is echoed and no event is relayed
 ```
 
-#### UC-IF8: Correct malformed delivery input
+### UC-IF8: Correct malformed delivery input
 
 ```gherkin
 Given a developer sends a correctly signed request with a malformed protocol body
@@ -113,7 +113,7 @@ When ingress receives it
 Then it returns a client error and relays nothing
 ```
 
-#### UC-IF17: Expose only declared endpoints
+### UC-IF17: Expose only declared endpoints
 
 ```gherkin
 Given a developer has not registered a project or has not declared the requested source
@@ -121,7 +121,7 @@ When a request reaches its derived path
 Then ingress returns not found and relays nothing
 ```
 
-#### UC-IF18: Authenticate every request before processing it
+### UC-IF18: Authenticate every request before processing it
 
 ```gherkin
 Given a developer has a declared endpoint reachable even from loopback
@@ -129,7 +129,7 @@ When a request has a missing or invalid raw-body signature
 Then it is unauthorized and no structured payload is parsed or relayed
 ```
 
-#### UC-IF19: Configure signing material through a reference
+### UC-IF19: Configure signing material through a reference
 
 ```gherkin
 Given a developer declares a webhook without a secret reference or with a literal secret
@@ -137,7 +137,7 @@ When configuration is validated
 Then it is refused identifying the declaration without exposing signing material
 ```
 
-#### UC-IF20: Add or remove a project source without restarting ingress
+### UC-IF20: Add or remove a project source without restarting ingress
 
 ```gherkin
 Given a developer has a running ingress
@@ -145,7 +145,7 @@ When they add, edit or remove a project native source in valid configuration
 Then the next request uses that declaration without restart and a removed source has no endpoint
 ```
 
-#### UC-IF21: Publish a domain fact without teaching instrukt its business schema
+### UC-IF21: Publish a domain fact without teaching instrukt its business schema
 
 ```gherkin
 Given a developer sends a valid signed native wrapper with an undeclared domain event name and opaque payload
@@ -153,7 +153,7 @@ When ingress accepts it
 Then the relayed type is domain dot name and its data is exactly the supplied payload
 ```
 
-#### UC-IF22: Correct an invalid native event name
+### UC-IF22: Correct an invalid native event name
 
 ```gherkin
 Given a developer sends a signed native wrapper whose domain has dots or whose name has an invalid or empty segment
@@ -161,7 +161,7 @@ When ingress checks the wrapper
 Then it returns a client error and publishes no event
 ```
 
-#### UC-IF23: Retry a delivery whose relay failed
+### UC-IF23: Retry a delivery whose relay failed
 
 ```gherkin
 Given a developer's source sends a verified delivery while cluster publication fails
@@ -169,7 +169,7 @@ When ingress answers
 Then the answer is a transient failure and does not claim successful acceptance
 ```
 
-#### UC-IF24: Diagnose an unreadable declaring project
+### UC-IF24: Diagnose an unreadable declaring project
 
 ```gherkin
 Given a developer's registered source configuration or declared secret cannot be read on ingress
@@ -178,7 +178,7 @@ Then it receives a server error with no relay
 And diagnostics identify the home and unresolved reference without a secret value
 ```
 
-#### UC-IF25: Receive either GitHub content type
+### UC-IF25: Receive either GitHub content type
 
 ```gherkin
 Given a developer sends the same GitHub document as JSON and as the sole form payload field with signatures over each original body
@@ -186,7 +186,7 @@ When ingress verifies the deliveries
 Then both relay the same document and GitHub event meaning
 ```
 
-#### UC-IF26: Reject an ambiguous GitHub form body
+### UC-IF26: Reject an ambiguous GitHub form body
 
 ```gherkin
 Given a developer sends a signed GitHub form with missing, repeated or additional payload fields or a nonobject document
@@ -194,7 +194,7 @@ When ingress receives it
 Then it returns a client error and relays nothing
 ```
 
-#### UC-IF27: Rotate signing secrets without dropping valid deliveries
+### UC-IF27: Rotate signing secrets without dropping valid deliveries
 
 ```gherkin
 Given a developer has current and previous secret references during rotation
@@ -204,7 +204,7 @@ When the previous reference is removed
 Then a request signed only by that old secret is rejected on the next request
 ```
 
-#### UC-IF28: Keep a project signing secret isolated and redacted
+### UC-IF28: Keep a project signing secret isolated and redacted
 
 ```gherkin
 Given two projects reuse a secret reference name with different values in their own environment files

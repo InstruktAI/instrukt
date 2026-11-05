@@ -189,9 +189,9 @@ clock. It is never silent: while it is set, every command prints
 `instrukt: clock overridden to <value>` to stderr. A value that is not RFC 3339
 refuses the command; it never falls back to the system clock.
 
-### Use cases
+## Use cases
 
-#### UC-CL1: A developer overrides a machine default for one project
+### UC-CL1: A developer overrides a machine default for one project
 
 ```gherkin
 Given a developer's machine sets a default for a setting that projects may override
@@ -202,7 +202,7 @@ When it reads the setting inside another project that sets nothing
 Then it receives the machine's default
 ```
 
-#### UC-CL2: A developer clones a project that tries to decide what runs on their machine
+### UC-CL2: A developer clones a project that tries to decide what runs on their machine
 
 ```gherkin
 Given a developer clones a project whose configuration chooses the machine runtime
@@ -211,7 +211,7 @@ Then the declaration is reported as not permitted in a project
 And reading the runtime choice inside that project still answers the machine's own
 ```
 
-#### UC-CL3: A developer keeps working after upgrading instrukt
+### UC-CL3: A developer keeps working after upgrading instrukt
 
 ```gherkin
 Given a developer's machine and project configuration were written by an older instrukt
@@ -220,7 +220,7 @@ Then their configuration is brought to the current schema with every setting kep
 And the commands that read it work as before
 ```
 
-#### UC-CL4: An older instrukt refuses configuration written by a newer one
+### UC-CL4: An older instrukt refuses configuration written by a newer one
 
 ```gherkin
 Given a developer's configuration was written by a newer instrukt than the one they run

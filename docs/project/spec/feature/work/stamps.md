@@ -122,7 +122,7 @@ Review rounds are counted from verdict stamps, including a new verdict in a
 reused session. There is no review-occurrence admission write; repeated
 evaluation alone counts no round.
 
-### Use cases
+## Use cases
 
 Stamp capture and validation support the goals in the approval, GitHub-record
 and evaluation-report specs. They introduce no separate stakeholder goal.

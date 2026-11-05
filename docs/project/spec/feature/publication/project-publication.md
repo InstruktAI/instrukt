@@ -169,9 +169,9 @@ reports the leftovers it could not remove.
 Listing and reading the published corpus and index belong to
 `project/instrukt/spec/feature/docs/progressive-retrieval`.
 
-### Use cases
+## Use cases
 
-#### UC-PUB1: A developer publishes committed docs on their computer
+### UC-PUB1: A developer publishes committed docs on their computer
 
 ```gherkin
 Given a developer's project with a domain of its own
@@ -181,7 +181,7 @@ Then the published corpus contains the snippet as committed and the index contai
 And uncommitted changes are absent from the published corpus
 ```
 
-#### UC-PUB2: Two projects publish on one computer without taking each other's docs
+### UC-PUB2: Two projects publish on one computer without taking each other's docs
 
 ```gherkin
 Given a developer with two projects on one computer, each with a domain of its own
@@ -193,7 +193,7 @@ Then its publication is refused and names the domain and its owner
 And the documentation of both projects is as it was before
 ```
 
-#### UC-PUB3: A developer retracts retired documentation
+### UC-PUB3: A developer retracts retired documentation
 
 ```gherkin
 Given a developer's project whose published documentation includes a snippet and a domain
@@ -206,7 +206,7 @@ And instructions rendered from masters that still exist are unchanged
 And another project's published documentation is unchanged
 ```
 
-#### UC-PUB4: Publishing again changes nothing until something new is committed
+### UC-PUB4: Publishing again changes nothing until something new is committed
 
 ```gherkin
 Given a developer's project whose committed main is already published
@@ -216,7 +216,7 @@ When the developer asks for the project to be republished regardless
 Then its documentation is published again from its committed main
 ```
 
-#### UC-PUB5: A developer who commits invalid docs keeps the last good publication
+### UC-PUB5: A developer who commits invalid docs keeps the last good publication
 
 ```gherkin
 Given a developer's project whose documentation is published
@@ -227,7 +227,7 @@ And the previously published documentation and index are unchanged
 And the next publication of the project tries that commit again
 ```
 
-#### UC-PUB6: Rendering that cannot complete stops publication
+### UC-PUB6: Rendering that cannot complete stops publication
 
 ```gherkin
 Given a developer's project whose documentation is published
@@ -241,7 +241,7 @@ Then publication fails and names the file and the reference
 And the previously published documentation is unchanged
 ```
 
-#### UC-PUB7: A committed link cannot make publication write outside the project
+### UC-PUB7: A committed link cannot make publication write outside the project
 
 ```gherkin
 Given a developer's project whose documentation is published
@@ -252,7 +252,7 @@ And the file the link points to is unchanged
 And the previously published documentation is unchanged
 ```
 
-#### UC-PUB8: A leftover that cannot be removed does not undo a publication
+### UC-PUB8: A leftover that cannot be removed does not undo a publication
 
 ```gherkin
 Given a developer's project with new documentation committed to main
@@ -265,7 +265,7 @@ When the leftover can be removed again and publication runs
 Then the leftover is gone
 ```
 
-#### UC-PUB9: A developer who names a domain after a reserved name is told why it is refused
+### UC-PUB9: A developer who names a domain after a reserved name is told why it is refused
 
 ```gherkin
 Given a developer's project that commits a domain named general or project

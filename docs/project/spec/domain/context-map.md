@@ -12,6 +12,11 @@ outside the binary. Contexts own behavior;
 modules determine which capabilities are enabled. The map indexes their domain
 contracts and the designs governing their relationships.
 
+## Ownership boundary
+
+This map indexes the bounded contexts and their relationships; each context's
+domain spec owns its behavior. The map is not an additional bounded context.
+
 ## Canonical fields
 
 ### Bounded contexts
@@ -101,10 +106,27 @@ session operations and external notifications. These are boundary locations, not
 additional contexts. Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
 
-### Cross-cutting designs and rulings
+## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no daemon.
 - `project/instrukt/policy/testing` — repository test authorship and validation ruling.
+
+## Ubiquitous language
+
+Context and module identities and relationship labels are defined in
+Canonical fields and in the domain specs indexed there.
+
+## Event subjects and origins
+
+The context map emits no events.
+
+## Use cases
+
+Each bounded context's domain spec indexes its feature use cases.
+
+## Context map position
+
+This map records the relationships across all bounded contexts.
 
 ## Known caveats
 

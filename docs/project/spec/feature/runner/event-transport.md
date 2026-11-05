@@ -87,9 +87,9 @@ retained local row extends neither of the latter two windows. Lost Redis groups
 and missing payloads remain visible recovery limits, never successful effects.
 Ingress claim retention is a separate three-day source-delivery window.
 
-### Use cases
+## Use cases
 
-#### UC-ET1: Keep a computer-local occurrence local
+### UC-ET1: Keep a computer-local occurrence local
 
 ```gherkin
 Given a developer has working separate local and cluster Redis endpoints
@@ -97,7 +97,7 @@ When a local runner fact is produced and consumed on that computer
 Then it is transported only through local Redis
 ```
 
-#### UC-ET2: Make an external occurrence available across the cluster
+### UC-ET2: Make an external occurrence available across the cluster
 
 ```gherkin
 Given a developer receives a signed native event named runner.upstream_changed
@@ -105,7 +105,7 @@ When ingress publishes it
 Then it uses cluster Redis despite resembling a local type
 ```
 
-#### UC-ET3: Use visible fallback only when local Redis is unconfigured
+### UC-ET3: Use visible fallback only when local Redis is unconfigured
 
 ```gherkin
 Given a developer enables events without local Redis configuration
@@ -114,7 +114,7 @@ Then local events use cluster Redis and the fallback is reported
 But a configured local endpoint outage does not move its positions to cluster
 ```
 
-#### UC-ET4: Avoid duplicate reads when both scopes name one Redis
+### UC-ET4: Avoid duplicate reads when both scopes name one Redis
 
 ```gherkin
 Given a developer uses one logical Redis for both scopes
@@ -122,7 +122,7 @@ When a consumer selects both local and cluster types
 Then it reads that source once and handles one occurrence once while its duplicate record is retained
 ```
 
-#### UC-ET5: Recover publication of a committed local fact
+### UC-ET5: Recover publication of a committed local fact
 
 ```gherkin
 Given a developer finalizes a todo and the stamp and local event commit
@@ -131,7 +131,7 @@ Then the committed work remains intact and the unconfirmed event is retried with
 And confirmed stream acceptance is recorded separately from reaction completion
 ```
 
-#### UC-ET6: Keep unrelated local work moving during a Redis outage
+### UC-ET6: Keep unrelated local work moving during a Redis outage
 
 ```gherkin
 Given a developer has local readers and a cluster reader on separate Redis endpoints
@@ -140,7 +140,7 @@ Then local reactions and unrelated work continue
 And cluster readers retain their positions and resume pending work after its return
 ```
 
-#### UC-ET7: Recover each scope from its own progress
+### UC-ET7: Recover each scope from its own progress
 
 ```gherkin
 Given a developer consumes events from independent local and cluster streams

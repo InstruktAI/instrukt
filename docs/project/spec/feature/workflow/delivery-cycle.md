@@ -133,9 +133,9 @@ does not create a new logical handoff. Integration is governed by
   Delivered worktree cleanup is `git worktree remove <path>` with `done_when`
   the worktree is absent. Returned preparation work retains its working resources.
 
-### Use cases
+## Use cases
 
-#### UC-DC1: Deliver a prepared change for integration
+### UC-DC1: Deliver a prepared change for integration
 
 ```gherkin
 Given a developer has a prepared change whose dependencies are delivered

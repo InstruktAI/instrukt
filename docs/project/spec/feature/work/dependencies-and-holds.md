@@ -92,9 +92,9 @@ not approve evidence or satisfy prerequisites. A hold is a brake on future
 automatic dispatch, not a command to terminate work already running. Structural
 holders carry no dispatch hold; each child carries its own.
 
-### Use cases
+## Use cases
 
-#### UC-DH1: Sequence a dependent delivery
+### UC-DH1: Sequence a dependent delivery
 
 ```gherkin
   Given a developer has a todo that needs other project work to be delivered first
@@ -104,7 +104,7 @@ holders carry no dispatch hold; each child carries its own.
   Then the change is refused, names the cycle, and leaves the todo's prerequisites and group as they were
 ```
 
-#### UC-DH2: Pause work with a reason others can inspect
+### UC-DH2: Pause work with a reason others can inspect
 
 ```gherkin
   Given a developer has active work they need to pause
@@ -113,7 +113,7 @@ holders carry no dispatch hold; each child carries its own.
   And the recorded work remains available with its dispatch hold
 ```
 
-#### UC-DH3: Grouping work under a todo keeps its pending documentation
+### UC-DH3: Grouping work under a todo keeps its pending documentation
 
 ```gherkin
   Given a developer has a todo whose planned documentation is not yet delivered

@@ -315,9 +315,9 @@ ownership cleared on release; they are not event history. Local events and settl
 stream retention separately bounds replay; occurrence duplicate marks expire
 after seven days. Local history does not backfill a newly created Redis group.
 
-### Use cases
+## Use cases
 
-#### UC-SD2: A write interrupted part-way leaves the last completed state
+### UC-SD2: A write interrupted part-way leaves the last completed state
 
 ```gherkin
   Given a developer's computer is recording a change that spans several records, such as a stamp and the todo it advances
