@@ -74,12 +74,19 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
 7.  Organize content inside those valid sections. Use subordinate headings such as `###` when they improve readability; do not flatten useful structure just to avoid internal headings.
 8.  If validation rejects a heading, first ask whether it should be downgraded under an existing schema section rather than deleted or flattened.
 
-9.  Authoring a snippet publishes nothing. Readers receive committed
+9.  **Change a published snippet at its source.** What `instrukt docs get`
+    shows is a published copy. To change a snippet you have read, find its
+    source: `instrukt docs index --domain <x>` opens with the position's
+    folder in the checkout it was published from, its published commit and
+    its repository's remote, and `instrukt docs get <id>` names the snippet's
+    source file. Edit that file in that checkout and commit it there; the
+    hook republishes it. Never edit anything under `~/.instrukt/`.
+10. Authoring a snippet publishes nothing. Readers receive committed
     documentation: the git hooks publish the committed state of the project's
     main after a commit, merge, rebase or checkout, and `instrukt sync`, run in
     the project, republishes it. No path publishes a working tree. This step supplies neither authoring nor commit
     authority.
-10. **Decide what the position's `index.yaml` carries.** A snippet reaches
+11. **Decide what the position's `index.yaml` carries.** A snippet reaches
     agents through `expanded`, `listed` or `agents` in its position's
     `index.yaml`, or through another snippet's required reads; one with none of
     these is found only through `instrukt docs index`. Every `expanded` entry,
@@ -95,13 +102,13 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     one agent CLI's observed default, written as a `policy` snippet. Never
     edit the generated documentation index; publication writes it.
 
-11. **Give a procedure an `activation_trigger` only when a user will ask for it
+12. **Give a procedure an `activation_trigger` only when a user will ask for it
     by name.** Every trigger is a line in every agent's context on every
     computer that adopts its domain (`general/policy/snippet-value-contract`,
     Manual in the always-on set). A procedure a workflow, a dispatcher or
     another procedure starts is reached through that starter and carries no
     trigger.
-12. **Changing an existing snippet — bounded, wholesale, or retired.** A live snippet is never overwritten or deleted in place to describe a change before it is delivered. Match the pending carrier to the shape of the change: bounded additions, replacements, and removals stay in body markers; wholesale reworks use a companion; retiring the whole snippet uses an empty companion. The pending carrier names the delivering `<slug>`.
+13. **Changing an existing snippet — bounded, wholesale, or retired.** A live snippet is never overwritten or deleted in place to describe a change before it is delivered. Match the pending carrier to the shape of the change: bounded additions, replacements, and removals stay in body markers; wholesale reworks use a companion; retiring the whole snippet uses an empty companion. The pending carrier names the delivering `<slug>`.
 
             - **Present-tense body (governs both forms).** Author the wrapped or companion body as the **future live contract**, in present tense, exactly as it must read once delivered. On delivery the marker lines vanish (ADD) or the companion replaces the parent (REPLACE) and the body stays **verbatim** — so it must already read as correct current-state contract with nothing stripped. The delivering `<slug>` is carried by the planned marker or the companion filename. A slug names work and a snippet body states contract, so **no slug appears in body prose**. Do not write "Pending `<slug>`, …", "the new surface is …", "will", "is planned", or any history/rationale narration inside the body (see the Narration anti-pattern in `general/policy/snippet-value-contract`). DON'T: `Pending <slug>, the manual-parking surface is: …`. DO: `The manual-parking surface is: …` — wrapped in `<!-- planned:<slug> -->`, which is the only place the slug appears.
             - **Change-shape heuristic.** A bounded localized edit uses an in-body marker: `planned` for added content, `planned-change` for replacement or removal. A wholesale rewrite uses a companion file. Retiring the whole snippet uses an empty companion file. ADRs do not use pending markers or companions; they land as immutable decision records.
@@ -152,7 +159,7 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
 
         - **Related-file discovery.** Before editing a live parent `<stem>.md`, list sibling files by stripping `.md` and globbing the stem (`ls docs/.../<stem>.*`). If a non-empty pending companion `<stem>.<slug>.md` exists, mirror the parent edit into that companion or coordinate ownership. A parent edit that leaves its non-empty pending companion unsynced is a defect. An empty companion is a retirement and is never mirrored into: content in it makes it a replacement.
 
-13. **Every rule reaches its reason in one hop.** A normative rule you author is
+14. **Every rule reaches its reason in one hop.** A normative rule you author is
     traceable to its reason — and the reason names the invariant protected or the
     failure prevented, never a restatement of the rule. Which route is available
     depends on the taxonomy, and every type resolves: `principle` and `policy`
@@ -169,9 +176,9 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     new why-less rule as a finding; the existing corpus is retrofitted
     progressively as rules are touched, never as a campaign.
 
-14. **ADR discipline (decision capture).** Specs, procedures, and principles describe the _current state_; they hold no reasoning logs. An ADR is reserved for a real, contestable decision and the default is none — consult `general/policy/adr-discipline` for the bar before writing one.
+15. **ADR discipline (decision capture).** Specs, procedures, and principles describe the _current state_; they hold no reasoning logs. An ADR is reserved for a real, contestable decision and the default is none — consult `general/policy/adr-discipline` for the bar before writing one.
 
-15. **Every edit meets the value contract, not only a new snippet.** Step 0
+16. **Every edit meets the value contract, not only a new snippet.** Step 0
     decides whether a snippet should exist; this step governs every region you
     write, including a pending block inside an existing snippet. Before
     committing, hold each changed region against the anti-patterns in
@@ -181,7 +188,7 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     another context's decision through this snippet's surface is consumer
     restatement and is not written.
 
-16. **Compose procedures by standing role.** A procedure a session is started
+17. **Compose procedures by standing role.** A procedure a session is started
     into carries root frontmatter — `role`, `subscriptions`,
     `activation_trigger` or `dispatch` (`general/spec/snippet-authoring-schema`).
     Before authoring one, name the standing role whose responsibility the new
