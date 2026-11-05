@@ -68,9 +68,14 @@ way, whatever was done before:
    older than the skill's release, say so and offer the same pinned install.
 2. **Act on what the human asked**, against that state:
    - **Adopt this repository.** When status reports it adopted, say so and
-     what it publishes. Otherwise run `instrukt init`, show what it wrote and
-     the claims it reports, and leave the first commit to main, which starts
-     publication, to the human's word.
+     what it publishes. Otherwise run `instrukt init` and show what it wrote and
+     the claims it reports. When init kept a hand-written `AGENTS.md`
+     (`.instrukt/adopted/AGENTS.md`), go through it with the human before the
+     first commit: its purpose into the master's `## Purpose`, each
+     instruction into a project snippet of its type with its index entry
+     (`instrukt docs schema docs/project` names the types), then remove the
+     kept copy. Leave the first commit to main, which starts publication, to
+     the human's word.
    - **Adopt another repository.** The same, in the repository the human
      names.
    - **Switch on a module.** For todos, when status reports that this

@@ -21,13 +21,20 @@ sections.
 
 Adoption replaces whole instruction files and never injects into existing
 ones. A project's root `AGENTS.md` is taken over by adoption: when a
-hand-written root `AGENTS.md` exists without a master, init seeds the master
-with that file's content as its `## Purpose` (the file's own headings demoted
-under it), so nothing the developer wrote is lost, and from the first sync
-the root `AGENTS.md` is rendered by instrukt. Init reports that the file is now
-generated and that its tracked copy is to be removed from version control in
-the same commit as the master (`git rm --cached AGENTS.md`); it never deletes
-or edits the file itself. User-scope agent files are the adopter's decision:
+hand-written root `AGENTS.md` exists without a master, init writes the
+purpose-only master as it does for any repository and keeps the file's
+content, byte for byte, at `.instrukt/adopted/AGENTS.md`, so nothing the
+developer wrote is lost while it finds its place. The master never takes that
+content: what a project's `AGENTS.md` includes comes only from
+`docs/project/index.yaml`. Placing it is migration the adopting agent guides
+(`project/instrukt/spec/feature/distribution/agent-skill`): the file's purpose
+into the master's `## Purpose`, each instruction into a project snippet of its
+type under `docs/project/` with its entry in the index, and the kept copy
+removed once nothing in it is left unplaced. From the first sync the root
+`AGENTS.md` is rendered by instrukt. Init reports the kept copy, that the file
+is now generated, and that its tracked copy is to be removed from version
+control in the same commit as the master (`git rm --cached AGENTS.md`); it
+never deletes or edits the file itself. User-scope agent files are the adopter's decision:
 sync refuses one instrukt did not write and names it
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
@@ -40,6 +47,7 @@ sync refuses one instrukt did not write and names it
 | Project index | `docs/project/index.yaml`, with empty `expanded` and `listed` | absent |
 | Project schema | `docs/project/schema.yaml`, a copy of the published `sdlc` domain's `schema.yaml` | absent and `sdlc` is published on the computer with a `schema.yaml` |
 | Master | `AGENTS.master.md` at the repository root, holding only `## Purpose` with the project name | absent |
+| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists, instrukt did not write it, and there is no master |
 | Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
 | Ignores | `.gitignore`: the generated `AGENTS.md` files and `.instrukt/` | a line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
@@ -97,9 +105,11 @@ And nothing has been committed
 ```gherkin
 Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
 When the developer initializes instrukt in it
-Then the project's master states the purpose with everything the file said
+Then everything the file said is kept aside for them, and the project's master holds only the purpose
 And the developer is told that the instruction file is generated from now on and how to stop tracking it
 And the file itself is left as it was until the first publication renders it
+When their agent goes through the kept instructions with them
+Then each lands in the project's documentation and index, and the published instruction file carries them
 ```
 
 #### UC-IN2: Initializing again completes an adoption without touching the developer's files

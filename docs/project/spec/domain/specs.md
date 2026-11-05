@@ -53,7 +53,7 @@ the structural graph, or the decision of who may author a use case.
    `docs/domain/<domain>/`; `general/<path>` under `docs/general/`. `<path>` is
    the file's path below its position without `.md`, such as
    `spec/feature/blueprint/use-case-trace`. The pre-release form
-   `project/<slug>/…` names no spec.
+   `local/projects/<slug>/…` names no spec.
 
 **Spec folder**
 :  The repository-relative folder that holds a feature spec file. Trace groups
