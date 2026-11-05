@@ -1,6 +1,10 @@
 //! The publication context: committed-state publication into the home,
 //! index patching by owner, entrypoint compilation and the eval fingerprint
-//! (`docs/local/spec/domain/publication.md`).
+//! (`docs/project/spec/domain/publication.md`).
+//!
+//! What a project publishes follows from what its committed main holds:
+//! `docs/general/` and each `docs/domain/<x>/`. Each is claimed in the
+//! ownership record under `~/.instrukt/state/publication/claims/`.
 //!
 //! One operation, [`sync`]: publish the project the caller stands in from
 //! its canonical main, or do nothing when that commit is already
@@ -72,8 +76,6 @@ pub enum PublicationError {
         path.display()
     )]
     DanglingLink { path: PathBuf },
-    #[error("domain `{domain}` is reserved for the home's own published tree")]
-    ReservedDomain { domain: String },
     #[error("{} cannot take the entrypoint-loading key: {reason}", path.display())]
     Settings { path: PathBuf, reason: String },
     #[error("cannot compile {file}: {reason}")]
@@ -179,20 +181,21 @@ impl PublishedRecord {
     }
 }
 
-/// The project that publishes `domain`, from the domain's publisher
-/// record; `None` when no project publishes it.
-pub fn domain_publisher(
+/// The project that owns the published position `domain` addresses
+/// (`general` for `docs/general/`), from the ownership record; `None` when
+/// no project publishes it.
+pub fn domain_owner(
     home: &Home,
     domain: &crate::ids::DomainName,
 ) -> Result<Option<ProjectSlug>, PublicationStateError> {
-    let path = home.domain_dir(domain).join(_tree::PUBLISHER_FILE);
+    let path = _tree::claim_path(home, domain);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(PublicationStateError::Read { path, source }),
     };
-    serde_yaml_ng::from_str::<_tree::PublisherRecord>(&text)
-        .map(|record| Some(record.publisher))
+    serde_yaml_ng::from_str::<_tree::ClaimRecord>(&text)
+        .map(|record| Some(record.owner))
         .map_err(|source| PublicationStateError::Parse { path, source })
 }
 

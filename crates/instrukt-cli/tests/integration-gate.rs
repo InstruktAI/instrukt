@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/workflow/integration-gate`: what
+//! `project/instrukt/spec/feature/workflow/integration-gate`: what
 //! instrukt contributes to integration. The standing integrator — here the
 //! fake runtime's session — is woken with finalized work, with its exact
 //! candidate's verification result read from GitHub, with the decision that
@@ -70,7 +70,7 @@ fn work_head(project: &Tracked) -> String {
     project.repo.git(["rev-parse", "tidy-imports/work"])
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG1
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
 #[test]
 fn finalized_work_starts_the_standing_integrator_with_its_handoff() {
     let project = finalized(true);
@@ -80,7 +80,7 @@ fn finalized_work_starts_the_standing_integrator_with_its_handoff() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG1
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
 #[test]
 fn a_green_candidate_wakes_the_integrator_naming_that_exact_commit() {
     let project = finalized(true);
@@ -105,7 +105,7 @@ fn a_green_candidate_wakes_the_integrator_naming_that_exact_commit() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG1
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
 #[test]
 fn an_unfinished_candidate_wakes_no_one() {
     let project = finalized(true);
@@ -124,7 +124,7 @@ fn an_unfinished_candidate_wakes_no_one() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG1
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
 #[test]
 fn a_repaired_candidate_is_reported_by_its_own_result_never_the_earlier_ones() {
     let project = finalized(true);
@@ -177,7 +177,7 @@ fn a_repaired_candidate_is_reported_by_its_own_result_never_the_earlier_ones() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG1
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
 #[test]
 fn without_ci_on_the_canonical_head_the_integrator_is_told_to_verify_locally() {
     let project = finalized(false);
@@ -222,7 +222,7 @@ fn failing_main() -> (Tracked, String) {
     (project, delivered)
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG2
 #[test]
 fn a_failing_canonical_head_wakes_the_integrator_with_that_commit_once() {
     let (project, delivered) = failing_main();
@@ -238,7 +238,7 @@ fn a_failing_canonical_head_wakes_the_integrator_with_that_commit_once() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG2
 #[test]
 fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
     let (project, delivered) = failing_main();
@@ -278,7 +278,7 @@ fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG2
 #[test]
 fn a_red_result_on_a_commit_main_has_moved_past_is_not_reported() {
     let project = finalized(true);
@@ -299,7 +299,7 @@ fn a_red_result_on_a_commit_main_has_moved_past_is_not_reported() {
     assert_eq!(project.rt.sent_count(INTEGRATOR), 0);
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG2
 #[test]
 fn each_new_failing_head_is_reported_afresh() {
     let (project, delivered) = failing_main();
@@ -323,7 +323,7 @@ fn each_new_failing_head_is_reported_afresh() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG2
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG2
 #[test]
 fn the_remotes_current_head_is_judged_even_when_this_checkout_never_fetched_it() {
     let project = finalized(true);
@@ -383,7 +383,7 @@ fn reviewed_direct_commit(project: &mut Tracked) -> String {
     direct
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG3
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG3
 #[test]
 fn a_direct_commits_review_verdict_is_readable_from_the_fetched_notes_ref() {
     let mut project = Tracked::integrating();
@@ -407,7 +407,7 @@ fn a_direct_commits_review_verdict_is_readable_from_the_fetched_notes_ref() {
     insta::assert_snapshot!("direct-commit-verdict", note);
 }
 
-// spec: local/projects/instrukt/spec/feature/workflow/integration-gate UC-IG3
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG3
 #[test]
 fn direct_commits_on_local_main_wake_the_integrator_to_take_them_through_verification() {
     let mut project = Tracked::integrating();

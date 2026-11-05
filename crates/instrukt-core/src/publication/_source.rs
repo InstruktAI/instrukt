@@ -255,6 +255,6 @@ mod tests {
         for path in ["../x", "/abs", "a/../b", "", "./a"] {
             assert!(safe_relative(path).is_err(), "{path}");
         }
-        assert!(safe_relative("docs/global/a.md").is_ok());
+        assert!(safe_relative("docs/general/a.md").is_ok());
     }
 }

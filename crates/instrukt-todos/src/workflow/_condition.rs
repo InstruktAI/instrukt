@@ -1,5 +1,5 @@
 //! Conditions: the structural operators a definition composes over facts
-//! (`docs/local/spec/feature/workflow/workflow-definition.md`, "Conditions").
+//! (`docs/project/spec/feature/workflow/workflow-definition.md`, "Conditions").
 
 use std::cmp::Ordering;
 

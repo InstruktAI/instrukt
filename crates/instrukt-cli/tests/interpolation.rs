@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/configuration/interpolation`:
+//! `project/instrukt/spec/feature/configuration/interpolation`:
 //! `instrukt config get` expands the active runtime's session id at call
 //! time. Cross-key and environment references, unset variables and cycles
 //! are pure logic, covered by the interpolation unit tests.
@@ -36,7 +36,7 @@ fn get(env: &TestEnv, cwd: &std::path::Path, path: &str) -> String {
     String::from_utf8(out.get_output().stdout.clone()).unwrap()
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/interpolation UC-VI1
+// spec: project/instrukt/spec/feature/configuration/interpolation UC-VI1
 #[test]
 fn an_agent_receives_the_command_reading_its_own_conversation() {
     let mut env = TestEnv::new();
@@ -65,7 +65,7 @@ fn an_agent_receives_the_command_reading_its_own_conversation() {
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/configuration/interpolation UC-VI1
+// spec: project/instrukt/spec/feature/configuration/interpolation UC-VI1
 #[test]
 fn outside_every_mapped_runtime_no_command_is_given() {
     let env = TestEnv::new();

@@ -1,4 +1,4 @@
-//! The graph contract (`docs/local/spec/feature/blueprint/graph-engine.md`):
+//! The graph contract (`docs/project/spec/feature/blueprint/graph-engine.md`):
 //! one JSON object with `nodes` (`id`, `source_file`) and `links`
 //! (`source`, `target`, `relation`), validated before anything is stored or
 //! answered.
@@ -53,7 +53,7 @@ impl fmt::Display for SourceFileProblem {
 }
 
 /// A link's relation. The named variants are the dependency relations
-/// (`docs/local/spec/domain/blueprint.md`); every other relation — including
+/// (`docs/project/spec/domain/blueprint.md`); every other relation — including
 /// containment — is kept as [`Relation::Other`] and never traversed as a
 /// dependency.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

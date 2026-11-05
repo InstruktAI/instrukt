@@ -178,10 +178,10 @@ fn is_feature_spec(snippet: &Snippet) -> bool {
         return false;
     }
     // The segment after the taxonomy: `<domain>/spec/<here>/…` or
-    // `local/projects/<slug>/spec/<here>/…`.
+    // `project/<slug>/spec/<here>/…`.
     let at = match snippet.scope() {
         Scope::Global => 2,
-        Scope::Project => 4,
+        Scope::Project => 3,
     };
     snippet.id().as_str().split('/').nth(at) == Some("feature")
 }

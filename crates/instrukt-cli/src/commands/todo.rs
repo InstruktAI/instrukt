@@ -1,7 +1,7 @@
 //! Todo commands: the work record's surfaces (`instrukt todo create|list|
 //! show|update|refresh|freeze|unfreeze|remove|reactivate|deliver|stamp|
 //! artifacts`), with workflow's `prepare|work` flattened in from
-//! [`todo_flow`] (`docs/local/spec/feature/work/`).
+//! [`todo_flow`] (`docs/project/spec/feature/work/`).
 //!
 //! These subcommands translate between the command line and the work
 //! context; `todo_flow.rs` does the same for workflow's subcommands. The

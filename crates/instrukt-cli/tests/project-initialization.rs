@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/repository/project-initialization`:
+//! `project/instrukt/spec/feature/repository/project-initialization`:
 //! `instrukt init` adopts a git repository in one idempotent step and never
 //! overwrites what exists.
 #![allow(
@@ -94,7 +94,7 @@ fn tree(dir: &Path) -> BTreeMap<PathBuf, (Vec<u8>, u32, SystemTime)> {
 
 const OWN_POST_COMMIT: &str = "#!/bin/sh\necho \"the developer's own post-commit\"\n";
 
-// spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN1
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN1
 #[test]
 fn one_init_adopts_the_repository_and_commits_nothing() {
     let env = machine();
@@ -115,16 +115,14 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     );
     let project = env.run(repo.path(), ["config", "get", "project"]).success();
     insta::assert_snapshot!(stdout(&env, &project), @"my-demo");
-    for folder in ["docs/global", "docs/local"] {
-        assert!(repo.path().join(folder).is_dir(), "{folder}");
-    }
+    assert!(repo.path().join("docs/project").is_dir(), "docs/project");
     insta::assert_snapshot!("seeded-master", repo.read("AGENTS.master.md"));
     insta::assert_snapshot!(
         "own-hook-beside-section",
         repo.read(".git/hooks/post-commit")
     );
     assert!(
-        repo.read("docs/local/baseline.md").is_empty(),
+        repo.read("docs/project/baseline.md").is_empty(),
         "the local baseline the master requires is seeded empty"
     );
 
@@ -147,22 +145,22 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     insta::assert_snapshot!("compiled-seeded-master", repo.read("AGENTS.md"));
 
     repo.write(
-        "docs/local/reference.md",
+        "docs/project/reference.md",
         "Read @~/.instrukt/docs/general/x.md first.\n",
     );
     repo.commit("a doc referring to the home");
     wait_for_run(&env, "my-demo", Hook::PostCommit);
-    let committed = repo.git(["show", "HEAD:docs/local/reference.md"]);
+    let committed = repo.git(["show", "HEAD:docs/project/reference.md"]);
     insta::assert_snapshot!("committed-reference", committed);
 
-    std::fs::remove_file(repo.path().join("docs/local/reference.md")).unwrap();
-    repo.git(["checkout", "--", "docs/local/reference.md"]);
+    std::fs::remove_file(repo.path().join("docs/project/reference.md")).unwrap();
+    repo.git(["checkout", "--", "docs/project/reference.md"]);
     wait_for_run(&env, "my-demo", Hook::PostCheckout);
-    let checked_out = std::fs::read(repo.path().join("docs/local/reference.md")).unwrap();
+    let checked_out = std::fs::read(repo.path().join("docs/project/reference.md")).unwrap();
     insta::assert_snapshot!("checked-out-reference", shown(&env, &checked_out));
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN1
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN1
 #[test]
 fn a_folder_without_a_usable_slug_needs_one_supplied_and_outside_a_repository_init_is_refused() {
     let env = machine();
@@ -185,21 +183,21 @@ fn a_folder_without_a_usable_slug_needs_one_supplied_and_outside_a_repository_in
 }
 
 const OWN_MASTER: &str = "## Purpose\n\nThe developer's own master.\n";
-const OWN_BASELINE: &str = "@docs/local/policy/house-rules.md\n";
+const OWN_BASELINE: &str = "@docs/project/policy/house-rules.md\n";
 const OWN_ATTRIBUTES: &str = "*.png binary\ndocs/**/*.md text eol=lf\n";
 
-// spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN2
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2
 #[test]
 fn init_completes_a_partial_adoption_and_then_changes_nothing() {
     let env = machine();
     let repo = env.git_repo("demo");
     repo.write("AGENTS.master.md", OWN_MASTER);
     repo.write(".gitattributes", OWN_ATTRIBUTES);
-    repo.write("docs/local/baseline.md", OWN_BASELINE);
+    repo.write("docs/project/baseline.md", OWN_BASELINE);
     env.run(repo.path(), ["config", "init"]).success();
     repo.commit("the developer's partial adoption");
     let master = std::fs::read(repo.path().join("AGENTS.master.md")).unwrap();
-    let baseline = std::fs::read(repo.path().join("docs/local/baseline.md")).unwrap();
+    let baseline = std::fs::read(repo.path().join("docs/project/baseline.md")).unwrap();
 
     let completed = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("completing-init", stdout(&env, &completed));
@@ -209,7 +207,7 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
         "the developer's master is unchanged"
     );
     assert_eq!(
-        std::fs::read(repo.path().join("docs/local/baseline.md")).unwrap(),
+        std::fs::read(repo.path().join("docs/project/baseline.md")).unwrap(),
         baseline,
         "the developer's local baseline is unchanged"
     );
@@ -227,7 +225,7 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
 
 const HAND_WRITTEN: &str = "# Instructions\n\nWritten by hand.\n";
 
-// spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN2
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2
 #[test]
 fn a_hand_written_agents_file_holds_back_the_master_until_its_content_has_moved() {
     let env = machine();
@@ -244,7 +242,7 @@ fn a_hand_written_agents_file_holds_back_the_master_until_its_content_has_moved(
         "the hand-written file is untouched"
     );
 
-    repo.write("docs/local/instructions.md", HAND_WRITTEN);
+    repo.write("docs/project/instructions.md", HAND_WRITTEN);
     std::fs::remove_file(repo.path().join("AGENTS.md")).unwrap();
     let next = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("init-after-content-moved", stdout(&env, &next));
@@ -259,7 +257,7 @@ fn a_hand_written_agents_file_holds_back_the_master_until_its_content_has_moved(
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/repository/project-initialization UC-IN2
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2
 #[test]
 fn an_ignore_file_linked_outside_the_repository_refuses_init_and_nothing_changes() {
     let env = machine();

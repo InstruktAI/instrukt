@@ -11,8 +11,8 @@ use std::path::Path;
 use super::_tree::BUNDLE_FILE;
 use super::PublicationError;
 use crate::docs::{
-    self, BaselineOwner, Corpus, Fragments, Lens, RefTarget, Reference, RenderContext, Rendered,
-    SourceFile, Values, View,
+    self, BaselineOwner, Corpus, Fragments, Lens, Position, RefTarget, Reference, RenderContext,
+    Rendered, SourceFile, Values, View,
 };
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
@@ -100,7 +100,7 @@ impl<'a> Compiler<'a> {
         if let Some(done) = self.bundles.get(domain) {
             return Ok(done.clone());
         }
-        let file = format!("docs/global/{domain}/{BUNDLE_FILE}");
+        let file = format!("{}/{BUNDLE_FILE}", Position::of_domain(domain).dir());
         if !self.compiling.insert(domain.clone()) {
             return Err(compile_error(&file, "its baseline requires its own bundle"));
         }
@@ -372,7 +372,7 @@ impl<'a> Compiler<'a> {
                         }
                         Err(source) => return Err(PublicationError::Io { path, source }),
                     };
-                    let source = format!("docs/global/{}.md", id.as_str());
+                    let source = docs::published_source(id).ok_or_else(unresolved)?;
                     let corpus = Corpus::from_sources(
                         None,
                         self.home,
@@ -494,15 +494,16 @@ impl<'a> Compiler<'a> {
 }
 
 /// The roster of published domains a global entrypoint ends with: one
-/// line per domain recorded in `triggers` or carrying live global entries
+/// line per domain named in `descriptions` or carrying live global entries
 /// in `index`, except those in `inlined`, with its live global snippet
-/// count, bundle path and recorded trigger.
+/// count, bundle path and, when its `index.yaml` gives one, its
+/// description.
 pub(super) fn roster(
     index: &GlobalIndex,
-    triggers: &BTreeMap<DomainName, String>,
+    descriptions: &BTreeMap<DomainName, Option<String>>,
     inlined: &BTreeSet<DomainName>,
 ) -> Result<String, PublicationError> {
-    let mut counts: BTreeMap<String, usize> = triggers
+    let mut counts: BTreeMap<String, usize> = descriptions
         .keys()
         .map(|domain| (domain.to_string(), 0))
         .collect();
@@ -520,15 +521,13 @@ pub(super) fn roster(
         if inlined.contains(&name) {
             continue;
         }
-        let trigger = triggers.get(&name).ok_or_else(|| {
-            compile_error(
-                &format!("~/.instrukt/docs/{domain}/publisher.yaml"),
-                "the published domain has no recorded trigger",
-            )
-        })?;
-        lines.push(format!(
-            "- `{domain}` — {count} snippet(s); bundle: `~/.instrukt/docs/{domain}/{BUNDLE_FILE}` — {trigger}"
-        ));
+        let mut line = format!(
+            "- `{domain}` — {count} snippet(s); bundle: `~/.instrukt/docs/{domain}/{BUNDLE_FILE}`"
+        );
+        if let Some(Some(description)) = descriptions.get(&name) {
+            line.push_str(&format!(" — {description}"));
+        }
+        lines.push(line);
     }
     if lines.is_empty() {
         return Ok(String::new());

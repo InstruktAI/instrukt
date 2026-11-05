@@ -51,8 +51,6 @@ pub enum FindingKind {
     AgentNotStartable,
     /// `runner.runtime` names no runtime-mapping entry.
     UnknownRuntime,
-    /// `publishes` declares one domain twice.
-    DuplicateDomain,
     /// A reference to a key that does not exist.
     UnresolvedReference,
     /// A reference that leads back to itself.

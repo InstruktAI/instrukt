@@ -1,5 +1,5 @@
 //! Generation per remote-main revision
-//! (`docs/local/spec/feature/blueprint/graph-generation.md`): a hook run
+//! (`docs/project/spec/feature/blueprint/graph-generation.md`): a hook run
 //! hands a revision over and returns at once; a detached worker maps it.
 //!
 //! # Mechanism

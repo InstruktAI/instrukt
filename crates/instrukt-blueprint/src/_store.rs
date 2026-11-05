@@ -1,6 +1,6 @@
 //! The project graph store: complete graphs per SHA in the home, the choice
 //! of the latest one, and the one-step publication that makes a new graph
-//! the latest (`docs/local/spec/domain/blueprint.md`, "Project graph store").
+//! the latest (`docs/project/spec/domain/blueprint.md`, "Project graph store").
 //!
 //! # Layout
 //!

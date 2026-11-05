@@ -2,10 +2,10 @@
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stdout(&env, &read).replace(&marker.display().to_string(), \"[MARKER]\")"
 ---
-# instrukt docs get: local/projects/demo/procedure/later
+# instrukt docs get: project/demo/procedure/later
 
 ---
-id: local/projects/demo/procedure/later
+id: project/demo/procedure/later
 type: procedure
 domain: project
 scope: project

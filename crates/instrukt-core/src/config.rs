@@ -1,5 +1,5 @@
 //! The configuration context: `instrukt.yaml` in a global and a project
-//! layer (`docs/local/spec/domain/configuration.md`).
+//! layer (`docs/project/spec/domain/configuration.md`).
 //!
 //! One capability: answer, validate, migrate and safely change layered
 //! configuration. Readers take a [`Configuration`] (the effective
@@ -22,8 +22,7 @@ mod _validate;
 use std::path::Path;
 
 pub use _effective::{
-    ApprovalGate, Approver, BoardRef, Configuration, Notify, PublishedDomain, ThinkingMode,
-    WatchedRef,
+    ApprovalGate, Approver, BoardRef, Configuration, Notify, ThinkingMode, WatchedRef,
 };
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _layer::{

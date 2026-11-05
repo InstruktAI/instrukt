@@ -1,5 +1,5 @@
 //! Structural validation of a repository's documentation
-//! (`local/projects/instrukt/spec/feature/docs/snippet-validation`).
+//! (`project/instrukt/spec/feature/docs/snippet-validation`).
 //!
 //! Validation judges shape, placement and form only, never prose. It reads
 //! the corpus, the effective configuration (startable agents, `requires`),
@@ -20,8 +20,10 @@ use super::_finding::{Finding, FindingCode};
 use super::_frontmatter;
 use super::_identity::{
     BaselineOwner, Classification, Placement, Scope, Taxonomy, companion_shape, place,
+    published_origin, published_source,
 };
 use super::_markers::Problem;
+use super::_position::{GENERAL, Position, is_reserved_domain_folder};
 use super::_refs::RefTarget;
 use super::_text;
 use super::DocsError;
@@ -59,8 +61,7 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Vec<Finding>, DocsErr
         let domain = config.workflow_domain()?;
         let authored = request
             .repo_root
-            .join("docs/global")
-            .join(domain.as_str())
+            .join(Position::of_domain(&domain).dir())
             .is_dir();
         if !authored && !request.home.domain_dir(&domain).is_dir() {
             return Err(DocsError::DomainUnpublished {
@@ -531,8 +532,8 @@ fn check_third_party(version: &Version, sources: Vec<String>, out: &mut Vec<Find
 /// The taxonomy an identity spells.
 fn taxonomy_of(id: &SnippetId) -> Option<Taxonomy> {
     let parts: Vec<&str> = id.as_str().split('/').collect();
-    let dir = if parts.first() == Some(&"local") {
-        parts.get(3)
+    let dir = if parts.first() == Some(&"project") {
+        parts.get(2)
     } else {
         parts.get(1)
     };
@@ -585,13 +586,16 @@ impl<'c> RequiredReads<'c> {
     }
 
     fn home_version(&self, id: &SnippetId) -> Result<Option<Version>, DocsError> {
-        if id.as_str().starts_with("local/") {
+        if id.is_project() {
             return Ok(None);
         }
+        let Some(source) = published_source(id) else {
+            return Ok(None);
+        };
         let file = self.corpus.home().docs_dir().join(format!("{id}.md"));
         Ok(read_home(&file)?.map(|text| {
             Version::parse(
-                &format!("docs/global/{id}.md"),
+                &source,
                 &text,
                 taxonomy_of(id),
                 self.corpus.project(),
@@ -902,8 +906,9 @@ fn home_procedure_states(corpus: &Corpus) -> Result<Vec<ProcedureState>, DocsErr
                     });
                 }
             };
-            if entry.file_type().is_file() {
-                let rel = format!("docs/global/{}", relative(&docs, entry.path()));
+            if entry.file_type().is_file()
+                && let Some(rel) = published_origin(&relative(&docs, entry.path()))
+            {
                 files.insert(rel, entry.path().to_path_buf());
             }
         }
@@ -1032,34 +1037,45 @@ fn states_by_id(states: &[ProcedureState]) -> BTreeMap<&SnippetId, Vec<&Procedur
     })
 }
 
-/// The `docs/global/<domain>/workflow/` directories of the repository, as
-/// domain and repository-relative path. Symbolic links are not followed.
+/// The `workflow/` directories of the repository's published positions
+/// (`docs/general/workflow/`, `docs/domain/<x>/workflow/`), as the domain
+/// name they are addressed by and repository-relative path. Symbolic links
+/// are not followed.
 fn workflow_dirs(repo_root: &Path) -> Result<Vec<(String, PathBuf)>, DocsError> {
-    let global = confined_docs(repo_root)?.join("global");
-    let entries = match std::fs::read_dir(&global) {
+    let docs = confined_docs(repo_root)?;
+    let real_dir =
+        |path: &Path| std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir());
+    let mut out = Vec::new();
+    if real_dir(&docs.join(GENERAL)) && real_dir(&docs.join(GENERAL).join("workflow")) {
+        out.push((
+            GENERAL.to_owned(),
+            PathBuf::from(format!("docs/{GENERAL}/workflow")),
+        ));
+    }
+    let domains = docs.join("domain");
+    let entries = match std::fs::read_dir(&domains) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(out),
         Err(source) => {
             return Err(DocsError::Read {
-                path: global,
+                path: domains,
                 source,
             });
         }
     };
-    let mut out = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| DocsError::Read {
-            path: global.clone(),
+            path: domains.clone(),
             source,
         })?;
         let domain = entry.file_name().to_string_lossy().into_owned();
-        let dir = entry.path().join("workflow");
-        let real_dir =
-            |path: &Path| std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir());
-        if real_dir(&entry.path()) && real_dir(&dir) {
+        if is_reserved_domain_folder(&domain) {
+            continue;
+        }
+        if real_dir(&entry.path()) && real_dir(&entry.path().join("workflow")) {
             out.push((
                 domain.clone(),
-                PathBuf::from(format!("docs/global/{domain}/workflow")),
+                PathBuf::from(format!("docs/domain/{domain}/workflow")),
             ));
         }
     }
@@ -1301,13 +1317,13 @@ mod tests {
 
     #[test]
     fn with_todos_off_neither_existence_nor_roles_are_asked() {
-        let c = corpus(&[("docs/local/procedure/p.md", &procedure(PENDING_BUILDER))]);
+        let c = corpus(&[("docs/project/procedure/p.md", &procedure(PENDING_BUILDER))]);
         assert!(run(&c, &CoreWiring::default(), &[]).is_empty());
     }
 
     #[test]
     fn with_todos_on_unknown_slugs_and_undeclared_roles_are_findings() {
-        let c = corpus(&[("docs/local/procedure/p.md", &procedure(PENDING_BUILDER))]);
+        let c = corpus(&[("docs/project/procedure/p.md", &procedure(PENDING_BUILDER))]);
         let wiring = CoreWiring {
             todo_existence: Some(Arc::new(Todos(vec!["known"]))),
             flavor_roles: Some(Arc::new(Roles(vec!["reviewer"]))),
@@ -1327,7 +1343,7 @@ mod tests {
     #[test]
     fn dispatch_agents_must_be_startable() {
         let c = corpus(&[(
-            "docs/local/procedure/p.md",
+            "docs/project/procedure/p.md",
             &procedure(
                 "role: r\nactivation_trigger: t\ndispatch: {agent: [claude, ghost], thinking_mode: med}\n",
             ),
@@ -1348,12 +1364,12 @@ mod tests {
         );
         let clean = ADR.replace("{extra}", "").replace("{body}", "");
         let c = corpus(&[
-            ("docs/local/adr/0001-a.md", &adr),
+            ("docs/project/adr/0001-a.md", &adr),
             (
-                "docs/local/adr/0002-b.md",
+                "docs/project/adr/0002-b.md",
                 &clean.replace("number: 1", "number: 2"),
             ),
-            ("docs/local/adr/0002-b.later.md", ""),
+            ("docs/project/adr/0002-b.later.md", ""),
         ]);
         let found = run(&c, &CoreWiring::default(), &[]);
         let carriers: Vec<&Path> = found
@@ -1364,9 +1380,9 @@ mod tests {
         assert_eq!(
             carriers,
             [
-                Path::new("docs/local/adr/0001-a.md"),
-                Path::new("docs/local/adr/0001-a.md"),
-                Path::new("docs/local/adr/0002-b.later.md"),
+                Path::new("docs/project/adr/0001-a.md"),
+                Path::new("docs/project/adr/0001-a.md"),
+                Path::new("docs/project/adr/0002-b.later.md"),
             ]
         );
     }
@@ -1415,19 +1431,19 @@ mod tests {
     fn a_manifest_naming_a_bundle_cannot_also_name_what_it_carries() {
         let concept = "---\ndescription: d\n---\n# C — Concept\n\n## What\n\n## Why\n";
         let c = corpus(&[
-            ("docs/global/acme/concept/a.md", concept),
+            ("docs/domain/acme/concept/a.md", concept),
             (
-                "docs/global/acme/baseline.md",
+                "docs/domain/acme/baseline.md",
                 "@~/.instrukt/docs/acme/concept/a.md\n",
             ),
             (
-                "docs/local/baseline.md",
+                "docs/project/baseline.md",
                 "@~/.instrukt/docs/acme/bundle.md\n@~/.instrukt/docs/acme/concept/a.md\n",
             ),
         ]);
         let found = run(&c, &CoreWiring::default(), &[]);
         assert_eq!(codes(&found), [FindingCode::BaselineCarried]);
-        assert_eq!(found[0].path, Path::new("docs/local/baseline.md"));
+        assert_eq!(found[0].path, Path::new("docs/project/baseline.md"));
     }
 
     const CONCEPT: &str = "---\ndescription: d\n---\n# C — Concept\n\n## What\n\n## Why\n";
@@ -1440,13 +1456,13 @@ mod tests {
 
     fn local_manifest_findings(files: &[(&str, &str)]) -> Vec<(FindingCode, PathBuf)> {
         let mut all = vec![
-            ("docs/global/acme/concept/a.md", CONCEPT),
+            ("docs/domain/acme/concept/a.md", CONCEPT),
             (
-                "docs/global/acme/baseline.md",
+                "docs/domain/acme/baseline.md",
                 "@~/.instrukt/docs/acme/concept/a.md\n",
             ),
             (
-                "docs/local/baseline.md",
+                "docs/project/baseline.md",
                 "@~/.instrukt/docs/outer/bundle.md\n@~/.instrukt/docs/acme/concept/a.md\n",
             ),
         ];
@@ -1461,18 +1477,18 @@ mod tests {
     fn a_bundle_naming_another_bundle_carries_what_that_bundle_carries() {
         let carried = vec![(
             FindingCode::BaselineCarried,
-            PathBuf::from("docs/local/baseline.md"),
+            PathBuf::from("docs/project/baseline.md"),
         )];
         let nested = local_manifest_findings(&[(
-            "docs/global/outer/baseline.md",
+            "docs/domain/outer/baseline.md",
             "@~/.instrukt/docs/acme/bundle.md\n",
         )]);
         assert_eq!(nested, carried);
         let through_reads = concept_reading("~/.instrukt/docs/acme/bundle.md");
         let via_required_read = local_manifest_findings(&[
-            ("docs/global/outer/concept/o.md", &through_reads),
+            ("docs/domain/outer/concept/o.md", &through_reads),
             (
-                "docs/global/outer/baseline.md",
+                "docs/domain/outer/baseline.md",
                 "@~/.instrukt/docs/outer/concept/o.md\n",
             ),
         ]);
@@ -1482,17 +1498,17 @@ mod tests {
     #[test]
     fn bundles_naming_each_other_end_the_expansion() {
         let c = corpus(&[
-            ("docs/global/acme/concept/a.md", CONCEPT),
+            ("docs/domain/acme/concept/a.md", CONCEPT),
             (
-                "docs/global/acme/baseline.md",
+                "docs/domain/acme/baseline.md",
                 "@~/.instrukt/docs/acme/concept/a.md\n@~/.instrukt/docs/outer/bundle.md\n",
             ),
             (
-                "docs/global/outer/baseline.md",
+                "docs/domain/outer/baseline.md",
                 "@~/.instrukt/docs/acme/bundle.md\n",
             ),
             (
-                "docs/local/baseline.md",
+                "docs/project/baseline.md",
                 "@~/.instrukt/docs/outer/bundle.md\n",
             ),
         ]);
@@ -1506,7 +1522,7 @@ mod tests {
             found,
             [(
                 FindingCode::BaselineCarried,
-                PathBuf::from("docs/global/acme/baseline.md")
+                PathBuf::from("docs/domain/acme/baseline.md")
             )]
         );
     }
@@ -1539,8 +1555,8 @@ mod tests {
 
     fn repo_with_workflow() -> tempfile::TempDir {
         let repo = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(repo.path().join("docs/global/acme/workflow")).unwrap();
-        std::fs::write(repo.path().join("docs/global/acme/workflow/work.yaml"), "").unwrap();
+        std::fs::create_dir_all(repo.path().join("docs/domain/acme/workflow")).unwrap();
+        std::fs::write(repo.path().join("docs/domain/acme/workflow/work.yaml"), "").unwrap();
         repo
     }
 
@@ -1563,7 +1579,7 @@ mod tests {
         assert_eq!(codes(&found), [FindingCode::WorkflowSchemaInvalid]);
         assert_eq!(
             found[0].path,
-            Path::new("docs/global/acme/workflow/actions.yaml")
+            Path::new("docs/domain/acme/workflow/actions.yaml")
         );
     }
 
@@ -1584,12 +1600,12 @@ mod tests {
         }));
         let c = corpus(&[
             (
-                "docs/global/acme/procedure/build.md",
+                "docs/domain/acme/procedure/build.md",
                 &procedure("role: worker\nactivation_trigger: t\n"),
             ),
-            ("docs/global/acme/procedure/helper.md", &procedure("")),
+            ("docs/domain/acme/procedure/helper.md", &procedure("")),
             (
-                "docs/global/acme/procedure/rogue.md",
+                "docs/domain/acme/procedure/rogue.md",
                 &procedure("role: rogue\nactivation_trigger: t\n"),
             ),
         ]);
@@ -1601,23 +1617,23 @@ mod tests {
             [
                 (
                     FindingCode::OrchestratorWithoutProcedure,
-                    Path::new("docs/global/acme/workflow/work.yaml")
+                    Path::new("docs/domain/acme/workflow/work.yaml")
                 ),
                 (
                     FindingCode::ActionProcedureWithoutRole,
-                    Path::new("docs/global/acme/workflow/actions.yaml")
+                    Path::new("docs/domain/acme/workflow/actions.yaml")
                 ),
                 (
                     FindingCode::ActionProcedureUnresolved,
-                    Path::new("docs/global/acme/workflow/actions.yaml")
+                    Path::new("docs/domain/acme/workflow/actions.yaml")
                 ),
                 (
                     FindingCode::ActionTargetNotProcedure,
-                    Path::new("docs/global/acme/workflow/actions.yaml")
+                    Path::new("docs/domain/acme/workflow/actions.yaml")
                 ),
                 (
                     FindingCode::RoleUndeclared,
-                    Path::new("docs/global/acme/procedure/rogue.md")
+                    Path::new("docs/domain/acme/procedure/rogue.md")
                 ),
             ]
         );

@@ -3,14 +3,14 @@
 //! Three forms are valid: the published-home form
 //! (`~/.instrukt/docs/<id>.md` or its home-expanded absolute form) naming a
 //! published snippet, the same form naming a domain bundle
-//! (`~/.instrukt/docs/<domain>/bundle.md`), and `docs/local/<…>` naming
-//! material in the project's local half.
+//! (`~/.instrukt/docs/<domain>/bundle.md`), and `docs/project/<…>` naming
+//! material in the project position.
 
 use std::path::Path;
 
 use serde::Serialize;
 
-use super::_identity::{Placement, place};
+use super::_identity::{Placement, place, published_origin};
 use crate::ids::{DomainName, ProjectSlug, SnippetId};
 
 /// What a well-formed reference names.
@@ -22,7 +22,7 @@ pub enum RefTarget {
     /// A published domain's generated bundle.
     Bundle(DomainName),
     /// A local-half file that is not a snippet (e.g.
-    /// `docs/local/baseline.md`), repository-relative.
+    /// `docs/project/baseline.md`), repository-relative.
     LocalFile(String),
 }
 
@@ -30,7 +30,7 @@ impl RefTarget {
     /// Whether the target lies in the local half.
     pub fn is_local(&self) -> bool {
         match self {
-            RefTarget::Snippet(id) => id.as_str().starts_with("local/"),
+            RefTarget::Snippet(id) => id.is_project(),
             RefTarget::Bundle(_) => false,
             RefTarget::LocalFile(_) => true,
         }
@@ -58,8 +58,8 @@ pub(super) fn parse(raw: &str, project: Option<&ProjectSlug>, user_home: &Path) 
 }
 
 fn target_of(raw: &str, project: Option<&ProjectSlug>, user_home: &Path) -> Option<RefTarget> {
-    if let Some(local) = raw.strip_prefix("docs/local/") {
-        let rel = format!("docs/local/{local}");
+    if let Some(local) = raw.strip_prefix("docs/project/") {
+        let rel = format!("docs/project/{local}");
         return match place(&rel, project)? {
             Placement::Snippet(class) => Some(RefTarget::Snippet(class.id)),
             Placement::Baseline { .. } => Some(RefTarget::LocalFile(rel)),
@@ -78,7 +78,7 @@ fn target_of(raw: &str, project: Option<&ProjectSlug>, user_home: &Path) -> Opti
     if let Some((domain, "bundle.md")) = published.split_once('/') {
         return DomainName::parse(domain).ok().map(RefTarget::Bundle);
     }
-    match place(&format!("docs/global/{published}"), project)? {
+    match place(&published_origin(published)?, project)? {
         Placement::Snippet(class) => Some(RefTarget::Snippet(class.id)),
         _ => None,
     }
@@ -110,14 +110,18 @@ mod tests {
             snippet("sdlc/policy/x")
         );
         assert_eq!(
+            target("~/.instrukt/docs/general/policy/x.md"),
+            snippet("general/policy/x")
+        );
+        assert_eq!(
             target("~/.instrukt/docs/sdlc/bundle.md"),
             Some(RefTarget::Bundle(DomainName::parse("sdlc").unwrap()))
         );
         assert_eq!(
-            target("docs/local/spec/a.md"),
-            snippet("local/projects/demo/spec/a")
+            target("docs/project/spec/a.md"),
+            snippet("project/demo/spec/a")
         );
-        let manifest = "docs/local/baseline.md";
+        let manifest = "docs/project/baseline.md";
         assert_eq!(
             target(manifest),
             Some(RefTarget::LocalFile(manifest.to_owned()))
@@ -127,7 +131,7 @@ mod tests {
     #[test]
     fn other_forms_name_nothing() {
         for raw in [
-            "docs/global/sdlc/policy/x.md",
+            "docs/domain/sdlc/policy/x.md",
             "~/.teleclaude/docs/sdlc/policy/x.md",
             "/elsewhere/.instrukt/docs/sdlc/policy/x.md",
             "~/.instrukt/docs/third-party/x.md",

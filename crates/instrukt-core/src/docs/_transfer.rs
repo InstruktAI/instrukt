@@ -1,5 +1,5 @@
 //! Pending-ownership transfer: every pending carrier naming one todo is
-//! made to name another (`local/projects/instrukt/spec/feature/work/dependencies-and-holds`,
+//! made to name another (`project/instrukt/spec/feature/work/dependencies-and-holds`,
 //! Structural holders: a new holder's pending documentation moves to its
 //! first child).
 //!
@@ -311,7 +311,7 @@ mod tests {
         (delivered, _markers::scan(split.body).slugs)
     }
 
-    const X: &str = "docs/local/spec/x.md";
+    const X: &str = "docs/project/spec/x.md";
 
     #[test]
     fn delivered_by_entries_move_to_the_new_owner() {
@@ -367,10 +367,10 @@ mod tests {
             "---\ndescription: d\n---\n<!-- planned:parent -->\nx\n<!-- /planned:parent -->\n";
         let out = transfer(&[
             (X, "---\ndescription: d\n---\nlive\n"),
-            ("docs/local/spec/x.parent.md", companion),
-            ("docs/local/spec/x.other.md", ""),
-            ("docs/local/spec/y.md", "---\ndescription: d\n---\nlive\n"),
-            ("docs/local/spec/y.parent.md", ""),
+            ("docs/project/spec/x.parent.md", companion),
+            ("docs/project/spec/x.other.md", ""),
+            ("docs/project/spec/y.md", "---\ndescription: d\n---\nlive\n"),
+            ("docs/project/spec/y.parent.md", ""),
         ])
         .unwrap();
         let moved: BTreeMap<&str, Option<&str>> = out
@@ -381,26 +381,26 @@ mod tests {
             moved,
             BTreeMap::from([
                 (
-                    "docs/local/spec/x.parent.md",
-                    Some("docs/local/spec/x.child.md")
+                    "docs/project/spec/x.parent.md",
+                    Some("docs/project/spec/x.child.md")
                 ),
                 (
-                    "docs/local/spec/y.parent.md",
-                    Some("docs/local/spec/y.child.md")
+                    "docs/project/spec/y.parent.md",
+                    Some("docs/project/spec/y.child.md")
                 ),
             ])
         );
-        let (_, marker_owners) = owners(&out["docs/local/spec/x.parent.md"].text);
+        let (_, marker_owners) = owners(&out["docs/project/spec/x.parent.md"].text);
         assert_eq!(marker_owners, BTreeSet::from([slug("child")]));
-        assert!(out["docs/local/spec/y.parent.md"].text.is_empty());
+        assert!(out["docs/project/spec/y.parent.md"].text.is_empty());
     }
 
     #[test]
     fn a_companion_landing_on_an_existing_one_is_refused() {
         let refused = transfer(&[
             (X, "live\n"),
-            ("docs/local/spec/x.parent.md", "mine\n"),
-            ("docs/local/spec/x.child.md", "theirs\n"),
+            ("docs/project/spec/x.parent.md", "mine\n"),
+            ("docs/project/spec/x.child.md", "theirs\n"),
         ]);
         assert!(matches!(refused, Err(DocsError::TransferRefused { .. })));
     }
@@ -418,7 +418,7 @@ mod tests {
     fn nothing_naming_the_old_owner_means_nothing_changes() {
         let text = "---\ndescription: d\ndelivered_by: [other]\n---\n<!-- planned:other -->\nx\n<!-- /planned:other -->\n";
         assert!(
-            transfer(&[(X, text), ("docs/local/spec/x.other.md", "")])
+            transfer(&[(X, text), ("docs/project/spec/x.other.md", "")])
                 .unwrap()
                 .is_empty()
         );

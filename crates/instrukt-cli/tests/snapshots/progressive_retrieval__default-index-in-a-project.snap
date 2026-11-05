@@ -10,9 +10,9 @@ acme/concept/terms: The words used.
 acme/policy/rules: The rules of the work.
 acme/procedure/start: Starts a session.
 acme/procedure/work: How the work is done.
-local/projects/demo/design/y: How y is built.
+project/demo/design/y: How y is built.
 beta/spec/thing: What a thing is.
-local/projects/demo/spec/feature/x: The x feature.
+project/demo/spec/feature/x: The x feature.
 
 # Read the snippets you need: instrukt docs get <id> [<id>…]
 # Pending documentation is flagged, never hidden: `(delivered by: <slugs>)` marks a snippet not yet delivered, `(superseded by: <slugs>)` a live snippet with pending changes. `instrukt docs get` reads the current contract; `--target <slug>` on `index` and `get` shows the documentation as that todo will deliver it.

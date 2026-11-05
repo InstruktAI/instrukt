@@ -1,7 +1,7 @@
 //! Work's evidence read contract for workflow: the record of one todo as
-//! the fact provider reads it (`docs/local/spec/domain/work.md`,
+//! the fact provider reads it (`docs/project/spec/domain/work.md`,
 //! "Published contracts": "evidence read capabilities for workflow";
-//! `docs/local/spec/domain/workflow.md`, "Flavor-facing contract", the
+//! `docs/project/spec/domain/workflow.md`, "Flavor-facing contract", the
 //! fact table).
 //!
 //! Work implements [`WorkEvidence`] over its local-leading record; workflow

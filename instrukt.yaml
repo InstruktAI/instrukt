@@ -1,7 +1,2 @@
 schema_version: 1
 project: instrukt
-publishes:
-  - slug: general
-    trigger: "Always loaded: the platform-wide principles, policies and procedures every agent works under."
-  - slug: sdlc
-    trigger: "Writing, reviewing, testing, refactoring, or debugging code or tests"

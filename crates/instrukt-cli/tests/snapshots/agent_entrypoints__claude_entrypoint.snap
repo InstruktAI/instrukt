@@ -46,4 +46,4 @@ Claude-specific guidance.
 
 ## Published Domains — load the relevant domain's bundle when needed
 
-- `sdlc` — 1 snippet(s); bundle: `~/.instrukt/docs/sdlc/bundle.md` — When working on sdlc.
+- `sdlc` — 1 snippet(s); bundle: `~/.instrukt/docs/sdlc/bundle.md`

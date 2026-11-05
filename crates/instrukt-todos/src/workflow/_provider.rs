@@ -1,6 +1,6 @@
 //! The fact provider: a todo's recorded evidence and the repository
 //! observations made for it, translated into the engine's typed [`Facts`]
-//! (`docs/local/spec/domain/workflow.md`, the fact table and its honesty
+//! (`docs/project/spec/domain/workflow.md`, the fact table and its honesty
 //! rules; `artifact-currency`).
 //!
 //! Pure: it reads only its input. Everything the record cannot say about

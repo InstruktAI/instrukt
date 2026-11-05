@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/runner/session-continuity`: the
+//! `project/instrukt/spec/feature/runner/session-continuity`: the
 //! sessions facade links conversations through the runtime mapping, so
 //! a developer's clarification reaches the linked conversation as their
 //! words; a standing agent whose start was interrupted waits until the
@@ -18,7 +18,7 @@ use common::TestEnv;
 use fork::{STANDING_AGENT, push_upstream_change, tick, watched_fork};
 use runtime::{FakeRuntime, global_layer, global_layer_with};
 
-// spec: local/projects/instrukt/spec/feature/runner/session-continuity UC-SS1
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
 #[test]
 fn a_clarification_typed_in_one_conversation_reaches_the_linked_one_as_the_developers_words() {
     let env = TestEnv::new();
@@ -47,7 +47,7 @@ fn a_clarification_typed_in_one_conversation_reaches_the_linked_one_as_the_devel
     );
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/session-continuity UC-SS1
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
 #[test]
 fn a_clarification_reaches_the_runtime_byte_for_byte_and_executes_nothing() {
     let env = TestEnv::new();
@@ -178,7 +178,7 @@ impl Interrupted {
     }
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/session-continuity UC-SS2
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
 #[test]
 fn when_no_session_was_created_the_standing_agent_starts_again() {
     let machine = Interrupted::new();
@@ -190,7 +190,7 @@ fn when_no_session_was_created_the_standing_agent_starts_again() {
     assert_eq!(machine.starts(), (2, 0), "the agent started again");
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/session-continuity UC-SS2
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
 #[test]
 fn when_the_created_session_is_named_it_is_bound_and_no_second_one_starts() {
     let machine = Interrupted::new();

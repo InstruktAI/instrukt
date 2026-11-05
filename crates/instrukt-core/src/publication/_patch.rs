@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::docs::{Corpus, DocDomain, Scope, Snippet, Visibility};
+use crate::docs::{Corpus, DocDomain, Scope, Snippet, Visibility, published_destination};
 use crate::ids::{DomainName, ProjectSlug};
 use crate::index::{
     FragmentEntry, GlobalIndex, IndexDispatch, IndexEntry, IndexParameter, IndexScope,
@@ -18,7 +18,7 @@ use crate::index::{
 pub enum Claim {
     /// A new entry's id is held by another project's entry.
     DuplicateId { id: String, owner: ProjectSlug },
-    /// A domain the project publishes is owned by another project.
+    /// A position the project publishes is owned by another project.
     DomainOwned {
         domain: DomainName,
         owner: ProjectSlug,
@@ -33,7 +33,8 @@ impl fmt::Display for Claim {
             }
             Claim::DomainOwned { domain, owner } => write!(
                 f,
-                "domain `{domain}` is owned by project `{owner}`; it is free to claim once `{owner}` stops publishing it"
+                "`{}` is owned by project `{owner}`; it is free to claim once `{owner}` stops publishing it",
+                crate::docs::Position::of_domain(domain)
             ),
         }
     }
@@ -112,11 +113,7 @@ fn entry(
     let (scope, path) = match (snippet.scope(), snippet.domain()) {
         (Scope::Global, DocDomain::Published(domain)) if domains.contains(domain) => (
             IndexScope::Global,
-            snippet
-                .path()
-                .strip_prefix("docs/global")
-                .ok()?
-                .to_path_buf(),
+            PathBuf::from(published_destination(&snippet.path().to_string_lossy())?),
         ),
         (Scope::Project, _) => (IndexScope::Local, primary.join(snippet.path())),
         _ => return None,
@@ -185,16 +182,17 @@ fn fallback_description(body: &str, path: &Path) -> String {
 
 /// Applies `contribution` to `index`: every entry its project owns is
 /// dropped, the new entries are checked against those that remain and
-/// added; other projects' entries are carried over unchanged. `publishers`
-/// names each published domain's recorded owner.
+/// added; other projects' entries are carried over unchanged. `owners`
+/// names each claimed position's owner, by the domain name it is addressed
+/// by.
 pub(super) fn patch(
     index: &GlobalIndex,
-    publishers: &BTreeMap<DomainName, ProjectSlug>,
+    owners: &BTreeMap<DomainName, ProjectSlug>,
     contribution: &Contribution,
 ) -> Result<GlobalIndex, Claim> {
     let project = &contribution.project;
     for domain in &contribution.domains {
-        if let Some(owner) = publishers.get(domain).filter(|owner| *owner != project) {
+        if let Some(owner) = owners.get(domain).filter(|owner| *owner != project) {
             return Err(Claim::DomainOwned {
                 domain: domain.clone(),
                 owner: owner.clone(),
@@ -295,7 +293,7 @@ mod tests {
     }
 
     fn entry(id: &str, owner: &str) -> IndexEntry {
-        let global = !id.starts_with("local/");
+        let global = !id.starts_with("project/");
         IndexEntry {
             id: SnippetId::parse(id).unwrap(),
             description: format!("about {id}"),
@@ -358,12 +356,12 @@ mod tests {
 
     #[test]
     fn an_id_held_by_another_project_is_refused_naming_its_owner() {
-        let before = index(vec![entry("local/projects/same/spec/a", "first")]);
-        let new = contribution("second", &[], &["local/projects/same/spec/a"]);
+        let before = index(vec![entry("project/same/spec/a", "first")]);
+        let new = contribution("second", &[], &["project/same/spec/a"]);
         assert_eq!(
             patch(&before, &BTreeMap::new(), &new),
             Err(Claim::DuplicateId {
-                id: "local/projects/same/spec/a".into(),
+                id: "project/same/spec/a".into(),
                 owner: slug("first"),
             })
         );

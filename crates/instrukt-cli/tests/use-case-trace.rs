@@ -1,6 +1,6 @@
 //! `instrukt specs trace` — use cases joined with the structural graph
 //! through the tests that bind them
-//! (`docs/local/spec/feature/blueprint/use-case-trace.md`).
+//! (`docs/project/spec/feature/blueprint/use-case-trace.md`).
 //!
 //! Generation is not part of these tests: each seeds the project's store in
 //! the temporary home through the store's own publication.
@@ -18,8 +18,8 @@ use instrukt_core::ids::{CommitSha, ProjectSlug};
 use serde_json::{Value, json};
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
-const SPEC_ID: &str = "local/projects/demo/spec/feature/things/thing";
-const SPEC_PATH: &str = "docs/local/spec/feature/things/thing.md";
+const SPEC_ID: &str = "project/demo/spec/feature/things/thing";
+const SPEC_PATH: &str = "docs/project/spec/feature/things/thing.md";
 const TESTS: &str = "crates/thing/tests/thing.rs";
 
 fn use_case(id: &str, title: &str) -> String {
@@ -107,7 +107,7 @@ fn stdout(assert: assert_cmd::assert::Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).unwrap()
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/use-case-trace UC-ST1
+// spec: project/instrukt/spec/feature/blueprint/use-case-trace UC-ST1
 #[test]
 fn tracing_a_use_case_shows_its_tests_and_the_code_they_reach() {
     let env = TestEnv::new();
@@ -118,7 +118,7 @@ fn tracing_a_use_case_shows_its_tests_and_the_code_they_reach() {
             .success(),
     );
     insta::assert_snapshot!(out, @r"
-    trace of local/projects/demo/spec/feature/things/thing UC-TH1 from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
+    trace of project/demo/spec/feature/things/thing UC-TH1 from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
     tests binding it:
       crates/thing/tests/thing.rs::first_works
       crates/thing/tests/thing.rs::both_work
@@ -129,7 +129,7 @@ fn tracing_a_use_case_shows_its_tests_and_the_code_they_reach() {
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/blueprint/use-case-trace UC-ST2
+// spec: project/instrukt/spec/feature/blueprint/use-case-trace UC-ST2
 #[test]
 fn tracing_a_file_shows_the_tests_reaching_it_and_the_use_cases_they_bind() {
     let env = TestEnv::new();
@@ -142,7 +142,7 @@ fn tracing_a_file_shows_the_tests_reaching_it_and_the_use_cases_they_bind() {
     insta::assert_snapshot!(out, @r"
     trace of src/store.rs from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
     tests reaching it, with the use cases they bind:
-      crates/thing/tests/thing.rs::first_works: local/projects/demo/spec/feature/things/thing UC-TH1
+      crates/thing/tests/thing.rs::first_works: project/demo/spec/feature/things/thing UC-TH1
     ");
     let out = stdout(
         env.run(repo.path(), ["specs", "trace", "--file", "src/thing.rs"])
@@ -151,8 +151,8 @@ fn tracing_a_file_shows_the_tests_reaching_it_and_the_use_cases_they_bind() {
     insta::assert_snapshot!(out, @r"
     trace of src/thing.rs from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
     tests reaching it, with the use cases they bind:
-      crates/thing/tests/thing.rs::first_works: local/projects/demo/spec/feature/things/thing UC-TH1
-      crates/thing/tests/thing.rs::second_works: local/projects/demo/spec/feature/things/thing UC-TH2
-      crates/thing/tests/thing.rs::both_work: local/projects/demo/spec/feature/things/thing UC-TH1, local/projects/demo/spec/feature/things/thing UC-TH2
+      crates/thing/tests/thing.rs::first_works: project/demo/spec/feature/things/thing UC-TH1
+      crates/thing/tests/thing.rs::second_works: project/demo/spec/feature/things/thing UC-TH2
+      crates/thing/tests/thing.rs::both_work: project/demo/spec/feature/things/thing UC-TH1, project/demo/spec/feature/things/thing UC-TH2
     ");
 }

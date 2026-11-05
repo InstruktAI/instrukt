@@ -1,4 +1,4 @@
-//! The engine adapter (`docs/local/spec/feature/blueprint/graph-engine.md`):
+//! The engine adapter (`docs/project/spec/feature/blueprint/graph-engine.md`):
 //! runs the selected engine against a checkout of one revision and
 //! translates its output into the graph contract, and forwards the
 //! questions only an engine can answer.

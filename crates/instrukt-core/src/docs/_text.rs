@@ -440,8 +440,8 @@ mod tests {
 
     #[test]
     fn references_skip_code_comments_and_emails() {
-        let body = "- @~/.instrukt/docs/a/policy/b.md\nsee @docs/local/spec/x.md now\n\
-                    `@docs/local/spec/y.md`\nmail me@host.md\n<!-- @docs/local/z.md -->\n";
+        let body = "- @~/.instrukt/docs/a/policy/b.md\nsee @docs/project/spec/x.md now\n\
+                    `@docs/project/spec/y.md`\nmail me@host.md\n<!-- @docs/project/z.md -->\n";
         let found: Vec<usize> = references(&lines(body))
             .into_iter()
             .map(|r| r.line)
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn a_reference_span_covers_its_at_sign_and_target() {
-        let body = "x\n  - @~/.instrukt/docs/a/policy/b.md\nsee `c` @docs/local/spec/x.md now\n";
+        let body = "x\n  - @~/.instrukt/docs/a/policy/b.md\nsee `c` @docs/project/spec/x.md now\n";
         for r in references(&lines(body)) {
             assert_eq!(body[r.span.clone()], format!("@{}", r.target));
         }

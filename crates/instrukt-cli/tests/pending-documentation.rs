@@ -1,6 +1,6 @@
 //! The read side of pending documentation: `instrukt docs index|get` with
 //! and without a todo's lens
-//! (`docs/local/spec/feature/docs/pending-documentation.md`).
+//! (`docs/project/spec/feature/docs/pending-documentation.md`).
 //!
 //! The home is published by the real `instrukt sync`.
 
@@ -89,22 +89,21 @@ fn published_demo(env: &TestEnv) -> Repo {
     let demo = project(
         env,
         "demo",
-        &["acme"],
         &[
-            ("docs/global/acme/spec/live.md", live),
-            ("docs/global/acme/policy/reworked.md", reworked),
-            ("docs/global/acme/policy/reworked.build-it.md", next),
-            ("docs/global/acme/spec/fresh.md", fresh),
-            ("docs/global/acme/spec/later.md", later),
-            ("docs/global/acme/concept/old.md", old),
-            ("docs/global/acme/concept/old.build-it.md", String::new()),
+            ("docs/domain/acme/spec/live.md", live),
+            ("docs/domain/acme/policy/reworked.md", reworked),
+            ("docs/domain/acme/policy/reworked.build-it.md", next),
+            ("docs/domain/acme/spec/fresh.md", fresh),
+            ("docs/domain/acme/spec/later.md", later),
+            ("docs/domain/acme/concept/old.md", old),
+            ("docs/domain/acme/concept/old.build-it.md", String::new()),
         ],
     );
     sync(env, &demo);
     demo
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/pending-documentation UC-PD1
+// spec: project/instrukt/spec/feature/docs/pending-documentation UC-PD1
 #[test]
 fn a_reader_of_the_current_contract_is_told_pending_changes_exist_and_who_owns_them() {
     let env = TestEnv::new();
@@ -129,7 +128,7 @@ fn a_reader_of_the_current_contract_is_told_pending_changes_exist_and_who_owns_t
     insta::assert_snapshot!("pending-withheld", stdout(&env, &withheld));
 }
 
-// spec: local/projects/instrukt/spec/feature/docs/pending-documentation UC-PD2
+// spec: project/instrukt/spec/feature/docs/pending-documentation UC-PD2
 #[test]
 fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
     let env = TestEnv::new();

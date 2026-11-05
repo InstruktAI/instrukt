@@ -73,7 +73,7 @@ pub enum FlavorCheck {
     Invalid(Vec<FlavorFinding>),
 }
 
-/// The workflow schema an authored flavor (`docs/global/<domain>/workflow/`)
+/// The workflow schema an authored flavor (`docs/domain/<domain>/workflow/`)
 /// is validated against (workflow, through the todos crate). Docs
 /// validation checks these files whether or not the `todos` module is on,
 /// because the publishing project authors them either way; the CLI always

@@ -1,5 +1,5 @@
 //! A project's workflow as its flavor configures it
-//! (`docs/local/spec/feature/workflow/workflow-definition.md`): the next
+//! (`docs/project/spec/feature/workflow/workflow-definition.md`): the next
 //! obligation follows the published definition, actions and instructions,
 //! and changing them changes the obligation with the same engine.
 #![allow(
@@ -19,7 +19,7 @@ mod workflow;
 use support::redact;
 use workflow::Crew;
 
-// spec: local/projects/instrukt/spec/feature/workflow/workflow-definition UC-WD1
+// spec: project/instrukt/spec/feature/workflow/workflow-definition UC-WD1
 #[test]
 fn the_next_obligation_follows_the_configured_order_actions_and_instructions() {
     let crew = Crew::new();
@@ -32,22 +32,22 @@ fn the_next_obligation_follows_the_configured_order_actions_and_instructions() {
     // PRD, drafted by another command, with other instructions.
     let flavor = &crew.flavor.repo;
     let prepare = flavor
-        .read("docs/global/crew/workflow/prepare.yaml")
+        .read("docs/domain/crew/workflow/prepare.yaml")
         .replace(
             "  to: plan_drafting\n  when: {equals: [kind, change]}\n  action: draft-plan",
             "  to: prd_drafting\n  when: {equals: [kind, change]}\n  action: draft-prd",
         );
     let actions = flavor
-        .read("docs/global/crew/workflow/actions.yaml")
+        .read("docs/domain/crew/workflow/actions.yaml")
         .replace(
             "draft-prd:\n  command: instrukt docs get crew/procedure/intake",
             "draft-prd:\n  command: instrukt docs get crew/procedure/prepare-lead --closure",
         );
     flavor
-        .write("docs/global/crew/workflow/prepare.yaml", &prepare)
-        .write("docs/global/crew/workflow/actions.yaml", &actions)
+        .write("docs/domain/crew/workflow/prepare.yaml", &prepare)
+        .write("docs/domain/crew/workflow/actions.yaml", &actions)
         .write(
-            "docs/global/crew/workflow/templates/draft-prd.md",
+            "docs/domain/crew/workflow/templates/draft-prd.md",
             "Write down what {slug} must achieve before planning it.\n",
         );
     crew.flavor

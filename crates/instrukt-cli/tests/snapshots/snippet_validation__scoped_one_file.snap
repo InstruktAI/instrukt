@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: one.out
 ---
-docs/global/acme/concept/one.md: frontmatter-visibility-invalid: x
+docs/domain/acme/concept/one.md: frontmatter-visibility-invalid: x

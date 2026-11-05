@@ -25,13 +25,6 @@ pub enum ThinkingMode {
     Slow,
 }
 
-/// A domain the project publishes, with its trigger line (`publishes`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishedDomain {
-    pub domain: DomainName,
-    pub trigger: String,
-}
-
 /// A gate whose approver the project configures (`approvals.<gate>`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalGate {
@@ -223,32 +216,6 @@ impl Configuration {
                 "is not `fast`, `med` or `slow`",
             )),
         }
-    }
-
-    /// `publishes`: the domains the project publishes, in order.
-    pub fn publishes(&self) -> Result<Vec<PublishedDomain>, ConfigError> {
-        let Some(list) = self.at(&["publishes"]) else {
-            return Ok(Vec::new());
-        };
-        list.as_sequence()
-            .ok_or_else(|| invalid("publishes", "is not a list"))?
-            .iter()
-            .map(|item| {
-                let slug = item.get("slug").and_then(Value::as_str);
-                let trigger = item.get("trigger").and_then(Value::as_str);
-                match (slug, trigger) {
-                    (Some(slug), Some(trigger)) => Ok(PublishedDomain {
-                        domain: DomainName::parse(slug)
-                            .map_err(|err| invalid("publishes", &err.to_string()))?,
-                        trigger: trigger.to_owned(),
-                    }),
-                    _ => Err(invalid(
-                        "publishes",
-                        "holds an entry without `slug` and `trigger`",
-                    )),
-                }
-            })
-            .collect()
     }
 
     /// `github.api_url` (default `https://api.github.com`).
@@ -547,29 +514,6 @@ mod tests {
         assert_eq!(
             cfg.agents_thinking_mode().unwrap(),
             Some(ThinkingMode::Slow)
-        );
-    }
-
-    #[test]
-    fn published_domains_are_read_in_order() {
-        let cfg = config(
-            "schema_version: 1\n",
-            Some(
-                "schema_version: 1\npublishes: [{slug: sdlc, trigger: t1}, {slug: general, trigger: t2}]\n",
-            ),
-        );
-        let domains: Vec<DomainName> = cfg
-            .publishes()
-            .unwrap()
-            .into_iter()
-            .map(|p| p.domain)
-            .collect();
-        assert_eq!(
-            domains,
-            [
-                DomainName::parse("sdlc").unwrap(),
-                DomainName::parse("general").unwrap()
-            ]
         );
     }
 

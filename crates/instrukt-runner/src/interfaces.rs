@@ -1,6 +1,6 @@
 //! The interfaces the runner declares for work and workflow
-//! (`docs/local/spec/domain/runner.md`, "Context map position";
-//! `docs/local/design/architecture/overview.md`, "Modules and crates").
+//! (`docs/project/spec/domain/runner.md`, "Context map position";
+//! `docs/project/design/architecture/overview.md`, "Modules and crates").
 //!
 //! Todo dispatch reads work and workflow only through these traits, which
 //! preserves `instrukt-todos` → `instrukt-runner` → `instrukt-core`. Work's

@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: run.out
 ---
-docs/global/acme/concept/bare.md: frontmatter-description-missing
+docs/domain/acme/concept/bare.md: frontmatter-description-missing

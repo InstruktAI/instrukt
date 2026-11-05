@@ -1,5 +1,5 @@
 //! instrukt's event vocabulary and the event-log append the runner offers
-//! (`docs/local/spec/domain/runner.md`, "Domain events emitted" and
+//! (`docs/project/spec/domain/runner.md`, "Domain events emitted" and
 //! "Domain events consumed"; `event-activation`, "Delivery and restart
 //! boundary").
 //!

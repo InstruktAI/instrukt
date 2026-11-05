@@ -1,0 +1,163 @@
+---
+description: 'Documentation leads, implementation catches up. Pending material names the delivery that makes it current, so the gap stays honest and the design stays shareable.'
+visibility: 'public'
+---
+
+# Documentation-First Development — Principle
+
+## Principle
+
+Documentation is the source of truth for what the system is AND what it is becoming. Design happens in the document layer first; code catches up. A snippet that describes the intended shape of the system is not a wish or a forecast — it is the design, written down, shareable, reviewable, and binding on what gets built.
+
+“First” orders the documentation before implementation; it does not put a tracked document before the design has formed. Conversation and scratchpad work may shape an outcome, but they are not the contract. The document becomes that contract only after the active participants converge and the authoring context releases the agreed outcome for materialization.
+
+For this to work without becoming a fiction, pending documentation distinguishes intended behavior from the current contract and identifies the delivery that makes it current. Its representation and authoring mechanics are owned by `general/spec/snippet-authoring-schema` and `general/procedure/doc-snippet-authoring`. Delivery resolves the pending material without erasing unrelated current or pending contracts. The reconciliation is enforced by the system, not left to memory.
+
+## Rationale
+
+The alternative — designing inside todos, inside PRDs, inside scattered artifacts — fragments the design surface. Each todo's artifacts are local to that todo. Other agents working in parallel can't easily reference them. The orchestrator that needs to coordinate three related deliveries has to read three different PRDs to see the shared design. Conversations about future state degrade into "go read the X artifact in todo Y."
+
+The alternative on the other side — refusing to update docs until code lands — leaves the design unspoken between conception and delivery. The product owner thinks about the future constantly; the agent reading docs sees only the past. There's no shared surface where forward design lives. So forward design ends up in chat, in team-message threads, in mental models that don't propagate.
+
+Doc-first resolves both by making the design space first-class:
+
+- **Shareable.** Pending material is a URL all agents can reach. The design lives in one place, not five.
+- **Honest.** Pending material declares intended state and names its delivery; unmarked text describes current behavior. A reader knows what they are looking at.
+- **Reviewable.** Pending snippets get the same review surface as code — pull requests, lint, validation. Bad design gets caught at doc time, before implementation costs are spent.
+- **Aligned.** The orchestrator dispatching three related builds points all three at the same pending snippet. The builders read the same design. Their outputs converge.
+- **Reconciled.** When delivery lands, its pending material becomes the current contract. Stale "future" doesn't accumulate.
+
+This is the same shape as TDD, schema-first API design, and ADRs. The discipline isn't new — what's new is naming it for documentation, encoding it in frontmatter, and making the reconciliation automatic.
+
+## Implications
+
+The **enforceable rules** of this principle — doc-only work is never a todo,
+functionality work authors its snippets first, every behavioral delta is
+reflected, a stale current snippet is a defect, delivery resolves pending material —
+live in `general/policy/documentation-discipline`. The **authoring mechanics** —
+planned sections, companions, frontmatter, the publication pipeline — live in
+`general/procedure/doc-snippet-authoring`, and the **field shapes** in
+`general/spec/snippet-authoring-schema`. This section states the conceptual
+consequences that shape how documentation is organized.
+
+### 1. Discoverability surfaces ownership
+
+`instrukt docs index` renders the owning slugs inline for every pending snippet — current snippets render with no suffix, a brand-new pending snippet renders with a `(delivered by: <slugs>)` suffix, and a live snippet with an incoming change renders with a `(superseded by: <slugs>)` suffix. The same listing answers "what is the state of this snippet?" and "who is on the hook to close the gap?" without a second lookup.
+
+A worker preparing or building a slug runs `instrukt docs index --target <slug>` to see exactly which snippets it owns. This is the canonical query that makes the doc-first discipline operational rather than aspirational: the worker asks the system what it has been put on the hook for, and the system answers.
+
+### 2. A context rewrite is pending material on its domain spec
+
+A context rewrite is expressed as pending changes to its domain contract (see `sdlc/spec/domain-spec`). The current contract remains available until the rewrite is delivered; the authoring procedure owns its pending representation. Workers on the new implementation build against the pending contract. Build review checks the implementation against it. When the new implementation ships and cuts over, delivery makes it the current contract.
+
+This is the structural reason a service rewrite is safe under this discipline: the domain spec is the shared design anchor; both the old implementation (in its declining role) and the new one (in its ascending role) must satisfy it; the cutover happens when the new implementation satisfies the same spec the old one satisfies.
+
+### 3. Feature specs are the hub; domain specs are the spokes
+
+Documentation organizes around two snippet kinds with one-directional flow:
+
+- **Feature spec** (the hub) — describes owner-local behavior in business-value terms through its prose contract, adds Gherkin use cases when user goals warrant them, and points at the bounded contexts it touches. Lives under the context that owns the behavioral decision at `docs/project/spec/feature/<context>/<concept-name>.md`. Concept-named, NEVER slug-named — the snippet identity is the domain concept it describes, not the todo that authored or refined it. Other contexts may index the spec as consumers; that does not make them co-owners.
+- **Domain spec** (the spokes) — describes a bounded context's ubiquitous language, aggregates, events, and design. Its Use cases section indexes the feature specs that touch this context.
+
+Authoring flows from hub to spokes: an intake agent processes a human's input as a feature need (the hub), then identifies and updates the affected domain specs (the spokes). The reverse direction (spokes inferring hubs) is forbidden — domain concepts don't carry business value standalone; that's the feature's job.
+
+#### 3a. Not every todo deserves a feature spec — classify first
+
+Feature specs exist for **behavioral capabilities** — behavior some observer
+experiences. They are NOT the default output of every prepared todo. The
+classification is one question, asked at intent entry: does this change alter
+what an observer can experience of the system?
+
+| Classification     | What it is                                                                                                                                                                  | Durable doc home                                      | Feature spec? |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------- |
+| **Behavioral**     | Behavior an observer experiences. The observer may be a human (a delivered message, a rendered screen) or an agent (a CLI surface, an event, a structured decision record). | `docs/project/spec/feature/<context>/<concept-name>.md` | **YES**       |
+| **Non-behavioral** | Refactor, migration, tooling, infrastructure with no contract delta — nothing any observer experiences differently.                                                         | None — workflow.artifacts only                        | **NO**        |
+
+A feature spec states its contract in prose: rules, invariants, refusal
+conditions and tables. Use cases are a separate, narrower question. A use case
+exists only at user-goal level: a goal a stakeholder of the product achieves in
+one sitting, stated as the stakeholder would state it, sized so the product
+owner can accept or reject a release on it. The stakeholder is a person, or an
+agent acting for a named person; the platform's own agents coordinating with
+each other are machinery, not stakeholders. Subfunctions (the steps inside a
+goal, such as setting a value, listing records or refusing invalid input) and
+internal mechanics get no use case, and a failure or refusal that threatens a
+goal is an extension of that goal's use case. Most behavioral changes therefore
+refine a spec's prose contract and add no use case. The reason is that a use
+case is what a product owner accepts: below goal level, scenarios restate
+mechanics, multiply with every change to the steps, and turn the specs into
+administration nobody reads. Silence on the classification question means
+unclassified — it is asked, never defaulted.
+
+A non-behavioral todo that produces a feature spec is a defect. The namespace
+becomes polluted with slug-named non-features, delivery reconciliation
+fires on docs nobody needed, and future readers can no longer tell
+which feature specs describe real capabilities.
+
+#### 3b. Concept-name derivation (behavioral work only)
+
+The `<concept-name>` in the feature-spec path is the durable domain noun
+for the capability — short, noun-shaped, descriptive of what users get,
+stable across multiple deliveries that may shape it. Derived from the
+capability, NEVER from the todo slug.
+
+- RIGHT: `docs/project/spec/feature/agent_runtime/session-revival.md`
+- RIGHT: `docs/project/spec/feature/workflow/multi-pillar-split.md`
+- WRONG: `docs/project/spec/feature/<context>/<v2-cutover-slug>.md` (todo slug verbatim)
+
+**Smell test.** If the proposed concept name equals, contains, or is an
+obvious rewording of the todo slug, you have not named a concept — you
+have copied a slug. Stop. Either re-derive the concept name from the
+durable capability, or recognize the work is non-behavioral and produce no
+feature spec at all.
+
+**Tie-breaker — classification is asked, not guessed.** A spurious feature
+spec is worse than a missing one: it lies to future readers about what's a
+real capability. But silence does not classify — when the behavioral question
+has no clear answer, ask it of the intent owner rather than defaulting either
+way. A missing spec for true behavioral work surfaces as a gap that the next
+delivery in that capability fills naturally.
+
+**Pending carriers are delivery association.** Pending carriers associate intended changes with their deliveries. One delivery may affect several snippets, and several deliveries may affect one snippet under the authoring procedure's ownership and ordering rules.
+
+**The architecture design lives in doc snippets; the `architecture` workflow.artifact is only a thin index/log.** Design decisions that survive delivery land in docs across two locations:
+
+- **Per-context architectural changes** (new aggregates, new events, refined invariants, internal model adjustments) → the affected domain spec snippet at `docs/project/spec/domain/<context>.md`
+- **Cross-cutting architectural changes** (new bounded context, communication patterns, transport rules, context-map shifts, deployment shape) → the architecture design docs at `docs/project/design/architecture/*.md`
+
+The doc-snippet updates ARE the design record — they are authoritative. The `architecture` workflow.artifact persists, but only as a thin per-todo audit log: which snippets the architecture phase touched, why, and the pending carriers that name its slug. It carries no design body and is never the source of truth. There is no `architecture` snippet kind. Decisions that don't survive (implementation tactic choices, library selection, internal sequencing) stay ephemeral in workflow.artifacts. The architecture phase routes per change: internal-to-context → domain spec; cross-cutting → design doc; or both when a change has both faces — and logs the routing in the thin artifact.
+
+**PRDs do not survive as snippets.** The PRD captures work-guidance for one delivery (MoSCoW, Why, risks). It is scaffolding. It stays a workflow.artifact and retires after delivery. The behavioral contract (feature-spec prose and any admitted Gherkin use cases) and the design (updates in domain specs) become docs.
+
+### 4. Prepare workers author directly to the docs layer
+
+The intake and architecture phases of the prepare lifecycle write DIRECTLY to docs — feature spec snippets (intake), domain spec snippets and architecture design docs (architecture). No design-bearing workflow.artifact that later "migrates." The doc IS the source; the architecture phase additionally writes a thin index/log artifact recording which snippets it touched.
+
+**Admitted use cases are written in Gherkin in the feature spec.** Intake authors the business value and prose contract, adding Gherkin only for user goals admitted by `sdlc/procedure/feature-spec-authoring`. A behavioral change that adds no user goal can refine that contract without adding a use case. There is no separate `test-specs` phase.
+
+Ephemeral workflow.artifacts (PRD, implementation plan, review findings, drift analysis, deferrals) remain in `workflow.artifacts` because they're process scaffolding, not behavioral contract.
+
+The prepare state machine still has phases; each phase's output shifts to docs (or stays workflow.artifact for the scaffolding). A phase with nothing to author (e.g., architecture phase on a Gherkin-only feature enrichment) produces no doc change and advances naturally.
+
+### 5. Multi-pillar features group at intake
+
+A feature whose acceptance scenarios cross multiple bounded contexts (pillars) gets handled by the intake phase via proactive grouping:
+
+1. Intake identifies which contexts the feature touches (the pillars).
+2. If the per-pillar slices deliver independently (the typical case), intake creates a container todo and per-pillar children via `instrukt todo create <child> "<content>" --kind <k> --group <container>`. Each child owns its own feature spec(s) 1:1 — there is no shared feature spec across children. Each child carries its own PRD workflow.artifact scoped to its slice.
+3. Children deliver independently. Each child's pending material on its own spec resolves when that child delivers.
+4. If the slices MUST land together (e.g., a new event taxonomy where every consumer needs the coordinated update on the same day), intake keeps a single todo with multiple owner-local feature specs and per-context commits. Atomic delivery coordinates the owners; it never collapses them into one shared contract. Independence is the discriminator.
+
+Grouping is an agent intelligence decision derived from the work's shape — there is no human approval gate. The agent partitions the parent's EXISTING scope into children; a child that needs scope absent from the parent is a NEW todo, not a grouped child.
+
+## Tensions
+
+- **Pending snippets that never deliver.** The slug they point to may be deferred, frozen, or abandoned. The author must either revive the delivery path or remove the pending material so the snippet reflects current state — design that nobody is actually committing to deliver doesn't belong in the doc layer.
+
+- **Design churn during prepare.** Pending snippets may go through revisions as the PRD iterates; only commit the snippet update when prepare converges on a stable design (typically after spec/plan review), not on every intermediate draft.
+
+- **Cross-context pending work.** A delivery spanning multiple bounded contexts updates multiple owner-local snippets, each through its own pending carrier. No behavioral or domain snippet spans ownership merely because the deliveries coordinate; cross-cutting design docs describe only the relationship among owners.
+
+- **Product owner anchor vs. agent ground.** Product owners reading pending material see forward state; agents making code decisions need current state. The ` (delivered by: …)` and ` (superseded by: …)` suffixes in `instrukt docs index` keep the distinction visible. When a human writes "in our system, X works like Y" as pending material, the human asserts design; an agent reading later must check whether it is pending and not assume X works that way today.
+
+- **Doc-first vs. velocity.** Design that only becomes clear by touching the code: author it as pending material, attempt the work, revise as you learn, then deliver. The principle does not require omniscience at design time — it requires writing down what you learn AS you learn it, with honesty about what is current and what is intended. For trivial implementation-internal changes (a one-line bug fix with no contract change), the doc layer is not touched; doc-first scales with the size and reach of the change.

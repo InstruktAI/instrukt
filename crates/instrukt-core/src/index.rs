@@ -1,9 +1,9 @@
-//! The global index: `~/.instrukt/docs/index.yaml`, every published entry of
+//! The global index: `~/.instrukt/state/index.yaml`, every published entry of
 //! every project, each carrying its owner.
 //!
 //! This is the persisted format shared by its writer and its readers:
 //! publication builds entries from a project's committed docs and patches
-//! the index by owner (`docs/local/spec/domain/publication.md`, "Global
+//! the index by owner (`docs/project/spec/domain/publication.md`, "Global
 //! index"); docs lists and resolves from it (`docs index`, `docs get`). The
 //! entry fields follow the predecessor's index, plus local entries carrying
 //! the absolute path of their file in their project.

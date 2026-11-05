@@ -1,6 +1,6 @@
 //! A fake GitHub: a local HTTP server standing in for GitHub's REST API at
 //! the network line, the one fake the testing policy allows
-//! (`docs/local/policy/testing.md`). instrukt's client stays real; the
+//! (`docs/project/policy/testing.md`). instrukt's client stays real; the
 //! test points it here through the global layer's `github.api_url`.
 //!
 //! It fakes GitHub's observable HTTP contract, not instrukt: resources

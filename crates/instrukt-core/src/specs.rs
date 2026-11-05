@@ -1,5 +1,5 @@
 //! The specs context: use-case inventory, test bindings, coverage and
-//! reservation (`docs/local/spec/domain/specs.md`).
+//! reservation (`docs/project/spec/domain/specs.md`).
 //!
 //! Callers ask for a project's coverage ([`Coverage::measure`], then
 //! [`Coverage::check`] or [`Coverage::update_baseline`]) or for a todo's

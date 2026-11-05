@@ -1,5 +1,5 @@
 //! Workflow's subcommands in the todo namespace: `instrukt todo prepare
-//! <slug>` and `instrukt todo work <slug>` (`docs/local/spec/domain/
+//! <slug>` and `instrukt todo work <slug>` (`docs/project/spec/domain/
 //! workflow.md`, "Flavor-facing contract"; `preparation`,
 //! `delivery-cycle`).
 //!

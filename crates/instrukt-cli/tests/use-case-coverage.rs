@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/specs/use-case-coverage`:
+//! `project/instrukt/spec/feature/specs/use-case-coverage`:
 //! `instrukt specs coverage [--check] [--update-baseline]` — the use-case
 //! inventory against the tests' bindings, and the ratchet over orphans and
 //! anonymous scenarios.
@@ -8,8 +8,8 @@ mod common;
 
 use common::{Repo, TestEnv};
 
-const SPEC_ID: &str = "local/projects/demo/spec/feature/things/thing";
-const SPEC_PATH: &str = "docs/local/spec/feature/things/thing.md";
+const SPEC_ID: &str = "project/demo/spec/feature/things/thing";
+const SPEC_PATH: &str = "docs/project/spec/feature/things/thing.md";
 
 /// A feature spec whose `### Use cases` section holds `use_cases`.
 fn spec(use_cases: &str) -> String {
@@ -66,7 +66,7 @@ fn coverage(env: &TestEnv, repo: &Repo, args: &[&str]) -> String {
     )
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn the_report_shows_bound_and_unbound_use_cases_orphans_and_anonymous_scenarios() {
     let env = TestEnv::new();
@@ -96,15 +96,15 @@ fn the_report_shows_bound_and_unbound_use_cases_orphans_and_anonymous_scenarios(
     unbound: 2
     multi-bound: 0
     orphans: 2
-    orphan: crates/thing/tests/thing.rs::realizes_1 cites local/projects/demo/spec/feature/things/thing UC-TH9
+    orphan: crates/thing/tests/thing.rs::realizes_1 cites project/demo/spec/feature/things/thing UC-TH9
     orphan: crates/thing/tests/thing.rs::realizes_2 cites docs/x.md UC-TH2
-    anonymous: local/projects/demo/spec/feature/things/thing ## Behaviour
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    anonymous: project/demo/spec/feature/things/thing ## Behaviour
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn python_decorators_bind_like_rust_comments_and_extra_tests_are_counted() {
     let env = TestEnv::new();
@@ -128,12 +128,12 @@ fn python_decorators_bind_like_rust_comments_and_extra_tests_are_counted() {
     unbound: 1
     multi-bound: 1
     orphans: 0
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
-    multi-bound: local/projects/demo/spec/feature/things/thing UC-TH1 (2 tests)
+    unbound: project/demo/spec/feature/things/thing UC-TH3
+    multi-bound: project/demo/spec/feature/things/thing UC-TH1 (2 tests)
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn a_use_case_heading_left_without_gherkin_is_retired_not_unbound() {
     let env = TestEnv::new();
@@ -156,12 +156,12 @@ fn a_use_case_heading_left_without_gherkin_is_retired_not_unbound() {
     unbound: 2
     multi-bound: 0
     orphans: 0
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    unbound: project/demo/spec/feature/things/thing UC-TH1
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC2
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC2
 #[test]
 fn a_test_citing_a_missing_use_case_fails_the_check_naming_the_count_that_grew() {
     let env = TestEnv::new();
@@ -184,15 +184,15 @@ fn a_test_citing_a_missing_use_case_fails_the_check_naming_the_count_that_grew()
     unbound: 2
     multi-bound: 0
     orphans: 1
-    orphan: tests/thing.rs::realizes_1 cites local/projects/demo/spec/feature/things/thing UC-TH7
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    orphan: tests/thing.rs::realizes_1 cites project/demo/spec/feature/things/thing UC-TH7
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     check: orphans 1 above baseline 0
     check: failed
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC2
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC2
 #[test]
 fn a_change_that_only_leaves_use_cases_unbound_passes_the_check() {
     let env = TestEnv::new();
@@ -215,9 +215,9 @@ fn a_change_that_only_leaves_use_cases_unbound_passes_the_check() {
     unbound: 3
     multi-bound: 0
     orphans: 0
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH4
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
+    unbound: project/demo/spec/feature/things/thing UC-TH4
     check: passed
     ");
 }
@@ -231,7 +231,7 @@ fn scenarios_under(id: &str, titles: &[&str]) -> String {
     format!("#### {id}: a goal\n\n```gherkin\n{scenarios}```\n\n")
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn prose_beginning_with_when_is_not_a_scenario() {
     let env = TestEnv::new();
@@ -254,13 +254,13 @@ fn prose_beginning_with_when_is_not_a_scenario() {
     unbound: 3
     multi-bound: 0
     orphans: 0
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    unbound: project/demo/spec/feature/things/thing UC-TH1
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn a_single_unnamed_scenario_takes_its_headings_id_and_is_bound_under_it() {
     let env = TestEnv::new();
@@ -284,11 +284,11 @@ fn a_single_unnamed_scenario_takes_its_headings_id_and_is_bound_under_it() {
     unbound: 1
     multi-bound: 0
     orphans: 0
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
+    unbound: project/demo/spec/feature/things/thing UC-TH1
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn unnamed_scenarios_that_are_not_their_headings_only_one_are_anonymous() {
     let env = TestEnv::new();
@@ -310,13 +310,13 @@ fn unnamed_scenarios_that_are_not_their_headings_only_one_are_anonymous() {
     unbound: 1
     multi-bound: 0
     orphans: 0
-    anonymous: local/projects/demo/spec/feature/things/thing Scenario: the second goal
-    anonymous: local/projects/demo/spec/feature/things/thing Scenario: another goal
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
+    anonymous: project/demo/spec/feature/things/thing Scenario: the second goal
+    anonymous: project/demo/spec/feature/things/thing Scenario: another goal
+    unbound: project/demo/spec/feature/things/thing UC-TH2
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn an_unnamed_scenario_beside_a_named_one_is_anonymous() {
     let env = TestEnv::new();
@@ -335,13 +335,13 @@ fn an_unnamed_scenario_beside_a_named_one_is_anonymous() {
     unbound: 2
     multi-bound: 0
     orphans: 0
-    anonymous: local/projects/demo/spec/feature/things/thing Scenario: unnamed
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    anonymous: project/demo/spec/feature/things/thing Scenario: unnamed
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn a_citation_no_test_function_follows_is_an_orphan_not_coverage() {
     let env = TestEnv::new();
@@ -360,14 +360,14 @@ fn a_citation_no_test_function_follows_is_an_orphan_not_coverage() {
     unbound: 3
     multi-bound: 0
     orphans: 1
-    orphan: tests/thing.rs:1 cites local/projects/demo/spec/feature/things/thing UC-TH1 (no test function follows it)
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    orphan: tests/thing.rs:1 cites project/demo/spec/feature/things/thing UC-TH1 (no test function follows it)
+    unbound: project/demo/spec/feature/things/thing UC-TH1
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[cfg(unix)]
 #[test]
 fn tracked_symlinks_resolving_outside_the_repository_are_not_its_tests() {
@@ -396,13 +396,13 @@ fn tracked_symlinks_resolving_outside_the_repository_are_not_its_tests() {
     unbound: 3
     multi-bound: 0
     orphans: 0
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH1
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH2
-    unbound: local/projects/demo/spec/feature/things/thing UC-TH3
+    unbound: project/demo/spec/feature/things/thing UC-TH1
+    unbound: project/demo/spec/feature/things/thing UC-TH2
+    unbound: project/demo/spec/feature/things/thing UC-TH3
     ");
 }
 
-// spec: local/projects/instrukt/spec/feature/specs/use-case-coverage UC-SC1
+// spec: project/instrukt/spec/feature/specs/use-case-coverage UC-SC1
 #[test]
 fn a_use_case_id_with_letters_and_hyphens_after_its_number_is_bindable() {
     let env = TestEnv::new();

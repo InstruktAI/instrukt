@@ -1,5 +1,5 @@
 //! Loading and validating a flavor's `workflow/` directory
-//! (`docs/local/spec/domain/workflow.md`, "Flavor-facing contract").
+//! (`docs/project/spec/domain/workflow.md`, "Flavor-facing contract").
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};

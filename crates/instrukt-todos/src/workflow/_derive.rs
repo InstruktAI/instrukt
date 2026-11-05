@@ -1,6 +1,6 @@
 //! Evaluation: a definition and facts to the derived state, the selected
 //! transition, its action with rendered instructions, and the effects owed
-//! (`docs/local/spec/feature/workflow/workflow-definition.md`).
+//! (`docs/project/spec/feature/workflow/workflow-definition.md`).
 
 use std::collections::BTreeSet;
 

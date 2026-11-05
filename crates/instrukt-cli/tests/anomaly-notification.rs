@@ -1,4 +1,4 @@
-//! `local/projects/instrukt/spec/feature/runner/anomaly-notification`: a
+//! `project/instrukt/spec/feature/runner/anomaly-notification`: a
 //! task whose execution failed, and waits in no conversation, is reported
 //! once through the runtime's notification facility by reference to the
 //! session holding it. A conversation still waiting for the developer
@@ -28,7 +28,7 @@ fn dispatched_task() -> Tracked {
     project
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/anomaly-notification UC-AN1
+// spec: project/instrukt/spec/feature/runner/anomaly-notification UC-AN1
 #[test]
 fn a_failed_task_is_reported_once_by_reference_to_the_session_holding_it() {
     let mut project = dispatched_task();
@@ -58,7 +58,7 @@ fn a_failed_task_is_reported_once_by_reference_to_the_session_holding_it() {
     insta::assert_snapshot!(project.rt.notifications().join("\n"), @"rt:s1");
 }
 
-// spec: local/projects/instrukt/spec/feature/runner/anomaly-notification UC-AN1
+// spec: project/instrukt/spec/feature/runner/anomaly-notification UC-AN1
 #[test]
 fn a_run_that_ended_without_its_outcome_is_asked_once_then_reported() {
     let mut project = dispatched_task();

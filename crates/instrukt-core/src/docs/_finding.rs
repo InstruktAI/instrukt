@@ -28,8 +28,11 @@ codes! {
     // Identity
     /// The taxonomy directory is not one of the seven.
     UnknownTaxonomy => "identity-unknown-taxonomy",
-    /// A published file without a domain segment, or a reserved one.
+    /// A file directly under `docs/domain/`, or a domain folder whose name
+    /// is not a domain name.
     MissingDomain => "identity-missing-domain",
+    /// A domain folder named `general`, `project` or `third-party`.
+    ReservedDomain => "identity-reserved-domain",
     /// A local snippet in a repository that declares no `project`.
     UndeclaredProject => "identity-undeclared-project",
     /// A Markdown file below `docs/` outside every place a document lives.

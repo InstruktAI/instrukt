@@ -1,4 +1,4 @@
-//! The evaluation report (`local/projects/instrukt/spec/feature/work/eval-report`):
+//! The evaluation report (`project/instrukt/spec/feature/work/eval-report`):
 //! delivery outcomes aggregated from the work record by project and
 //! evaluation window, with the model a separate dimension inside each
 //! window and human acts in a row of their own, rendered as HTML.

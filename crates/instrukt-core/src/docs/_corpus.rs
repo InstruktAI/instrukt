@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::_finding::FindingCode;
 use super::_frontmatter::{Frontmatter, parse_mapping};
 use super::_identity::{
-    BaselineOwner, Classification, DocDomain, Placement, Scope, Taxonomy, Unplaced,
+    BaselineOwner, Classification, DocDomain, FRAGMENT_ROOT, Placement, Scope, Taxonomy, Unplaced,
     companion_shape, place,
 };
 use super::_markers::{self, Scan, Side};
@@ -627,8 +627,8 @@ impl Corpus {
         self.fragments.get(name).map(String::as_str)
     }
 
-    /// The domains this repository publishes: those with a directory below
-    /// its `docs/global/`.
+    /// The domains this repository publishes: `general` when it holds
+    /// `docs/general/`, and each `<x>` of a `docs/domain/<x>/` it holds.
     pub fn published_domains(&self) -> &BTreeSet<DomainName> {
         &self.owned_domains
     }
@@ -638,7 +638,7 @@ impl Corpus {
     pub(super) fn fragment_files(&self) -> impl Iterator<Item = (String, &str)> {
         self.fragments
             .iter()
-            .map(|(name, body)| (format!("docs/global/snippets/{name}.md"), body.as_str()))
+            .map(|(name, body)| (format!("{FRAGMENT_ROOT}{name}.md"), body.as_str()))
     }
 
     pub(super) fn strays(&self) -> &[Stray] {
@@ -679,12 +679,12 @@ impl Corpus {
     }
 }
 
+/// The published position a repository file lies in, as the domain name it
+/// is addressed by: `general` for `docs/general/…`, `<x>` for
+/// `docs/domain/<x>/…`.
 fn owned_domain(path: &str) -> Option<DomainName> {
-    let rest = path.strip_prefix("docs/global/")?;
-    let (domain, _) = rest.split_once('/')?;
-    if domain == "snippets" {
-        return None;
-    }
+    let home_rel = super::_identity::published_destination(path)?;
+    let (domain, _) = home_rel.split_once('/')?;
     DomainName::parse(domain).ok()
 }
 
@@ -772,6 +772,7 @@ pub(super) fn unplaced_code(why: &Unplaced) -> (FindingCode, Option<String>) {
     match why {
         Unplaced::UnknownTaxonomy(dir) => (FindingCode::UnknownTaxonomy, Some(dir.clone())),
         Unplaced::MissingDomain(segment) => (FindingCode::MissingDomain, Some(segment.clone())),
+        Unplaced::ReservedDomain(name) => (FindingCode::ReservedDomain, Some(name.clone())),
         Unplaced::UndeclaredProject => (FindingCode::UndeclaredProject, None),
         Unplaced::Outside => (FindingCode::Unplaced, None),
     }
@@ -815,12 +816,12 @@ mod tests {
 
     fn with_companions() -> Corpus {
         corpus(&[
-            ("docs/local/spec/a.md", &live()),
+            ("docs/project/spec/a.md", &live()),
             (
-                "docs/local/spec/a.rework.md",
+                "docs/project/spec/a.rework.md",
                 &format!("---\ndescription: d\n---\n{NEXT}"),
             ),
-            ("docs/local/spec/a.retire-it.md", ""),
+            ("docs/project/spec/a.retire-it.md", ""),
         ])
     }
 
@@ -845,7 +846,7 @@ mod tests {
     fn lenses_show_current_target_and_retired_views() {
         let c = with_companions();
         let s = &c.snippets()[0];
-        let live = PathBuf::from("docs/local/spec/a.md");
+        let live = PathBuf::from("docs/project/spec/a.md");
         // The live body's own lines: 0-5 before, 6 open, 7 added, 8 close,
         // 9-12 after.
         let text = live_body();
@@ -864,7 +865,7 @@ mod tests {
         );
         let rework = slug("rework");
         let (path, _) = shown(s.view(Lens::Target(&rework)));
-        assert_eq!(path, PathBuf::from("docs/local/spec/a.rework.md"));
+        assert_eq!(path, PathBuf::from("docs/project/spec/a.rework.md"));
         let retire = slug("retire-it");
         assert_eq!(s.view(Lens::Target(&retire)), View::Retired);
     }
@@ -872,7 +873,7 @@ mod tests {
     #[test]
     fn a_pending_snippet_is_withheld_outside_its_lens() {
         let c = corpus(&[(
-            "docs/local/spec/new.md",
+            "docs/project/spec/new.md",
             "---\ndescription: d\ndelivered_by: [build-it]\n---\n# N — Spec\n",
         )]);
         let s = &c.snippets()[0];
@@ -889,9 +890,9 @@ mod tests {
     #[test]
     fn required_reads_are_read_from_their_section_only() {
         let c = corpus(&[(
-            "docs/local/policy/p.md",
-            "---\ndescription: d\n---\n# P — Policy\n\n## Required reads\n\n- @docs/local/policy/q.md\n\
-             - @~/.instrukt/docs/sdlc/bundle.md\n\n## Rules\n\n@docs/local/policy/r.md\n",
+            "docs/project/policy/p.md",
+            "---\ndescription: d\n---\n# P — Policy\n\n## Required reads\n\n- @docs/project/policy/q.md\n\
+             - @~/.instrukt/docs/sdlc/bundle.md\n\n## Rules\n\n@docs/project/policy/r.md\n",
         )]);
         let targets: Vec<_> = c.snippets()[0]
             .current()
@@ -903,7 +904,7 @@ mod tests {
             targets,
             [
                 Some(RefTarget::Snippet(
-                    SnippetId::parse("local/projects/demo/policy/q").unwrap()
+                    SnippetId::parse("project/demo/policy/q").unwrap()
                 )),
                 Some(RefTarget::Bundle(DomainName::parse("sdlc").unwrap())),
             ]

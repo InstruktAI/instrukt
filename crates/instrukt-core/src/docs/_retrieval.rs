@@ -1,6 +1,6 @@
 //! Progressive retrieval: `docs index` lists what the home holds, `docs get`
 //! reads it through the read pipeline
-//! (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`).
+//! (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 //!
 //! Both read the global index and the publication record; neither writes
 //! anything. A published snippet is read from the home, a local snippet
@@ -12,7 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use super::_corpus::{Corpus, Lens, ManifestLine, Snippet, SourceFile, View, manifest_lines};
-use super::_identity::{Scope, Taxonomy, companion_shape};
+use super::_identity::{Scope, Taxonomy, companion_shape, published_source};
+use super::_position::GENERAL;
 use super::_refs::{RefTarget, Reference};
 use super::_render::{self, Fragments, RenderContext, Values, read_confined};
 use super::DocsError;
@@ -57,9 +58,6 @@ pub struct Reading {
     pub text: String,
     pub unresolved: bool,
 }
-
-/// The domain whose owner's third-party docs are global.
-const GENERAL: &str = "general";
 
 const AREAS: &str = "principle|concept|policy|procedure|design|spec|adr";
 
@@ -213,7 +211,7 @@ fn slugs<'a>(slugs: impl IntoIterator<Item = &'a TodoSlug>) -> String {
 
 /// The ids every baseline manifest in view names: the published domains'
 /// `baseline.md` and `baseline-progressive.md`, and the listed project's
-/// `docs/local/baseline.md`.
+/// `docs/project/baseline.md`.
 fn baseline_ids(
     req: &IndexRequest<'_>,
     domains: &BTreeSet<&str>,
@@ -234,7 +232,7 @@ fn baseline_ids(
         None => caller.repo_root.clone().zip(caller.project.clone()),
     };
     if let Some((root, project)) = local {
-        let path = root.join("docs/local/baseline.md");
+        let path = root.join("docs/project/baseline.md");
         match std::fs::read_to_string(&path) {
             Ok(text) => manifests.push((text, Some(project))),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -531,11 +529,9 @@ impl<'i> Reader<'i> {
             IndexScope::Local => outside_repository,
         };
         let (on_disk, as_source) = match entry.scope {
-            // The home holds `docs/global/<domain>/…` at `<docs>/<domain>/…`.
-            IndexScope::Global => (
-                repo_rel.trim_start_matches("docs/global/").to_owned(),
-                repo_rel.clone(),
-            ),
+            // The home holds `docs/general/…` and `docs/domain/<x>/…` at
+            // `<docs>/general/…` and `<docs>/<x>/…`: the id's own path.
+            IndexScope::Global => (format!("{}.md", entry.id.as_str()), repo_rel.clone()),
             IndexScope::Local => (repo_rel.clone(), repo_rel.clone()),
         };
         let missing = || match entry.scope {
@@ -816,10 +812,10 @@ impl<'i> Reader<'i> {
         };
         let rendered = _render::render(&text, Lens::Current, &cx)?;
         // third-party-docs spec: `global` for the docs of the project that
-        // owns the `general` domain, `project` for any other project's. The
-        // owner is the domain's publisher, whether or not it has snippets.
+        // owns `docs/general/`, `project` for any other project's. The owner
+        // is the position's claimant, whether or not it has snippets.
         let owns_general = match DomainName::parse(GENERAL) {
-            Ok(general) => crate::publication::domain_publisher(self.home, &general)?
+            Ok(general) => crate::publication::domain_owner(self.home, &general)?
                 .is_some_and(|owner| owner == entry.source_project),
             Err(_) => false,
         };
@@ -860,8 +856,9 @@ fn outside_repository(path: PathBuf) -> DocsError {
     DocsError::OutsideRepository { path }
 }
 
-/// A global entry's file as a repository path (`docs/global/<rel>`), from
-/// the path the entry carries relative to the home's docs directory.
+/// A published entry's file as the repository path it was published from
+/// (`docs/general/…`, `docs/domain/<x>/…`), once the path the entry carries
+/// relative to the home's docs directory is its id's own path.
 fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
     let parts: Option<Vec<&str>> = entry
         .path
@@ -871,9 +868,9 @@ fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
             _ => None,
         })
         .collect();
-    let rel = parts.map(|p| format!("docs/global/{}", p.join("/")));
-    match rel {
-        Some(rel) if rel == format!("docs/global/{}.md", entry.id.as_str()) => Ok(rel),
+    let at_identity = parts.is_some_and(|p| p.join("/") == format!("{}.md", entry.id.as_str()));
+    match published_source(&entry.id) {
+        Some(rel) if at_identity => Ok(rel),
         _ => Err(DocsError::IndexMismatch {
             id: entry.id.clone(),
             path: entry.path.clone(),
@@ -882,20 +879,20 @@ fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
 }
 
 /// A local entry's project root and the file's repository path
-/// (`docs/local/<taxonomy>/<rest>.md`), from the absolute path the entry
+/// (`docs/project/<taxonomy>/<rest>.md`), from the absolute path the entry
 /// carries.
 fn local_root(entry: &IndexEntry) -> Result<(PathBuf, String), DocsError> {
     let mismatch = || DocsError::IndexMismatch {
         id: entry.id.clone(),
         path: entry.path.clone(),
     };
-    let prefix = format!("local/projects/{}/", entry.source_project.as_str());
+    let prefix = format!("project/{}/", entry.source_project.as_str());
     let rest = entry
         .id
         .as_str()
         .strip_prefix(&prefix)
         .ok_or_else(mismatch)?;
-    let rel = format!("docs/local/{rest}.md");
+    let rel = format!("docs/project/{rest}.md");
     if !entry.path.is_absolute() || !entry.path.ends_with(&rel) {
         return Err(mismatch());
     }
@@ -993,7 +990,7 @@ mod tests {
         let placed = entry(id, IndexScope::Global, &format!("{id}.md"));
         assert_eq!(
             global_rel(&placed).unwrap(),
-            format!("docs/global/{}", placed.path.display())
+            format!("docs/domain/{}", placed.path.display())
         );
         for path in ["../../etc/passwd", "/etc/passwd", "acme/spec/b.md"] {
             assert!(
@@ -1008,14 +1005,14 @@ mod tests {
 
     #[test]
     fn a_local_entry_names_its_project_root_by_the_path_it_carries() {
-        let id = "local/projects/demo/spec/feature/a";
-        let rel = "docs/local/spec/feature/a.md";
+        let id = "project/demo/spec/feature/a";
+        let rel = "docs/project/spec/feature/a.md";
         let root = PathBuf::from("/work/demo");
         let placed = entry(id, IndexScope::Local, &root.join(rel).display().to_string());
         assert_eq!(local_root(&placed).unwrap(), (root, rel.to_owned()));
         for path in [
-            "docs/local/spec/feature/a.md",
-            "/work/demo/docs/local/spec/feature/b.md",
+            "docs/project/spec/feature/a.md",
+            "/work/demo/docs/project/spec/feature/b.md",
         ] {
             assert!(
                 matches!(
@@ -1026,9 +1023,9 @@ mod tests {
             );
         }
         let other = entry(
-            "local/projects/other/spec/a",
+            "project/other/spec/a",
             IndexScope::Local,
-            "/x/docs/local/spec/a.md",
+            "/x/docs/project/spec/a.md",
         );
         assert!(matches!(
             local_root(&other),

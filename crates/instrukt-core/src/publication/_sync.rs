@@ -10,11 +10,14 @@ use super::_compile::{self, Compiler};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
-use super::_tree::{self, BUNDLE_FILE, Outputs, PublisherRecord};
+use super::_tree::{self, BUNDLE_FILE, ClaimRecord, Outputs};
 use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, ConfigError, Configuration, Layer, Module};
-use crate::docs::{self, Corpus, Finding, ValidationRequest, Values};
+use crate::docs::{
+    self, Corpus, DomainIndex, FRAGMENT_ROOT, Finding, GENERAL, INDEX_FILE, Position,
+    PositionIndex, ValidationRequest, Values,
+};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::home::Home;
 use crate::ids::{CommitSha, DomainName, ProjectSlug};
@@ -26,12 +29,6 @@ const DOCS_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The docs lock's file name below the home's lock directory.
 const DOCS_LOCK: &str = "docs.lock";
-
-/// Domain names the published tree keeps for itself.
-const RESERVED_DOMAINS: [&str; 1] = ["third-party"];
-
-/// The domain whose owner writes the global agent entrypoints.
-const GENERAL: &str = "general";
 
 /// The `general` owner's global master.
 const GLOBAL_MASTER: &str = "agents/AGENTS.global.md";
@@ -62,8 +59,11 @@ pub struct SyncRequest<'a> {
 pub enum Refusal {
     /// The committed documentation has structural validation findings.
     Findings(Vec<Finding>),
-    /// The project claims an id or a domain another project owns.
+    /// The project claims an id or a position another project owns.
     Claim(Claim),
+    /// The committed tree holds a domain folder with a reserved name, by
+    /// its repository directory (`docs/domain/general/`).
+    ReservedDomain(Vec<String>),
 }
 
 impl fmt::Display for Refusal {
@@ -75,6 +75,15 @@ impl fmt::Display for Refusal {
                 findings.len()
             ),
             Refusal::Claim(claim) => claim.fmt(f),
+            Refusal::ReservedDomain(dirs) => {
+                let named: Vec<String> = dirs.iter().map(|dir| format!("`{dir}`")).collect();
+                let verb = if named.len() == 1 { "is" } else { "are" };
+                write!(
+                    f,
+                    "{} {verb} named after a reserved name: `general` and `project` are reserved and `third-party` keeps its special case, so no domain may take them",
+                    named.join(" and ")
+                )
+            }
         }
     }
 }
@@ -184,11 +193,14 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
 /// Everything a sync computed before it writes anything.
 struct Prepared {
     committed: Committed,
-    publishes: Vec<config::PublishedDomain>,
+    /// The published positions the committed tree holds, by the domain
+    /// name each is addressed by.
+    held: Vec<DomainName>,
     /// The index as it was, and as this sync leaves it.
     index: GlobalIndex,
     patched: GlobalIndex,
-    publishers: BTreeMap<DomainName, PublisherRecord>,
+    /// Every claimed position's owner before this sync.
+    owners: BTreeMap<DomainName, ProjectSlug>,
     /// Each published domain's compiled bundle.
     bundles: BTreeMap<DomainName, String>,
     /// Compiled `AGENTS.md` files, relative to the primary worktree.
@@ -238,6 +250,10 @@ fn publish(
         commit: commit.clone(),
         refusal,
     };
+    let (held, reserved) = _tree::held_positions(&committed);
+    if !reserved.is_empty() {
+        return Ok(refused(Refusal::ReservedDomain(reserved)));
+    }
     // Whether `todos` is on is the committed configuration's to say.
     let todos = Configuration::load(home, Some(checkout.path()))?.module_enabled(Module::Todos)?;
     let wiring = CoreWiring {
@@ -256,35 +272,16 @@ fn publish(
     }
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
-    let publishes = config.publishes()?;
-    if let Some(reserved) = publishes
-        .iter()
-        .find(|p| RESERVED_DOMAINS.contains(&p.domain.as_str()))
-    {
-        return Err(PublicationError::ReservedDomain {
-            domain: reserved.domain.to_string(),
-        });
-    }
     let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
     let fragments: Vec<String> = committed
-        .below("docs/global/snippets/")
+        .below(FRAGMENT_ROOT)
         .filter_map(|(rel, _)| rel.strip_suffix(".md"))
         .filter(|name| !name.split('/').any(|segment| segment.starts_with('_')))
         .map(str::to_owned)
         .collect();
-    let domains: Vec<DomainName> = publishes.iter().map(|p| p.domain.clone()).collect();
-    let contribution = Contribution::of(
-        &project.slug,
-        &corpus,
-        &domains,
-        &fragments,
-        &project.primary,
-    );
-    let publishers = _tree::publishers(home)?;
-    let owners: BTreeMap<DomainName, ProjectSlug> = publishers
-        .iter()
-        .map(|(domain, record)| (domain.clone(), record.publisher.clone()))
-        .collect();
+    let contribution =
+        Contribution::of(&project.slug, &corpus, &held, &fragments, &project.primary);
+    let owners = _tree::claims(home)?;
     let index = GlobalIndex::load(home)?.unwrap_or_default();
     let patched = match patch(&index, &owners, &contribution) {
         Ok(patched) => patched,
@@ -293,7 +290,7 @@ fn publish(
 
     // Compilation reads the committed tree and the home as it stands; it
     // writes nothing, so a failure here leaves everything as it was.
-    let owned: BTreeSet<DomainName> = domains.iter().cloned().collect();
+    let owned: BTreeSet<DomainName> = held.iter().cloned().collect();
     let values = Values::publish(&config);
     let events = config.module_enabled(Module::Events)?;
     let mut compiler = Compiler::new(
@@ -307,7 +304,7 @@ fn publish(
         &project.primary,
     );
     let mut bundles = BTreeMap::new();
-    for domain in &domains {
+    for domain in &held {
         bundles.insert(domain.clone(), compiler.bundle(domain)?);
     }
     let mut agents = Vec::new();
@@ -320,26 +317,27 @@ fn publish(
         }
         agents.push((dir.join(AGENTS_FILE), compiled));
     }
-    let mut triggers: BTreeMap<DomainName, String> = publishers
-        .iter()
-        .filter(|(_, record)| record.publisher != project.slug)
-        .map(|(domain, record)| (domain.clone(), record.trigger.clone()))
-        .collect();
-    for domain in &publishes {
-        triggers.insert(domain.domain.clone(), domain.trigger.clone());
-    }
     let (entrypoints, settings) = if owned.iter().any(|d| d.as_str() == GENERAL) {
-        global_entrypoints(home, &committed, &mut compiler, &patched, &triggers)?
+        let mut descriptions = BTreeMap::new();
+        for (domain, owner) in &owners {
+            if owner != &project.slug {
+                descriptions.insert(domain.clone(), published_description(home, domain)?);
+            }
+        }
+        for domain in &held {
+            descriptions.insert(domain.clone(), committed_description(&committed, domain)?);
+        }
+        global_entrypoints(home, &committed, &mut compiler, &patched, &descriptions)?
     } else {
         (Vec::new(), Vec::new())
     };
 
     let prepared = Prepared {
         committed,
-        publishes,
+        held,
         index,
         patched,
-        publishers,
+        owners,
         bundles,
         agents,
         entrypoints,
@@ -397,14 +395,19 @@ fn preflight(
     }
     let root = home.root();
     let mine = |owner: &ProjectSlug| owner == &project.slug;
-    let domains = prepared.publishes.iter().map(|p| &p.domain).chain(
-        prepared
-            .publishers
-            .iter()
-            .filter(|(_, record)| mine(&record.publisher))
-            .map(|(domain, _)| domain),
-    );
-    let mut targets: Vec<PathBuf> = domains.map(|d| home.domain_dir(d)).collect();
+    let claimed: Vec<&DomainName> = prepared
+        .held
+        .iter()
+        .chain(
+            prepared
+                .owners
+                .iter()
+                .filter(|(_, owner)| mine(owner))
+                .map(|(domain, _)| domain),
+        )
+        .collect();
+    let mut targets: Vec<PathBuf> = claimed.iter().map(|d| home.domain_dir(d)).collect();
+    targets.extend(claimed.iter().map(|d| _tree::claim_path(home, d)));
     let docs = home.docs_dir();
     for index in [&prepared.index, &prepared.patched] {
         targets.extend(
@@ -460,14 +463,14 @@ fn global_entrypoints(
     committed: &Committed,
     compiler: &mut Compiler<'_>,
     index: &GlobalIndex,
-    triggers: &BTreeMap<DomainName, String>,
+    descriptions: &BTreeMap<DomainName, Option<String>>,
 ) -> Result<(Files<String>, Files<Vec<u8>>), PublicationError> {
     let Some(master) = committed.file(GLOBAL_MASTER) else {
         return Ok((Vec::new(), Vec::new()));
     };
     let master = String::from_utf8_lossy(master).into_owned();
     let inlined = compiler.inlined_bundles(GLOBAL_MASTER, &master)?;
-    let roster = _compile::roster(index, triggers, &inlined)?;
+    let roster = _compile::roster(index, descriptions, &inlined)?;
     let user_home = home.user_home();
     let mut entrypoints = Vec::new();
     let mut settings = Vec::new();
@@ -534,24 +537,27 @@ fn write(
             path: root.to_path_buf(),
             source,
         })?;
-    // Domains: staged whole with their record and bundle, then swapped in.
-    let published: BTreeSet<&DomainName> = prepared.publishes.iter().map(|p| &p.domain).collect();
-    for domain in &prepared.publishes {
-        let record = PublisherRecord {
-            domain: domain.domain.clone(),
-            publisher: project.slug.clone(),
-            trigger: domain.trigger.clone(),
-        };
-        let staged = staging.path().join(domain.domain.as_str());
-        _tree::stage_domain(&prepared.committed, &record, &staged)?;
-        if let Some(bundle) = prepared.bundles.get(&domain.domain) {
+    // Positions: staged whole with their bundle, then swapped in, each
+    // claimed in the ownership record.
+    let published: BTreeSet<&DomainName> = prepared.held.iter().collect();
+    for domain in &prepared.held {
+        let staged = staging.path().join(domain.as_str());
+        _tree::stage_domain(&prepared.committed, domain, &staged)?;
+        if let Some(bundle) = prepared.bundles.get(domain) {
             atomic_write(&staged.join(BUNDLE_FILE), bundle.as_bytes())?;
         }
-        tx.replace_dir(&staged, &in_home(&home.domain_dir(&domain.domain))?)?;
+        tx.replace_dir(&staged, &in_home(&home.domain_dir(domain))?)?;
+        let claim = ClaimRecord {
+            position: domain.clone(),
+            owner: project.slug.clone(),
+        };
+        let text = serde_yaml_ng::to_string(&claim).map_err(PublicationError::Render)?;
+        tx.write(&in_home(&_tree::claim_path(home, domain))?, text.as_bytes())?;
     }
-    for (domain, record) in &prepared.publishers {
-        if record.publisher == project.slug && !published.contains(domain) {
+    for (domain, owner) in &prepared.owners {
+        if owner == &project.slug && !published.contains(domain) {
             tx.remove_dir(&in_home(&home.domain_dir(domain))?)?;
+            tx.remove_file(&in_home(&_tree::claim_path(home, domain))?)?;
         }
     }
     // Fragments and third-party docs: file by file, owner-scoped.
@@ -563,7 +569,7 @@ fn write(
         .iter()
         .filter(|f| mine(&f.source_project))
     {
-        let source = format!("docs/global/snippets/{}.md", fragment.name);
+        let source = format!("{FRAGMENT_ROOT}{}.md", fragment.name);
         if let Some(bytes) = prepared.committed.file(&source) {
             tx.write(&in_home(&docs.join(&fragment.path))?, bytes)?;
         }
@@ -659,6 +665,49 @@ fn write(
         text.as_bytes(),
     )?;
     Ok(())
+}
+
+/// The `description` of the committed `docs/domain/<x>/index.yaml` of
+/// `domain`; `None` without one, or for `general`, whose index carries
+/// none.
+fn committed_description(
+    committed: &Committed,
+    domain: &DomainName,
+) -> Result<Option<String>, PublicationError> {
+    let rel = format!("{}/{INDEX_FILE}", Position::of_domain(domain).dir());
+    match committed.file(&rel) {
+        Some(bytes) => description(domain, &String::from_utf8_lossy(bytes), Path::new(&rel)),
+        None => Ok(None),
+    }
+}
+
+/// The `description` of another project's published `index.yaml` of
+/// `domain` in the home; `None` without one.
+fn published_description(
+    home: &Home,
+    domain: &DomainName,
+) -> Result<Option<String>, PublicationError> {
+    let path = home.domain_dir(domain).join(INDEX_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => description(domain, &text, &path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(PublicationError::Io { path, source }),
+    }
+}
+
+fn description(
+    domain: &DomainName,
+    text: &str,
+    path: &Path,
+) -> Result<Option<String>, PublicationError> {
+    match PositionIndex::parse(&Position::of_domain(domain), text) {
+        Ok(PositionIndex::Domain(DomainIndex { description, .. })) => Ok(description),
+        Ok(_) => Ok(None),
+        Err(source) => Err(PublicationError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// `path` relative to `root`, which contains it.
