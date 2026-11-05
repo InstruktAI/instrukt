@@ -110,6 +110,8 @@ contract without executing its operation.
 | Configured runtime | runner | the runtime mapping's commands |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
+| GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
+| Claude Code plugin system | distribution | the `instrukt` marketplace and plugin `instrukt@instrukt`: one cockpit skill and one startup hook |
 
 ## Invariants
 
@@ -138,6 +140,27 @@ contract without executing its operation.
   (a SHA, a version).
 
 ## Primary flows
+
+### Install
+
+```mermaid
+flowchart LR
+  A["Claude, install instrukt"] --> B[claude plugin install instrukt --marketplace InstruktAI/instrukt]
+  B --> C[next session: startup hook says instrukt's skill is the way in]
+  C --> D[cockpit skill: no binary]
+  D --> E[install.sh: platform, download, SHA256SUMS, --version check]
+  E --> F[instrukt in the install directory]
+  F --> G[cockpit: instrukt status, then the interview]
+```
+
+The release installer is the one way the binary is installed or upgraded,
+with or without Claude: it writes only `instrukt` into the install directory
+(`$INSTRUKT_INSTALL_DIR`, else `$XDG_BIN_HOME`, else `~/.local/bin`) and
+touches no profile, home or agent setting. The plugin carries no binary and
+upgrades none on its own; a plugin and a binary of the same release share one
+version. Everything set up afterwards goes through the CLI into the
+configuration layers, never into the plugin
+(`local/projects/instrukt/spec/domain/distribution`).
 
 ### Publish
 

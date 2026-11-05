@@ -134,7 +134,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   schemas in a repository's `.instrukt/schemas/` and their modelines, which
   sync and `instrukt init` write; the eval
   fingerprint; owner-scoped publication and retraction of domain workflow
-  definitions, roles, actions and templates as non-snippet files.
+  definitions, roles, actions and templates as non-snippet files; the
+  `instrukt status` report, which reads this state together with the
+  configuration layers and the repository's hook sections, and changes
+  nothing.
 - **Does not own** — snippet identity, the reference forms, the `@config`
   directive grammar, pending carriers, `index.yaml` and `schema.yaml` and
   their findings, structural validation, `instrukt docs get --domain` and
@@ -155,11 +158,14 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   `~/.instrukt/state/publication/`; the eval fingerprint per published commit
   under `~/.instrukt/state/eval-fingerprint/`; the rendered `AGENTS.md` files
   in a project; the global agent files; `.instrukt/schemas/` and the modeline
-  form (`local/projects/instrukt/spec/feature/publication/editor-schemas`).
+  form (`local/projects/instrukt/spec/feature/publication/editor-schemas`);
+  `instrukt status [--json]` and its report
+  (`local/projects/instrukt/spec/feature/publication/instrukt-status`).
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime mapping, its migration operation, and the configuration schema type
-  the editor schema of `instrukt.yaml` is generated from, as customer).
+  the editor schema of `instrukt.yaml` is generated from, as customer);
+  for `instrukt status` only, repository (hook-section state, as customer).
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
 
@@ -230,6 +236,7 @@ runs it.
 - **eval-fingerprint** — `docs/local/spec/feature/publication/eval-fingerprint.md` — every publishing sync leaves a digest of the evaluated doctrine for stamps to carry.
 - **editor-schemas** — `docs/local/spec/feature/publication/editor-schemas.md` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
 - **docs-repositories** — `docs/local/spec/feature/publication/docs-repositories.md` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
+- **instrukt-status** — `docs/local/spec/feature/publication/instrukt-status.md` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
 
 ### Governing designs and decisions (index)
 
@@ -262,6 +269,9 @@ runs it.
   `~/.instrukt/docs/<x>/workflow/`. The engine selects the domain with
   project key `workflow.domain` (default `sdlc`); these files have no snippet
   index entries.
+- **distribution** — Published language. `instrukt status` is the state the
+  Claude plugin's cockpit skill reads on every visit
+  (`local/projects/instrukt/spec/domain/distribution`).
 
 ## Known caveats
 
