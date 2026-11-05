@@ -41,9 +41,8 @@ enum DocsCommand {
     Index(IndexArgs),
     /// Read snippets through the read pipeline (phase 2).
     ///
-    /// Prints each snippet's header and body, with fragments included,
-    /// configured values resolved for this session, and references made
-    /// absolute. Names the required reads it did not load; `--closure`
+    /// Prints each snippet's header and body, with configured values
+    /// resolved for this session and references made absolute. Names the required reads it did not load; `--closure`
     /// loads them with one procedure instead. Exits non-zero when an id is
     /// unknown or a configured value cannot be resolved.
     Get(GetArgs),

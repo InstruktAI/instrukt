@@ -19,6 +19,7 @@ dispatch:
 - @~/.instrukt/docs/sdlc/principle/architectural-defaults.md
 - @~/.instrukt/docs/sdlc/policy/preparation-artifact-quality.md
 - @~/.instrukt/docs/sdlc/policy/state-storage.md
+- @~/.instrukt/docs/sdlc/policy/command-contract-read.md
 
 ## Goal
 
@@ -101,8 +102,6 @@ the planner.
   is detected, re-grounding happens before substantive work begins.
 
 ## Steps
-
-<!-- @include: docs/snippets/step-role-read.md -->
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
 

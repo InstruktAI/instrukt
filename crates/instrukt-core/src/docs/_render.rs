@@ -2,20 +2,20 @@
 //! publication's compilation.
 //!
 //! One rendering takes a text through, in order: the frontmatter strip, the
-//! `@include` expansion, the planned lens, the `@config` configured values,
+//! planned lens, the `@config` configured values,
 //! the inline references and the `Required reads` strip
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`, read
 //! pipeline). The lens goes before `@config`, so hidden content is never
-//! resolved. Nothing runs a command: a leftover `@exec` stays inert text.
+//! resolved. Nothing runs a command or includes a file: a leftover `@exec`
+//! or `@include` stays inert text.
 //!
-//! The two callers differ in where fragments come from and in how a
-//! configured value resolves and what a refusal means; both are the
-//! [`RenderContext`].
+//! The two callers differ in how a configured value resolves and what a
+//! refusal means; both are the [`RenderContext`].
 
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
-use super::_corpus::{Corpus, Lens, Version, required_reads_section};
+use super::_corpus::{Lens, Version, required_reads_section};
 use super::_markers::{self, Side};
 use super::_refs::{self, Reference};
 use super::_text::{self, Directive};
@@ -23,48 +23,6 @@ use super::DocsError;
 use crate::config::{Configuration, Env, render_yaml};
 use crate::home::Home;
 use crate::ids::ProjectSlug;
-
-/// Where `@include` fragments come from.
-#[derive(Debug, Clone, Copy)]
-pub enum Fragments<'a> {
-    /// The home's published fragments (`~/.instrukt/docs/snippets/`): a
-    /// reader's `docs get`.
-    Home(&'a Home),
-    /// The corpus's own fragments (`docs/global/snippets/` of its committed
-    /// state), then the home's: publication compiling its project.
-    CorpusFirst(&'a Corpus),
-}
-
-impl Fragments<'_> {
-    fn home(&self) -> &Home {
-        match self {
-            Fragments::Home(home) => home,
-            Fragments::CorpusFirst(corpus) => corpus.home(),
-        }
-    }
-
-    /// The body of the fragment `include_path` (`docs/snippets/<name>.md`)
-    /// names; `None` when no fragment of that name exists.
-    fn body(&self, include_path: &str) -> Result<Option<String>, DocsError> {
-        if let Fragments::CorpusFirst(corpus) = self
-            && let Some(body) = corpus.fragment(include_path)
-        {
-            return Ok(Some(body.to_owned()));
-        }
-        let Some(name) = include_path
-            .strip_prefix("docs/snippets/")
-            .filter(|name| name.ends_with(".md"))
-        else {
-            return Ok(None);
-        };
-        let root = self.home().fragments_dir();
-        let outside = |path| DocsError::OutsideHome { path };
-        let Some(text) = read_confined(&root, Path::new(name), outside)? else {
-            return Ok(None);
-        };
-        Ok(Some(_text::split_frontmatter(&text).body.to_owned()))
-    }
-}
 
 /// Reads `root/relative` when it exists and lies inside `root` once
 /// symbolic links are resolved; `None` when it does not exist. A relative
@@ -175,9 +133,8 @@ pub(super) fn is_runtime(path: &str) -> bool {
 /// Everything a rendering resolves outside the text itself.
 #[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
-    /// Where `@include` fragments come from; also the home whose user
-    /// directory `~/` references expand to.
-    pub fragments: Fragments<'a>,
+    /// The home whose user directory `~/` references expand to.
+    pub home: &'a Home,
     /// How `@config` directives resolve.
     pub values: &'a Values<'a>,
     /// The root of the repository the text belongs to, against which
@@ -226,7 +183,7 @@ pub fn render(text: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rend
 }
 
 fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
-    let lensed = include_and_lens(body, lens, cx)?;
+    let lensed = lensed(body, lens);
     let required_reads = section_reads(&lensed, cx);
     let (resolved, config_refusals) = resolve_values(&lensed, cx.values)?;
     // The section is stripped before references expand, which leaves the
@@ -241,29 +198,23 @@ fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Ren
 }
 
 /// The required reads a rendering of `body` through `lens` reports, read
-/// without resolving any configured value: fragments are included and the
-/// lens applied first, so a fragment's required reads count and hidden
-/// ones do not. A value is fenced and never adds a reference, so this is
+/// without resolving any configured value: the lens is applied first, so
+/// hidden required reads do not count. A value is fenced and never adds a reference, so this is
 /// exactly [`Rendered::required_reads`].
 pub(super) fn dependency_reads(
     body: &str,
     lens: Lens<'_>,
     cx: &RenderContext<'_>,
 ) -> Result<Vec<Reference>, DocsError> {
-    Ok(section_reads(&include_and_lens(body, lens, cx)?, cx))
+    Ok(section_reads(&lensed(body, lens), cx))
 }
 
-fn include_and_lens(
-    body: &str,
-    lens: Lens<'_>,
-    cx: &RenderContext<'_>,
-) -> Result<String, DocsError> {
-    let included = expand_includes(body, &cx.fragments)?;
-    let scan = _markers::scan(&included);
-    Ok(_markers::resolve(&included, &scan, |block| match lens {
+fn lensed(body: &str, lens: Lens<'_>) -> String {
+    let scan = _markers::scan(body);
+    _markers::resolve(body, &scan, |block| match lens {
         Lens::Target(slug) if block.slug == slug.as_str() => Side::Delivered,
         _ => Side::Current,
-    }))
+    })
 }
 
 /// `text` with each span replaced by its replacement; spans are ordered
@@ -278,19 +229,6 @@ fn splice(text: &str, replacements: Vec<(Range<usize>, String)>) -> String {
     }
     out.push_str(&text[at..]);
     out
-}
-
-fn expand_includes(body: &str, fragments: &Fragments<'_>) -> Result<String, DocsError> {
-    let mut replacements = Vec::new();
-    for directive in _text::directives(&_text::lines(body)) {
-        let Directive::Include { path, span } = directive else {
-            continue;
-        };
-        if let Some(fragment) = fragments.body(&path)? {
-            replacements.push((span, fragment.trim_matches(['\n', '\r']).to_owned()));
-        }
-    }
-    Ok(splice(body, replacements))
 }
 
 /// Every visible `@config` directive replaced by its value as a fenced
@@ -344,7 +282,7 @@ fn fenced(value: &str) -> String {
 /// path: `~/` expands to the user's home directory, a relative path
 /// resolves against the repository root when the text has one.
 fn expand_references(body: &str, cx: &RenderContext<'_>) -> String {
-    let user_home = cx.fragments.home().user_home();
+    let user_home = cx.home.user_home();
     let replacements = _text::references(&_text::lines(body))
         .into_iter()
         .filter(|r| r.target.ends_with(".md") && !r.target.contains("://"))
@@ -368,7 +306,7 @@ fn section_reads(body: &str, cx: &RenderContext<'_>) -> Vec<Reference> {
     let Some(section) = required_reads_section(&lines) else {
         return Vec::new();
     };
-    let user_home = cx.fragments.home().user_home();
+    let user_home = cx.home.user_home();
     _text::references(&lines)
         .into_iter()
         .filter(|r| section.contains(&r.line))

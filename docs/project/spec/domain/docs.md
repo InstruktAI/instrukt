@@ -106,14 +106,11 @@ before this snippet.
 the CLI resolves it. Snippets are never referenced by path. Code is referenced
 by its repository-relative path.
 
-**Fragment**
-: A shared text body inlined where an `@include` directive names it. Not a
-snippet; never retrieved by id.
-
 **Configured value**
 : A `@config` directive in a snippet body naming a configuration path, resolved
 in-process when the snippet is read, with the value placed where the directive
-stood. The snippet format has no directive that runs a command.
+stood. The snippet format has no directive that runs a command or includes
+another file.
 
 **Third-party doc**
 : Curated external documentation under `docs/third-party/`, indexed apart from
@@ -165,7 +162,7 @@ recorded by publication.
 
 - **Owns** — the snippet model (positions, identity derivation, the domain
   definition and reserved names, taxonomy, frontmatter fields and where each
-  is allowed, sections, the reference form, fragments, third-party doc shape);
+  is allowed, sections, the reference form, third-party doc shape);
   the position index model, its keys per position, findings and notices; the
   root rules, the position schema chain and the effective schema; structural
   validation, its findings and notices, including the required-reads hygiene
@@ -206,7 +203,7 @@ recorded by publication.
 
 - **Root:** Snippet.
 - **Contains:** frontmatter, sections, required reads, references, directives
-  (`@include`, `@config`), companions, planned blocks.
+  (`@config`), companions, planned blocks.
 - **Invariants:**
   - Identity, type, domain and scope follow from the path and the project's
     declared slug; none is authored.
