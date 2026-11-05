@@ -250,7 +250,10 @@ After a code-writing role's completion stamp, advance the todo branch to the
 stamped role head by fast-forward only, then release that attempt as evidence.
 The next role starts only after that handoff is recorded. A read-only review
 runs in its own worktree at the same todo head; its verdict releases the attempt
-without a branch advance. Branch handoff, refusal and crash reconciliation are
+without a branch advance. A deferrer likewise uses its own attempt; its current
+`--deferrals-processed` evidence releases it without a branch advance. These
+read-only releases commit with their stamps and require clean worktrees at the
+captured todo head. Branch handoff, refusal and crash reconciliation are
 owned by `project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 An active attempt may receive follow-ups in its bound thread. After release,
@@ -275,8 +278,11 @@ metadata must be verified against the installed T3 response before translation;
 a fake runtime fixture is not evidence of the live shape.
 
 Work records retain sessions per todo, role and attempt; subsequent work reads that
-binding and observes it before `send`. An ended turn can leave a reusable
-conversation. Artifact writers and stamps retain `<runtime>:<id>` identity. A
+binding and confirms that its attempt is active and unreleased before observing
+it for a work follow-up through `send`. An ended turn can leave a reusable
+conversation within that active attempt. A released finalizer's record-only
+readiness write uses its retained binding after confirmed handoff; further
+workspace work requires a new attempt. Artifact writers and stamps retain `<runtime>:<id>` identity. A
 step is complete only with its required artifact and stamp. After an ended run
 without either, or a gone session, the runner attempts one recovery send to that
 same id; continued absence raises an anomaly. Observation failure retries

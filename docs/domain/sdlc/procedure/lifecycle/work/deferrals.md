@@ -62,10 +62,13 @@ dispatch:
      the same evidence. Otherwise close the entry.
 3. Record each entry's disposition — the created or filed slug, or why it was
    closed — in the todo's `log`.
-4. Stamp processing complete:
+4. Confirm the role worktree is clean at its captured todo head, then stamp
+   processing complete:
    - `instrukt todo stamp {slug} --deferrals-processed`
-5. Confirm the dispositions and processing stamp are in the record and report
-   a summary. Record writes are reflected to GitHub; they require no repository commit.
+5. The processing stamp binds the current deferrals artifact and releases this deferrer attempt in
+   the same record transaction, without advancing a branch. Confirm the
+   dispositions, stamp and release in the record and report a summary. Record
+   writes are reflected to GitHub; they require no repository commit.
 
 ## Outputs
 

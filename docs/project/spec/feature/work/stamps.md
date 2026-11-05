@@ -86,7 +86,9 @@ bound to the particular task execution; the reason records failure evidence.
 
 `instrukt todo stamp <slug> --deferrals-processed` records the disposition
 bound to the current deferrals artifact. `deferrals.pending` becomes false
-only while that binding covers the current artifact.
+only while that binding covers the current artifact. For a bound deferrer
+attempt, the stamp requires its clean worktree at the captured todo head and
+releases the attempt in the same transaction without advancing a branch.
 
 ### Stamp forms
 
@@ -123,6 +125,11 @@ branch preserves the completion binding. A different head requires fresh
 evidence. A review verdict targets the captured todo head and never advances
 a branch.
 
+A build-review verdict requires a clean review worktree at the captured todo
+head and releases that bound attempt in the verdict transaction without a
+branch advance. Follow-up workspace work after release requires a new attempt;
+runtime availability alone never permits reuse.
+
 `instrukt todo stamp <slug> --finalize-ready` requires the finalizer's completed
 handoff and equality of its clean worktree head, local todo branch and published
 todo branch. It records the exact-commit handoff
@@ -131,9 +138,14 @@ project, todo and SHA, in the stamp's own transaction: the stamp is never
 recorded without its event, nor the event without its stamp. It does not
 release the execution claim.
 
-Review rounds are counted from verdict stamps, including a new verdict in a
-reused session. There is no review-occurrence admission write; repeated
-evaluation alone counts no round.
+Readiness resolves the caller's retained finalizer binding after its confirmed
+handoff and attempt release. It is a record-only write, not renewed admission to
+that workspace attempt. Further workspace changes require a new finalizer
+attempt and its own completion and confirmed handoff.
+
+Build-review rounds are counted from verdict stamps, each releasing its own
+attempt. There is no review-occurrence admission write; repeated evaluation
+alone counts no round.
 
 ### Use cases
 
