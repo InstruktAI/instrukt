@@ -22,8 +22,10 @@ receiver under `project/instrukt/spec/feature/runner/single-ingress-webhook-term
 that narrow intake outlives runner invocations and exposes no session-control API.
 The runner's local state is the state database
 (`project/instrukt/spec/feature/work/state-database`), written by
-whichever instrukt process holds the writer lock. A running process can read events and react to them; the
-scheduled tick supplies time-based wake-ups. These are execution forms of the
+whichever instrukt process holds the writer lock for a local write transaction.
+Network waits and reactions run outside that lock. A running process can read
+events and react to them; the scheduled tick supplies time-based wake-ups.
+These are execution forms of the
 same runner, not separate services per module.
 
 | Capability | Runner responsibility |
@@ -61,8 +63,11 @@ with conditional requests: the todos it holds claims on, one pickup listing per
 project with `todos` on, and the prerequisites its own work is blocked on
 (`project/instrukt/spec/feature/work/github-record`). Pickup considers the todos
 of that listing. Every tick flushes pending work-record reflection under the
-per-computer writer lock; commands that write the record flush it under that
-lock too.
+per-computer reflection lock; commands that write the record flush it under that
+lock too. Reflection holds that lock across GitHub requests and takes the writer
+lock only briefly for each local commit of what it learned. Lock order is always
+reflection → writer; the local transaction releases the writer lock before a
+flush acquires the reflection lock. Local readers take neither lock.
 
 ### Enablement and infrastructure
 

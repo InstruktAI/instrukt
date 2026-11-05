@@ -44,6 +44,12 @@ the meaning and the writes of the runner tables.
   Network waits and reaction execution run outside that section, so a blocked
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
+- A separate per-computer reflection lock
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
+  across GitHub requests and takes the writer lock only briefly for each local
+  transaction that records what reflection learned. Lock order is always
+  reflection → writer; a local writer releases the writer lock before acquiring
+  the reflection lock. Local readers take neither lock.
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
