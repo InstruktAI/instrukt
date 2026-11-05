@@ -19,6 +19,16 @@ layers carry `schema_version`, and older documents are migrated.
 
 Runtime entries may declare an `available` check template. `dispatch` agent names validate against agents the configured runtime mapping can start, never a fixed set.
 
+### Event enablement
+
+The effective `modules.events` switch is authoritative. Subscriptions remain in
+published documentation while off and produce no activation. A nonempty valid
+project `webhooks:` map adds receiver demand only while events are enabled; a
+declaration with events off produces a plain validation finding naming that
+switch. An empty map adds no receiver demand. Source declarations never silently
+enable events. Installation and withdrawal are owned by the later module
+installation contract; these schema rules install nothing.
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |

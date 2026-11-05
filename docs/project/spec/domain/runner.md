@@ -11,7 +11,7 @@ The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the sessions facade, event-source
 translation and time eligibility, including anomaly reporting. It executes
 the enabled modules' work in one process, entered through `instrukt run` or
-`instrukt tick` and woken by the OS scheduler. It has no daemon. The work
+`instrukt tick` and woken by the OS scheduler. It has no consumer daemon. A separate opt-in loopback webhook receiver accepts signed external events on the designated ingress computer. The work
 context owns work content, artifacts and stamps; workflow owns
 authorization and derived workflow state.
 
@@ -156,7 +156,7 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 - **Lifecycle:** A source supplies an event, the runner resolves subscriptions
   and starts or wakes the responsible session. The event log in the state
   database retains idempotency keys, per-consumer cursors and per-consumer
-  handled marks across restarts, so each consumer is handed an event once;
+  handled marks across restarts, with bounded transport replay and seven-day occurrence duplicate protection;
   handlers reconcile their subject idempotently.
 
 #### Task timing
@@ -173,14 +173,41 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
   due work. A recurring schedule supplies later occurrences without per-task
   external scheduler registration.
 
+### Event-platform boundary
+
+Event facts retain the complete project, company, person, none and unknown origin
+vocabulary. Executable homes in this release are registered projects and the
+platform; company/person resolution is an explicit unsupported capability, never
+a conversion to another home. Unknown origin activates nothing. None selects a
+platform responsibility. Only the emitting computer activates a matching
+procedure: external events therefore activate on ingress, and a missing project
+checkout there fails visibly without forwarding.
+
+Published general/domain procedures reach every home of their declared kind.
+A project-local subscribed procedure reaches only that project's origin; this
+preserves instrukt's project-local reach as an adaptation of TeleClaude's tiers.
+
+`instrukt run` hosts independent event readers. `instrukt tick` gives each a
+bounded pending-then-new drain, retaining Redis groups between invocations.
+A scheduled-only computer reacts on its next wake, within stream retention.
+One consumer's slow handler or unavailable Redis does not block unrelated readers
+or local work. SQLite writer-lock ownership is limited to local write sections;
+network waits and reactions run outside it.
+
+A1's local event log and local settled cursors remain. Redis owns transport
+positions and bounded replay; SQLite occurrence marks protect a logical consumer
+against the same event ID for seven days. Existing local event rows retain
+retryable publication status and coordinates so a committed fact is published
+later with its original ID. This supplies no separate outbox/inbox service and
+no accepted ingress buffering during a cluster outage.
+
 ### Domain events emitted
 
 The first build reads watched upstream refs with `git ls-remote` and uses
 conditional requests for an active integrate candidate's CI status per SHA.
 Polling follows the cost contract in
 `project/instrukt/spec/feature/runner/event-activation`. Missed
-ticks are caught by the next state read. Later webhook receipt only prompts a
-tick; it does not carry authoritative state or require reliable delivery.
+ticks are caught by the next state read. Signed native and GitHub requests also enter as ordinary cluster events; polling remains source reconciliation, with its own authoritative state.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
@@ -253,6 +280,14 @@ automatic holds, purging expired retained records, and reading and writing
 per-role session bindings. Work owns validation and persistence of those writes.
 
 ## Known caveats
+
+- The target delivery contract requires durable acceptance, sequential/batched
+  selection, procedure-first briefing and untrusted activation provenance. Its
+  realization through A3's published runtime boundary is the S6 feasibility gate;
+  ordinary conversational JSON is not evidence of equivalence.
+- This slice does not implement company/person homes, a consumer daemon,
+  conversation channels, help desks or runtime lifecycle.
+
 
 - UC-HR1 is retired: machine maintenance is outside instrukt; its id is not reused.
 - UC-HR2 is retired: machine maintenance is outside instrukt; its id is not reused.

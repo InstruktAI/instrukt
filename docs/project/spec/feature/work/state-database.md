@@ -258,7 +258,9 @@ An execution's row goes when its todo is released; a standing start's when it
 is bound or resolved; a task failure's is kept after its hold is released, so the same failed run
 never sets the hold again, and is replaced by the task's next failed run. Validators,
 deferrals, watched-ref observations and listing copies are replaced in place.
-Events, cursors and handled marks are kept.
+Local events and settled cursors are retained as operational accounting. Redis
+stream retention separately bounds replay; occurrence duplicate marks expire
+after seven days. Local history does not backfill a newly created Redis group.
 
 ### Use cases
 
@@ -275,9 +277,7 @@ Events, cursors and handled marks are kept.
 
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
-- The event log and its handled marks grow without a retention rule; each
-  row is one distinct observation (a ref revision, a candidate result, a
-  finalized todo), so growth follows activity.
+- The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
 - Work recorded only in an earlier build's file store is not read. Reflect
   it to GitHub with that build before upgrading; after the upgrade it enters
   the database again by pull-through.

@@ -16,9 +16,7 @@ changed upstream without a CI pipeline driving the response.
 ### Subscription contract
 
 Procedure frontmatter carries subscriptions. They travel with the
-documentation even when events are disabled. The runner reads an event,
-resolves matching subscribed procedures and asks the sessions facade to start
-or wake the responsible agent.
+documentation even when events are disabled. The runner reads an event, resolves matching published subscriptions and durably accepts keyed activations. The runtime adapter owns the subsequent start or wake.
 
 `modules.events` is the sole events switch, available in both layers (project overrides global). `events.watch` is only the project watch list. Off leaves existing subscriptions inert.
 Todo pickup settings do not govern these activations.
@@ -43,16 +41,16 @@ contained in remote canonical main, under the integration-gate contract.
 An absent ref or an already promoted head means no candidate is pending.
 
 The project layer selects watched refs with `events.watch: [{remote, ref}]`.
-The first build uses this state-reading mechanism for every repository; it
-needs no public address or receiver. Each tick considers watched upstream refs, CI
+State watching needs no public address; signed webhook sources additionally use the opt-in ingress receiver. Each tick considers watched upstream refs, CI
 status per active candidate SHA and the CI status of remote canonical main's
 head commit, subject to the source poll interval. It does not depend on delivery guarantees: a missed
 tick is caught by the next tick reading current state.
 
-A runtime's webhook receipt is a later addition, only as a wake-up to tick
-now. The tick still reads state; losing that wake-up loses no state, because
-the next scheduled tick reads it. Agents and standing responsibilities react
-to the resulting events regardless of what prompted the state read.
+A project's declared native or GitHub endpoint verifies and relays a signed
+request as a cluster event. The request is an event fact in its own right;
+repository polling remains an independent source-reconciliation mechanism.
+External events carry the ingress computer as source. Only that computer
+activates matching procedures, and a missing local home is a visible failure.
 
 Polling checks only active subjects: a waiting integrate candidate, remote
 canonical main's head commit, local items on this computer and configured
@@ -85,31 +83,25 @@ of workflow progress. A turn-completion event cannot stand in for a step's
 artifact and stamp. Session observation follows
 `project/instrukt/spec/feature/runner/session-continuity`.
 
-Events persist in the event log of the state database
-(`project/instrukt/spec/feature/work/state-database`, Runner tables),
-with per-consumer cursors, per-consumer handled marks and idempotency keys.
-An event is appended with its idempotency key in one transaction, so it is
-logged once. A delivery's handled marks, one per event it hands over, and
-the consumer's cursor commit in one transaction with the delivery's outcome
-once the runtime has answered; an event carrying a mark is never handed to
-that consumer again. A send interrupted before that commit is repeated once
-at the next delivery, which the handler absorbs by reconciling its subject.
-Restart resumes from the cursors; handlers reconcile
-their subject against current state, making replay idempotent. Event payloads
-and keys are defined in `project/instrukt/spec/domain/runner`.
-A standing agent's session is recorded per (subscribing procedure, project).
+Local event records survive restarts in A1's SQLite store. Publication to
+scoped Redis is a separate effect, retried from the same local row with the same
+occurrence ID and recorded publication coordinates. Redis groups retain
+per-consumer/per-computer progress. Successful handling commits its local outcome,
+handled event ID and settled local cursor before Redis acknowledgment. Duplicate
+protection lasts seven days; retained stream replay is independently bounded.
+Handlers reconcile their subject idempotently after interrupted acceptance.
 
 Conditional-request validators are kept in the state database per project
 and request, so a later invocation asks only for what changed, beside each
 watched ref's last observed revision.
 
-A start is recorded before the runtime is asked, and its handled marks
-commit with the session it binds. A start whose result never
-arrived (the invocation ended after the runtime may have created the session)
-is never repeated, so no second standing session is created for the same
-agent: it is reported once as an anomaly naming the exact command line that
-resolves it, `instrukt sessions resolve-start <procedure>@<project> --session
-<runtime:id>` or `--none`, and the standing agent waits until it is resolved.
+Delivery acceptance and runtime execution are separate completion boundaries.
+The target contract retains procedure-first briefing, untrusted event provenance,
+sequential/batched selection and eligible delivery boundaries, with settings fixed
+for a session including revival. Runtime realization is the S6/A3 feasibility gate;
+routing itself starts no session. `run` hosts independent readers; `tick` drains
+pending then new entries within a bounded invocation. Scheduled-only execution
+reacts at the next wake while retained entries remain available.
 
 ### Use cases
 
@@ -122,3 +114,14 @@ resolves it, `instrukt sessions resolve-start <procedure>@<project> --session
   Then a standing agent reports the changes
   And offers reconciliation that retains the fork's local modifications
 ```
+
+## Known caveats
+
+- Company/person origins and references travel intact, but resolving those homes
+  is unsupported in this release and fails visibly. Unknown never means none.
+- Runtime delivery equivalence remains subject to the S6/A3 feasibility gate.
+
+## See Also
+
+- project/instrukt/spec/domain/runner
+- project/instrukt/spec/feature/work/state-database
