@@ -16,7 +16,9 @@ use documented::{project, snippet, sync};
 
 fn stdout(env: &TestEnv, assert: &Assert) -> String {
     let base = env.home().parent().unwrap().display().to_string();
-    String::from_utf8_lossy(&assert.get_output().stdout).replace(&base, "[TMP]")
+    common::mask_published_commits(
+        &String::from_utf8_lossy(&assert.get_output().stdout).replace(&base, "[TMP]"),
+    )
 }
 
 /// Configured values inside the todos' planned blocks. `build-it`'s
@@ -67,7 +69,7 @@ fn published_demo(env: &TestEnv) -> Repo {
         "delivered_by: [build-it]\n",
         // Named only where the body is shown: a withheld snippet's
         // required reads are not named.
-        &["- @~/.instrukt/docs/acme/spec/later.md"],
+        &["- acme/spec/later"],
         "New with build-it.\n",
     );
     let later = snippet(

@@ -302,7 +302,7 @@ fn dependent_consumer(env: &TestEnv) -> Repo {
         .write(
             "docs/project/concept/flow.md",
             "---\ndescription: How work flows here.\n---\n\n# Flow — Concept\n\n\
-         ## Required reads\n\n- @~/.instrukt/docs/flows/policy/rules.md\n\n\
+         ## Required reads\n\n- flows/policy/rules\n\n\
          ## What\n\nOur flow.\n\n## Why\n\nTo ship.\n",
         )
         .write(
@@ -320,7 +320,7 @@ fn validating_a_snippet_that_requires_an_unpublished_domain_names_it() {
     let app = dependent_consumer(&env);
 
     let refused = env.run(app.path(), ["docs", "validate"]).failure();
-    insta::assert_snapshot!(stdout(&env, &refused), @"docs/project/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
+    insta::assert_snapshot!(stdout(&env, &refused), @"docs/project/concept/flow.md: reference-domain-unpublished: flows/policy/rules: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
 }
 
 // spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
@@ -330,5 +330,5 @@ fn publishing_a_snippet_that_requires_an_unpublished_domain_names_it() {
     let app = dependent_consumer(&env);
 
     let refused = env.run(app.path(), ["sync"]).failure();
-    insta::assert_snapshot!(stdout(&env, &refused), @"docs/project/concept/flow.md: reference-domain-unpublished: ~/.instrukt/docs/flows/policy/rules.md: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
+    insta::assert_snapshot!(stdout(&env, &refused), @"docs/project/concept/flow.md: reference-domain-unpublished: flows/policy/rules: domain `flows` is not published on this computer; adopt a docs repository that publishes it");
 }

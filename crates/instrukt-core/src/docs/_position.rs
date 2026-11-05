@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{DomainName, SnippetId};
@@ -87,7 +88,9 @@ impl fmt::Display for Position {
 }
 
 /// A supported agent CLI: a deployment target of the global agent files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentCli {
     Claude,
@@ -97,7 +100,7 @@ pub enum AgentCli {
 }
 
 /// `docs/general/index.yaml`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GeneralIndex {
     /// Rendered in full, each with its closure; may name any domain's ids.
@@ -112,7 +115,7 @@ pub struct GeneralIndex {
 }
 
 /// `docs/domain/<x>/index.yaml`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DomainIndex {
     /// The one line saying what the domain is about.
@@ -125,13 +128,35 @@ pub struct DomainIndex {
 }
 
 /// `docs/project/index.yaml`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectIndex {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expanded: Vec<SnippetId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listed: Vec<SnippetId>,
+}
+
+/// The JSON Schemas of the three `index.yaml` documents for the developer's
+/// editor, each generated from the type [`PositionIndex::parse`] reads that
+/// position's index with, so the editor admits exactly the keys parsing
+/// admits.
+impl GeneralIndex {
+    pub fn editor_schema() -> serde_json::Value {
+        schemars::schema_for!(GeneralIndex).to_value()
+    }
+}
+
+impl DomainIndex {
+    pub fn editor_schema() -> serde_json::Value {
+        schemars::schema_for!(DomainIndex).to_value()
+    }
+}
+
+impl ProjectIndex {
+    pub fn editor_schema() -> serde_json::Value {
+        schemars::schema_for!(ProjectIndex).to_value()
+    }
 }
 
 /// A position's `index.yaml`, read with the keys its position allows.
@@ -175,7 +200,7 @@ impl PositionIndex {
 }
 
 /// The H2 sections one folder path of a position schema adds.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FolderSections {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -186,7 +211,7 @@ pub struct FolderSections {
 
 /// A position's `schema.yaml`: per folder path relative to the position
 /// root (`spec/feature`), the sections it adds for the snippets under it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct PositionSchema {
     pub folders: BTreeMap<String, FolderSections>,
@@ -198,6 +223,12 @@ impl PositionSchema {
     /// error. A file holding no document is a schema that adds nothing.
     pub fn parse(text: &str) -> Result<Self, serde_yaml_ng::Error> {
         document(text)
+    }
+
+    /// The JSON Schema of a `schema.yaml` for the developer's editor,
+    /// generated from the type [`PositionSchema::parse`] reads it with.
+    pub fn editor_schema() -> serde_json::Value {
+        schemars::schema_for!(PositionSchema).to_value()
     }
 }
 
@@ -297,6 +328,61 @@ mod tests {
     fn an_index_with_no_document_selects_nothing() {
         let index = PositionIndex::parse(&Position::Project, "# a modeline only\n").unwrap();
         assert!(index.expanded().is_empty() && index.listed().is_empty());
+    }
+
+    /// The keys a JSON Schema object admits, and whether it admits others.
+    fn keys(schema: &serde_json::Value) -> (Vec<String>, bool) {
+        let names = schema["properties"]
+            .as_object()
+            .map(|properties| properties.keys().cloned().collect())
+            .unwrap_or_default();
+        (
+            names,
+            schema["additionalProperties"] != serde_json::Value::Bool(false),
+        )
+    }
+
+    #[test]
+    fn each_position_index_schema_admits_exactly_its_keys() {
+        for (schema, wanted) in [
+            (
+                GeneralIndex::editor_schema(),
+                vec!["agents", "expanded", "listed"],
+            ),
+            (
+                DomainIndex::editor_schema(),
+                vec!["description", "expanded", "listed"],
+            ),
+            (ProjectIndex::editor_schema(), vec!["expanded", "listed"]),
+        ] {
+            let (mut names, open) = keys(&schema);
+            names.sort();
+            assert_eq!(names, wanted);
+            assert!(!open, "{wanted:?} admits no other key");
+        }
+    }
+
+    #[test]
+    fn the_general_index_schema_admits_only_the_supported_agent_clis() {
+        let schema = GeneralIndex::editor_schema();
+        let (mut names, open) = keys(&schema["properties"]["agents"]);
+        names.sort();
+        assert_eq!(names, ["claude", "codex", "deepseek", "gemini"]);
+        assert!(!open);
+    }
+
+    #[test]
+    fn a_schema_folder_schema_admits_required_and_optional_only() {
+        let schema = PositionSchema::editor_schema();
+        let folder = &schema["additionalProperties"];
+        let folder = match folder.get("$ref").and_then(serde_json::Value::as_str) {
+            Some(reference) => &schema["$defs"][reference.trim_start_matches("#/$defs/")],
+            None => folder,
+        };
+        let (mut names, open) = keys(folder);
+        names.sort();
+        assert_eq!(names, ["optional", "required"]);
+        assert!(!open);
     }
 
     #[test]

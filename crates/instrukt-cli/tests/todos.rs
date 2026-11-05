@@ -292,7 +292,11 @@ fn filing_changing_preparing_and_working_on_a_todo_name_the_switch_while_trackin
 
     insta::assert_snapshot!("tracking-off", refusals.join("---\n"));
     assert!(
-        !project.env.instrukt_home().join("state/work").exists(),
+        !project
+            .env
+            .instrukt_home()
+            .join("state/instrukt.db")
+            .exists(),
         "nothing was recorded"
     );
 }

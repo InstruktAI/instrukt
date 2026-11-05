@@ -3,13 +3,12 @@
 //! "Domain events consumed"; `event-activation`, "Delivery and restart
 //! boundary").
 //!
-//! The runner builder implements [`EventLog`] over the log in
-//! `state/runner/` (per-consumer cursors and idempotency keys are its
+//! The runner implements [`EventLog`] over the state database's `events`
+//! table (per-consumer cursors, handled marks and idempotency keys are its
 //! internals). Work's `instrukt todo stamp <slug> --finalize-ready` appends
-//! [`Event::WorkflowFinalized`] through it; the CLI hands work the
-//! implementation (`crates/instrukt-cli/src/wiring.rs`, `event_log`).
-
-use std::path::PathBuf;
+//! [`Event::WorkflowFinalized`] through it, in the stamp's own transaction;
+//! the CLI hands work the implementation (`crates/instrukt-cli/src/wiring.rs`,
+//! `event_log`).
 
 use instrukt_core::ids::{CommitSha, ProjectSlug, TodoSlug};
 use serde::{Deserialize, Serialize};
@@ -120,17 +119,17 @@ pub enum AppendOutcome {
 /// The event log could not be read or written.
 #[derive(Debug, thiserror::Error)]
 pub enum EventLogError {
-    #[error("cannot access the event log at {}: {source}", path.display())]
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("the event log at {} is not readable: {message}", path.display())]
-    Corrupt { path: PathBuf, message: String },
+    #[error(transparent)]
+    State(#[from] crate::state::StateError),
 }
 
-/// Appending to the runner's event log in `state/runner/`, idempotently by
-/// the event's key.
+/// Appending to the runner's event log, idempotently by the event's key,
+/// inside the caller's write transaction: the event commits with the change
+/// it records, or not at all.
 pub trait EventLog: Send + Sync {
-    fn append(&self, event: &Event) -> Result<AppendOutcome, EventLogError>;
+    fn append(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        event: &Event,
+    ) -> Result<AppendOutcome, EventLogError>;
 }

@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/docs-repositories.rs
 expression: "stdout(&env, &domains)"
 ---
 # instrukt docs index: snippet ids with their descriptions
-# Filter with --domains <general|sdlc>, --areas <principle|concept|policy|procedure|design|spec|adr>, --baseline-only, --third-party, --target <slug>, --project <slug>
+# Filter with --domain <general|sdlc> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
 
 general/policy/rules: The general rules policy.
 sdlc/policy/rules: The sdlc rules policy.

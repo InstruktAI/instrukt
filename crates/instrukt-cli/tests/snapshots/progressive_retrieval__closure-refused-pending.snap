@@ -1,5 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stderr(&env, &refused)"
+expression: "refused_closure(&env, &demo, \"acme/procedure/blocked\")"
 ---
-instrukt: cannot read acme/procedure/blocked as a closure: its required read `~/.instrukt/docs/acme/spec/coming.md` is still pending
+instrukt: cannot read acme/procedure/blocked as a closure: its required read `acme/spec/coming` is still pending

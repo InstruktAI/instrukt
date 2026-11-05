@@ -278,6 +278,7 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                 &config,
                 &args.agent,
                 &resolution,
+                ctx.clock.now(),
             )?;
             if args.json {
                 ctx.out.json(&json!({

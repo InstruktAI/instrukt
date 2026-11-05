@@ -4,7 +4,6 @@
 //! committing a change and flushing pending reflection.
 
 use instrukt_core::config::Configuration;
-use instrukt_core::fsx::LockGuard;
 use instrukt_core::git;
 use instrukt_core::ids::{RuntimeName, SessionId, SessionRef, TodoSlug};
 use instrukt_core::machine::{self, MachineId};
@@ -26,6 +25,7 @@ use crate::evidence::{
 };
 use instrukt_core::github;
 use instrukt_core::publication::EvalFingerprint;
+use instrukt_runner::events::{Event, EventLog};
 use instrukt_runner::sessions::Sessions;
 
 /// The fixed recovery window of withdrawn work.
@@ -81,7 +81,6 @@ pub(crate) enum Located {
 
 pub(crate) struct Session<'w> {
     work: &'w Work,
-    _lock: LockGuard,
     pub project: ProjectRef,
     pub config: Configuration,
     store: Store,
@@ -111,13 +110,14 @@ impl<'w> Session<'w> {
     /// Takes the writer lock and loads the project's local record. Purges
     /// withdrawn work whose recovery window has expired.
     pub fn open(work: &'w Work, project: &ProjectRef) -> Result<Self, WorkError> {
-        let lock = _store::lock(work.home())?;
+        // Opening the store takes the writer lock, held for the whole
+        // command.
+        let store = Store::open(work.home(), &project.slug)?;
         let config = Configuration::load(work.home(), Some(&project.root))?;
         // The address the token is sent to comes from the machine's own
         // layer, never from a repository's.
         let api_url = github::api_url(work.home())?;
         let repository = github::repository(&config, &api_url, &project.root)?;
-        let store = Store::open(work.home(), &project.slug)?;
         let items = store.items()?;
         let now = work.now();
         let remote = match github::credentials(work.env()) {
@@ -135,7 +135,6 @@ impl<'w> Session<'w> {
         let base = github::default_branch(&project.root)?;
         let mut session = Self {
             work,
-            _lock: lock,
             project: project.clone(),
             config,
             store,
@@ -479,12 +478,23 @@ impl<'w> Session<'w> {
     /// Runs `change` against the record set, then commits every record it
     /// changed: a new revision, pending reflection, saved. A grouping's
     /// documentation transfer (`pending_transfer`) is the last step, once
-    /// every check has passed and every record is saved. A refused or
-    /// failed change — a transfer included — leaves every record and the
-    /// documentation as they were.
+    /// every check has passed and every record is written. Everything
+    /// commits in one transaction; a refused or failed change — a transfer
+    /// included — leaves every record and the documentation as they were.
     pub fn commit<T>(
         &mut self,
         what: &'static str,
+        change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
+    ) -> Result<T, WorkError> {
+        self.commit_with_events(what, None, change)
+    }
+
+    /// [`Session::commit`], appending `events` to the runner's event log in
+    /// the same transaction (`state-database`, "Writing").
+    pub fn commit_with_events<T>(
+        &mut self,
+        what: &'static str,
+        events: Option<(&dyn EventLog, &[Event])>,
         change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
     ) -> Result<T, WorkError> {
         let before: Vec<LocalItem> = self.items.clone();
@@ -495,32 +505,29 @@ impl<'w> Session<'w> {
                 return Err(err);
             }
         };
-        let mut saved = Vec::new();
+        let mut changed = Vec::new();
         for index in 0..self.items.len() {
-            let changed = before
+            let differs = before
                 .get(index)
                 .is_none_or(|prior| prior.record != self.items[index].record);
-            if !changed {
-                continue;
+            if differs {
+                let item = &mut self.items[index];
+                item.record.revision += 1;
+                item.reflection.pending = true;
+                changed.push(index);
             }
-            let item = &mut self.items[index];
-            item.record.revision += 1;
-            item.reflection.pending = true;
-            if let Err(err) = self.store.save(item) {
-                self.unsave(&before, &saved);
+        }
+        let transfer = self.pending_transfer.take();
+        let written = self.write_change(&changed, events, transfer.as_ref());
+        let docs = match written {
+            Ok(docs) => docs,
+            Err(err) => {
                 self.restore(before);
                 return Err(err);
             }
-            saved.push(index);
-        }
-        // Documentation moves only now: the transfer writes nothing when it
-        // refuses or fails, and the records it would orphan are put back.
-        if let Err(err) = super::_ops::transfer_documentation(self) {
-            self.unsave(&before, &saved);
-            self.restore(before);
-            return Err(err);
-        }
-        for &index in &saved {
+        };
+        self.docs_changed.extend(docs);
+        for &index in &changed {
             let item = &self.items[index];
             tracing::info!(
                 event = "work_recorded",
@@ -535,34 +542,68 @@ impl<'w> Session<'w> {
         Ok(value)
     }
 
+    /// Writes the changed items, the events and the documentation transfer
+    /// in one transaction; returns the documentation files the transfer
+    /// rewrote. Nothing commits unless everything succeeded: documentation
+    /// moves only once every row is written, and a failing transfer writes
+    /// nothing of its own.
+    fn write_change(
+        &mut self,
+        changed: &[usize],
+        events: Option<(&dyn EventLog, &[Event])>,
+        transfer: Option<&(TodoSlug, TodoSlug)>,
+    ) -> Result<Vec<std::path::PathBuf>, WorkError> {
+        let path = self.store.path().to_path_buf();
+        let tx = self.store.transaction()?;
+        for &index in changed {
+            _store::save_in(&tx, &path, &self.items[index])?;
+        }
+        if let Some((log, events)) = events {
+            for event in events {
+                let appended = log.append(&tx, event)?;
+                tracing::info!(
+                    event = "work_event_logged",
+                    name = event.name(),
+                    project = %event.project(),
+                    appended = ?appended,
+                    "an event committed with the work record change"
+                );
+            }
+        }
+        let docs = match transfer {
+            Some((parent, child)) => {
+                super::_ops::transfer_documentation(&self.project, parent, child)?
+            }
+            None => Vec::new(),
+        };
+        tx.commit()
+            .map_err(instrukt_core::state_db::StateDbError::sqlite(&path))?;
+        Ok(docs)
+    }
+
+    /// Appends `event` to the runner's event log in a transaction of its
+    /// own.
+    pub fn log_event(&mut self, log: &dyn EventLog, event: &Event) -> Result<(), WorkError> {
+        let path = self.store.path().to_path_buf();
+        let tx = self.store.transaction()?;
+        let appended = log.append(&tx, event)?;
+        tx.commit()
+            .map_err(instrukt_core::state_db::StateDbError::sqlite(&path))?;
+        tracing::info!(
+            event = "work_event_logged",
+            name = event.name(),
+            project = %event.project(),
+            appended = ?appended,
+            "an event logged on its own"
+        );
+        Ok(())
+    }
+
     /// Puts the in-memory record set back as it was before a change, and
     /// drops the change's pending documentation transfer.
     fn restore(&mut self, before: Vec<LocalItem>) {
         self.items = before;
         self.pending_transfer = None;
-    }
-
-    /// Writes back the stored records a failed change already saved: each
-    /// one as it was, and a record the change created removed. A record
-    /// that cannot be put back is reported; the change's own failure is
-    /// what the caller is told.
-    fn unsave(&self, before: &[LocalItem], saved: &[usize]) {
-        for &index in saved {
-            let undone = match before.get(index) {
-                Some(prior) => self.store.save(prior),
-                None => self.store.delete(&self.items[index].record.id),
-            };
-            if let Err(err) = undone {
-                tracing::error!(
-                    event = "work_rollback_failed",
-                    project = %self.items[index].record.project,
-                    todo = %self.items[index].record.slug,
-                    id = %self.items[index].record.id,
-                    error = %err,
-                    "a record of a failed change could not be put back"
-                );
-            }
-        }
     }
 
     /// Flushes pending reflection of every local item under the lock.

@@ -1,8 +1,10 @@
 //! The repository context: adoption, hook sections and attributed commits
 //! (`docs/project/spec/domain/repository.md`).
 //!
-//! - [`init`] adopts a repository: project layer, docs folders, master,
-//!   docs reference filter and hook sections, never overwriting a file.
+//! - [`init`] adopts a repository: project layer, `docs/project/` with its
+//!   index and schema, master, kept instructions, editor schemas, ignores
+//!   and hook sections, never overwriting a file, and reports the claims
+//!   its first sync will make.
 //! - [`install_hooks`], [`remove_hooks`] and [`hooks_status`] manage
 //!   instrukt's one marked section per hook file and touch nothing else.
 //! - [`run_hook`] is what a section calls: it starts what acts on the hook
@@ -11,13 +13,11 @@
 //! - [`commit`] makes an attributed commit; [`stamp()`] records a
 //!   commit-review verdict as a git note and pushes the notes ref;
 //!   [`read_review_notes`] fetches it and reads the verdicts.
-//! - [`apply_docs_filter`] is the docs reference filter git runs.
 
 mod _adoption;
 mod _commit;
 mod _contain;
 mod _error;
-mod _filter;
 mod _git;
 mod _hook;
 mod _hooks;
@@ -27,13 +27,11 @@ mod _section;
 mod _stamp;
 
 pub use _adoption::{
-    GENERATED_FILE, InitPart, InitReport, LOCAL_BASELINE, MASTER_FILE, PartOutcome, init,
+    GENERATED_FILE, InitPart, InitReport, KEPT_INSTRUCTIONS, KeptInstructions, MASTER_FILE,
+    NotWritten, PROJECT_DOCS, PartOutcome, init,
 };
 pub use _commit::{CommitRequest, OWNED_TRAILERS, commit};
 pub use _error::RepositoryError;
-pub use _filter::{
-    FILTER_COMMAND, FILTER_NAME, FILTER_PATTERN, FilterDirection, apply_docs_filter,
-};
 pub use _git::HooksDir;
 pub use _hook::Hook;
 pub use _hooks::{

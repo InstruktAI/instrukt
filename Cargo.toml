@@ -27,6 +27,8 @@ hex = "0.4"
 indexmap = { version = "2", features = ["serde"] }
 jiff = { version = "0.2", features = ["serde"] }
 regex = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"

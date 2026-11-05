@@ -101,27 +101,57 @@ codes! {
     /// require.
     SchemaSectionDropped => "schema-section-dropped",
 
+    // Required-reads hygiene
+    /// A required read the closure of another required read of the same
+    /// snippet already brings.
+    RequiredReadImplied => "hygiene-required-read-implied",
+
     // References
-    ReferenceOutsideRequiredReads => "reference-outside-required-reads",
+    /// A snippet named by its file path (`@…`, or a path to a snippet
+    /// file) outside code: references are ids.
+    ReferenceByPath => "reference-by-path",
     RequiredReadsLevel => "reference-required-reads-not-h2",
+    /// A Required reads entry that is not one snippet id or one bare
+    /// domain name.
     ReferenceForm => "reference-form-invalid",
     ReferenceUnresolved => "reference-unresolved",
+    /// A bare-domain required read naming a domain without `index.yaml`.
+    ReferenceDomainWithoutIndex => "reference-domain-without-index",
     /// A reference into a published domain that no adopted docs
     /// repository publishes on this computer.
     ReferenceDomainUnpublished => "reference-domain-unpublished",
     /// A published snippet referencing local material.
     ReferenceLocalFromPublished => "reference-local-from-published",
 
-    // Required-reads hygiene
-    /// A required read the closure of another required read of the same
-    /// snippet already brings.
-    RequiredReadImplied => "hygiene-required-read-implied",
-
     // Baselines
     BaselineLineInvalid => "baseline-line-invalid",
     BaselineOrder => "baseline-out-of-order",
     /// A manifest naming a snippet its domain's bundle already carries.
     BaselineCarried => "baseline-already-carried",
+
+    // Position index
+    /// An `index.yaml` that is not a YAML mapping.
+    IndexInvalid => "index-invalid",
+    /// A key the position does not allow (`agents` outside
+    /// `docs/general/index.yaml` among them).
+    IndexKeyNotAllowed => "index-key-not-allowed",
+    /// A value of the wrong shape: not a list of ids, or a `description`
+    /// that is not one non-empty line.
+    IndexShapeInvalid => "index-shape-invalid",
+    /// A domain's `index.yaml` without `description`.
+    IndexDescriptionMissing => "index-description-missing",
+    /// An id that names no snippet.
+    IndexIdUnresolved => "index-id-unresolved",
+    /// An id that names a pending snippet.
+    IndexIdPending => "index-id-pending",
+    /// A domain's or the project's index naming an id of another position.
+    IndexIdForeign => "index-id-foreign",
+    /// An `agents` key that is not a supported agent CLI.
+    IndexAgentUnsupported => "index-agent-unsupported",
+    /// A `listed` id already in the closure of `expanded`.
+    IndexListedInExpanded => "index-listed-in-expanded",
+    /// An `index.yaml` anywhere but a position's root.
+    IndexNested => "index-nested",
 
     // Pending
     DeliveredByInvalid => "pending-delivered-by-invalid",
@@ -217,9 +247,12 @@ impl fmt::Display for Finding {
     }
 }
 
-/// A stable notice code. Like a finding code, its text form never changes.
+/// A stable notice code. The text form is the contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NoticeCode {
+    /// A domain without `index.yaml`: absent from the global agent files,
+    /// found only through `instrukt docs index --domain <x>`.
+    DomainWithoutIndex,
     /// A delivered snippet no `index.yaml` names and no snippet requires:
     /// reachable only through `instrukt docs index`.
     UnreferencedSnippet,
@@ -228,6 +261,7 @@ pub enum NoticeCode {
 impl NoticeCode {
     pub fn as_str(self) -> &'static str {
         match self {
+            NoticeCode::DomainWithoutIndex => "domain-without-index",
             NoticeCode::UnreferencedSnippet => "unreferenced-snippet",
         }
     }
@@ -245,12 +279,13 @@ impl Serialize for NoticeCode {
     }
 }
 
-/// Something worth knowing about a file that never fails a run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// A report that does not break the contract: it never fails a run.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Notice {
-    /// The file, relative to the repository root.
+    /// The file or folder, relative to the repository root.
     pub path: PathBuf,
     pub code: NoticeCode,
+    /// What the notice says about it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
 }
@@ -263,13 +298,4 @@ impl fmt::Display for Notice {
         }
         Ok(())
     }
-}
-
-/// What one validation run found: findings fail it, notices never do.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Validation {
-    /// Ordered by file.
-    pub findings: Vec<Finding>,
-    /// Ordered by file.
-    pub notices: Vec<Notice>,
 }

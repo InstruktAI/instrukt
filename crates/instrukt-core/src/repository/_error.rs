@@ -7,6 +7,7 @@ use crate::fsx::FsError;
 use crate::git::GitError;
 use crate::ids::IdError;
 use crate::interfaces::InterfaceError;
+use crate::publication::PublicationError;
 
 use super::_section::SectionError;
 
@@ -81,6 +82,13 @@ pub enum RepositoryError {
         program: PathBuf,
         source: std::io::Error,
     },
+    #[error(
+        "{} declares no `project` slug; add `project: <slug>` to it and run again",
+        path.display()
+    )]
+    NoProjectSlug { path: PathBuf },
+    #[error(transparent)]
+    Publication(#[from] PublicationError),
     #[error(transparent)]
     Id(#[from] IdError),
     #[error(transparent)]

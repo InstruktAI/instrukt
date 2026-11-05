@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/snippet-validation.rs
 expression: run.out
 ---
-docs/domain/acme/concept/overlap.md: hygiene-required-read-implied: ~/.instrukt/docs/acme/principle/care.md, implied by ~/.instrukt/docs/acme/policy/rules.md
+docs/domain/acme/concept/overlap.md: hygiene-required-read-implied: acme/principle/care, implied by acme/policy/rules

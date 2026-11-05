@@ -22,8 +22,8 @@ use jiff::tz::TimeZone;
 
 use crate::ci::{self, CiClient, CiRead};
 use crate::dispatch::{self, DispatchContext};
-use crate::event_log::FileEventLog;
-use crate::events::{Event, EventLog};
+use crate::event_log::DbEventLog;
+use crate::events::Event;
 use crate::interfaces::{ProjectRef, RunnerWiring};
 use crate::sources;
 use crate::standing;
@@ -136,7 +136,7 @@ pub fn run(
 fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(), RunnerError> {
     let previous = ticks::last_wakeup(state)?;
     ticks::record_wakeup(state, now)?;
-    let log = FileEventLog::new(state.clone());
+    let log = DbEventLog::new(state.clone(), now);
     let index = match GlobalIndex::load(cx.home) {
         Ok(index) => index.unwrap_or_default(),
         Err(err) => {
@@ -182,12 +182,12 @@ fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(
 fn read_sources(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
-    log: &FileEventLog,
+    log: &DbEventLog,
     considered: &Considered,
     now: Timestamp,
 ) {
     let project = &considered.project;
-    let mut append = |event: &Event| match log.append(event) {
+    let append = |event: &Event| match log.log(event) {
         Ok(_) => true,
         Err(err) => {
             tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
@@ -196,13 +196,9 @@ fn read_sources(
     };
     match considered.config.events_watch() {
         Ok(watched) if !watched.is_empty() => {
-            if let Err(err) = sources::upstream_changes(
-                state,
-                &project.slug,
-                &project.root,
-                &watched,
-                &mut append,
-            ) {
+            if let Err(err) =
+                sources::upstream_changes(state, log, &project.slug, &project.root, &watched, now)
+            {
                 tracing::warn!(event = "upstream_watch_failed", project = %project.slug, error = %err);
             }
         }

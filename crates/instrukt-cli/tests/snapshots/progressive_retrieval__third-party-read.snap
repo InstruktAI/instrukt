@@ -8,6 +8,7 @@ expression: "stdout(&env, &guide)"
 id: third-party/tool/guide
 scope: project
 description: How the tool works.
+source: [TMP]/demo/docs/third-party/tool/guide.md
 ---
 # Tool guide
 

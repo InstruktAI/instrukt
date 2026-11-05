@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::_agents::{MergeRefusal, TARGETS, merge_key};
 use super::_compile::{self, Compiler};
+use super::_editor::{EditorChange, OnLink, refresh_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
@@ -19,6 +20,7 @@ use crate::docs::{
     ValidationRequest, Values,
 };
 use crate::fsx::{LockGuard, atomic_write};
+use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, DomainName, ProjectSlug};
 use crate::index::GlobalIndex;
@@ -117,6 +119,9 @@ pub struct SyncReport {
     /// every sync removes those it can, and a later sync tries the rest
     /// again. They are not part of the published corpus.
     pub leftovers: Vec<PathBuf>,
+    /// What a publishing sync changed of the editor schemas and modelines
+    /// in the primary worktree.
+    pub editor: Vec<EditorChange>,
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -150,6 +155,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)
         .map_err(PublicationError::from)?;
     let mut leftovers = sweep(request.home.root())?;
+    let mut editor = Vec::new();
     let attempt = (|| {
         let (branch, commit) = _source::canonical_main(&project.primary)?;
         let previous = PublishedRecord::load(request.home, &project.slug)?;
@@ -159,7 +165,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
                 commit: commit.clone(),
             }
         } else {
-            publish(request, &project, &commit, &mut leftovers)?
+            publish(request, &project, &commit, &mut leftovers, &mut editor)?
         };
         Ok::<_, PublicationError>((branch, commit, outcome))
     })();
@@ -187,7 +193,11 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         leftovers = leftovers.len(),
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
-    Ok(SyncReport { outcome, leftovers })
+    Ok(SyncReport {
+        outcome,
+        leftovers,
+        editor,
+    })
 }
 
 /// Everything a sync computed before it writes anything.
@@ -216,6 +226,7 @@ fn publish(
     project: &Project,
     commit: &CommitSha,
     leftovers: &mut Vec<PathBuf>,
+    editor: &mut Vec<EditorChange>,
 ) -> Result<SyncOutcome, PublicationError> {
     let home = request.home;
     config::migrate(home, &Layer::Global)?;
@@ -295,7 +306,6 @@ fn publish(
         &patched,
         events,
         &values,
-        &project.primary,
     );
     let mut bundles = BTreeMap::new();
     for domain in &held {
@@ -338,6 +348,9 @@ fn publish(
         settings,
     };
     preflight(home, project, commit, &prepared)?;
+    // Before anything is published: a refresh that cannot write fails the
+    // sync, and no commit is recorded.
+    *editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, request.now, &prepared, &mut tx) {
         Ok(()) => {
@@ -622,6 +635,7 @@ fn write(
         project: project.slug.clone(),
         commit: commit.clone(),
         checkout: project.primary.clone(),
+        remote: remote_url(&project.primary)?,
     };
     let text = serde_yaml_ng::to_string(&record).map_err(PublicationError::Render)?;
     tx.write(
@@ -629,6 +643,14 @@ fn write(
         text.as_bytes(),
     )?;
     Ok(())
+}
+
+/// The URL of the `origin` remote of the repository at `dir`; `None` when
+/// it has none.
+fn remote_url(dir: &Path) -> Result<Option<String>, PublicationError> {
+    let output = git::run_output(dir, ["config", "--get", "remote.origin.url"])?;
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((output.status.success() && !url.is_empty()).then_some(url))
 }
 
 /// The `description` of the committed `docs/domain/<x>/index.yaml` of

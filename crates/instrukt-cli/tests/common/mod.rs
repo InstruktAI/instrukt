@@ -27,6 +27,31 @@
 
 pub mod github;
 
+/// `text` with every published commit a source line names
+/// (`published commit <sha>`) shown as `[SHA]`: commits made in a test
+/// differ from run to run.
+pub fn mask_published_commits(text: &str) -> String {
+    const MARK: &str = "published commit ";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(MARK) {
+        let after = at + MARK.len();
+        out.push_str(&rest[..after]);
+        let hex = rest[after..]
+            .bytes()
+            .take_while(u8::is_ascii_hexdigit)
+            .count();
+        if hex == 40 {
+            out.push_str("[SHA]");
+            rest = &rest[after + hex..];
+        } else {
+            rest = &rest[after..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The repository root of the published position `domain` addresses:
 /// `docs/general` for `general`, `docs/domain/<domain>` for any other.
 pub fn position_dir(domain: &str) -> String {
@@ -181,6 +206,14 @@ impl TestEnv {
     /// environment.
     pub fn instrukt(&self, cwd: &Path) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_instrukt"));
+        cmd.env_clear().envs(&self.vars).current_dir(cwd);
+        cmd
+    }
+
+    /// The built `instrukt` binary as a plain process, for a test that
+    /// runs it in the background and stops it part-way.
+    pub fn instrukt_process(&self, cwd: &Path) -> StdCommand {
+        let mut cmd = StdCommand::new(env!("CARGO_BIN_EXE_instrukt"));
         cmd.env_clear().envs(&self.vars).current_dir(cwd);
         cmd
     }

@@ -1,7 +1,7 @@
 //! Recovery of dispatched executions (`session-continuity`, "Five-state
 //! status contract"): a step is done only when the work record carries its
-//! evidence. The runner keeps each execution it dispatched in
-//! `state/runner/executions.json` until its todo is released again (the
+//! evidence. The runner keeps each execution it dispatched in the state
+//! database's `executions` table until its todo is released again (the
 //! claim given back, so work offers it once more) or no lane is owed. While
 //! the execution lasts, each tick observes it:
 //!
@@ -22,6 +22,7 @@ use crate::anomaly;
 use crate::interfaces::{PickupCandidate, ProjectRef, WorkflowAssignments};
 use crate::sessions::{Observation, SessionState, Sessions};
 use crate::state::{self, RunnerState, StateError};
+use instrukt_core::state_db::rusqlite::params;
 
 /// The message a stalled execution's session receives once.
 pub const RECOVERY_MESSAGE: &str = "instrukt: the work this session was started for has no recorded completion. Finish it and record its evidence, or record why it cannot be completed.";
@@ -85,20 +86,97 @@ impl<'a> Executions<'a> {
         Self { state }
     }
 
+    /// Every watched execution whose todo is still in the work record.
     fn load(&self) -> Result<Vec<Execution>, StateError> {
-        Ok(state::read_json(&self.state.executions())?.unwrap_or_default())
+        let loaded = self.state.read(|conn, path| {
+            let sql = state::sql(path);
+            let mut statement = conn
+                .prepare(
+                    "SELECT e.project, t.slug, e.role, e.session, e.workflow_state,
+                        e.recovery_sent, e.anomaly_raised
+                     FROM executions e JOIN todos t ON t.id = e.todo_id
+                     ORDER BY e.rowid",
+                )
+                .map_err(&sql)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, bool>(5)?,
+                        row.get::<_, bool>(6)?,
+                    ))
+                })
+                .map_err(&sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(&sql)?;
+            rows.into_iter()
+                .map(
+                    |(
+                        project,
+                        todo,
+                        role,
+                        session,
+                        workflow_state,
+                        recovery_sent,
+                        anomaly_raised,
+                    )| {
+                        Ok(Execution {
+                            project: ProjectSlug::parse(&project)
+                                .map_err(|e| state::invalid(path, e))?,
+                            todo: TodoSlug::parse(&todo).map_err(|e| state::invalid(path, e))?,
+                            role: RoleName::parse(&role).map_err(|e| state::invalid(path, e))?,
+                            session: SessionRef::parse(&session)
+                                .map_err(|e| state::invalid(path, e))?,
+                            state: workflow_state,
+                            recovery_sent,
+                            anomaly_raised,
+                        })
+                    },
+                )
+                .collect::<Result<Vec<_>, StateError>>()
+        })?;
+        Ok(loaded.unwrap_or_default())
     }
 
+    /// Replaces every watched execution with `executions`, in one
+    /// transaction.
     fn save(&self, executions: &[Execution]) -> Result<(), StateError> {
-        state::write_json(&self.state.executions(), executions)
+        self.state.write(|tx| {
+            let path = state::db_path(tx);
+            tx.execute("DELETE FROM executions", [])
+                .map_err(state::sql(&path))?;
+            for execution in executions {
+                insert(tx, execution)?;
+            }
+            Ok(())
+        })
     }
 
     /// Starts watching an execution, replacing any for the same todo.
     pub fn record(&self, execution: Execution) -> Result<(), StateError> {
-        let mut executions = self.load()?;
-        executions.retain(|e| !(e.project == execution.project && e.todo == execution.todo));
-        executions.push(execution);
-        self.save(&executions)
+        self.state.write(|tx| {
+            let path = state::db_path(tx);
+            let Some(id) = state::todo_id(tx, execution.project.as_str(), execution.todo.as_str())?
+            else {
+                return Err(state::invalid(
+                    &path,
+                    format!(
+                        "no local todo `{}` to watch an execution of",
+                        execution.todo
+                    ),
+                ));
+            };
+            tx.execute(
+                "DELETE FROM executions WHERE project = ?1 AND todo_id = ?2",
+                params![execution.project.as_str(), id],
+            )
+            .map_err(state::sql(&path))?;
+            insert(tx, &execution)
+        })
     }
 
     /// Observes `project`'s executions. `offered` are the todos work offers
@@ -173,6 +251,34 @@ impl<'a> Executions<'a> {
         }
         self.save(&kept)
     }
+}
+
+/// Writes `execution`'s row; one whose todo left the work record is
+/// released and not kept.
+fn insert(
+    tx: &instrukt_core::state_db::rusqlite::Connection,
+    execution: &Execution,
+) -> Result<(), StateError> {
+    let path = state::db_path(tx);
+    let Some(id) = state::todo_id(tx, execution.project.as_str(), execution.todo.as_str())? else {
+        return Ok(());
+    };
+    tx.execute(
+        "INSERT OR REPLACE INTO executions (project, todo_id, role, session, workflow_state,
+            recovery_sent, anomaly_raised)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            execution.project.as_str(),
+            id,
+            execution.role.as_str(),
+            execution.session.to_string(),
+            execution.state,
+            execution.recovery_sent,
+            execution.anomaly_raised,
+        ],
+    )
+    .map_err(state::sql(&path))?;
+    Ok(())
 }
 
 #[cfg(test)]

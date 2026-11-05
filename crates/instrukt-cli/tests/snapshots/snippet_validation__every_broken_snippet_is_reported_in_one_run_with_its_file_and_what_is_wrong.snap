@@ -14,10 +14,9 @@ docs/domain/acme/concept/runs.md: directive-exec: touch ran
 docs/domain/acme/notes/idea.md: identity-unknown-taxonomy: notes
 docs/domain/acme/policy/authored.md: identity-classification-authored: id, type
 docs/domain/acme/policy/refs.md: structure-required-reads-not-first
-docs/domain/acme/policy/refs.md: reference-outside-required-reads: ~/.instrukt/docs/acme/principle/care.md
-docs/domain/acme/policy/refs.md: reference-form-invalid: docs/domain/acme/principle/care.md
-docs/domain/acme/policy/refs.md: reference-unresolved: ~/.instrukt/docs/acme/principle/missing.md
-docs/domain/acme/policy/refs.md: reference-local-from-published: docs/project/design/shape.md
+docs/domain/acme/policy/refs.md: reference-by-path: ~/.instrukt/docs/acme/principle/care.md
+docs/domain/acme/policy/refs.md: reference-unresolved: acme/principle/missing
+docs/domain/acme/policy/refs.md: reference-local-from-published: project/demo/design/shape
 docs/domain/acme/principle/session.md: directive-config-runtime-compiled: runtime.session_id
 docs/domain/acme/principle/shape.md: structure-h1-not-first
 docs/domain/acme/principle/shape.md: structure-section-missing: Tensions, required by instrukt root rules

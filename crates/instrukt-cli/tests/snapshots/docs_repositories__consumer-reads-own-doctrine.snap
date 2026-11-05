@@ -10,6 +10,7 @@ type: policy
 domain: sdlc
 scope: global
 description: The sdlc rules policy.
+source: [TMP]/mydocs/docs/domain/sdlc/policy/rules.md
 ---
 # sdlc rules — Policy
 
