@@ -11,9 +11,6 @@ description: Shared review execution contract for lanes, evidence, citations, se
 - [sdlc/policy/definition-of-done-lanes](../../policy/definition-of-done-lanes.md)
 - [sdlc/policy/process-change-authority](../../policy/process-change-authority.md)
 - [general/policy/human-involvement-recording](../../../../general/policy/human-involvement-recording.md)
-- [sdlc/policy/quality-predicate-registry](../../policy/quality-predicate-registry.md)
-- [sdlc/procedure/lifecycle/work/principle-violation-hunt](work/principle-violation-hunt.md)
-- [sdlc/procedure/lifecycle/work/silent-failure-audit](work/silent-failure-audit.md)
 - [sdlc/principle/module-depth](../../principle/module-depth.md)
 - [sdlc/policy/substrate-anchoring](../../policy/substrate-anchoring.md)
 

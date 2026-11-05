@@ -6,7 +6,6 @@ description: 'Prepare phase design: one driving session loads phase-scoped proce
 
 ## Required reads
 
-- [sdlc/principle/externalized-structural-context](../../principle/externalized-structural-context.md)
 - [sdlc/design/lifecycle/overview](overview.md)
 
 ## Purpose

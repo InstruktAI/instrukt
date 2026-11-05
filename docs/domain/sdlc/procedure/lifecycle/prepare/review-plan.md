@@ -15,11 +15,7 @@ dispatch:
 
 ## Required reads
 
-- [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 - [sdlc/procedure/lifecycle/work/review-build](../work/review-build.md)
-- [sdlc/policy/process-change-authority](../../../policy/process-change-authority.md)
-- [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
-- [sdlc/policy/quality-predicate-registry](../../../policy/quality-predicate-registry.md)
 
 ## Goal
 

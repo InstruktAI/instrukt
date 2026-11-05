@@ -8,7 +8,6 @@ visibility: 'public'
 ## Required reads
 
 - [sdlc/design/code-intelligence](code-intelligence.md)
-- [sdlc/design/lifecycle/overview](lifecycle/overview.md)
 
 ## Purpose
 

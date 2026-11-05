@@ -19,7 +19,6 @@ dispatch:
 - [general/principle/session-lifecycle](../../../../../general/principle/session-lifecycle.md)
 - [general/concept/agent-characteristics](../../../../../general/concept/agent-characteristics.md)
 - [general/procedure/orchestration](../../../../../general/procedure/orchestration.md)
-- [sdlc/procedure/lifecycle/overview](../overview.md)
 - [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 
 ## Goal

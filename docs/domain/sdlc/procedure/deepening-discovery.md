@@ -7,8 +7,6 @@ activation_trigger: Use when asked to find refactoring or deepening opportunitie
 
 ## Required reads
 
-- [sdlc/principle/module-depth](../principle/module-depth.md)
-- [sdlc/policy/substrate-anchoring](../policy/substrate-anchoring.md)
 - [sdlc/principle/architectural-defaults](../principle/architectural-defaults.md)
 - [general/procedure/visualizing-for-humans](../../../general/procedure/visualizing-for-humans.md)
 - [general/policy/human-contract](../../../general/policy/human-contract.md)

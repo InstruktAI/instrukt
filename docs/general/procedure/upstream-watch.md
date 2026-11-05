@@ -9,7 +9,6 @@ subscriptions:
 
 ## Required reads
 
-- [general/policy/human-contract](../policy/human-contract.md)
 - [general/procedure/event-handling/overview](event-handling/overview.md)
 - [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
 

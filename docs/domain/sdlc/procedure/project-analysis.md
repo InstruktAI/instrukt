@@ -12,11 +12,8 @@ dispatch:
 
 ## Required reads
 
-- [general/principle/intent-first-documentation](../../../general/principle/intent-first-documentation.md)
-- [sdlc/principle/documentation-first-development](../principle/documentation-first-development.md)
 - [sdlc/procedure/feature-spec-authoring](feature-spec-authoring.md)
 - [sdlc/principle/domain-driven-design](../principle/domain-driven-design.md)
-- [general/policy/snippet-value-contract](../../../general/policy/snippet-value-contract.md)
 - [general/procedure/doc-snippet-authoring](../../../general/procedure/doc-snippet-authoring.md)
 - [sdlc/policy/linting-requirements](../policy/linting-requirements.md)
 - [general/policy/agent-artifact-governance](../../../general/policy/agent-artifact-governance.md)

@@ -11,7 +11,6 @@ visibility: public
 ## Required reads
 
 - [general/policy/adr-discipline](../policy/adr-discipline.md)
-- [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
 
 ## Goal
 

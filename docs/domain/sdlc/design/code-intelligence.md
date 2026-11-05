@@ -7,7 +7,6 @@ visibility: 'public'
 
 ## Required reads
 
-- [sdlc/principle/externalized-structural-context](../principle/externalized-structural-context.md)
 - [sdlc/design/lifecycle/overview](lifecycle/overview.md)
 
 ## Purpose

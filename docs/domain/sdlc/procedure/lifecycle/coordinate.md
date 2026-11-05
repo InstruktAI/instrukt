@@ -18,9 +18,7 @@ dispatch:
 - [sdlc/procedure/lifecycle/work/finalize](work/finalize.md)
 - [sdlc/procedure/lifecycle/work/deferrals](work/deferrals.md)
 - [sdlc/procedure/lifecycle/integrate](integrate.md)
-- [sdlc/policy/todo-creation-discipline](../../policy/todo-creation-discipline.md)
 - [general/policy/conflict-resolution](../../../../general/policy/conflict-resolution.md)
-- [general/policy/human-contract](../../../../general/policy/human-contract.md)
 
 ## Goal
 

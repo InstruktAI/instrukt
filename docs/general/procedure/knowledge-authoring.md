@@ -21,7 +21,6 @@ dispatch:
 
 - [general/procedure/doc-snippet-authoring](doc-snippet-authoring.md)
 - [general/procedure/scratchpad-workspace](scratchpad-workspace.md)
-- [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
 - [sdlc/policy/command-contract-read](../../domain/sdlc/policy/command-contract-read.md)
 
 ## Goal
