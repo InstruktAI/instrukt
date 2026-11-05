@@ -69,7 +69,12 @@ authorization and derived workflow state.
 - **Owns:** Module-aware runner execution; todo dispatch policy; procedure
   activation from events; the sessions facade and session reuse behavior;
   runtime capability translation, including linked-session input; time
-  eligibility and missed-run decisions; anomaly-notification routing.
+  eligibility and missed-run decisions; anomaly-notification routing; the
+  meaning and writes of its tables in the state database (the event log,
+  consumer cursors and handled marks, request validators, watched-ref
+  observations, executions, standing-agent bindings and starts, held task
+  failures and the last wake-up), whose schema is published in
+  `local/projects/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
@@ -86,7 +91,8 @@ authorization and derived workflow state.
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and
   project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
-  supplies records and session identity, and workflow supplies assignments; the runtime and
+  supplies records and session identity, and the state database's file,
+  writer lock and migrations; workflow supplies assignments; the runtime and
   GitHub supply execution and external observations. These
   relationships are specified in the context map position below.
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
@@ -110,9 +116,9 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 - **Identifier:** The invocation itself; no new durable invocation identifier
   is established by this contract.
 - **Lifecycle:** Begins at a runner entry point and ends when that invocation
-  exits. One runner lock per machine serializes invocations; a tick exits
-  at once while `instrukt run` holds it. The lock and last wake-up live in
-  `state/runner/`.
+  exits. One runner lock per machine, `~/.instrukt/state/runner.lock`,
+  serializes invocations; a tick exits at once while `instrukt run` holds it.
+  The last wake-up is a row of the state database.
 
 #### Standing-agent session binding
 
@@ -136,8 +142,10 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
   not authorization to reconcile the fork.
 - **Identifier:** Event identity and subscribed responsibility; the standing-agent session is keyed by (subscribing procedure, project).
 - **Lifecycle:** A source supplies an event, the runner resolves subscriptions
-  and starts or wakes the responsible session. The event log in `state/runner/` retains idempotency keys and per-consumer
-  cursors across restarts; handlers reconcile their subject idempotently.
+  and starts or wakes the responsible session. The event log in the state
+  database retains idempotency keys, per-consumer cursors and per-consumer
+  handled marks across restarts, so each consumer is handed an event once;
+  handlers reconcile their subject idempotently.
 
 #### Task timing
 
@@ -175,8 +183,10 @@ tick; it does not carry authoritative state or require reliable delivery.
 | --- | --- | --- | --- | --- |
 | `workflow.finalized` | work’s finalize-ready stamp, expressing workflow’s handoff | Project, todo, finalized revision | Project, todo, finalized revision | Wake the subscribed standing integrator for finalize-ready work |
 
-The log in `state/runner/` persists these events with per-consumer cursors and
-idempotency keys. Consumers resume from their cursors and reconcile their
+The state database's event log persists these events with per-consumer
+cursors, handled marks and idempotency keys; a consumer's handled mark
+commits with the record of its delivery. Consumers resume from their cursors
+and reconcile their
 subject against current state. Runtime session observations supply the five
 facade states; they do not expand the first-build event vocabulary or replace
 record-backed completion.
@@ -210,6 +220,7 @@ record-backed completion.
 | runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
+| work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
 | runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits; `runner.main_failing` wakes it to restore a failing canonical branch |
 
 The runtime mapping and event-source boundary form an **Anti-corruption layer

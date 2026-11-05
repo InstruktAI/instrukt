@@ -43,7 +43,9 @@ remain available as history when current evidence changes.
 ### Mutation boundary
 
 `instrukt todo stamp <slug>` records an allowed fact. The whole resulting
-record is validated before the local mutation commits. An unknown stamp,
+record is validated before its transaction in the state database commits;
+the stamp, the todo's new revision and its pending reflection commit
+together. An unknown stamp,
 missing target, unresolved required evidence, missing required attribution or
 invalid resulting state is refused without a partial local stamp.
 
@@ -112,7 +114,9 @@ and approved plan digest before builder admission; recovery preserves the origin
 
 `instrukt todo stamp <slug> --finalize-ready` records the exact-commit handoff
 and appends `workflow.finalized` through the runner's event-log interface idempotently, keyed by
-project, todo and SHA. It does not release the execution claim.
+project, todo and SHA, in the stamp's own transaction: the stamp is never
+recorded without its event, nor the event without its stamp. It does not
+release the execution claim.
 
 Review rounds are counted from verdict stamps, including a new verdict in a
 reused session. There is no review-occurrence admission write; repeated

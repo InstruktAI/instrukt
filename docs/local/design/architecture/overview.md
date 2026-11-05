@@ -68,11 +68,11 @@ which are lost if the home is deleted.
 | `state/index.yaml` | the global index, every entry carrying its owning project; `docs/project/` entries carry the absolute path of the file in their project | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
 | `state/hooks/<project>/` | each hook section's last run outcome, shown by `instrukt hooks status` | the next hook run |
-| `state/runner/` | the event log with per-consumer cursors, conditional-request validators, standing-agent session bindings, the runner lock, the last wake-up | the runner (events re-derived from the record where possible) |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent bindings and starts, held task failures, the last wake-up; schema in `local/projects/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); the runner's state starts empty |
+| `state/writer.lock`, `state/runner.lock` | the per-computer writer lock, held by each command that writes and each runner call, under which every database write runs (the database's write-isolation unit); the lock serializing runner invocations | taken again by the next writer or runner |
 | `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
-| `state/work/` | the local work record (pull-through of GitHub) | GitHub |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 
 A project carries `instrukt.yaml` (the project layer) and documentation in

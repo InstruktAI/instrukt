@@ -18,7 +18,9 @@ readiness, an item-level execution claim and a dispatch hold remain separate fac
 Dependencies form a project-local directed acyclic graph. A dependency says
 the dependent waits for evidence from its prerequisite. Unknown prerequisites,
 self-dependencies and cycles are refused before any edge changes; a cycle
-refusal identifies the cycle. A todo cannot depend on its own structural
+refusal identifies the cycle. An accepted change of edges or groups, across
+however many todos it touches, commits in one transaction of the state
+database. A todo cannot depend on its own structural
 holder or an ancestor holder, including through a simultaneous group change.
 
 `instrukt todo create` accepts prerequisites at creation.

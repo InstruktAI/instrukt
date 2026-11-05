@@ -17,7 +17,9 @@ reactivity. The runner executes the work of enabled modules in one process.
 
 `instrukt run` and `instrukt tick` are entry points to the runner. The OS
 scheduler supplies wake-ups; instrukt has no daemon, socket API, or separate
-state service. A running process can read events and react to them; the
+state service. Its state is the state database
+(`local/projects/instrukt/spec/feature/work/state-database`), written by
+whichever instrukt process holds the writer lock. A running process can read events and react to them; the
 scheduled tick supplies time-based wake-ups. These are execution forms of the
 same runner, not separate services per module.
 
@@ -28,12 +30,12 @@ same runner, not separate services per module.
 | `events` enabled | Resolve event subscriptions and start or wake standing agents independently of todo pickup mode. |
 | `blueprint` enabled | Its pushed-revision generation follows its own hook contract; enabling it does not create another runner. |
 
-One runner lock per machine serializes invocations. A tick exits at once
-while `instrukt run` holds the lock. Publication state supplies each project's
+One runner lock per machine, `~/.instrukt/state/runner.lock`, serializes
+invocations. A tick exits at once while `instrukt run` holds the lock. Publication state supplies each project's
 checkout path beside its published commit; the runner considers projects
 whose effective configuration (project over global) enables `todos` or
 `events`, without a separate registry.
-Before starting a session for a todo, the runner records a claim on the item
+Before starting a session for a todo, the runner commits a claim on the item
 and reflects it to GitHub; a revision conflict means another computer claimed
 it first, and this runner leaves the item. When GitHub cannot be reached, the
 claim stays local and pending and no session starts; the next tick reflects
