@@ -102,6 +102,7 @@ bindings) only through work's command contract.
 | `human_involved` | The audit-only creation declaration, or `NULL`. |
 | `revision` | Incremented by every accepted change; the revision reflection writes. |
 | `group_id` | The structural holder this todo is grouped under (`todos.id`), or `NULL`. |
+| `group_slug` | The holder's last-known slug, for a holder not stored on this computer, or `NULL`. |
 | `schedule` | A task's schedule: an ISO-8601 instant with offset, or `cron:<five fields>`; `NULL` for none. |
 | `catch_up` | `once` or `skip`. |
 | `agent`, `thinking` | A task's agent preference and thinking mode, or `NULL`. |
@@ -114,6 +115,9 @@ bindings) only through work's command contract.
 
 **`prerequisites`** — the dependency edges. Key: `(todo_id, prerequisite_id)`,
 both `todos.id`; `prerequisite_id` may name a retained delivered todo.
+Columns: `todo_id`, `prerequisite_id`, `slug` (the prerequisite's last-known
+slug, for showing it and finding it by slug when it is not stored on this
+computer).
 
 **`artifacts`** — one row per named artifact. Key: `(todo_id, name)`.
 Columns: `todo_id`, `name`, `address` (the provider address once
@@ -242,7 +246,8 @@ Columns: `procedure`, `project`, `begun_at`, `reported`.
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
-`todo_id`, `session`, `notified`.
+`todo_id`, `session`, `notified`, `occurrence` (the failed run the hold was
+set for).
 
 **`wakeups`** — one row: `last_at`, the last wake-up.
 
@@ -261,7 +266,8 @@ the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
 
 A removed todo's rows are purged with it when its recovery window expires.
 An execution's row goes when its todo is released; a standing start's when it
-is bound or resolved; a task failure's when its hold is released. Validators,
+is bound or resolved; a task failure's is kept after its hold is released, so the same failed run
+never sets the hold again, and is replaced by the task's next failed run. Validators,
 deferrals, watched-ref observations, listing copies and the disk guard's row
 are replaced in place. Events, cursors and handled marks are kept.
 
