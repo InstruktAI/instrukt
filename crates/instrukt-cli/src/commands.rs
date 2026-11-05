@@ -6,6 +6,7 @@ pub mod blueprint;
 pub mod config;
 pub mod docs;
 pub mod eval;
+pub mod events;
 pub mod repository;
 pub mod runner;
 pub mod specs;

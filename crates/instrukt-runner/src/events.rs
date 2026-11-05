@@ -1,96 +1,120 @@
-//! instrukt's event vocabulary and the event-log append the runner offers
-//! (`docs/project/spec/domain/runner.md`, "Domain events emitted" and
-//! "Domain events consumed"; `event-activation`, "Delivery and restart
-//! boundary").
+//! Typed producer facts and the open canonical event boundary.
 //!
-//! The runner implements [`EventLog`] over the state database's `events`
-//! table (per-consumer cursors, handled marks and idempotency keys are its
-//! internals). Work's `instrukt todo stamp <slug> --finalize-ready` appends
-//! [`Event::WorkflowFinalized`] through it, in the stamp's own transaction;
-//! the CLI hands work the implementation (`crates/instrukt-cli/src/wiring.rs`,
-//! `event_log`).
+//! The acquisition enum is a producer model, not the received-event vocabulary.
+//! Received envelopes preserve external types and unknown facts unchanged.
+
+mod _catalog;
+mod _envelope;
+mod _producer;
+mod _reference;
+#[cfg(test)]
+mod _tests;
 
 use instrukt_core::ids::{CommitSha, ProjectSlug, TodoSlug};
 use serde::{Deserialize, Serialize};
 
-/// One instrukt event. Its idempotency key is its whole payload, which is
-/// exactly the key the runner spec lists for each event: appending an
-/// event equal to one already logged is the same event.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "event")]
-pub enum Event {
-    /// A watched upstream ref changed (`git ls-remote` on a tick).
-    #[serde(rename = "runner.upstream_changed")]
-    UpstreamChanged {
-        project: ProjectSlug,
-        remote: String,
-        r#ref: String,
-        revision: CommitSha,
-    },
-    /// Local main is ahead of remote main and no candidate is pending.
-    #[serde(rename = "runner.main_ahead")]
-    MainAhead {
-        project: ProjectSlug,
-        local_main: CommitSha,
-        remote_main: CommitSha,
-    },
-    /// The integrate candidate's CI result completed.
-    #[serde(rename = "runner.ci_completed")]
-    CiCompleted {
-        project: ProjectSlug,
-        candidate: CommitSha,
-        result: CiResult,
-    },
-    /// The CI of remote canonical main's head commit completed red. It
-    /// wakes the integrator to restore the canonical branch and authorizes
-    /// nothing by itself.
-    #[serde(rename = "runner.main_failing")]
-    MainFailing {
-        project: ProjectSlug,
-        /// The failing head commit.
-        head: CommitSha,
-    },
-    /// A finalized todo was handed off to integration: work's
-    /// finalize-ready stamp, expressing workflow's handoff.
-    #[serde(rename = "workflow.finalized")]
-    WorkflowFinalized {
-        project: ProjectSlug,
-        todo: TodoSlug,
-        /// The finalized commit the stamp names.
-        revision: CommitSha,
-    },
+pub use _catalog::{
+    CatalogError, DataField, DataFieldType, DataValueKind, EventCatalog, EventDeclaration,
+    LifecycleState, StateDeclaration, StateStanding,
+};
+pub use _envelope::{EmissionContext, EnvelopeError, EventEnvelope, EventTime, occurrence_id};
+pub use _producer::{DeadLettered, ProducerEvent};
+pub use _reference::{EventHome, EventHomeOwner, EventRef, HomeKind, ReferenceKind};
+pub use instrukt_core::event_type::{TypePattern, TypePatternError};
+
+// One declaration defines the producer's Rust fields, wire name and catalog.
+macro_rules! acquisition_events {
+    ($($variant:ident, $name:literal, $description:literal, $subject:ident {
+        $($field:ident: $ty:ty),* $(,)?
+    });* $(;)?) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(tag = "event")]
+        pub enum Event {
+            $(#[doc = $description]
+              #[serde(rename = $name)]
+              $variant { $($field: $ty),* }),*
+        }
+
+        impl Event {
+            pub const NAMES: &'static [&'static str] = &[$($name),*];
+
+            pub fn name(&self) -> &'static str {
+                match self { $(Self::$variant { .. } => $name),* }
+            }
+
+            pub fn declaration(&self) -> EventDeclaration {
+                match self { $(Self::$variant { .. } => acquisition_events!(@declaration $name, $description, $subject, $($field: $ty),*)),* }
+            }
+
+            pub fn declarations() -> Vec<EventDeclaration> {
+                vec![$(acquisition_events!(@declaration $name, $description, $subject, $($field: $ty),*)),*]
+            }
+        }
+    };
+    (@declaration $name:literal, $description:literal, $subject:ident, $($field:ident: $ty:ty),*) => {
+        EventDeclaration {
+            name: $name.into(), version: 1, description: $description.into(),
+            subject_kind: Some(ReferenceKind::$subject), home_kinds: vec![HomeKind::Project],
+            data_fields: vec![$(DataField::of::<$ty>(stringify!($field).trim_start_matches("r#"))),*],
+            related_kinds: vec![ReferenceKind::Session], state: None,
+        }
+    };
+}
+
+acquisition_events! {
+    UpstreamChanged, "runner.upstream_changed", "A watched upstream ref changed.", Commit {
+        project: ProjectSlug, remote: String, r#ref: String, revision: CommitSha
+    };
+    MainAhead, "runner.main_ahead", "Local main is ahead of remote main with no candidate pending.", Commit {
+        project: ProjectSlug, local_main: CommitSha, remote_main: CommitSha
+    };
+    CiCompleted, "runner.ci_completed", "The integrate candidate CI completed, including a no-CI observation.", Commit {
+        project: ProjectSlug, candidate: CommitSha, result: CiResult
+    };
+    MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", Commit {
+        project: ProjectSlug, head: CommitSha
+    };
+    WorkflowFinalized, "workflow.finalized", "A finalize-ready todo was handed off to integration.", Todo {
+        project: ProjectSlug, todo: TodoSlug, revision: CommitSha
+    };
 }
 
 impl Event {
-    /// Every name of the vocabulary, as subscriptions use them.
-    pub const NAMES: [&'static str; 5] = [
-        "runner.upstream_changed",
-        "runner.main_ahead",
-        "runner.ci_completed",
-        "runner.main_failing",
-        "workflow.finalized",
-    ];
-
-    /// The vocabulary name subscriptions use (`runner.ci_completed`, …).
-    pub fn name(&self) -> &'static str {
+    pub fn project(&self) -> &ProjectSlug {
         match self {
-            Event::UpstreamChanged { .. } => "runner.upstream_changed",
-            Event::MainAhead { .. } => "runner.main_ahead",
-            Event::CiCompleted { .. } => "runner.ci_completed",
-            Event::MainFailing { .. } => "runner.main_failing",
-            Event::WorkflowFinalized { .. } => "workflow.finalized",
+            Self::UpstreamChanged { project, .. }
+            | Self::MainAhead { project, .. }
+            | Self::CiCompleted { project, .. }
+            | Self::MainFailing { project, .. }
+            | Self::WorkflowFinalized { project, .. } => project,
         }
     }
 
-    /// The project the event concerns.
-    pub fn project(&self) -> &ProjectSlug {
+    /// The declared source occurrence key, independent of JSON field order,
+    /// enrichment, source computer, timestamps or transport positions.
+    pub fn occurrence_id(&self) -> String {
+        let mut key = vec![self.name(), self.project().as_str()];
         match self {
-            Event::UpstreamChanged { project, .. }
-            | Event::MainAhead { project, .. }
-            | Event::CiCompleted { project, .. }
-            | Event::MainFailing { project, .. }
-            | Event::WorkflowFinalized { project, .. } => project,
+            Self::UpstreamChanged {
+                remote,
+                r#ref,
+                revision,
+                ..
+            } => key.extend([remote.as_str(), r#ref.as_str(), revision.as_str()]),
+            Self::MainAhead {
+                local_main,
+                remote_main,
+                ..
+            } => key.extend([local_main.as_str(), remote_main.as_str()]),
+            Self::CiCompleted {
+                candidate, result, ..
+            } => key.extend([candidate.as_str(), result.as_str()]),
+            Self::MainFailing { head, .. } => key.push(head.as_str()),
+            Self::WorkflowFinalized { todo, revision, .. } => {
+                key.extend([todo.as_str(), revision.as_str()])
+            }
         }
+        occurrence_id(&key)
     }
 }
 

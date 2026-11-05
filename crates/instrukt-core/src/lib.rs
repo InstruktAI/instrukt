@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod docs;
+pub mod event_type;
 pub mod fsx;
 pub mod git;
 pub mod github;

@@ -15,7 +15,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use crate::commands::{blueprint, config, docs, eval, repository, runner, specs, sync, todo};
+use crate::commands::{
+    blueprint, config, docs, eval, events, repository, runner, specs, sync, todo,
+};
 use crate::context::Ctx;
 
 /// Context engineering for coding agents.
@@ -48,6 +50,8 @@ enum Command {
     Todo(todo::TodoArgs),
     /// Evaluation reports from the work record.
     Eval(eval::EvalArgs),
+    /// Discover producer-declared event types and their schemas.
+    Events(events::EventsArgs),
     /// Run the runner until stopped.
     Run(runner::RunArgs),
     /// One runner wake-up, as the OS scheduler invokes it.
@@ -78,6 +82,7 @@ fn main() -> ExitCode {
         Command::Blueprint(args) => blueprint::run(args, &mut ctx),
         Command::Todo(args) => todo::run(args, &mut ctx),
         Command::Eval(args) => eval::run(args, &mut ctx),
+        Command::Events(args) => events::run(args, &mut ctx),
         Command::Run(args) => runner::run_run(args, &mut ctx),
         Command::Tick(args) => runner::run_tick(args, &mut ctx),
         Command::Ticks(args) => runner::run_ticks(args, &mut ctx),

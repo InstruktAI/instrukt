@@ -37,15 +37,7 @@ use jiff::Timestamp;
 /// Whether a subscription pattern selects the event `name`: an exact name,
 /// whole leading segments followed by `.*`, or `*`.
 pub fn pattern_matches(pattern: &str, name: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    match pattern.strip_suffix(".*") {
-        Some(prefix) => name
-            .strip_prefix(prefix)
-            .is_some_and(|rest| rest.starts_with('.')),
-        None => pattern == name,
-    }
+    crate::events::TypePattern::parse(pattern).is_ok_and(|pattern| pattern.matches(name))
 }
 
 /// The procedures subscribing for `project`.

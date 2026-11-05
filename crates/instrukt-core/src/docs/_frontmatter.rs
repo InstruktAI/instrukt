@@ -207,14 +207,7 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
 /// An event type pattern: an exact dotted name, a whole-segment prefix
 /// followed by `.*`, or `*`.
 pub(super) fn is_type_pattern(pattern: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    let name = pattern.strip_suffix(".*").unwrap_or(pattern);
-    !name.is_empty()
-        && name.split('.').all(|segment| {
-            !segment.is_empty() && !segment.contains('*') && !segment.contains(char::is_whitespace)
-        })
+    crate::event_type::TypePattern::parse(pattern).is_ok()
 }
 
 fn parse_parameters(value: &Value) -> Result<Vec<Parameter>, String> {
