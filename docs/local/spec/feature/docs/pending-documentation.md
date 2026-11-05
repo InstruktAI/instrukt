@@ -53,6 +53,10 @@ resolved as in a default read.
   names an existing todo is checked only when the `todos` module is on.
 - **Closures stay current.** A closure never includes a pending required read
   (`local/projects/instrukt/spec/feature/docs/progressive-retrieval`).
+- **Indexes name delivered snippets.** An `index.yaml` naming a pending
+  snippet is a finding
+  (`local/projects/instrukt/spec/feature/docs/position-index`); a named live
+  snippet with pending material is rendered as its current contract.
 
 ### Delivery fold
 
