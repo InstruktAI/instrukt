@@ -4,7 +4,8 @@
 //! pending events.
 //!
 //! The consumer of the event log is the pair (subscribing procedure,
-//! project), and so is its session binding, kept in `standing.json`. A
+//! project), and so is its session binding, kept in the state database's
+//! `standing_bindings` table. A
 //! published procedure subscribes for every project; a project's local
 //! procedure only for its own project.
 //!
@@ -23,14 +24,15 @@ use std::path::Path;
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use instrukt_core::index::{GlobalIndex, IndexEntry, IndexScope};
-use serde::{Deserialize, Serialize};
 
 use crate::agents::{agent_order, global_order};
-use crate::event_log::{FileEventLog, LoggedEvent};
+use crate::event_log::{DbEventLog, LoggedEvent};
 use crate::events::Event;
 use crate::launch;
 use crate::sessions::{Observation, SessionState, Sessions, StartRequest};
 use crate::state::{self, RunnerState, StateError};
+use instrukt_core::state_db::rusqlite::{Connection, params};
+use jiff::Timestamp;
 
 /// Whether a subscription pattern selects the event `name`: an exact name,
 /// whole leading segments followed by `.*`, or `*`.
@@ -71,10 +73,11 @@ pub enum Delivery {
 }
 
 /// A standing-agent start begun and not yet bound.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct StartAttempt {
+    /// When it was recorded; `None` until the change recording it commits.
+    begun_at: Option<Timestamp>,
     /// The uncertain start was reported as an anomaly.
-    #[serde(default)]
     reported: bool,
 }
 
@@ -114,9 +117,9 @@ pub enum StartResolution {
 }
 
 /// The standing agents' durable records: bound sessions and starts not
-/// yet bound. Both files are read and written together under one lock,
-/// each change applied to a fresh read, so a delivery and a
-/// `resolve-start` running at once both keep their changes.
+/// yet bound. Both are read and written together in one transaction, each
+/// change applied to a fresh read, so a delivery and a `resolve-start`
+/// running at once both keep their changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Records {
     pub bindings: BTreeMap<String, SessionRef>,
@@ -178,26 +181,120 @@ impl Records {
     }
 }
 
-/// Applies `change` to the standing records under their lock, on a fresh
-/// read, and writes them back.
+/// Applies `change` to the standing records in one transaction, on a
+/// fresh read, and writes them back; a start recorded by it begins at
+/// `now`.
 fn update<T, E: From<StateError>>(
     state: &RunnerState,
+    now: Timestamp,
     change: impl FnOnce(&mut Records) -> Result<T, E>,
 ) -> Result<T, E> {
-    let _guard = state::lock(&state.standing_lock())?;
-    let mut records = Records {
-        bindings: state::read_json(&state.standing())?.unwrap_or_default(),
-        starts: state::read_json(&state.standing_starts())?.unwrap_or_default(),
-    };
-    let before = records.clone();
-    let answer = change(&mut records)?;
-    if records.bindings != before.bindings {
-        state::write_json(&state.standing(), &records.bindings)?;
+    state.write(|tx| {
+        let mut records = load_records(tx)?;
+        let before = records.clone();
+        let answer = change(&mut records)?;
+        if records != before {
+            save_records(tx, &records, now)?;
+        }
+        Ok(answer)
+    })
+}
+
+/// The standing records as the database holds them.
+fn load_records(conn: &Connection) -> Result<Records, StateError> {
+    let path = state::db_path(conn);
+    let sql = state::sql(&path);
+    let mut bindings = BTreeMap::new();
+    let mut statement = conn
+        .prepare("SELECT procedure, project, session FROM standing_bindings")
+        .map_err(&sql)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(&sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&sql)?;
+    for (procedure, project, session) in rows {
+        let session = SessionRef::parse(&session).map_err(|e| state::invalid(&path, e))?;
+        bindings.insert(format!("{procedure}@{project}"), session);
     }
-    if records.starts != before.starts {
-        state::write_json(&state.standing_starts(), &records.starts)?;
+    let mut starts = BTreeMap::new();
+    let mut statement = conn
+        .prepare("SELECT procedure, project, begun_at, reported FROM standing_starts")
+        .map_err(&sql)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, bool>(3)?,
+            ))
+        })
+        .map_err(&sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&sql)?;
+    for (procedure, project, begun_at, reported) in rows {
+        let begun_at = begun_at
+            .parse::<Timestamp>()
+            .map_err(|e| state::invalid(&path, e))?;
+        starts.insert(
+            format!("{procedure}@{project}"),
+            StartAttempt {
+                begun_at: Some(begun_at),
+                reported,
+            },
+        );
     }
-    Ok(answer)
+    Ok(Records { bindings, starts })
+}
+
+/// Replaces the standing records with `records`.
+fn save_records(conn: &Connection, records: &Records, now: Timestamp) -> Result<(), StateError> {
+    let path = state::db_path(conn);
+    let sql = state::sql(&path);
+    conn.execute("DELETE FROM standing_bindings", [])
+        .map_err(&sql)?;
+    conn.execute("DELETE FROM standing_starts", [])
+        .map_err(&sql)?;
+    for (consumer, session) in &records.bindings {
+        let (procedure, project) = split_consumer(&path, consumer)?;
+        conn.execute(
+            "INSERT INTO standing_bindings (procedure, project, session) VALUES (?1, ?2, ?3)",
+            params![procedure, project, session.to_string()],
+        )
+        .map_err(&sql)?;
+    }
+    for (consumer, attempt) in &records.starts {
+        let (procedure, project) = split_consumer(&path, consumer)?;
+        conn.execute(
+            "INSERT INTO standing_starts (procedure, project, begun_at, reported)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                procedure,
+                project,
+                attempt.begun_at.unwrap_or(now).to_string(),
+                attempt.reported
+            ],
+        )
+        .map_err(&sql)?;
+    }
+    Ok(())
+}
+
+/// A consumer `<procedure>@<project>` as its two key columns.
+fn split_consumer<'c>(
+    path: &std::path::Path,
+    consumer: &'c str,
+) -> Result<(&'c str, &'c str), StateError> {
+    consumer
+        .rsplit_once('@')
+        .ok_or_else(|| state::invalid(path, format!("a consumer `{consumer}`")))
 }
 
 /// The command line that resolves `consumer`'s uncertain start, as its
@@ -215,6 +312,7 @@ pub fn resolve_start(
     config: &Configuration,
     consumer: &str,
     resolution: &StartResolution,
+    now: Timestamp,
 ) -> Result<(), ResolveStartError> {
     let well_formed = consumer
         .rsplit_once('@')
@@ -235,7 +333,7 @@ pub fn resolve_start(
             session: session.clone(),
         });
     }
-    update(state, |records| records.resolve(consumer, resolution))?;
+    update(state, now, |records| records.resolve(consumer, resolution))?;
     tracing::info!(event = "standing_start_resolved", consumer, resolution = ?resolution);
     Ok(())
 }
@@ -243,7 +341,7 @@ pub fn resolve_start(
 /// Delivers `project`'s pending events to `procedure`.
 pub fn deliver(
     state: &RunnerState,
-    log: &FileEventLog,
+    log: &DbEventLog,
     config: &Configuration,
     env: &Env,
     procedure: &IndexEntry,
@@ -251,6 +349,7 @@ pub fn deliver(
     root: &Path,
 ) -> Result<Delivery, StandingError> {
     let consumer = format!("{}@{project}", procedure.id);
+    let now = log.now();
     let pending = log.pending(&consumer, |event| {
         event.project() == project
             && procedure
@@ -267,10 +366,13 @@ pub fn deliver(
     let Some(last) = batch.last().map(|logged| logged.seq) else {
         return Ok(Delivery::Nothing);
     };
+    let seqs: Vec<u64> = batch.iter().map(|logged| logged.seq).collect();
     let text = events_text(batch.iter().map(|logged| &logged.event));
     let sessions = Sessions::new(config, env);
-    let bindings: BTreeMap<String, SessionRef> =
-        state::read_json(&state.standing())?.unwrap_or_default();
+    let bindings = state
+        .read(|conn, _| load_records(conn))?
+        .unwrap_or_default()
+        .bindings;
     if let Some(bound) = bindings.get(&consumer).cloned() {
         match sessions.alive(&bound)? {
             Observation::Unobservable(reason) => {
@@ -285,7 +387,7 @@ pub fn deliver(
             Observation::State(SessionState::Gone) => {}
             Observation::State(_) => {
                 sessions.send(&bound, &text)?;
-                log.acknowledge(&consumer, last)?;
+                log.acknowledge(&consumer, &seqs)?;
                 tracing::info!(event = "standing_agent_woken", consumer, session = %bound, through = last);
                 return Ok(Delivery::Woken(bound));
             }
@@ -297,7 +399,7 @@ pub fn deliver(
     // The start is recorded before the runtime is asked: a start whose
     // result was never recorded (the tick died in between) may have created
     // a session, so it is never repeated; it is reported once instead.
-    match update::<_, StateError>(state, |records| Ok(records.begin_start(&consumer)))? {
+    match update::<_, StateError>(state, now, |records| Ok(records.begin_start(&consumer)))? {
         StartGate::Begin => {}
         StartGate::ReportUncertain => {
             let door = resolve_start_command(&consumer);
@@ -321,7 +423,7 @@ pub fn deliver(
             // Only a start that certainly created no session clears its
             // attempt; an uncertain one stays until `resolve-start`.
             if err.start_certainly_failed() {
-                update::<_, StateError>(state, |records| {
+                update::<_, StateError>(state, now, |records| {
                     records.start_failed(&consumer);
                     Ok(())
                 })?;
@@ -329,11 +431,11 @@ pub fn deliver(
             return Err(err.into());
         }
     };
-    update::<_, StateError>(state, |records| {
+    update::<_, StateError>(state, now, |records| {
         records.started(&consumer, &started.session);
         Ok(())
     })?;
-    log.acknowledge(&consumer, last)?;
+    log.acknowledge(&consumer, &seqs)?;
     tracing::info!(event = "standing_agent_started", consumer, session = %started.session, through = last);
     Ok(Delivery::Started(started.session))
 }

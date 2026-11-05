@@ -315,8 +315,7 @@ impl Work {
         &self,
         project: &instrukt_core::ids::ProjectSlug,
     ) -> Result<Vec<TodoRecord>, WorkError> {
-        Ok(super::_store::Store::open(&self.home, project)?
-            .items()?
+        Ok(super::_store::read_items(&self.home, project)?
             .into_iter()
             .map(|item| item.record)
             .collect())
@@ -672,29 +671,40 @@ impl Work {
             sequence: 0,
             model_provenance,
         };
-        if let StampFact::FinalizeReady { commit } = &stamp.fact {
-            let log = events.ok_or_else(|| {
-                WorkError::refused(
-                    "the finalize-ready handoff appends `workflow.finalized` to the runner's event log, which this build does not provide",
-                )
-            })?;
-            let event = Event::WorkflowFinalized {
-                project: project.slug.clone(),
-                todo: slug.clone(),
-                revision: commit.clone(),
-            };
-            let appended = log.append(&event)?;
-            tracing::info!(
-                event = "work_finalize_handoff",
-                project = %project.slug,
-                todo = %slug,
-                commit = %commit,
-                appended = ?appended,
-                "workflow.finalized handed to the event log"
-            );
-        }
+        // The finalize-ready handoff commits with its `workflow.finalized`
+        // event, in one transaction.
+        let handoff = match &stamp.fact {
+            StampFact::FinalizeReady { commit } => {
+                let log = events.ok_or_else(|| {
+                    WorkError::refused(
+                        "the finalize-ready handoff appends `workflow.finalized` to the runner's event log, which this build does not provide",
+                    )
+                })?;
+                tracing::info!(
+                    event = "work_finalize_handoff",
+                    project = %project.slug,
+                    todo = %slug,
+                    commit = %commit,
+                    "workflow.finalized handed to the event log"
+                );
+                Some((
+                    log,
+                    vec![Event::WorkflowFinalized {
+                        project: project.slug.clone(),
+                        todo: slug.clone(),
+                        revision: commit.clone(),
+                    }],
+                ))
+            }
+            _ => None,
+        };
         if resolved.already_recorded {
             // The runner stamped this run's start; nothing new to record.
+            if let Some((log, events)) = &handoff {
+                for event in events {
+                    s.log_event(*log, event)?;
+                }
+            }
             s.flush()?;
             return Ok(Outcome {
                 value: stamp,
@@ -703,7 +713,10 @@ impl Work {
             });
         }
         let now = s.now;
-        s.commit("stamped", |s| {
+        let events = handoff
+            .as_ref()
+            .map(|(log, events)| (*log, events.as_slice()));
+        s.commit_with_events("stamped", events, |s| {
             let record = &mut s.items[index].record;
             if let StampFact::DiagnosisUnresolved { reason, .. } = &stamp.fact {
                 if let Some(previous) = record.hold.take() {
@@ -1298,20 +1311,21 @@ fn join_group(
 /// child (`dependencies-and-holds`, "Structural holders"), the last step of
 /// a validated change: the files are rewritten in the working tree and
 /// listed for the caller to commit. A docs refusal refuses the conversion.
-pub(super) fn transfer_documentation(s: &mut Session<'_>) -> Result<(), WorkError> {
-    let Some((parent, child)) = s.pending_transfer.take() else {
-        return Ok(());
-    };
-    match instrukt_core::docs::transfer_pending(&s.project.root, &parent, &child) {
+pub(super) fn transfer_documentation(
+    project: &ProjectRef,
+    parent: &TodoSlug,
+    child: &TodoSlug,
+) -> Result<Vec<std::path::PathBuf>, WorkError> {
+    match instrukt_core::docs::transfer_pending(&project.root, parent, child) {
         Ok(outcome) => {
-            s.docs_changed.extend(outcome.written);
-            s.docs_changed.extend(
+            let mut changed = outcome.written;
+            changed.extend(
                 outcome
                     .renamed
                     .into_iter()
                     .flat_map(|(from, to)| [from, to]),
             );
-            Ok(())
+            Ok(changed)
         }
         Err(instrukt_core::docs::DocsError::TransferRefused { path, reason }) => {
             Err(WorkError::refused(format!(

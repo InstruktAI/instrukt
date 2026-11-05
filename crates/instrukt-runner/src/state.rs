@@ -1,151 +1,122 @@
-//! The runner's files in `state/runner/` (architecture overview, "The
-//! home"): the event log and its cursors, conditional-request validators,
-//! watched-ref observations, standing-agent session bindings, the runner
-//! lock and the last wake-up.
+//! The runner's state in the state database's runner tables
+//! (`state-database`, "Runner tables"): the event log and its cursors and
+//! handled marks, conditional-request validators and poll deferrals,
+//! watched-ref observations, executions, standing-agent bindings and
+//! starts, held task failures and the last wake-up.
 //!
-//! Every path the runner writes is named here. Writes are whole-file and
-//! atomic, and refuse a target that is a symbolic link: the runner never
-//! follows a link planted in the home.
+//! Every write runs in one transaction under the per-computer writer lock,
+//! taken for that transaction alone, so a runner write never waits on a
+//! work command for longer than the command holds it. The runner lock
+//! `state/runner.lock` serializes runner invocations and guards no data.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use instrukt_core::fsx::{self, FsError, LockGuard};
+use instrukt_core::fsx::{self, FsError};
 use instrukt_core::home::Home;
-use instrukt_core::ids::ProjectSlug;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use instrukt_core::state_db::rusqlite::{Connection, Transaction};
+use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
 
-/// How long a writer waits for another process holding a state lock.
-pub(crate) const STATE_LOCK_WAIT: Duration = Duration::from_secs(10);
-
-/// A runner state file could not be read or written.
+/// The runner's state could not be read or written.
 #[derive(Debug, thiserror::Error)]
 pub enum StateError {
+    #[error(transparent)]
+    Db(#[from] StateDbError),
+    #[error("{} is a symbolic link; the runner does not write through links", path.display())]
+    Symlink { path: PathBuf },
     #[error("cannot read {}: {source}", path.display())]
     Read {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[error("{} is not readable runner state: {message}", path.display())]
-    Corrupt { path: PathBuf, message: String },
-    #[error("{} is a symbolic link; the runner does not write through links", path.display())]
-    Symlink { path: PathBuf },
     #[error(transparent)]
     Fs(#[from] FsError),
 }
 
-/// Paths into one home's runner state.
+/// One home's runner state.
 #[derive(Debug, Clone)]
 pub struct RunnerState {
-    dir: PathBuf,
+    home: Home,
 }
 
 impl RunnerState {
     pub fn new(home: &Home) -> Self {
-        Self {
-            dir: home.runner_state_dir(),
-        }
-    }
-
-    pub fn dir(&self) -> &Path {
-        &self.dir
+        Self { home: home.clone() }
     }
 
     /// The machine's runner lock: one runner invocation at a time.
     pub fn runner_lock(&self) -> PathBuf {
-        self.dir.join("runner.lock")
+        self.home.runner_lock_file()
     }
 
-    /// The lock serializing event-log and cursor writes.
-    pub(crate) fn events_lock(&self) -> PathBuf {
-        self.dir.join("events.lock")
+    /// Runs `change` in one write transaction under the writer lock.
+    pub(crate) fn write<T, E: From<StateError>>(
+        &self,
+        change: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut db = StateDb::open(&self.home).map_err(StateError::from)?;
+        let path = db.path().to_path_buf();
+        let tx = db.transaction().map_err(StateError::from)?;
+        let value = change(&tx)?;
+        tx.commit()
+            .map_err(StateDbError::sqlite(&path))
+            .map_err(StateError::from)?;
+        Ok(value)
     }
 
-    /// The event log, one JSON record per line.
-    pub(crate) fn events_log(&self) -> PathBuf {
-        self.dir.join("events.jsonl")
-    }
-
-    /// Per-consumer cursors into the event log.
-    pub(crate) fn cursors(&self) -> PathBuf {
-        self.dir.join("cursors.json")
-    }
-
-    /// The last wake-up.
-    pub(crate) fn last_wakeup(&self) -> PathBuf {
-        self.dir.join("last-wakeup")
-    }
-
-    /// The watched refs last observed for `project`.
-    pub(crate) fn watched(&self, project: &ProjectSlug) -> PathBuf {
-        self.dir.join("watch").join(format!("{project}.json"))
-    }
-
-    /// The conditional-request validators and poll intervals for `project`.
-    pub(crate) fn validators(&self, project: &ProjectSlug) -> PathBuf {
-        self.dir.join("validators").join(format!("{project}.json"))
-    }
-
-    /// The executions the runner dispatched and watches.
-    pub(crate) fn executions(&self) -> PathBuf {
-        self.dir.join("executions.json")
-    }
-
-    /// The lock over the standing-agent records.
-    pub(crate) fn standing_lock(&self) -> PathBuf {
-        self.dir.join("standing.lock")
-    }
-
-    /// Standing-agent starts begun and not yet bound.
-    pub(crate) fn standing_starts(&self) -> PathBuf {
-        self.dir.join("standing-starts.json")
-    }
-
-    /// The held task failures and whether each was notified.
-    pub(crate) fn task_failures(&self) -> PathBuf {
-        self.dir.join("task-failures.json")
-    }
-
-    /// Standing-agent session bindings, keyed by (procedure, project).
-    pub(crate) fn standing(&self) -> PathBuf {
-        self.dir.join("standing.json")
+    /// Runs `read` against the database; `None` when none exists yet,
+    /// which is empty state.
+    pub(crate) fn read<T>(
+        &self,
+        read: impl FnOnce(&Connection, &Path) -> Result<T, StateError>,
+    ) -> Result<Option<T>, StateError> {
+        match StateRead::open(&self.home)? {
+            Some(db) => read(db.conn(), db.path()).map(Some),
+            None => Ok(None),
+        }
     }
 }
 
-/// Reads JSON state at `path`; `None` when the file does not exist. Any
-/// other failure is an error: only "not found" is absence.
-pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, StateError> {
-    let Some(text) = read_text(path)? else {
-        return Ok(None);
-    };
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|err| StateError::Corrupt {
-            path: path.to_path_buf(),
-            message: err.to_string(),
-        })
-}
-
-/// Reads text state at `path`; `None` when the file does not exist.
-pub(crate) fn read_text(path: &Path) -> Result<Option<String>, StateError> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(StateError::Read {
+/// Maps a SQLite failure on the database at `path` into a state error.
+pub(crate) fn sql(
+    path: &Path,
+) -> impl Fn(instrukt_core::state_db::rusqlite::Error) -> StateError + '_ {
+    move |source| {
+        StateError::Db(StateDbError::Sqlite {
             path: path.to_path_buf(),
             source,
-        }),
+        })
     }
 }
 
-/// Writes `value` as JSON to `path`, atomically.
-pub(crate) fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), StateError> {
-    let text = serde_json::to_string_pretty(value).map_err(|err| StateError::Corrupt {
-        path: path.to_path_buf(),
-        message: err.to_string(),
-    })?;
-    write_bytes(path, text.as_bytes())
+/// The path of the transaction's database, for error messages.
+pub(crate) fn db_path(conn: &Connection) -> PathBuf {
+    conn.path().map(PathBuf::from).unwrap_or_default()
+}
+
+/// A stored value the runner cannot read.
+pub(crate) fn invalid(path: &Path, message: impl std::fmt::Display) -> StateError {
+    StateError::Db(StateDbError::invalid(path, message.to_string()))
+}
+
+/// The durable identity of `project`'s local todo `slug`, as the work
+/// record holds it — its live entry, else its latest retained one; runner
+/// rows name todos by identity.
+pub(crate) fn todo_id(
+    conn: &Connection,
+    project: &str,
+    slug: &str,
+) -> Result<Option<String>, StateError> {
+    use instrukt_core::state_db::rusqlite::OptionalExtension;
+    let path = db_path(conn);
+    conn.query_row(
+        "SELECT id FROM todos WHERE project = ?1 AND slug = ?2
+         ORDER BY status IN ('active', 'iceboxed', 'structural_holder') DESC, created_at DESC
+         LIMIT 1",
+        [project, slug],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(sql(&path))
 }
 
 /// Writes `bytes` to `path` atomically, refusing a symbolic link there.
@@ -168,10 +139,4 @@ pub(crate) fn refuse_symlink(path: &Path) -> Result<(), StateError> {
             source,
         }),
     }
-}
-
-/// Takes the exclusive lock at `path`, waiting a bounded time.
-pub(crate) fn lock(path: &Path) -> Result<LockGuard, StateError> {
-    refuse_symlink(path)?;
-    Ok(LockGuard::acquire(path, STATE_LOCK_WAIT)?)
 }

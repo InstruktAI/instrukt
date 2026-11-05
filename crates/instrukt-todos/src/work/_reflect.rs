@@ -940,10 +940,10 @@ mod tests {
         assert!(board_owed(&item, &b));
     }
 
-    /// A local item as the store wrote it before board membership carried
-    /// its board: an item id and status, no `board`.
-    const PRE_BOARD_IDENTITY_ITEM: &str = r#"{
-        "record": {
+    /// A local item whose board membership carries no board: an item id
+    /// and status, no `board`.
+    fn membership_without_board() -> LocalItem {
+        let record: TodoRecord = serde_json::from_value(serde_json::json!({
             "schema": 1,
             "id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
             "project": "demo",
@@ -953,28 +953,25 @@ mod tests {
             "created": "2026-10-01T09:00:00Z",
             "created_by": {"person": {"name": "dev"}},
             "revision": 3,
-            "sequence": 0,
-            "artifacts": [],
-            "stamps": [],
-            "bindings": [],
-            "hold_history": [],
-            "after": [],
-            "catch_up": "once"
-        },
-        "reflection": {
-            "issue": {"number": 4, "id": 4004},
-            "pending": false,
-            "conflicted": false,
-            "board_item": "PVTI_old",
-            "board_status": "active",
-            "reviews_reflected": 0,
-            "pull_closed": false
+        }))
+        .unwrap();
+        LocalItem {
+            record,
+            reflection: ReflectionState {
+                issue: Some(IssueRef {
+                    number: 4,
+                    id: 4004,
+                }),
+                board_item: Some("PVTI_old".into()),
+                board_status: Some("active".into()),
+                ..ReflectionState::default()
+            },
         }
-    }"#;
+    }
 
     #[test]
     fn a_membership_stored_without_its_board_is_owed_on_the_configured_board() {
-        let item: LocalItem = serde_json::from_str(PRE_BOARD_IDENTITY_ITEM).unwrap();
+        let item = membership_without_board();
         let configured = BoardRef {
             owner: "acme".into(),
             number: 7,

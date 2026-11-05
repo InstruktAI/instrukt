@@ -16,9 +16,13 @@ use instrukt_core::config::WatchedRef;
 use instrukt_core::git::{self, GitError};
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 
+use crate::event_log::DbEventLog;
 use crate::events::Event;
+use crate::events::{EventLog, EventLogError};
 use crate::process::{Invocation, ProcessError};
 use crate::state::{self, RunnerState, StateError};
+use instrukt_core::state_db::rusqlite::params;
+use jiff::Timestamp;
 
 /// How long `git ls-remote` may take for one watched ref.
 const LS_REMOTE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -45,6 +49,8 @@ pub enum SourceError {
     Git(#[from] GitError),
     #[error(transparent)]
     State(#[from] StateError),
+    #[error(transparent)]
+    Log(#[from] EventLogError),
 }
 
 /// The revision `git_ref` has on `remote`, as `git ls-remote` reports it;
@@ -75,18 +81,43 @@ pub fn ls_remote(
 }
 
 /// The upstream changes of `project`'s watched refs since the last tick.
-/// Each changed ref yields its event; observations are kept only after
-/// `emit` accepted the events, so a failure re-reads the change next tick.
+/// Each changed ref yields its event; the events and the observations
+/// commit together in one transaction, so a failure re-reads the change
+/// next tick.
 pub fn upstream_changes(
     state: &RunnerState,
+    log: &DbEventLog,
     project: &ProjectSlug,
     root: &Path,
     watched: &[WatchedRef],
-    mut emit: impl FnMut(&Event) -> bool,
+    now: Timestamp,
 ) -> Result<(), SourceError> {
-    let path = state.watched(project);
-    let mut known: BTreeMap<String, CommitSha> = state::read_json(&path)?.unwrap_or_default();
-    let mut changed = false;
+    let known = state
+        .read(|conn, path| {
+            let sql = state::sql(path);
+            let mut statement = conn
+                .prepare("SELECT remote, ref, revision FROM watched_refs WHERE project = ?1")
+                .map_err(&sql)?;
+            let rows = statement
+                .query_map(params![project.as_str()], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(&sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(&sql)?;
+            rows.into_iter()
+                .map(|(remote, git_ref, revision)| {
+                    let sha = CommitSha::parse(&revision).map_err(|e| state::invalid(path, e))?;
+                    Ok((format!("{remote} {git_ref}"), sha))
+                })
+                .collect::<Result<BTreeMap<_, _>, StateError>>()
+        })?
+        .unwrap_or_default();
+    let mut observations: Vec<(&WatchedRef, CommitSha, Option<Event>)> = Vec::new();
     for watch in watched {
         let key = format!("{} {}", watch.remote, watch.git_ref);
         let observed = match ls_remote(root, &watch.remote, &watch.git_ref) {
@@ -109,21 +140,40 @@ pub fn upstream_changes(
                     r#ref: watch.git_ref.clone(),
                     revision: observed.clone(),
                 };
-                if !emit(&event) {
-                    continue;
-                }
+                observations.push((watch, observed, Some(event)));
             }
             None => {
                 tracing::info!(event = "upstream_ref_first_observed", project = %project, remote = %watch.remote, git_ref = %watch.git_ref, revision = %observed);
+                observations.push((watch, observed, None));
             }
         }
-        known.insert(key, observed);
-        changed = true;
     }
-    if changed {
-        state::write_json(&path, &known)?;
+    if observations.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        for (watch, observed, event) in &observations {
+            if let Some(event) = event {
+                log.append(tx, event)?;
+            }
+            tx.execute(
+                "INSERT INTO watched_refs (project, remote, ref, revision, observed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (project, remote, ref) DO UPDATE SET revision = excluded.revision,
+                    observed_at = excluded.observed_at",
+                params![
+                    project.as_str(),
+                    watch.remote,
+                    watch.git_ref,
+                    observed.as_str(),
+                    now.to_string()
+                ],
+            )
+            .map_err(state::sql(&path))?;
+        }
+        Ok::<_, SourceError>(())
+    })
 }
 
 /// What local git says about a project's main and its candidate.

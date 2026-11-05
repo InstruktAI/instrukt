@@ -112,10 +112,22 @@ impl Home {
         self.state_dir().join("hooks").join(project.as_str())
     }
 
-    /// `~/.instrukt/state/runner/` — event log, cursors, validators,
-    /// bindings, runner lock and last wake-up.
-    pub fn runner_state_dir(&self) -> PathBuf {
-        self.state_dir().join("runner")
+    /// `~/.instrukt/state/instrukt.db` — the state database: the local
+    /// work record and the runner's state (`state-database`).
+    pub fn state_db_file(&self) -> PathBuf {
+        self.state_dir().join("instrukt.db")
+    }
+
+    /// `~/.instrukt/state/writer.lock` — the per-computer writer lock every
+    /// state-database write runs under.
+    pub fn writer_lock_file(&self) -> PathBuf {
+        self.state_dir().join("writer.lock")
+    }
+
+    /// `~/.instrukt/state/runner.lock` — serializes runner invocations; it
+    /// guards no data.
+    pub fn runner_lock_file(&self) -> PathBuf {
+        self.state_dir().join("runner.lock")
     }
 
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
@@ -126,11 +138,6 @@ impl Home {
     /// `~/.instrukt/state/blueprint/<project>/` — graphs per SHA.
     pub fn blueprint_dir(&self, project: &ProjectSlug) -> PathBuf {
         self.state_dir().join("blueprint").join(project.as_str())
-    }
-
-    /// `~/.instrukt/state/work/` — the local work record.
-    pub fn work_state_dir(&self) -> PathBuf {
-        self.state_dir().join("work")
     }
 
     /// `~/.instrukt/state/machine-id` — this computer's id, created once;
@@ -177,10 +184,11 @@ mod tests {
             home.publication_outputs_dir(),
             home.claims_dir(),
             home.hooks_state_dir(&project),
-            home.runner_state_dir(),
+            home.state_db_file(),
+            home.writer_lock_file(),
+            home.runner_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
-            home.work_state_dir(),
             home.machine_id_file(),
             home.git_dir(),
             home.locks_dir(),

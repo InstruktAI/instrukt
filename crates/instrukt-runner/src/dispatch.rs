@@ -12,8 +12,6 @@
 //! and pending and nothing starts. An exhausted agent order releases the
 //! runner's claim through work's command contract and is an anomaly.
 
-use std::collections::BTreeMap;
-
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
@@ -30,8 +28,9 @@ use crate::interfaces::{
 };
 use crate::launch;
 use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
-use crate::state::{self, RunnerState};
+use crate::state::{self, RunnerState, StateError};
 use crate::timing::{self, Decision};
+use instrukt_core::state_db::rusqlite::params;
 
 /// The role of the procedure that runs a due task.
 pub const TASK_RUNNER_ROLE: &str = "task-runner";
@@ -324,12 +323,81 @@ pub fn procedure_for_role<'i>(
 /// A task failure the runner holds and reports: its occurrence's
 /// `error` outcome, the session that ran it, and whether the developer was
 /// notified yet.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct TaskFailure {
     project: ProjectSlug,
     todo: TodoSlug,
+    /// The failed occurrence the hold answers.
+    occurrence: String,
     session: Option<SessionRef>,
     notified: bool,
+}
+
+/// The held task failures, joined to their todos' slugs.
+fn task_failures(state: &RunnerState) -> Result<Vec<TaskFailure>, StateError> {
+    let loaded = state.read(|conn, path| {
+        let sql = state::sql(path);
+        let mut statement = conn
+            .prepare(
+                "SELECT f.project, t.slug, f.occurrence, f.session, f.notified
+                 FROM task_failures f JOIN todos t ON t.id = f.todo_id
+                 ORDER BY f.rowid",
+            )
+            .map_err(&sql)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, bool>(4)?,
+                ))
+            })
+            .map_err(&sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(&sql)?;
+        rows.into_iter()
+            .map(|(project, todo, occurrence, session, notified)| {
+                Ok(TaskFailure {
+                    project: ProjectSlug::parse(&project).map_err(|e| state::invalid(path, e))?,
+                    todo: TodoSlug::parse(&todo).map_err(|e| state::invalid(path, e))?,
+                    occurrence,
+                    session: session
+                        .map(|s| SessionRef::parse(&s).map_err(|e| state::invalid(path, e)))
+                        .transpose()?,
+                    notified,
+                })
+            })
+            .collect::<Result<Vec<_>, StateError>>()
+    })?;
+    Ok(loaded.unwrap_or_default())
+}
+
+/// Records `failure`, replacing an earlier one of its todo.
+fn save_task_failure(state: &RunnerState, failure: &TaskFailure) -> Result<(), StateError> {
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        let Some(id) = state::todo_id(tx, failure.project.as_str(), failure.todo.as_str())? else {
+            return Err(state::invalid(
+                &path,
+                format!("no local todo `{}` to hold a failure of", failure.todo),
+            ));
+        };
+        tx.execute(
+            "INSERT OR REPLACE INTO task_failures (project, todo_id, occurrence, session, notified)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                failure.project.as_str(),
+                id,
+                failure.occurrence,
+                failure.session.as_ref().map(ToString::to_string),
+                failure.notified,
+            ],
+        )
+        .map_err(state::sql(&path))?;
+        Ok(())
+    })
 }
 
 /// A task whose last firing recorded `error` is a blocker needing the
@@ -353,16 +421,18 @@ fn hold_failed_firing(
         return;
     };
     let todo = &candidate.todo;
-    let key = format!("{}/{todo}/{}", project.slug, firing.occurrence);
-    let path = cx.state.task_failures();
-    let mut failures: BTreeMap<String, TaskFailure> = match state::read_json(&path) {
-        Ok(failures) => failures.unwrap_or_default(),
+    let occurrence = firing.occurrence.to_string();
+    let failures = match task_failures(cx.state) {
+        Ok(failures) => failures,
         Err(err) => {
             tracing::warn!(event = "task_failures_unreadable", error = %err);
             return;
         }
     };
-    if failures.contains_key(&key) {
+    if failures
+        .iter()
+        .any(|f| f.project == project.slug && &f.todo == todo && f.occurrence == occurrence)
+    {
         return;
     }
     let cause = HoldCause::TaskFailed {
@@ -384,16 +454,14 @@ fn hold_failed_firing(
             }
         });
     tracing::warn!(event = "task_failed_held", project = %project.slug, todo = %todo, occurrence = %firing.occurrence);
-    failures.insert(
-        key,
-        TaskFailure {
-            project: project.slug.clone(),
-            todo: todo.clone(),
-            session,
-            notified: false,
-        },
-    );
-    if let Err(err) = state::write_json(&path, &failures) {
+    let failure = TaskFailure {
+        project: project.slug.clone(),
+        todo: todo.clone(),
+        occurrence,
+        session,
+        notified: false,
+    };
+    if let Err(err) = save_task_failure(cx.state, &failure) {
         tracing::warn!(event = "task_failures_unwritable", error = %err);
     }
 }
@@ -404,17 +472,15 @@ fn hold_failed_firing(
 /// thread, and one that cannot be observed is retried next tick. The
 /// notification references the session that ran it.
 fn notify_task_failures(cx: &DispatchContext<'_>, config: &Configuration, project: &ProjectRef) {
-    let path = cx.state.task_failures();
-    let mut failures: BTreeMap<String, TaskFailure> = match state::read_json(&path) {
-        Ok(failures) => failures.unwrap_or_default(),
+    let mut failures = match task_failures(cx.state) {
+        Ok(failures) => failures,
         Err(err) => {
             tracing::warn!(event = "task_failures_unreadable", error = %err);
             return;
         }
     };
     let sessions = Sessions::new(config, cx.env);
-    let mut changed = false;
-    for failure in failures.values_mut() {
+    for failure in &mut failures {
         if failure.notified || failure.project != project.slug {
             continue;
         }
@@ -438,9 +504,8 @@ fn notify_task_failures(cx: &DispatchContext<'_>, config: &Configuration, projec
         };
         anomaly::notify(config, cx.env, &reference, None);
         failure.notified = true;
-        changed = true;
-    }
-    if changed && let Err(err) = state::write_json(&path, &failures) {
-        tracing::warn!(event = "task_failures_unwritable", error = %err);
+        if let Err(err) = save_task_failure(cx.state, failure) {
+            tracing::warn!(event = "task_failures_unwritable", error = %err);
+        }
     }
 }
