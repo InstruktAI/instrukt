@@ -19,7 +19,7 @@ use super::_model::{
     Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef,
     Version, digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, Located, PullFor, ReflectionStatus, Session};
+use super::_session::{GitHubRead, Located, ReflectionStatus, Session};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::Work;
 use crate::evidence::{
@@ -105,6 +105,11 @@ pub struct TodoView {
     pub prerequisites: Vec<PrerequisiteView>,
     /// A structural holder's children.
     pub children: Vec<TodoRef>,
+    /// Whether the todo was refreshed from GitHub for this view; when not,
+    /// it is shown as this computer last knew it, and why.
+    pub refresh: GitHubRead,
+    /// For a todo that is not a local item: when its copy was read.
+    pub copied_at: Option<jiff::Timestamp>,
 }
 
 /// One prerequisite with the status this computer knows of it.
@@ -125,11 +130,10 @@ pub struct RecordedWork {
     pub conflicted: Vec<TodoSlug>,
 }
 
-/// `instrukt todo list`.
+/// `instrukt todo list`: read from the state database alone.
 #[derive(Debug, Clone)]
 pub struct Listing {
     pub entries: Vec<ListEntry>,
-    pub github: GitHubRead,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +143,19 @@ pub struct ListEntry {
     pub reflection: Option<ReflectionStatus>,
     /// Every prerequisite delivered.
     pub ready: bool,
+    /// Where the todo is shown from: `None` for a todo this computer holds
+    /// a claim on (the local record); otherwise its last known copy.
+    pub last_known: Option<LastKnown>,
+}
+
+/// A todo this computer holds no claim on, as last known here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastKnown {
+    /// The computer its claim names; `None` when unclaimed.
+    pub runs_on: Option<instrukt_core::machine::MachineId>,
+    /// When the copy was read; `None` for a local item, whose last read
+    /// from GitHub this computer does not record.
+    pub copied_at: Option<jiff::Timestamp>,
 }
 
 impl Work {
@@ -166,10 +183,6 @@ impl Work {
             ));
         }
         ensure_slug_free(&mut s, &request.slug, None)?;
-        if !request.after.is_empty() || request.group.is_some() {
-            // A relationship is judged against the current graph.
-            s.pull_all()?;
-        }
         let actor = s.actor()?;
         let after = resolve_refs(&mut s, &request.after)?;
         if request.after.contains(&request.slug) {
@@ -259,7 +272,7 @@ impl Work {
         let mut s = Session::open(self, project)?;
         match s.locate(address)? {
             Located::Local(index) => {
-                match s.pull_through(index, PullFor::Read) {
+                match s.pull_through(index) {
                     Ok(()) | Err(WorkError::Conflicted { .. }) => {}
                     Err(err) => return Err(err),
                 }
@@ -269,13 +282,33 @@ impl Work {
                     reflection: Some(s.status(index)),
                     issue: item.reflection.issue.map(|i| i.number),
                     pull: item.reflection.pull,
+                    refresh: s.github_read(),
                     ..view
                 })
             }
-            Located::Remote(item) => {
+            Located::Remote {
+                item,
+                refreshed,
+                copied_at,
+            } => {
                 let issue = item.reflection.issue.map(|i| i.number);
                 let view = view(&mut s, item.record, false);
-                Ok(TodoView { issue, ..view })
+                let refresh = if refreshed {
+                    GitHubRead::Read
+                } else {
+                    match s.github_read() {
+                        GitHubRead::Read => GitHubRead::NotRead(
+                            super::_session::PendingReason::Failed("not read".to_owned()),
+                        ),
+                        not_read => not_read,
+                    }
+                };
+                Ok(TodoView {
+                    issue,
+                    refresh,
+                    copied_at: Some(copied_at),
+                    ..view
+                })
             }
         }
     }
@@ -321,36 +354,49 @@ impl Work {
             .collect())
     }
 
+    /// The project's todos as this computer's state database holds them:
+    /// no listing ever reads GitHub (`github-record`, "Interest-driven
+    /// refresh"). The todos this computer holds claims on are shown from
+    /// the local record; every other todo as last known, labelled with the
+    /// computer its claim names and the copy's age.
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
-        let mut s = Session::open(self, project)?;
-        s.pull_all()?;
+        let s = Session::open(self, project)?;
+        let machine = s.machine()?;
         let wanted = match selection {
             Selection::Active => vec![TodoStatus::Active, TodoStatus::StructuralHolder],
             Selection::Iceboxed => vec![TodoStatus::Iceboxed],
             Selection::Removed => vec![TodoStatus::Removed],
             Selection::Delivered => vec![TodoStatus::Delivered],
         };
+        let runs_on = |record: &TodoRecord| record.claim.as_ref().map(|c| c.machine.clone());
         let mut entries: Vec<ListEntry> = s
             .items
             .iter()
             .enumerate()
             .filter(|(_, it)| wanted.contains(&it.record.status))
-            .map(|(index, it)| ListEntry {
-                record: it.record.clone(),
-                local: true,
-                reflection: Some(s.status(index)),
-                ready: false,
+            .map(|(index, it)| {
+                let here = runs_on(&it.record).as_ref() == Some(&machine);
+                ListEntry {
+                    record: it.record.clone(),
+                    local: true,
+                    reflection: Some(s.status(index)),
+                    ready: false,
+                    last_known: (!here).then(|| LastKnown {
+                        runs_on: runs_on(&it.record),
+                        copied_at: None,
+                    }),
+                }
             })
             .collect();
         let local_ids: BTreeSet<TodoId> = s.items.iter().map(|it| it.record.id.clone()).collect();
-        let remote = match selection {
-            Selection::Active | Selection::Iceboxed => Some(s.remote_live()),
-            Selection::Removed | Selection::Delivered => s.remote_all(),
-        };
-        for (record, _) in remote.unwrap_or_default() {
-            if !local_ids.contains(&record.id) && wanted.contains(&record.status) {
+        for copy in &s.copies {
+            if !local_ids.contains(&copy.record.id) && wanted.contains(&copy.record.status) {
                 entries.push(ListEntry {
-                    record,
+                    last_known: Some(LastKnown {
+                        runs_on: runs_on(&copy.record),
+                        copied_at: Some(copy.copied_at),
+                    }),
+                    record: copy.record.clone(),
                     local: false,
                     reflection: None,
                     ready: false,
@@ -358,19 +404,17 @@ impl Work {
             }
         }
         let delivered: BTreeSet<TodoId> = s
-            .items
-            .iter()
-            .map(|it| &it.record)
-            .chain(entries.iter().map(|e| &e.record))
+            .known_records()
+            .into_iter()
+            .chain(entries.iter().map(|e| e.record.clone()))
             .filter(|r| r.status == TodoStatus::Delivered)
-            .map(|r| r.id.clone())
+            .map(|r| r.id)
             .collect();
         for entry in &mut entries {
             entry.ready = entry.record.after.iter().all(|r| delivered.contains(&r.id));
         }
         Ok(Listing {
             entries: order(entries),
-            github: s.github_read(),
         })
     }
 
@@ -388,10 +432,6 @@ impl Work {
         s.parent_preparation = preparation;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
-        if request.after.is_some() || request.group.is_some() {
-            // A relationship is judged against the current graph.
-            s.pull_all()?;
-        }
         let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
         s.flush()?;
         Ok(Outcome {
@@ -546,7 +586,7 @@ impl Work {
                 "a live todo is named `{slug}`; restoring would make the name ambiguous — rename one first"
             )));
         }
-        s.pull_through(index, PullFor::Change)?;
+        s.pull_through(index)?;
         s.commit("reactivated", |s| {
             let record = &mut s.items[index].record;
             let from = record
@@ -1438,13 +1478,13 @@ pub(crate) enum ParentPreparation {
 /// The structural holders above `id`, nearest first.
 fn ancestors(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoId> {
     let mut found = Vec::new();
-    let mut current = s.record_by_id(id).and_then(|r| r.group);
+    let mut current = s.record_current(id).and_then(|r| r.group);
     while let Some(parent) = current {
         if found.contains(&parent.id) {
             break;
         }
         found.push(parent.id.clone());
-        current = s.record_by_id(&parent.id).and_then(|r| r.group);
+        current = s.record_current(&parent.id).and_then(|r| r.group);
     }
     found
 }
@@ -1463,7 +1503,7 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     }
     let mut warnings = Vec::new();
     for prerequisite in &record.after {
-        if s.record_by_id(&prerequisite.id)
+        if s.record_current(&prerequisite.id)
             .is_some_and(|r| r.status == TodoStatus::Iceboxed)
         {
             warnings.push(format!(
@@ -1478,7 +1518,7 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
 /// What a todo waits on: its prerequisites, and for a structural holder
 /// its children (a holder's milestone is every child's).
 fn waits_on(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoRef> {
-    let Some(record) = s.record_by_id(id) else {
+    let Some(record) = s.record_current(id) else {
         return Vec::new();
     };
     let mut next = record.after.clone();
@@ -1490,8 +1530,10 @@ fn waits_on(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoRef> {
             .filter(|r| r.group.as_ref().is_some_and(|g| &g.id == id))
             .map(TodoRecord::reference)
             .collect();
-        for (remote, _) in s.remote_live() {
+        for copy in &s.copies {
+            let remote = &copy.record;
             if remote.group.as_ref().is_some_and(|g| &g.id == id)
+                && remote.is_live()
                 && !children.iter().any(|c| c.id == remote.id)
             {
                 children.push(remote.reference());
@@ -1623,8 +1665,10 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
         .map(TodoRecord::reference)
         .collect();
     if record.status == TodoStatus::StructuralHolder {
-        for (remote, _) in s.remote_live() {
+        for copy in &s.copies {
+            let remote = &copy.record;
             if remote.group.as_ref().is_some_and(|g| g.id == record.id)
+                && remote.is_live()
                 && !children.iter().any(|c| c.id == remote.id)
             {
                 children.push(remote.reference());
@@ -1640,6 +1684,8 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
         pull: None,
         prerequisites,
         children,
+        refresh: GitHubRead::Read,
+        copied_at: None,
     }
 }
 
@@ -1720,6 +1766,7 @@ mod tests {
             local: true,
             reflection: None,
             ready,
+            last_known: None,
         }
     }
 

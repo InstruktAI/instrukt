@@ -34,19 +34,6 @@ pub(crate) enum Pulled {
     Adopted,
     /// A newer remote revision met pending local changes.
     Conflicted,
-    /// A newer remote revision, left unread because a change is about to be
-    /// recorded against the older one (`UC-GR3`: refresh first).
-    Newer,
-}
-
-/// Whether a pull may bring a newer remote revision into the local record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PullFor {
-    /// A read: a newer revision enters the local record.
-    Read,
-    /// A change: a newer revision means the change was made against a
-    /// todo the caller has not read; it is refused until refreshed.
-    Change,
 }
 
 /// The committed record on an issue: the head of its revision chain.
@@ -122,14 +109,9 @@ fn same_record(a: &TodoRecord, b: &TodoRecord) -> bool {
 
 /// Pulls the item's record from GitHub: a conditional read of its issue
 /// (a new revision comment moves it), then the head of its revision chain.
-/// For a read, a newer head is adopted when nothing local is pending; for a
-/// change it is reported as [`Pulled::Newer`] and nothing is adopted.
-/// Pending local changes meeting a newer head mark the item conflicted.
-pub(crate) fn pull(
-    gh: &GitHub,
-    item: &mut LocalItem,
-    purpose: PullFor,
-) -> Result<Pulled, GitHubError> {
+/// A newer head is adopted when nothing local is pending; pending local
+/// changes meeting a newer head mark the item conflicted.
+pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubError> {
     let Some(issue) = item.reflection.issue else {
         return Ok(Pulled::Current);
     };
@@ -169,9 +151,6 @@ pub(crate) fn pull(
     if item.reflection.pending {
         item.reflection.conflicted = true;
         return Ok(Pulled::Conflicted);
-    }
-    if purpose == PullFor::Change {
-        return Ok(Pulled::Newer);
     }
     let record = with_contents(gh, issue.number, head.record, &item.record)?;
     item.record = record;
@@ -426,6 +405,30 @@ pub(crate) fn remote_records(
     Ok(records)
 }
 
+/// The todo on issue `number` as GitHub holds it now, with the artifact
+/// contents GitHub still serves and verifies: one issue read, not a
+/// listing. `None` when the issue is gone or carries no committed record.
+pub(crate) fn read_one(gh: &GitHub, number: u64) -> Result<Option<LocalItem>, GitHubError> {
+    let path = format!("/issues/{number}");
+    let issue = match gh.get(&path, None) {
+        Ok(Fetched::Fresh { body, .. }) => body,
+        Ok(Fetched::NotModified) | Err(GitHubError::NotFound { .. }) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if issue.get("pull_request").is_some() {
+        return Ok(None);
+    }
+    let Some(id) = issue["body"].as_str().and_then(_envelope::issue_identity) else {
+        return Ok(None);
+    };
+    let issue = issue_ref(&issue, &path)?;
+    let comments = gh.list(&format!("/issues/{number}/comments"))?;
+    let Some(head) = committed(&comments, &id) else {
+        return Ok(None);
+    };
+    localize_head(gh, issue, head).map(Some)
+}
+
 /// A remote record as a new local item, with the artifact contents GitHub
 /// still serves and verifies.
 pub(crate) fn localize(
@@ -440,6 +443,11 @@ pub(crate) fn localize(
             message: "the issue carries no committed record".to_owned(),
         });
     };
+    localize_head(gh, issue, head)
+}
+
+/// The committed `head` of `issue` as a local item with verified contents.
+fn localize_head(gh: &GitHub, issue: IssueRef, head: Committed) -> Result<LocalItem, GitHubError> {
     let empty = TodoRecord {
         artifacts: Vec::new(),
         ..head.record.clone()

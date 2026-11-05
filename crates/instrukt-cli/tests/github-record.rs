@@ -1,8 +1,10 @@
 //! `project/instrukt/spec/feature/work/github-record`: the local
 //! record keeps accepted work through GitHub outages, a delivered todo's
-//! evidence can be followed on GitHub, a change made against a todo
-//! changed elsewhere is refused until refreshed, and records posted without
-//! write access never change the work.
+//! evidence can be followed on GitHub, progress that loses to a change made
+//! elsewhere is not reflected until refreshed, records posted without write
+//! access never change the work, todos need the project's code on GitHub,
+//! and a todo is refreshed before work on it starts and before each command
+//! acts on it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -10,14 +12,23 @@
 )]
 
 mod common;
+#[path = "support/documented.rs"]
+mod documented;
+#[path = "support/flavor.rs"]
+mod flavor;
+#[path = "support/runtime.rs"]
+mod runtime;
 #[path = "support/work.rs"]
 mod support;
 
-use common::github::CannedResponse;
+use common::TestEnv;
+use common::github::{CannedResponse, FakeGitHub};
 use std::collections::BTreeSet;
+use std::path::Path;
 
+use instrukt_core::config::CURRENT_SCHEMA_VERSION;
 use serde_json::Value;
-use support::{Project, REPOSITORY, redact, stdout};
+use support::{Project, REPOSITORY, redact};
 
 const INTENT: &str = "Keep the depth of nested lists when parsing Markdown.";
 const PRD: &str = "Lists keep their depth through parse and render.";
@@ -182,10 +193,19 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR3
 #[test]
-fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
-    let project = Project::new();
+fn progress_that_loses_to_a_change_made_elsewhere_is_reflected_only_after_refreshing() {
+    let mut project = Project::new();
     project.create("nested-lists", "feature", INTENT);
     let elsewhere = project.other_computer();
+    // This computer records progress while it cannot reach GitHub.
+    let gh_config = project.env.path("gh-config");
+    std::fs::create_dir_all(&gh_config).unwrap();
+    project
+        .env
+        .remove_env("GITHUB_TOKEN")
+        .set_env("GH_CONFIG_DIR", gh_config.to_str().unwrap());
+    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    // Meanwhile the other computer's change reaches GitHub first.
     elsewhere.ok([
         "update",
         "nested-lists",
@@ -193,24 +213,28 @@ fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
         "--reason",
         "waiting for the renderer rewrite",
     ]);
+    let chain_before = revision_headers(&project);
 
+    project.env.set_env("GITHUB_TOKEN", "test-token");
+    let reflected = project.ok(["show", "nested-lists"]);
     let refused = project
-        .todo(["artifacts", "write", "nested-lists", "prd", PRD])
+        .todo(["artifacts", "write", "nested-lists", "log", "Started."])
         .failure();
+    assert_eq!(
+        revision_headers(&project),
+        chain_before,
+        "the losing progress overwrote nothing on GitHub"
+    );
     let refreshed = project.ok(["refresh", "nested-lists"]);
-    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    let rerecorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
     let shown = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!(
-        "refused-then-refreshed",
+        "lost-then-refreshed",
         redact(&format!(
-            "{}---\n{refreshed}---\n{recorded}---\n{shown}",
+            "{recorded}---\n{reflected}---\n{}---\n{refreshed}---\n{rerecorded}---\n{shown}",
             String::from_utf8_lossy(&refused.get_output().stderr)
         ))
-    );
-    assert!(
-        stdout(&refused).is_empty(),
-        "the refused change reports nothing as recorded"
     );
 }
 
@@ -299,6 +323,243 @@ fn records_posted_without_write_access_never_change_the_work_and_collaborators_s
         "untrusted-ignored-trusted-applied",
         redact(&format!("{unchanged}---\n{applied}"))
     );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR6
+#[test]
+fn switching_todos_on_for_code_hosted_elsewhere_is_refused_in_plain_words() {
+    let env = TestEnv::new();
+    let repo = hosted_elsewhere(&env);
+    let before = repo.read("instrukt.yaml");
+    let revision = config_revision(&env, repo.path());
+
+    let refused = env
+        .run(
+            repo.path(),
+            [
+                "config",
+                "patch",
+                "--revision",
+                &revision,
+                "--yaml",
+                "modules: {todos: true}",
+            ],
+        )
+        .failure();
+
+    insta::assert_snapshot!("todos-need-github", told(&env, &refused));
+    assert_eq!(
+        repo.read("instrukt.yaml"),
+        before,
+        "the configuration is unchanged"
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR6
+#[test]
+fn todos_on_from_the_machine_for_code_hosted_elsewhere_refuse_and_validation_says_why() {
+    let env = TestEnv::new();
+    let global = env.instrukt_home().join("instrukt.yaml");
+    std::fs::create_dir_all(global.parent().unwrap()).unwrap();
+    std::fs::write(
+        &global,
+        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nmodules:\n  todos: true\n"),
+    )
+    .unwrap();
+    let repo = hosted_elsewhere(&env);
+
+    let listed = env.run(repo.path(), ["todo", "list"]).failure();
+    let validated = env.run(repo.path(), ["config", "validate"]).failure();
+
+    insta::assert_snapshot!(
+        "todo-commands-need-github",
+        format!("{}---\n{}", told(&env, &listed), told(&env, &validated))
+    );
+}
+
+/// A project whose code is kept on a host other than GitHub: its default
+/// branch tracks a GitLab remote and `github.repository` is not set.
+fn hosted_elsewhere(env: &TestEnv) -> common::Repo {
+    let repo = env.git_repo("demo");
+    repo.write(
+        "instrukt.yaml",
+        &format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\n"),
+    );
+    repo.commit("the developer's project");
+    repo.git([
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/acme/demo.git",
+    ]);
+    repo.git(["config", "branch.main.remote", "origin"]);
+    repo
+}
+
+fn config_revision(env: &TestEnv, cwd: &Path) -> String {
+    let out = env.run(cwd, ["config", "get", "--revision"]).success();
+    String::from_utf8(out.get_output().stdout.clone())
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+/// What a refused command told the developer, with the test's directory
+/// shown as `[TMP]`.
+fn told(env: &TestEnv, assert: &assert_cmd::assert::Assert) -> String {
+    let base = env.path("").display().to_string();
+    let output = assert.get_output();
+    // Diagnostics carry the real time; what the developer is told does not.
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .lines()
+    .filter(|line| !line.starts_with(|c: char| c.is_ascii_digit()))
+    .map(|line| format!("{line}\n"))
+    .collect::<String>()
+    .replace(base.trim_end_matches('/'), "[TMP]")
+}
+
+/// The computer that held the todo before its claim moved.
+const OTHER_MACHINE: &str = "c0ffee00c0ffee00c0ffee00c0ffee00";
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR7
+#[test]
+fn a_todo_whose_claim_moves_here_starts_from_what_github_holds_now() {
+    let project = flavor::Tracked::new(true);
+    let collaborator = support::computer(&project.github);
+    collaborator.ok([
+        "create",
+        "tidy-imports",
+        "Sort the imports of every module.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    // Another computer holds the todo.
+    seed_revision(&project.github, |record| {
+        record["claim"] =
+            serde_json::json!({"machine": OTHER_MACHINE, "at": "2026-11-03T12:00:00Z"});
+    });
+    project.tick();
+    assert!(
+        project.rt.calls().is_empty(),
+        "work held elsewhere is not dispatched here"
+    );
+    project.github.clear_requests();
+    let listed = project.todo(["list"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "a listing reads no GitHub: {:?}",
+        project.github.requests()
+    );
+
+    // A collaborator changes the todo while it is held, then the claim is
+    // released.
+    seed_revision(&project.github, |record| {
+        record["hold_history"] = serde_json::json!([{
+            "hold": {
+                "source": "manual",
+                "reason": "the import order is being agreed",
+                "by": {"person": {"name": "Other Developer"}},
+                "at": "2026-11-03T12:00:00Z"
+            },
+            "released": "2026-11-03T13:00:00Z",
+            "by": {"person": {"name": "Other Developer"}}
+        }]);
+    });
+    seed_revision(&project.github, |record| {
+        record.as_object_mut().unwrap().remove("claim");
+    });
+    project.tick();
+
+    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    let shown = project.todo(["show", "tidy-imports"]);
+    insta::assert_snapshot!(
+        "claim-moved-here",
+        redact(&format!(
+            "{listed}---\n{shown}---\n{}",
+            chain(&project.github)
+        ))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR7
+#[test]
+fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
+    let project = Project::new();
+    project.create("nested-lists", "feature", INTENT);
+    let elsewhere = project.other_computer();
+    elsewhere.ok([
+        "update",
+        "nested-lists",
+        "--hold",
+        "--reason",
+        "waiting for the renderer rewrite",
+    ]);
+
+    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    let shown = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "refreshed-before-progress",
+        redact(&format!(
+            "{recorded}---\n{shown}---\n{}",
+            revision_headers(&project)
+        ))
+    );
+}
+
+/// Appends the next revision of todo #1 to its issue, built on its latest
+/// one and changed by `change`: what an instrukt elsewhere writes.
+fn seed_revision(github: &FakeGitHub, change: impl FnOnce(&mut Value)) {
+    let latest = latest_envelope(github);
+    let mut record = latest["record"].clone();
+    let base = record["revision"].as_u64().unwrap();
+    record["revision"] = Value::from(base + 1);
+    change(&mut record);
+    let slug = record["slug"].as_str().unwrap().to_owned();
+    let next = serde_json::json!({"base": base, "record": record});
+    github.seed_comment(
+        REPOSITORY,
+        1,
+        "instrukt-test",
+        "COLLABORATOR",
+        &format!(
+            "[instrukt record · {slug} · rev {} on rev {base}]\n{RECORD_MARKER}{next}{CLOSE}\n",
+            base + 1
+        ),
+    );
+}
+
+/// The latest trusted record envelope on issue #1.
+fn latest_envelope(github: &FakeGitHub) -> Value {
+    let line = github
+        .comments(REPOSITORY, 1)
+        .into_iter()
+        .rev()
+        .filter(|c| c["author_association"] == "COLLABORATOR")
+        .find_map(|c| {
+            c["body"]
+                .as_str()?
+                .lines()
+                .find(|l| l.starts_with(RECORD_MARKER))
+                .map(str::to_owned)
+        })
+        .unwrap();
+    serde_json::from_str(&line[RECORD_MARKER.len()..line.len() - CLOSE.len()]).unwrap()
+}
+
+/// The first line of every comment on issue #1: the revision chain.
+fn chain(github: &FakeGitHub) -> String {
+    github
+        .comments(REPOSITORY, 1)
+        .iter()
+        .filter_map(|c| c["body"].as_str()?.lines().next().map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The envelope of todo #1's next revision, built on its latest one, with
