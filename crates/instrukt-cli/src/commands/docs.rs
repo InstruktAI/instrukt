@@ -1,4 +1,4 @@
-//! Docs commands: `instrukt docs validate|fold|index|get`.
+//! Docs commands: `instrukt docs validate|schema|fold|index|get`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -28,6 +28,13 @@ enum DocsCommand {
     /// (`notice: <file>: <code>[: <value>]`), and exits non-zero while any
     /// finding remains; notices never fail the run.
     Validate(ValidateArgs),
+    /// Show the sections the snippets of a folder must and may carry.
+    ///
+    /// For each type the folder can hold: its required and optional
+    /// sections, each with what imposes it (`instrukt root rules`, or the
+    /// position's `schema.yaml` and its folder key), then a skeleton to start
+    /// a snippet from. Reads the working tree; the folder need not exist.
+    Schema(SchemaArgs),
     /// Apply one delivery's pending documentation to the working tree.
     ///
     /// Clears the todo from `delivered_by`, replaces each live snippet with
@@ -113,6 +120,13 @@ struct ValidateArgs {
 }
 
 #[derive(Debug, clap::Args)]
+struct SchemaArgs {
+    /// A folder inside `docs/general/`, `docs/domain/<domain>/` or
+    /// `docs/project/`.
+    folder: PathBuf,
+}
+
+#[derive(Debug, clap::Args)]
 struct FoldArgs {
     /// The delivering todo's slug.
     slug: TodoSlug,
@@ -121,6 +135,7 @@ struct FoldArgs {
 pub fn run(args: DocsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         DocsCommand::Validate(args) => validate(args, ctx),
+        DocsCommand::Schema(args) => schema(args, ctx),
         DocsCommand::Fold(args) => fold(args, ctx),
         DocsCommand::Index(args) => index(args, ctx),
         DocsCommand::Get(args) => get(args, ctx),
@@ -199,6 +214,58 @@ fn validate(args: ValidateArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+fn schema(args: SchemaArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let root = repo_root(&ctx.cwd)?;
+    let folder = docs::schema(&root, &ctx.cwd, &args.folder)?;
+    if !folder.findings.is_empty() {
+        for finding in &folder.findings {
+            ctx.out.line(&finding.to_string())?;
+        }
+        return Ok(ExitCode::FAILURE);
+    }
+    let mut text = String::new();
+    for (index, effective) in folder.types.iter().enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+        text.push_str(&schema_text(&folder.folder, effective));
+    }
+    ctx.out.text(&text)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One type's effective schema at `folder`: its sections with what imposes
+/// each, then a skeleton.
+fn schema_text(folder: &str, effective: &docs::EffectiveSchema) -> String {
+    let taxonomy = effective.taxonomy;
+    let width = effective
+        .required
+        .iter()
+        .chain(&effective.optional)
+        .map(|s| s.title.chars().count())
+        .max()
+        .unwrap_or(0);
+    let list = |sections: &[docs::SchemaSection]| -> String {
+        sections
+            .iter()
+            .map(|s| format!("  {:<width$}  {}\n", s.title, s.imposed_by))
+            .collect()
+    };
+    let headings: String = effective
+        .required
+        .iter()
+        .map(|s| format!("\n## {}\n", s.title))
+        .collect();
+    format!(
+        "{folder}: {taxonomy}\n\nRequired sections:\n{}\nOptional sections:\n{}\n\
+         Skeleton:\n\n---\ndescription: <one line saying what this {taxonomy} is about>\n---\n\n\
+         # <Title> — {}\n{headings}",
+        list(&effective.required),
+        list(&effective.optional),
+        taxonomy.title_suffix(),
+    )
 }
 
 fn fold(args: FoldArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {

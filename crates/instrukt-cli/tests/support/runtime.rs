@@ -7,7 +7,8 @@
 //! keeping the opening message; `send` keeps each text; `alive` prints
 //! the session's status file (`running` after start, `gone` without one);
 //! `conversation` prints the session's conversation; `link` and
-//! `link --remove` join and part two sessions; `type` is the developer
+//! `link --remove` join and part two sessions; `search` names the sessions
+//! whose conversation holds a text; `type` is the developer
 //! typing into a session, which also reaches its linked sessions as the
 //! developer's words.
 #![allow(
@@ -85,6 +86,12 @@ case "$cmd" in
   notify)
     printf '%s\n' "$*" >> "$state/notifications"
     ;;
+  search)
+    for file in "$state"/*.conversation; do
+      [ -f "$file" ] || continue
+      if grep -q -- "$1" "$file"; then basename "$file" .conversation; fi
+    done
+    ;;
   type)
     id="$1"
     printf 'developer: %s\n' "$2" >> "$state/$id.conversation"
@@ -108,6 +115,7 @@ pub struct FakeRuntime {
     state: PathBuf,
     link: bool,
     agent: Option<String>,
+    history: bool,
 }
 
 impl FakeRuntime {
@@ -126,6 +134,7 @@ impl FakeRuntime {
             state,
             link,
             agent: None,
+            history: false,
         }
     }
 
@@ -140,6 +149,11 @@ impl FakeRuntime {
         entry.push_str(&format!("    notify: \"{base} notify\"\n"));
         if let Some(agent) = &self.agent {
             entry.push_str(&format!("    agent: {agent}\n"));
+        }
+        if self.history {
+            entry.push_str(&format!(
+                "    history:\n      search: \"{base} search\"\n      show: \"{base} conversation\"\n"
+            ));
         }
         if self.link {
             entry.push_str(&format!(
@@ -164,6 +178,12 @@ impl FakeRuntime {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    /// This runtime searches and shows past conversations (`history`).
+    pub fn with_history(mut self) -> Self {
+        self.history = true;
+        self
     }
 
     /// This runtime is the agent CLI that starts `agent`.
@@ -241,14 +261,44 @@ impl FakeRuntime {
 }
 
 /// Writes the global layer: `modules` switches, then the runtimes;
-/// anomaly notification is left at its default.
+/// anomaly notification is left at its default. The disk-headroom guard
+/// is off: its reports go through the same notification, and the free
+/// space of the machine running the tests is not these tests' subject.
 pub fn global_layer(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime]) {
     global_layer_with(env, modules, runtimes, "");
 }
 
 /// As [`global_layer`], with `extra` YAML appended (an agent order).
 pub fn global_layer_with(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime], extra: &str) {
-    let mut text = format!("schema_version: 1\nmodules: {{{modules}}}\nruntimes:\n");
+    write_global_layer(env, modules, runtimes, "disk_headroom: 'off'", extra);
+}
+
+/// As [`global_layer`], with the disk-headroom guard set to `headroom`
+/// (`runner.disk_headroom`, as YAML).
+pub fn global_layer_with_headroom(
+    env: &TestEnv,
+    modules: &str,
+    runtimes: &[&FakeRuntime],
+    headroom: &str,
+) {
+    write_global_layer(
+        env,
+        modules,
+        runtimes,
+        &format!("disk_headroom: {headroom}"),
+        "",
+    );
+}
+
+fn write_global_layer(
+    env: &TestEnv,
+    modules: &str,
+    runtimes: &[&FakeRuntime],
+    runner: &str,
+    extra: &str,
+) {
+    let mut text =
+        format!("schema_version: 1\nmodules: {{{modules}}}\nrunner:\n  {runner}\nruntimes:\n");
     for runtime in runtimes {
         text.push_str(&runtime.entry());
     }

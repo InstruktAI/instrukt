@@ -8,6 +8,7 @@ use serde_yaml_ng::Value;
 
 use super::_effective::effective_value;
 use super::_error::{ConfigError, Finding, FindingKind};
+use super::_features::{Feature, Unavailable, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read, read_usable, require_usable};
 use super::_module::Module;
@@ -76,8 +77,52 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
             agent_order(value, &effective, &mut found);
         }
     }
+    feature_verbs(value, &effective, &mut found);
     references(value, kind, &effective, &mut found);
     found
+}
+
+/// A module switch this layer turns on whose features the chosen runtime
+/// cannot carry: no runtime is chosen, or it leaves verbs those features
+/// need empty (`session-continuity`, "Verb-gated features"). A
+/// `runner.runtime` naming no entry is its own finding and is not judged
+/// again here.
+fn feature_verbs(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
+    let entries = _runtime::entries(effective.get("runtimes"));
+    let chosen = match effective
+        .get("runner")
+        .and_then(|r| r.get("runtime"))
+        .and_then(Value::as_str)
+    {
+        Some(name) => match entries.iter().find(|entry| entry.name == name) {
+            Some(entry) => Some(entry),
+            None => return,
+        },
+        None => entries.first(),
+    };
+    for module in ["events", "todos"] {
+        let on = value
+            .get("modules")
+            .and_then(|m| m.get(module))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let features = Feature::switched_on_by(module);
+        if !on || features.is_empty() {
+            continue;
+        }
+        let Some(unavailable) = availability(chosen, features) else {
+            continue;
+        };
+        let kind = match unavailable {
+            Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
+            Unavailable::MissingVerbs { .. } => FindingKind::RuntimeVerbMissing,
+        };
+        out.push(KeyFinding::new(
+            &join("modules", module),
+            kind,
+            unavailable.describe(features),
+        ));
+    }
 }
 
 /// `requires`: every module it names is switched on in the effective
@@ -305,6 +350,37 @@ mod tests {
             judged(&judge(&global, LayerKind::Global, None)),
             [("runner.runtime", FindingKind::UnknownRuntime)]
         );
+    }
+
+    #[test]
+    fn a_switch_the_chosen_runtime_cannot_carry_is_a_finding_on_the_layer_that_sets_it() {
+        let partial = yaml(
+            "schema_version: 1\nmodules: {todos: true, events: true}\n\
+             runtimes: [{name: rt, session_id_env: R, start: s, conversation: c, alive: a}]\n",
+        );
+        assert_eq!(
+            judged(&judge(&partial, LayerKind::Global, None)),
+            [
+                ("modules.events", FindingKind::RuntimeVerbMissing),
+                ("modules.todos", FindingKind::RuntimeVerbMissing)
+            ]
+        );
+        let none = yaml("schema_version: 1\n");
+        let project = yaml("schema_version: 1\nproject: p\nmodules: {todos: true}\n");
+        assert_eq!(
+            judged(&judge(&project, LayerKind::Project, Some(&none))),
+            [("modules.todos", FindingKind::NoRuntimeChosen)]
+        );
+        let full = yaml(&format!("schema_version: 1\n{RUNTIMES}"));
+        assert_eq!(judge(&project, LayerKind::Project, Some(&full)), []);
+    }
+
+    #[test]
+    fn choosing_the_shipped_t3_entry_carries_dispatch_and_standing_agents() {
+        let global = yaml(
+            "schema_version: 1\nrunner: {runtime: t3}\nmodules: {todos: true, events: true}\n",
+        );
+        assert_eq!(judge(&global, LayerKind::Global, None), []);
     }
 
     #[test]

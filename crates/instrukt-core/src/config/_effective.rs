@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use serde_yaml_ng::Value;
 
 use super::_error::ConfigError;
+use super::_features::{self, Feature, Unavailable};
 use super::_interpolate::{Interpolator, Mode};
 use super::_layer::{Layer, read_usable};
 use super::_merge::overlay;
 use super::_module::Module;
 use super::_runtime::{self, Env, RuntimeEntry};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
+use super::_shipped;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 
@@ -55,6 +57,25 @@ pub enum Notify {
     Command(String),
     /// Unset: the selected runtime's own notification capability.
     RuntimeDefault,
+}
+
+/// The disk-headroom guard's settings (`runner.disk_headroom`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiskHeadroom {
+    /// `off`: the guard neither reports nor removes anything.
+    Off,
+    On(HeadroomSettings),
+}
+
+/// The levels and search roots of a switched-on guard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadroomSettings {
+    /// Below this many free bytes the guard warns.
+    pub warn_bytes: u64,
+    /// Below this many free bytes the guard reclaims.
+    pub floor_bytes: u64,
+    /// Directories searched for checkouts (`roots`), expanded.
+    pub roots: Vec<PathBuf>,
 }
 
 /// The configuration a caller reads: the global layer with the project
@@ -154,8 +175,9 @@ impl Configuration {
         _runtime::active_agent(&self.runtimes, env)
     }
 
-    /// The runtime the runner uses: `runner.runtime`, defaulting to the
-    /// first entry of the mapping; `None` without a mapping.
+    /// The runtime the developer chose, which an OS-started runner uses:
+    /// `runner.runtime` (a declared or shipped entry), defaulting to the
+    /// first declared entry; `None` with neither. Nothing is detected.
     pub fn runner_runtime(&self) -> Result<Option<&RuntimeEntry>, ConfigError> {
         match self.str_at(&["runner", "runtime"])? {
             Some(name) => self
@@ -168,6 +190,12 @@ impl Configuration {
                 }),
             None => Ok(self.runtimes.first()),
         }
+    }
+
+    /// Whether `features` are available on the chosen runtime; `None` when
+    /// they are.
+    pub fn unavailable(&self, features: &[Feature]) -> Result<Option<Unavailable>, ConfigError> {
+        Ok(_features::availability(self.runner_runtime()?, features))
     }
 
     /// Whether `module` is switched on (off by default).
@@ -316,6 +344,55 @@ impl Configuration {
         })
     }
 
+    /// `runner.disk_headroom`, its roots expanded in `env`. A size that is
+    /// not a GiB size, a floor that is not positive and below the warn
+    /// level, or a root that is not an absolute path is refused.
+    pub fn runner_disk_headroom(&self, env: &Env) -> Result<DiskHeadroom, ConfigError> {
+        const KEY: &str = "runner.disk_headroom";
+        let map = match self.at(&["runner", "disk_headroom"]) {
+            Some(Value::String(text)) if text == "off" => return Ok(DiskHeadroom::Off),
+            Some(Value::Mapping(map)) => map,
+            None | Some(Value::Null) => &serde_yaml_ng::Mapping::new(),
+            Some(_) => return Err(invalid(KEY, "is not `off` or a mapping")),
+        };
+        let size = |name: &str, default: &str| match map.get(name) {
+            None => _schema::gib_bytes(default).ok_or_else(|| invalid(KEY, "has no default size")),
+            Some(value) => value
+                .as_str()
+                .and_then(_schema::gib_bytes)
+                .ok_or_else(|| invalid(&format!("{KEY}.{name}"), "is not a size in GiB")),
+        };
+        let warn_bytes = size("warn", _schema::DEFAULT_HEADROOM_WARN)?;
+        let floor_bytes = size("floor", _schema::DEFAULT_HEADROOM_FLOOR)?;
+        if floor_bytes == 0 || floor_bytes >= warn_bytes {
+            return Err(invalid(
+                &format!("{KEY}.floor"),
+                "is not positive and below the warn level",
+            ));
+        }
+        let roots = match map.get("roots") {
+            None => Vec::new(),
+            Some(_) => match self.get(Some("runner.disk_headroom.roots"), env)? {
+                Value::Sequence(items) => items
+                    .iter()
+                    .map(|item| match item.as_str().map(PathBuf::from) {
+                        Some(root) if root.is_absolute() => Ok(root),
+                        _ => Err(invalid(
+                            &format!("{KEY}.roots"),
+                            "holds an entry that is not an absolute directory path",
+                        )),
+                    })
+                    .collect::<Result<_, _>>()?,
+                _ => return Err(invalid(&format!("{KEY}.roots"), "is not a list")),
+            },
+        };
+        Ok(DiskHeadroom::On(HeadroomSettings {
+            warn_bytes,
+            floor_bytes,
+            roots,
+        }))
+    }
+
     /// `blueprint.engine`; `None` selects the shipped adapter.
     pub fn blueprint_engine(&self) -> Result<Option<&str>, ConfigError> {
         self.str_at(&["blueprint", "engine"])
@@ -425,6 +502,7 @@ pub(crate) fn effective_value(global: Option<&Value>, project: Option<&Value>) -
         overlay(&mut value, &_schema::defaults(LayerKind::Project));
         overlay(&mut value, &_schema::permitted(project, LayerKind::Project));
     }
+    _shipped::join_chosen(&mut value);
     value
 }
 

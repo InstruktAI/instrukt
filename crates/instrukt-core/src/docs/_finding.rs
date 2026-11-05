@@ -86,6 +86,26 @@ codes! {
     SeeAlsoNotLast => "structure-see-also-not-last",
     RequiredReadsNotFirst => "structure-required-reads-not-first",
 
+    // Schema
+    /// A `schema.yaml` that cannot be parsed, or whose value carries a key
+    /// other than `required` and `optional`.
+    SchemaInvalid => "schema-invalid",
+    /// A `schema.yaml` anywhere but at a position root.
+    SchemaMisplaced => "schema-misplaced",
+    /// A path key not starting with a taxonomy directory, or not in whole
+    /// segments.
+    SchemaKeyInvalid => "schema-key-invalid",
+    /// One key listing a section both as required and as optional.
+    SchemaSectionConflict => "schema-section-required-and-optional",
+    /// A key making optional a section the root rules or a shorter path
+    /// require.
+    SchemaSectionDropped => "schema-section-dropped",
+
+    // Required-reads hygiene
+    /// A required read the closure of another required read of the same
+    /// snippet already brings.
+    RequiredReadImplied => "hygiene-required-read-implied",
+
     // References
     /// A snippet named by its file path (`@…`, or a path to a snippet
     /// file) outside code: references are ids.
@@ -242,6 +262,9 @@ pub enum NoticeCode {
     /// A root master without `docs/project/index.yaml`: the root
     /// `AGENTS.md` holds the purpose and the triggered procedures only.
     ProjectWithoutIndex,
+    /// A delivered snippet no `index.yaml` names and no snippet requires:
+    /// reachable only through `instrukt docs index`.
+    UnreferencedSnippet,
 }
 
 impl NoticeCode {
@@ -249,6 +272,7 @@ impl NoticeCode {
         match self {
             NoticeCode::DomainWithoutIndex => "domain-without-index",
             NoticeCode::ProjectWithoutIndex => "project-without-index",
+            NoticeCode::UnreferencedSnippet => "unreferenced-snippet",
         }
     }
 }

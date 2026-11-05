@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/snippet-schema.rs
+expression: run.out
+---
+docs/project/spec/domain/ledger.md: structure-section-unknown: Examples, outside the schema of docs/project/spec/domain; see `instrukt docs schema docs/project/spec/domain`
+docs/project/spec/feature/billing.md: structure-section-missing: Use cases, required by docs/project/schema.yaml spec/feature

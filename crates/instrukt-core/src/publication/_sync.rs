@@ -317,7 +317,13 @@ fn publish(
     if !validation.findings.is_empty() {
         return Ok(refused(Refusal::Findings(validation.findings)));
     }
-    let mut notices = validation.notices;
+    // Sync reports the notices about what it renders; the rest are
+    // `instrukt docs validate`'s.
+    let mut notices: Vec<Notice> = validation
+        .notices
+        .into_iter()
+        .filter(|n| n.code == NoticeCode::DomainWithoutIndex)
+        .collect();
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
     let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());

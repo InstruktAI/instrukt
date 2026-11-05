@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/snippet-schema.rs
+expression: run.out
+---
+docs/project/schema.yaml: schema-section-dropped: spec/feature/legacy: optional Canonical fields, required by instrukt root rules
+docs/project/schema.yaml: schema-section-dropped: spec/feature/legacy: optional Use cases, required by docs/project/schema.yaml spec/feature

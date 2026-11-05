@@ -14,3 +14,9 @@ docs/general/index.yaml: index-agent-unsupported: agents: cursor (the supported 
 docs/general/index.yaml: index-listed-in-expanded: listed: general/principle/root is already in the closure of expanded general/policy/top
 docs/project/index.yaml: index-key-not-allowed: description
 docs/project/index.yaml: index-shape-invalid: expanded: not a list of ids
+notice: docs/domain/acme/policy/rules.md: unreferenced-snippet: acme/policy/rules
+notice: docs/domain/acme/procedure/listen.md: unreferenced-snippet: acme/procedure/listen
+notice: docs/domain/acme/procedure/work/overview.md: unreferenced-snippet: acme/procedure/work/overview
+notice: docs/general/policy/top.md: unreferenced-snippet: general/policy/top
+notice: docs/project/adr/0049-choice.md: unreferenced-snippet: project/demo/adr/0049-choice
+notice: docs/project/design/retired.md: unreferenced-snippet: project/demo/design/retired

@@ -16,10 +16,10 @@ use instrukt_runner::agents::{agent_order, global_order};
 use instrukt_runner::install::{self, Scheduler, WakeUp};
 use instrukt_runner::interfaces::{ProjectRef, SessionBinding};
 use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
-use instrukt_runner::sessions::{Observation, Sessions, StartRequest};
+use instrukt_runner::sessions::{Answer, Ending, Instruction, Observation, Sessions, StartRequest};
 use instrukt_runner::standing::{self, StartResolution};
 use instrukt_runner::state::RunnerState;
-use instrukt_runner::{launch, ticks};
+use instrukt_runner::{headroom, launch, ticks};
 use jiff::tz::TimeZone;
 use serde_json::json;
 
@@ -84,7 +84,12 @@ pub struct TicksArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum TicksCommand {
-    /// Show the last wake-up; warns when none arrived for five minutes.
+    /// Show the last wake-up and the disk-headroom guard's last run.
+    ///
+    /// Warns when no wake-up arrived for five minutes. The guard's line gives
+    /// its level and free space; its last report lists the largest
+    /// regenerable directories, or what a run at the floor removed and
+    /// skipped.
     Status(JsonArgs),
 }
 
@@ -100,8 +105,21 @@ pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         TicksCommand::Status(args) => {
             let state = RunnerState::new(&ctx.home);
             let status = ticks::status(ticks::last_wakeup(&state)?, ctx.clock.now());
+            let guard = headroom::last_run(&state)?;
+            // `ticks status` always works: an unreadable configuration
+            // shows the guard's last run as if it were on.
+            let guard_on = Configuration::load_global(&ctx.home)
+                .map(|config| headroom::switched_on(&config, &Env::from_process()))
+                .unwrap_or(true);
             if args.json {
-                ctx.out.json(&status)?;
+                let mut value = serde_json::to_value(&status)?;
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(
+                        "disk_headroom".to_owned(),
+                        json!({"on": guard_on, "last_run": guard}),
+                    );
+                }
+                ctx.out.json(&value)?;
             } else {
                 match status.last_wakeup {
                     None => ctx.out.line("no wake-up ever recorded")?,
@@ -114,13 +132,26 @@ pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                         }
                     }
                 }
+                for line in headroom::status_lines(guard_on, guard.as_ref()) {
+                    ctx.out.line(&line)?;
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
     }
 }
 
+/// The exit status of a call whose verb the runtime fills as an `agent`
+/// instruction (`session-continuity`, "Verb kinds").
+const YOURS_TO_DO: u8 = 3;
+
 #[derive(Debug, clap::Args)]
+#[command(
+    after_help = "Exit status 3, \"yours to do\": the runtime fills this call as an \
+instruction for you. instrukt ran nothing; it printed the instruction (with the call's inputs \
+after it, one per line). Carry it out with your own runtime's tools; that completes the call. \
+It is neither success nor failure."
+)]
 pub struct SessionsArgs {
     #[command(subcommand)]
     command: SessionsCommand,
@@ -139,8 +170,11 @@ enum SessionsCommand {
     Conversation(IdArgs),
     /// Link two sessions of one runtime, or remove their link.
     Link(LinkArgs),
-    /// End a session.
-    End(IdArgs),
+    /// End a session, your own (`self`), or a todo's bound sessions
+    /// (`--todo`); says so when the runtime needs no ending.
+    End(EndArgs),
+    /// Look up earlier conversations in the runtime you are running in.
+    History(HistoryArgs),
     /// Resolve a standing agent's start whose result never arrived: bind
     /// the session the runtime did create, or declare that none was.
     ResolveStart(ResolveStartArgs),
@@ -203,6 +237,70 @@ struct IdArgs {
 }
 
 #[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("target").required(true).args(["session", "todo"])))]
+struct EndArgs {
+    /// The session, `<runtime>:<id>`, or `self` for the caller's own
+    /// session; ending yourself is always your last step.
+    session: Option<EndTarget>,
+    /// End each session bound to this todo except the caller's own.
+    /// Release the todo first; this checks no claim.
+    #[arg(long)]
+    todo: Option<TodoSlug>,
+    #[arg(long)]
+    json: bool,
+}
+
+/// What `sessions end` addresses.
+#[derive(Debug, Clone)]
+enum EndTarget {
+    /// The caller's own session.
+    Caller,
+    Session(SessionRef),
+}
+
+impl std::str::FromStr for EndTarget {
+    type Err = instrukt_core::ids::IdError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "self" {
+            Ok(EndTarget::Caller)
+        } else {
+            SessionRef::parse(s).map(EndTarget::Session)
+        }
+    }
+}
+
+#[derive(Debug, clap::Args)]
+struct HistoryArgs {
+    #[command(subcommand)]
+    command: HistoryCommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum HistoryCommand {
+    /// Find earlier conversations by text; names their session ids.
+    Search(HistorySearchArgs),
+    /// Show one conversation's messages.
+    Show(HistoryShowArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct HistorySearchArgs {
+    /// The text to search for, as one argument.
+    #[arg(allow_hyphen_values = true)]
+    text: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+struct HistoryShowArgs {
+    /// The session id, as a search named it or a record carries it.
+    id: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, clap::Args)]
 struct LinkArgs {
     a: SessionRef,
     b: SessionRef,
@@ -256,17 +354,37 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
             }
             Ok(ExitCode::SUCCESS)
         }
-        SessionsCommand::Link(args) => {
-            sessions.link(&args.a, &args.b, args.remove)?;
-            if args.json {
-                ctx.out.json(&json!({"a": args.a.to_string(), "b": args.b.to_string(), "linked": !args.remove}))?;
-            } else if args.remove {
-                ctx.out
-                    .line(&format!("unlinked {} and {}", args.a, args.b))?;
-            } else {
-                ctx.out.line(&format!("linked {} and {}", args.a, args.b))?;
+        SessionsCommand::Link(args) => match sessions.link(&args.a, &args.b, args.remove)? {
+            Answer::YoursToDo(instruction) => yours_to_do(ctx, &instruction, args.json),
+            Answer::Ran(()) => {
+                if args.json {
+                    ctx.out.json(&json!({"kind": "command", "a": args.a.to_string(), "b": args.b.to_string(), "linked": !args.remove}))?;
+                } else if args.remove {
+                    ctx.out
+                        .line(&format!("unlinked {} and {}", args.a, args.b))?;
+                } else {
+                    ctx.out.line(&format!("linked {} and {}", args.a, args.b))?;
+                }
+                Ok(ExitCode::SUCCESS)
             }
-            Ok(ExitCode::SUCCESS)
+        },
+        SessionsCommand::History(args) => {
+            let (answer, json) = match args.command {
+                HistoryCommand::Search(args) => (sessions.history_search(&args.text)?, args.json),
+                HistoryCommand::Show(args) => (sessions.history_show(&args.id)?, args.json),
+            };
+            match answer {
+                Answer::YoursToDo(instruction) => yours_to_do(ctx, &instruction, json),
+                Answer::Ran(output) => {
+                    if json {
+                        ctx.out
+                            .json(&json!({"kind": "command", "output": output}))?;
+                    } else {
+                        ctx.out.text(&output)?;
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+            }
         }
         SessionsCommand::ResolveStart(args) => {
             let resolution = match &args.session {
@@ -298,11 +416,7 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
             }
             Ok(ExitCode::SUCCESS)
         }
-        SessionsCommand::End(args) => {
-            sessions.end(&args.session)?;
-            print_session(ctx, &args.session, args.json)?;
-            Ok(ExitCode::SUCCESS)
-        }
+        SessionsCommand::End(args) => sessions_end(args, ctx, &config, &sessions),
     }
 }
 
@@ -389,6 +503,111 @@ fn sessions_run(
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `sessions end`: one session, the caller's own, or a todo's bound
+/// sessions, each through its runtime's ending.
+fn sessions_end(
+    args: EndArgs,
+    ctx: &mut Ctx,
+    config: &Configuration,
+    sessions: &Sessions<'_>,
+) -> anyhow::Result<ExitCode> {
+    let endings = match (&args.session, &args.todo) {
+        (Some(EndTarget::Caller), _) => vec![sessions.end_self()?],
+        (Some(EndTarget::Session(session)), _) => vec![sessions.end(session)?],
+        (None, Some(todo)) => {
+            let caller = sessions.caller().ok();
+            let mut endings = Vec::new();
+            for session in bound_sessions(ctx, config, todo)? {
+                if Some(&session) != caller.as_ref() {
+                    endings.push(sessions.end(&session)?);
+                }
+            }
+            if endings.is_empty() {
+                if args.json {
+                    ctx.out.json(&json!({"endings": []}))?;
+                } else {
+                    ctx.out.line(&format!(
+                        "`{todo}` has no bound session other than yours; there is nothing to end"
+                    ))?;
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            endings
+        }
+        (None, None) => bail!("name a session, `self`, or --todo <slug>"),
+    };
+    let yours = endings
+        .iter()
+        .any(|ending| matches!(ending, Ending::YoursToDo { .. }));
+    if args.json {
+        let rendered: Vec<serde_json::Value> = endings.iter().map(ending_json).collect();
+        match (&args.todo, rendered.as_slice()) {
+            (None, [one]) => ctx.out.json(one)?,
+            _ => ctx.out.json(&json!({"endings": rendered}))?,
+        }
+    } else {
+        for ending in &endings {
+            match ending {
+                Ending::NotNeeded { runtime } => ctx.out.line(&format!(
+                    "runtime `{runtime}` needs no ending; nothing was done"
+                ))?,
+                Ending::Ended(session) => ctx.out.line(&format!("ended {session}"))?,
+                Ending::YoursToDo { instruction, .. } => ctx.out.line(&instruction.0)?,
+            }
+        }
+    }
+    Ok(if yours {
+        ExitCode::from(YOURS_TO_DO)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn ending_json(ending: &Ending) -> serde_json::Value {
+    match ending {
+        Ending::NotNeeded { runtime } => json!({"kind": "none", "runtime": runtime}),
+        Ending::Ended(session) => json!({"kind": "command", "session": session.to_string()}),
+        Ending::YoursToDo {
+            session,
+            instruction,
+        } => json!({"kind": "agent", "session": session.to_string(), "instruction": instruction.0}),
+    }
+}
+
+/// The sessions bound to `todo` in instrukt's own session bindings
+/// (`sessions.bound`), each once, in binding order.
+fn bound_sessions(
+    ctx: &Ctx,
+    config: &Configuration,
+    todo: &TodoSlug,
+) -> anyhow::Result<Vec<SessionRef>> {
+    let project = project_ref(config)?;
+    let Some(evidence) = wiring::work_evidence(ctx)? else {
+        bail!("--todo reads the todo's session bindings, which needs `modules.todos` on");
+    };
+    let Some(record) = evidence.evidence(&project, todo)? else {
+        bail!("no todo `{todo}` in project `{}`", project.slug);
+    };
+    let mut sessions: Vec<SessionRef> = Vec::new();
+    for bound in record.bindings {
+        if !sessions.contains(&bound.binding.session) {
+            sessions.push(bound.binding.session);
+        }
+    }
+    Ok(sessions)
+}
+
+/// An `agent` verb's answer: the instruction, and the "yours to do" status.
+fn yours_to_do(ctx: &mut Ctx, instruction: &Instruction, json: bool) -> anyhow::Result<ExitCode> {
+    if json {
+        ctx.out
+            .json(&json!({"kind": "agent", "instruction": instruction.0}))?;
+    } else {
+        ctx.out.line(&instruction.0)?;
+    }
+    Ok(ExitCode::from(YOURS_TO_DO))
 }
 
 fn print_session(ctx: &mut Ctx, session: &SessionRef, json: bool) -> anyhow::Result<()> {
