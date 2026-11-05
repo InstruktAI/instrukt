@@ -138,7 +138,7 @@ standing integrator's subscription and activation routes carry that wake-up.
 2. After preparation release and runner admission, run
    `instrukt todo work {slug}` to build, review, fix and finalize. Reuse recorded
    sessions through `alive` and `send`; start only a required new session through
-   `instrukt sessions run` and its runtime mapping.
+   `instrukt sessions run` and its runtime adapter.
 3. Execute the configured finalize-ready handoff. The standing integrator
    composes, verifies and promotes the exact candidate; no work-role command
    performs integration.
@@ -170,6 +170,6 @@ standing integrator's subscription and activation routes carry that wake-up.
 
 ## See also
 
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/overview.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/work/overview.md
-- ~/.instrukt/docs/sdlc/procedure/lifecycle/integrate.md
+- sdlc/procedure/lifecycle/prepare/overview
+- sdlc/procedure/lifecycle/work/overview
+- sdlc/procedure/lifecycle/integrate

@@ -13,7 +13,7 @@ use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read, read_usable, require_usable};
 use super::_module::Module;
 use super::_runtime;
-use super::_schema::{self, CURRENT_SCHEMA_VERSION, KeyFinding, LayerKind};
+use super::_schema::{self, CURRENT_SCHEMA_VERSION, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
 use crate::home::Home;
 
 /// The findings of `layer` as stored at `path` with content `value`.
@@ -27,7 +27,11 @@ pub(crate) fn findings_for(
         LayerKind::Global => None,
         LayerKind::Project => read_usable(home, &Layer::Global)?,
     };
-    Ok(judge(value, layer.kind(), global.as_ref())
+    let mut found = judge(value, layer.kind(), global.as_ref());
+    if let Layer::Project(root) = layer {
+        found.extend(code_on_github(root, value, global.as_ref())?);
+    }
+    Ok(found
         .into_iter()
         .map(|finding| Finding {
             document: path.to_path_buf(),
@@ -36,6 +40,48 @@ pub(crate) fn findings_for(
             message: finding.message,
         })
         .collect())
+}
+
+/// Whether `modules.todos` is on in the configuration project layer
+/// `value` takes part in, judged with the machine's `global` layer.
+pub(crate) fn todos_on(value: &Value, global: Option<&Value>) -> bool {
+    effective_value(global, Some(value))
+        .get("modules")
+        .and_then(|m| m.get(Module::Todos.key()))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Todos on in the effective configuration of the project rooted at
+/// `root` need its code on GitHub (`github-record`, "Code on GitHub"): a
+/// finding at `modules.todos` when it is not.
+fn code_on_github(
+    root: &Path,
+    value: &Value,
+    global: Option<&Value>,
+) -> Result<Option<KeyFinding>, ConfigError> {
+    if !todos_on(value, global) {
+        return Ok(None);
+    }
+    let configured = value
+        .get("github")
+        .and_then(|g| g.get("repository"))
+        .and_then(Value::as_str);
+    // The API address comes from the machine's own layer, never a
+    // repository's.
+    let api_url = global
+        .and_then(|g| g.get("github"))
+        .and_then(|g| g.get("api_url"))
+        .and_then(Value::as_str)
+        .unwrap_or(DEFAULT_GITHUB_API_URL);
+    match crate::github::resolve_code_host(configured, api_url, root)? {
+        crate::github::CodeHost::GitHub { .. } => Ok(None),
+        crate::github::CodeHost::Elsewhere { reason } => Ok(Some(KeyFinding::new(
+            "modules.todos",
+            FindingKind::TodosNeedGitHub,
+            crate::github::todos_need_github(&reason),
+        ))),
+    }
 }
 
 /// `instrukt config validate`: the findings of `layer`. A missing layer,

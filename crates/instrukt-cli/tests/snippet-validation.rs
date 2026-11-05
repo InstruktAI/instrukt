@@ -225,6 +225,32 @@ fn a_snippet_without_a_description_is_reported_not_left_out() {
 
 // spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
 #[test]
+fn a_runtime_value_in_a_snippet_an_index_renders_in_full_is_reported() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/domain/acme/principle/session.md",
+        &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),
+    )
+    .write(
+        "docs/project/concept/way.md",
+        &snippet("concept", "", "").replace(
+            "# Sample — Concept\n",
+            "# Sample — Concept\n\n## Required reads\n\n- acme/principle/session\n",
+        ),
+    )
+    .write(
+        "docs/project/index.yaml",
+        "expanded: [project/demo/concept/way]\n",
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!("runtime_value_rendered_through_an_index", run.out);
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
+#[test]
 fn an_include_directive_is_reported_naming_what_it_includes() {
     let env = TestEnv::new();
     let repo = project(&env);

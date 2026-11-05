@@ -8,10 +8,10 @@ use std::time::Instant;
 use serde_yaml_ng::{Mapping, Value};
 use sha2::{Digest, Sha256};
 
-use super::_error::{ConfigError, Findings};
+use super::_error::{ConfigError, FindingKind, Findings};
 use super::_merge::merge_patch;
 use super::_schema::{CURRENT_SCHEMA_VERSION, LayerKind};
-use super::_validate::findings_for;
+use super::_validate::{findings_for, todos_on};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
 use crate::home::Home;
@@ -235,9 +235,18 @@ pub fn patch(
             current: current.to_string(),
         });
     }
-    let mut next = doc.value;
+    let before = doc.value;
+    let mut next = before.clone();
     merge_patch(&mut next, patch);
-    let findings = findings_for(home, layer, &path, &next)?;
+    let mut findings = findings_for(home, layer, &path, &next)?;
+    // Todos already on stay a validation finding; only a write that
+    // switches them on is refused for it.
+    if layer.kind() == LayerKind::Project {
+        let global = read_usable(home, &Layer::Global)?;
+        if todos_on(&before, global.as_ref()) {
+            findings.retain(|f| f.kind != FindingKind::TodosNeedGitHub);
+        }
+    }
     if !findings.is_empty() {
         return Err(ConfigError::Invalid(Findings(findings)));
     }

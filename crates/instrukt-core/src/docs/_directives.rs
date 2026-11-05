@@ -1,22 +1,25 @@
 //! The directive checks of validation: the format has no directive that
-//! runs a command or includes a file, and what publication compiles has no
+//! runs a command or includes a file, and what publication renders has no
 //! runtime session (`project/instrukt/spec/feature/docs/snippet-validation`,
 //! Directives).
 //!
 //! - An `@exec` or `@include` directive in a snippet, a companion, a
 //!   third-party doc or a master is a finding.
 //! - A `@config` directive with a `runtime.*` path is a finding in every
-//!   file compiled into a bundle, an `AGENTS.md` or a global entrypoint: the
-//!   masters and the global agent files, and the snippets the published
-//!   domains' baselines and the masters require (transitively, as
-//!   compilation reads them).
+//!   file rendered into an `AGENTS.md` or a global agent file: the masters,
+//!   and the snippets the repository's position indexes render in full
+//!   (`expanded`, `general`'s `agents`) and the masters require, with their
+//!   closure, as rendering reads them.
+//! - The repository-root master carrying `## Required reads` is a finding:
+//!   `docs/project/index.yaml` selects what the root `AGENTS.md` includes
+//!   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::_corpus::{Corpus, Lens, Stray, Version, View};
 use super::_finding::{Finding, FindingCode};
-use super::_identity::BaselineOwner;
+use super::_position::{INDEX_FILE, Position, PositionIndex};
 use super::_refs::{RefTarget, Reference};
 use super::_render::{self, RenderContext, Values, is_runtime};
 use super::_text::{self, Directive};
@@ -25,8 +28,6 @@ use crate::git;
 
 /// The file name of a master.
 const MASTER_FILE_NAME: &str = "AGENTS.master.md";
-/// The directory of the global master and the agent addenda.
-const AGENTS_DIR: &str = "agents/";
 
 /// Every directive finding of the repository at `repo_root`, whose parsed
 /// documentation is `corpus`.
@@ -64,6 +65,7 @@ pub(super) fn check(
     };
     let mut walk = Compiled {
         corpus,
+        repo_root,
         cx: &cx,
         seen: BTreeSet::new(),
         out,
@@ -71,19 +73,62 @@ pub(super) fn check(
     for (rel, text) in compiled_sources(repo_root)? {
         let body = _text::split_frontmatter(&text).body.to_owned();
         unsupported_in(Path::new(&rel), &body, walk.out);
+        if rel == MASTER_FILE_NAME && carries_required_reads(&body) {
+            walk.out.push(Finding::new(
+                Path::new(&rel),
+                FindingCode::MasterRequiredReads,
+                Some(format!(
+                    "the root master holds only `## Purpose`; `docs/project/{INDEX_FILE}` selects what the root AGENTS.md includes"
+                )),
+            ));
+        }
         walk.file(Path::new(&rel), &body)?;
     }
-    let owned = corpus.published_domains();
-    for manifest in corpus.baselines() {
-        let compiled = !manifest.is_progressive()
-            && matches!(manifest.owner(), BaselineOwner::Domain(d) if owned.contains(d));
-        if compiled {
-            for entry in manifest.entries() {
-                walk.reference(entry)?;
+    let mut positions = vec![Position::Project];
+    positions.extend(corpus.published_domains().iter().map(Position::of_domain));
+    for position in positions {
+        if let Some(index) = position_index(repo_root, &position)? {
+            for id in rendered_in_full(&index) {
+                walk.reference(&Reference {
+                    raw: id.as_str().to_owned(),
+                    target: Some(RefTarget::Snippet(id.clone())),
+                })?;
             }
         }
     }
     Ok(())
+}
+
+/// Whether a master's body carries a `## Required reads` heading outside
+/// fenced code.
+fn carries_required_reads(body: &str) -> bool {
+    _text::headings(&_text::lines(body))
+        .iter()
+        .any(|h| h.level == 2 && _text::normalize_title(&h.title) == "required reads")
+}
+
+/// The `index.yaml` of `position` in the repository at `repo_root`; `None`
+/// without one or when it does not parse (the index check reports that).
+fn position_index(
+    repo_root: &Path,
+    position: &Position,
+) -> Result<Option<PositionIndex>, DocsError> {
+    let path = repo_root.join(position.dir()).join(INDEX_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(PositionIndex::parse(position, &text).ok()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(DocsError::Read { path, source }),
+    }
+}
+
+/// The ids an index has rendered in full: `expanded`, and for `general`
+/// every agent CLI's `agents` snippets.
+fn rendered_in_full(index: &PositionIndex) -> Vec<&crate::ids::SnippetId> {
+    let mut ids: Vec<_> = index.expanded().iter().collect();
+    if let PositionIndex::General(general) = index {
+        ids.extend(general.agents.values().flatten());
+    }
+    ids
 }
 
 /// A finding for each `@exec` and `@include` directive in `body`, naming
@@ -99,9 +144,10 @@ fn unsupported_in(path: &Path, body: &str, out: &mut Vec<Finding>) {
     }
 }
 
-/// The walk over what publication compiles, each target once.
+/// The walk over what publication renders, each target once.
 struct Compiled<'w, 'c> {
     corpus: &'c Corpus,
+    repo_root: &'w Path,
     cx: &'w RenderContext<'w>,
     seen: BTreeSet<RefTarget>,
     out: &'w mut Vec<Finding>,
@@ -137,34 +183,21 @@ impl Compiled<'_, '_> {
                     self.file(&path, &body)?;
                 }
             }
-            // Until rendering reads position indexes, a bare-domain read
-            // is compiled as that domain's bundle.
-            RefTarget::Bundle(domain) | RefTarget::Domain(domain) => {
-                let entries: Vec<Reference> = self
-                    .corpus
-                    .baselines()
-                    .iter()
-                    .filter(|m| {
-                        !m.is_progressive() && m.owner() == &BaselineOwner::Domain(domain.clone())
-                    })
-                    .flat_map(|m| m.entries().into_iter().cloned())
-                    .collect();
-                for entry in &entries {
-                    self.reference(entry)?;
+            // A bare-domain read renders that domain's `expanded` set.
+            RefTarget::Domain(domain) => {
+                let position = Position::of_domain(domain);
+                if let Some(index) = position_index(self.repo_root, &position)? {
+                    for id in index.expanded() {
+                        self.reference(&Reference {
+                            raw: id.as_str().to_owned(),
+                            target: Some(RefTarget::Snippet(id.clone())),
+                        })?;
+                    }
                 }
             }
-            RefTarget::LocalFile(path) => {
-                let entries: Vec<Reference> = self
-                    .corpus
-                    .baselines()
-                    .iter()
-                    .filter(|m| m.path() == Path::new(path))
-                    .flat_map(|m| m.entries().into_iter().cloned())
-                    .collect();
-                for entry in &entries {
-                    self.reference(entry)?;
-                }
-            }
+            // A path reference is validation's finding elsewhere; it names
+            // nothing rendering reads.
+            RefTarget::Bundle(_) | RefTarget::LocalFile(_) => {}
         }
         Ok(())
     }
@@ -191,7 +224,7 @@ fn current(body: &str) -> String {
     Version::parse("", body, None, None, Path::new("")).lens_body(Lens::Current)
 }
 
-/// The masters and global agent files of the repository at `repo_root`,
+/// The masters of the repository at `repo_root`,
 /// with their text: tracked and untracked files git does not ignore in a
 /// working tree, every file of a directory that is none.
 fn compiled_sources(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
@@ -217,9 +250,7 @@ fn compiled_sources(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError
     };
     let mut out = Vec::new();
     for rel in listed {
-        let is_source = rel.rsplit('/').next() == Some(MASTER_FILE_NAME)
-            || (rel.starts_with(AGENTS_DIR) && rel.ends_with(".md"));
-        if !is_source {
+        if rel.rsplit('/').next() != Some(MASTER_FILE_NAME) {
             continue;
         }
         let path = repo_root.join(&rel);

@@ -11,16 +11,16 @@ dispatch:
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/prepare/overview.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/overview.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/build.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/review-build.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/finalize.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/work/deferrals.md
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/integrate.md
-- @~/.instrukt/docs/sdlc/policy/todo-creation-discipline.md
-- @~/.instrukt/docs/general/policy/conflict-resolution.md
-- @~/.instrukt/docs/general/policy/human-contract.md
+- sdlc/procedure/lifecycle/prepare/overview
+- sdlc/procedure/lifecycle/work/overview
+- sdlc/procedure/lifecycle/work/build
+- sdlc/procedure/lifecycle/work/review-build
+- sdlc/procedure/lifecycle/work/finalize
+- sdlc/procedure/lifecycle/work/deferrals
+- sdlc/procedure/lifecycle/integrate
+- sdlc/policy/todo-creation-discipline
+- general/policy/conflict-resolution
+- general/policy/human-contract
 
 ## Goal
 
@@ -85,10 +85,10 @@ runtime supports shared discussion. The peer remains alive but unlinked between
 judgments. Close the link only after both sessions agree on the disposition,
 including whether any residue is human-owned or safety-gated, with
 `instrukt sessions link --remove <a> <b>`. At most one peer is live at a time;
-end a failed peer with `instrukt sessions end <id>` before replacing it, with
-no overlap. The coordinator ends its peer with the same command when its own
-session ends. When the command answers that the ending is yours to do, carry
-out the instruction it prints; that is the ending.
+record the failed peer's disposition and confirm that its assignment has
+stopped before replacing it, with no overlapping work. At its own handoff,
+the coordinator records the peer's remaining obligations. The runtime owns
+session ending and cleanup; an unavailable lifecycle action remains a blocker.
 A peer objection is a claim answered by evidence, never an order. Agreement
 follows evidence, not rank.
 

@@ -72,6 +72,13 @@ impl Project {
     }
 }
 
+/// A computer of the developer team reflecting the project to `github`:
+/// its own home and checkout.
+pub fn computer(github: &FakeGitHub) -> Computer {
+    let (env, repo) = machine(&github.url(), None);
+    Computer { env, repo }
+}
+
 /// A second computer working on the same project.
 pub struct Computer {
     pub env: TestEnv,

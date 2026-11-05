@@ -6,7 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## Required reads
 
-@docs/project/spec/feature/workflow/artifact-currency.md
+@project/instrukt/spec/feature/workflow/artifact-currency
 
 ## What it is
 
@@ -70,8 +70,8 @@ the runtime adapter provides session capabilities rather than workflow policy.
 | Finalizer dispatch and readiness check | Orchestrator action and provider | Dispatch finalization, then compare the clean worktree, branch, remote and readiness stamp. |
 | Kickback | Work-orchestrator record command and lane-release commands | Append the reason to input, invalidate the plan, reset finalization, release the lane and retain worktree, branch and commits. |
 | Substantive-drift return | Work-orchestrator commands | Release the lane for preparation while preserving the working resources; re-derivation belongs to the affected layer. |
-| Finalize-ready handoff | Finalize-ready stamp (including its event-log append) and lane-release commands | Make the candidate available to the standing integrator, confirm claim release, end children and leave the work lane. |
-| Preparation completion | Preparation orchestrator release commands | Confirm claim release and end the preparation lane; the runner owns later dispatch. |
+| Finalize-ready handoff | Finalize-ready stamp (including its event-log append) and lane-release commands | Make the candidate available to the standing integrator, confirm claim release, record the handoff and leave the work lane. |
+| Preparation completion | Preparation orchestrator release commands | Confirm claim release and record the preparation handoff; the runner owns later dispatch. |
 
 Command failures remain explicit evidence for the orchestrator. A silent skip
 is not a completed merge; an ignored push result is not a published branch;
@@ -90,6 +90,13 @@ project preparation. Once finalize readiness is recorded, confirmation and
 handoff owe no merge or branch-publication effect.
 
 ### Session reuse
+
+Worktree creation and attachment are distinct adapter capabilities. T3's
+published `--worktree <base>` and `--branch <name>` create a new worktree; they
+cannot attach a new role's thread to the setup thread's existing worktree. Reuse
+that bound thread where the assignment permits it. A new role requiring the same
+worktree remains pending with the capability gap reported; the adapter neither
+repeats setup nor runs that role in the project root.
 
 Every role dispatch in this cycle uses recorded-session reuse under
 `project/instrukt/spec/feature/runner/session-continuity`.
@@ -119,9 +126,8 @@ does not create a new logical handoff. Integration is governed by
 - `instrukt todo stamp <slug> --finalize-ready` records the handoff and appends
   `workflow.finalized` idempotently by project/todo/SHA.
 - Release with `instrukt todo update <slug> --unclaim`; confirm `claim.held`
-  is false, then end the children in `sessions.bound` with
-  `instrukt sessions end --todo <slug>`, and the lane last with
-  `instrukt sessions end self`.
+  is false and record the handoff. The runtime owns session ending and
+  cleanup; preserve conversations still needed for review or human input.
 - The integrator runs `instrukt docs fold <slug>` before candidate verification,
   then `instrukt todo deliver <slug> --commit <sha>` after confirmed promotion.
   Delivered worktree cleanup is `git worktree remove <path>` with `done_when`
@@ -138,8 +144,15 @@ Then an integration candidate is handed off only after current independent appro
 And findings requiring changes return to implementation before that handoff
 ```
 
+## Known caveats
+
+- T3's host CLI creates new worktrees but cannot attach a new role to an
+  existing one. Such a dispatch remains pending with that capability gap;
+  the setup and multi-role delivery sequence is not fully supported by this
+  adapter until the runtime supplies attachment.
+
 ## See Also
 
-- `sdlc/principle/design-fundamentals` — each effect has an explicit owner and visible outcome.
-- `general/principle/trust-and-guardrails` — claims protect against interference.
-- `general/principle/intelligence-boundaries` — recovery and remediation remain agent judgment.
+- sdlc/principle/design-fundamentals
+- general/principle/trust-and-guardrails
+- general/principle/intelligence-boundaries

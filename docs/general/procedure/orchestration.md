@@ -8,7 +8,7 @@ visibility: 'public'
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/procedure/lifecycle/overview.md
+- sdlc/procedure/lifecycle/overview
 
 ## Goal
 
@@ -68,8 +68,9 @@ actually did the work recorded there.
    use `instrukt sessions send` to continue the assignment, and use
    `instrukt sessions run` when a new session is required. Selection walks
    procedure `dispatch` or global `agents.order`, including thinking mode,
-   taking the first available agent. Without an availability check, a start
-   failure tries the next agent. Exhaustion is an anomaly.
+   taking the first available agent where the adapter supports selection.
+   Only a rejection proven to precede creation permits fallback; an ambiguous
+   start remains pending for reconciliation. Exhaustion is an anomaly.
 5. Assess current session and work evidence under the sections below. A step
    is complete only when the record carries its required artifact and stamp,
    with current target bindings. A reply or ended run alone supplies neither.
@@ -79,8 +80,8 @@ actually did the work recorded there.
 
 The orchestrator executes worktree preparation, upstream merges, publication,
 stale checks, findings relay, kickback and lane release through configured
-commands. The runtime mapping supplies capabilities rather than workflow
-policy. The record supplies facts rather than a second stored phase.
+commands. The runtime adapter supplies capabilities rather than workflow policy.
+The record supplies facts rather than a second stored phase.
 
 ### Terminal Child Cleanup
 
@@ -92,11 +93,10 @@ never the claim. A refused release remains unresolved.
 
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
-conversation needs the child, the dispatcher ends it with
-`instrukt sessions end <id>`. Close discussion links with
-`instrukt sessions link --remove <a> <b>`. When `instrukt sessions end`
-answers that the ending is yours to do, carry out the instruction it prints;
-that is the ending. A failed ending stays unresolved.
+conversation needs the child, record the contribution and handoff. Close
+supported discussion links with `instrukt sessions link --remove <a> <b>`.
+Session ending and cleanup belong to the runtime. Preserve any unresolved
+cleanup with its responsible owner.
 
 ### Container Slug Handling
 
@@ -168,11 +168,11 @@ executing worker within its brief through `send`. Availability selection belongs
 to the runtime checks and ordered dispatch contract; it supplies no manual
 provider-status mutation, restart or quota timer. Distinguish a start failure
 from a failed observation and from execution that began and remains incomplete.
-When evidence establishes unusable startup with no delivered work, end the
-undelivered dispatch with `instrukt sessions end <id>`, confirm its outcome,
-then repeat the dispatch through the ordered availability selection. If recovery cannot
-complete, preserve the pending step and report the anomaly rather than
-silently duplicating it.
+When evidence establishes rejection before any session was created, retry
+through the adapter's supported availability selection. An ambiguous start
+retains its identity and pending work for reconciliation; session ending and
+cleanup belong to the runtime. If recovery cannot complete, preserve the pending
+step and report the anomaly.
 
 ### Review Threshold Handling (Orchestrator-Owned)
 
@@ -227,9 +227,9 @@ tier blocks the verdict — there is no fourth tier and no deferral path.
 4. Confirm terminal handoff and claim release; retain other live obligations.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
-then end the assignment children in `sessions.bound` with
-`instrukt sessions end --todo <slug>`, and end the completed lane with
-`instrukt sessions end self` as its last step.
+then record the handoff and any remaining obligations. Preserve conversations
+needed for later rounds or human input; the runtime owns session ending and
+cleanup.
 
 ## Outputs
 
@@ -246,5 +246,5 @@ then end the assignment children in `sessions.bound` with
 
 ## See Also
 
-- ~/.instrukt/docs/general/procedure/ai-to-ai-operations.md
-- ~/.instrukt/docs/general/policy/orchestrator-jurisdiction.md
+- general/procedure/ai-to-ai-operations
+- general/policy/orchestrator-jurisdiction

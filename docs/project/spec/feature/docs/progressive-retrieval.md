@@ -172,9 +172,9 @@ as authored.
 ### Configured values
 
 A configured value is the directive `<!-- @config: <path> -->` in a snippet
-body. `get` resolves `<path>` in-process through configuration's `get`, with
-the same interpolation and the same refusals: an unknown path, and a
-`runtime.*` path read with no active runtime session
+body. `get` resolves `<path>` in-process through configuration's `get`, with the
+same interpolation and the same refusals: an unknown path, and
+`runtime.session_id` read without the selected adapter's caller context
 (`project/instrukt/spec/feature/configuration/interpolation`).
 
 - It runs no shell and no subprocess. It resolves exactly as

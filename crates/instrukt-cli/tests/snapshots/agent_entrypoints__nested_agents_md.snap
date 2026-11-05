@@ -5,3 +5,27 @@ expression: "repo.read(\"tools/AGENTS.md\")"
 ## Tools
 
 Only the tools.
+
+# Project
+
+## Style — Policy
+
+### Rules
+
+Style: Rules.
+
+### Rationale
+
+Style: Rationale.
+
+### Scope
+
+Style: Scope.
+
+### Enforcement
+
+Style: Enforcement.
+
+### Exceptions
+
+Style: Exceptions.

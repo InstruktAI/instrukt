@@ -185,6 +185,12 @@ codes! {
     /// An action naming a snippet that is not a procedure.
     ActionTargetNotProcedure => "workflow-action-target-not-procedure",
 
+    // Masters
+    /// A repository-root `AGENTS.master.md` carrying `## Required reads`:
+    /// `docs/project/index.yaml` selects what the root `AGENTS.md`
+    /// includes.
+    MasterRequiredReads => "master-required-reads",
+
     // Directives
     /// An `@exec` directive: the format has no directive that runs a
     /// command.
@@ -255,6 +261,9 @@ pub enum NoticeCode {
     /// A domain without `index.yaml`: absent from the global agent files,
     /// found only through `instrukt docs index --domain <x>`.
     DomainWithoutIndex,
+    /// A root master without `docs/project/index.yaml`: the root
+    /// `AGENTS.md` holds the purpose and the triggered procedures only.
+    ProjectWithoutIndex,
     /// A delivered snippet no `index.yaml` names and no snippet requires:
     /// reachable only through `instrukt docs index`.
     UnreferencedSnippet,
@@ -264,6 +273,7 @@ impl NoticeCode {
     pub fn as_str(self) -> &'static str {
         match self {
             NoticeCode::DomainWithoutIndex => "domain-without-index",
+            NoticeCode::ProjectWithoutIndex => "project-without-index",
             NoticeCode::UnreferencedSnippet => "unreferenced-snippet",
         }
     }

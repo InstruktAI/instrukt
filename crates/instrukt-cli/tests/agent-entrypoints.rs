@@ -1,4 +1,4 @@
-//! Compiled agent instructions from `instrukt sync`
+//! Rendered agent instructions from `instrukt sync`
 //! (`docs/project/spec/feature/publication/agent-entrypoints.md`).
 #![allow(
     clippy::unwrap_used,
@@ -8,16 +8,22 @@
 
 mod common;
 
+use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
 use serde_json::Value;
 
-/// A snippet of `taxonomy` (policy or procedure) with every required
-/// section and `extra` frontmatter lines.
-fn snippet(taxonomy: &str, title: &str, extra: &str) -> String {
+/// A snippet of `taxonomy` (policy, principle or procedure) with every
+/// required section, `extra` frontmatter lines and `reads` as its required
+/// reads.
+fn snippet(taxonomy: &str, title: &str, extra: &str, reads: &[&str]) -> String {
     let (suffix, sections): (&str, &[&str]) = match taxonomy {
         "policy" => (
             "Policy",
             &["Rules", "Rationale", "Scope", "Enforcement", "Exceptions"],
+        ),
+        "principle" => (
+            "Principle",
+            &["Principle", "Rationale", "Implications", "Tensions"],
         ),
         _ => (
             "Procedure",
@@ -26,6 +32,12 @@ fn snippet(taxonomy: &str, title: &str, extra: &str) -> String {
     };
     let mut text =
         format!("---\ndescription: About {title}.\n{extra}---\n\n# {title} — {suffix}\n");
+    if !reads.is_empty() {
+        text.push_str("\n## Required reads\n\n");
+        for read in reads {
+            text.push_str(&format!("- {read}\n"));
+        }
+    }
     for section in sections {
         text.push_str(&format!("\n## {section}\n\n{title}: {section}.\n"));
     }
@@ -36,35 +48,52 @@ fn layer(slug: &str) -> String {
     format!("schema_version: 1\nproject: {slug}\n")
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
-#[test]
-fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
-    let env = TestEnv::new();
-    // Codex is installed: it reads the project override file.
-    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
+/// Emitted text with the test's temporary directory shown as `[TMP]`.
+fn shown(env: &TestEnv, bytes: &[u8]) -> String {
+    let base = env.path("").display().to_string();
+    String::from_utf8_lossy(bytes).replace(base.trim_end_matches('/'), "[TMP]")
+}
+
+fn stdout(env: &TestEnv, assert: &Assert) -> String {
+    shown(env, &assert.get_output().stdout)
+}
+
+fn stderr(env: &TestEnv, assert: &Assert) -> String {
+    shown(env, &assert.get_output().stderr)
+}
+
+/// A project whose root master states its purpose and whose index selects
+/// one snippet in full (with a required read of its own), lists another,
+/// beside a triggered procedure and a nested master.
+fn demo_project(env: &TestEnv) -> Repo {
     let repo = env.git_repo("demo");
     repo.write("instrukt.yaml", &layer("demo"))
         .write(
             "AGENTS.master.md",
             "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
-             ## Required reads\n\n@docs/project/policy/house.md\n@docs/project/policy/future.md\n\n\
              ## Notes\n\n<!-- @config: project -->\n\n\
              Written as ``@docs/project/policy/house.md`` it is quoted.\n\n\
-             ```\n@docs/project/policy/not-a-snippet.md\n```\n\n\
-             <!-- @docs/project/policy/house.md stays a comment -->\n",
+             ```\n@docs/project/policy/not-a-snippet.md\n```\n",
         )
-        .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n")
+        .write(
+            "tools/AGENTS.master.md",
+            "## Tools\n\nOnly the tools.\n\n## Required reads\n\n- project/demo/policy/style\n",
+        )
+        .write(
+            "docs/project/index.yaml",
+            "expanded:\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
+        )
         .write(
             "docs/project/policy/house.md",
-            &snippet("policy", "House", ""),
+            &snippet("policy", "House", "", &["project/demo/principle/care"]),
         )
         .write(
-            "docs/project/policy/future.md",
-            &snippet("policy", "Future", "delivered_by: [build-future]\n"),
+            "docs/project/principle/care.md",
+            &snippet("principle", "Care", "", &[]),
         )
         .write(
             "docs/project/policy/style.md",
-            &snippet("policy", "Style", ""),
+            &snippet("policy", "Style", "", &[]),
         )
         .write(
             "docs/project/procedure/release.md",
@@ -72,55 +101,162 @@ fn an_agent_opened_in_the_project_reads_one_self_contained_instruction_file() {
                 "procedure",
                 "Release",
                 "activation_trigger: When cutting a release.\n",
+                &[],
             ),
-        )
-        .write(
-            "docs/project/baseline.md",
-            "@docs/project/policy/style.md\n",
         );
     repo.commit("instructions");
+    repo
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
+#[test]
+fn an_agent_opened_in_the_project_reads_its_purpose_and_its_selection() {
+    let env = TestEnv::new();
+    // Codex is installed: it reads the project override file.
+    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
+    let repo = demo_project(&env);
 
     env.run(repo.path(), ["sync"]).success();
 
     insta::assert_snapshot!("root_agents_md", repo.read("AGENTS.md"));
-    insta::assert_snapshot!("nested_agents_md", repo.read("tools/AGENTS.md"));
     assert_eq!(repo.read("AGENTS.override.md"), repo.read("AGENTS.md"));
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
+#[test]
+fn a_nested_master_renders_beside_itself_with_its_required_reads() {
+    let env = TestEnv::new();
+    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
+    let repo = demo_project(&env);
+
+    env.run(repo.path(), ["sync"]).success();
+
+    insta::assert_snapshot!("nested_agents_md", repo.read("tools/AGENTS.md"));
     assert!(!repo.path().join("tools/AGENTS.override.md").exists());
 }
 
-/// The general owner: a global master inlining the general bundle, one
-/// addendum per agent, and a general baseline.
-fn general_owner(env: &TestEnv) -> Repo {
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
+#[test]
+fn a_root_master_with_required_reads_is_refused_naming_the_project_index() {
+    let env = TestEnv::new();
+    let repo = env.git_repo("demo");
+    repo.write("instrukt.yaml", &layer("demo"))
+        .write(
+            "AGENTS.master.md",
+            "## Purpose\n\nThe demo project.\n\n## Required reads\n\n- project/demo/policy/house\n",
+        )
+        .write(
+            "docs/project/policy/house.md",
+            &snippet("policy", "House", "", &[]),
+        );
+    repo.commit("master with reads");
+
+    let refused = env.run(repo.path(), ["sync"]).failure();
+
+    insta::assert_snapshot!("root_master_with_required_reads", stdout(&env, &refused));
+    assert!(!repo.path().join("AGENTS.md").exists());
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
+#[test]
+fn without_a_project_index_the_root_agents_md_holds_the_purpose_and_procedures() {
+    let env = TestEnv::new();
+    let repo = env.git_repo("demo");
+    repo.write("instrukt.yaml", &layer("demo"))
+        .write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
+        .write(
+            "docs/project/procedure/release.md",
+            &snippet(
+                "procedure",
+                "Release",
+                "activation_trigger: When cutting a release.\n",
+                &[],
+            ),
+        );
+    repo.commit("no index");
+
+    let synced = env.run(repo.path(), ["sync"]).success();
+
+    insta::assert_snapshot!(
+        "sync_without_project_index",
+        stdout(&env, &synced).replace(&repo.head(), "[SHA]")
+    );
+    insta::assert_snapshot!("root_agents_md_without_index", repo.read("AGENTS.md"));
+}
+
+/// A project publishing `sdlc` with a description, a triggered procedure
+/// and a snippet the general owner's index selects.
+fn engineering(env: &TestEnv) -> Repo {
+    let repo = env.git_repo("engineering");
+    repo.write("instrukt.yaml", &layer("engineering"))
+        .write(
+            "docs/domain/sdlc/index.yaml",
+            "description: Writing, reviewing and shipping code\n",
+        )
+        .write(
+            "docs/domain/sdlc/policy/tests.md",
+            &snippet("policy", "Tests", "", &[]),
+        )
+        .write(
+            "docs/domain/sdlc/procedure/ship.md",
+            &snippet(
+                "procedure",
+                "Ship",
+                "activation_trigger: When the human asks to ship.\n",
+                &[],
+            ),
+        );
+    repo.commit("sdlc");
+    repo
+}
+
+/// The owner of `docs/general/`: its index selects a general snippet (with
+/// its closure), an sdlc snippet and another general snippet in full, lists
+/// one, maps an agent policy to `agents`, and it has a triggered procedure.
+fn general_owner(env: &TestEnv, agents: &str) -> Repo {
     let repo = env.git_repo("platform");
     repo.write("instrukt.yaml", &layer("platform"))
         .write(
-            "agents/AGENTS.global.md",
-            "# Global baseline\n\n## Required reads\n\n@~/.instrukt/docs/general/bundle.md\n\n\
-             ## Who you are\n\nA careful agent.\n",
-        )
-        .write(
-            "agents/CLAUDE.addendum.md",
-            "## Claude\n\nClaude-specific guidance.\n",
-        )
-        .write(
-            "agents/CODEX.addendum.md",
-            "## Codex\n\nCodex-specific guidance.\n",
-        )
-        .write(
-            "agents/GEMINI.addendum.md",
-            "## Gemini\n\nGemini-specific guidance.\n",
+            "docs/general/index.yaml",
+            &format!(
+                "expanded:\n  - general/policy/care\n  - sdlc/policy/tests\n  - general/policy/kind\n\
+                 listed:\n  - general/policy/style\n{agents}"
+            ),
         )
         .write(
             "docs/general/policy/care.md",
-            &snippet("policy", "Care", ""),
+            &snippet("policy", "Care", "", &["general/principle/attention"]),
         )
         .write(
-            "docs/general/baseline.md",
-            "@~/.instrukt/docs/general/policy/care.md\n",
+            "docs/general/principle/attention.md",
+            &snippet("principle", "Attention", "", &[]),
+        )
+        .write(
+            "docs/general/policy/kind.md",
+            &snippet("policy", "Kind", "", &[]),
+        )
+        .write(
+            "docs/general/policy/style.md",
+            &snippet("policy", "Style", "", &[]),
+        )
+        .write(
+            "docs/general/policy/agents/claude.md",
+            &snippet("policy", "Claude", "", &[]),
+        )
+        .write(
+            "docs/general/procedure/onboard.md",
+            &snippet(
+                "procedure",
+                "Onboard",
+                "activation_trigger: When the human asks to onboard someone.\n",
+                &[],
+            ),
         );
-    repo.commit("global baseline");
+    repo.commit("general");
     repo
 }
+
+const CLAUDE_AGENTS: &str = "agents:\n  claude:\n    - general/policy/agents/claude\n";
 
 /// Whether every member of `before` is in `after` with the same value,
 /// objects compared member by member.
@@ -138,7 +274,7 @@ fn keeps_every_member(before: &Value, after: &Value) -> bool {
 // spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE2
 #[cfg(unix)]
 #[test]
-fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_settings() {
+fn every_installed_agent_cli_starts_with_the_general_section_and_keeps_its_settings() {
     let env = TestEnv::new();
     let home = env.home();
     let claude_settings = serde_json::json!({
@@ -172,23 +308,17 @@ fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_setti
     )
     .unwrap();
     std::fs::create_dir_all(home.join(".codex")).unwrap();
-    let other = env.git_repo("engineering");
-    other.write("instrukt.yaml", &layer("engineering")).write(
-        "docs/domain/sdlc/policy/tests.md",
-        &snippet("policy", "Tests", ""),
-    );
-    other.commit("sdlc");
-    env.run(other.path(), ["sync"]).success();
-    let platform = general_owner(&env);
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, "");
 
     env.run(platform.path(), ["sync"]).success();
 
     let read = |rel: &str| std::fs::read_to_string(home.join(rel)).unwrap();
-    insta::assert_snapshot!("claude_entrypoint", read(".claude/CLAUDE.md"));
-    insta::assert_snapshot!("codex_entrypoint", read(".codex/AGENTS.md"));
-    insta::assert_snapshot!(
-        "gemini_entrypoint",
-        read(".gemini/antigravity-cli/AGENTS.md")
+    insta::assert_snapshot!("global_file", read(".claude/CLAUDE.md"));
+    assert_eq!(read(".codex/AGENTS.md"), read(".claude/CLAUDE.md"));
+    assert_eq!(
+        read(".gemini/antigravity-cli/AGENTS.md"),
+        read(".claude/CLAUDE.md")
     );
     assert!(
         !home.join(".dsh").exists(),
@@ -220,4 +350,160 @@ fn every_installed_agent_cli_starts_with_the_global_baseline_and_keeps_its_setti
         &serde_json::from_str(&gemini_after).unwrap()
     ));
     assert!(!home.join(".codex/settings.json").exists());
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE3
+#[test]
+fn an_agents_snippet_ends_only_its_own_clis_global_file() {
+    let env = TestEnv::new();
+    let home = env.home();
+    for dir in [".claude", ".codex"] {
+        std::fs::create_dir_all(home.join(dir)).unwrap();
+    }
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, CLAUDE_AGENTS);
+
+    env.run(platform.path(), ["sync"]).success();
+
+    let read = |rel: &str| std::fs::read_to_string(home.join(rel)).unwrap();
+    insta::assert_snapshot!("claude_global_file", read(".claude/CLAUDE.md"));
+    insta::assert_snapshot!("codex_global_file", read(".codex/AGENTS.md"));
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE3
+#[test]
+fn mapping_a_snippet_to_an_unsupported_agent_cli_is_refused_naming_the_supported_ones() {
+    let env = TestEnv::new();
+    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(
+        &env,
+        "agents:\n  cursor:\n    - general/policy/agents/claude\n",
+    );
+
+    let refused = env.run(platform.path(), ["sync"]).failure();
+
+    insta::assert_snapshot!("unsupported_agent_cli", stdout(&env, &refused));
+    assert!(!env.home().join(".claude/CLAUDE.md").exists());
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE4
+#[test]
+fn a_global_file_the_developer_wrote_stops_publication_until_it_is_moved() {
+    let env = TestEnv::new();
+    let home = env.home();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let own = "# My own rules\n\nAlways answer in haiku.\n";
+    std::fs::write(home.join(".claude/CLAUDE.md"), own).unwrap();
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, "");
+
+    let refused = env.run(platform.path(), ["sync"]).failure();
+
+    insta::assert_snapshot!(
+        "foreign_global_file",
+        stderr(&env, &refused).replace(&platform.head(), "[SHA]")
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
+        own
+    );
+    assert!(!env.instrukt_home().join("docs/general").exists());
+
+    std::fs::rename(home.join(".claude/CLAUDE.md"), env.path("CLAUDE.mine.md")).unwrap();
+    env.run(platform.path(), ["sync"]).success();
+    insta::assert_snapshot!(
+        "global_file_after_moving_own",
+        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap()
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE4
+#[test]
+fn a_global_file_edited_after_instrukt_wrote_it_stops_the_next_publication() {
+    let env = TestEnv::new();
+    let home = env.home();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, "");
+    env.run(platform.path(), ["sync"]).success();
+    let edited = format!(
+        "{}\nA line of my own.\n",
+        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap()
+    );
+    std::fs::write(home.join(".claude/CLAUDE.md"), &edited).unwrap();
+
+    let refused = env.run(platform.path(), ["sync", "--force"]).failure();
+
+    insta::assert_snapshot!(
+        "edited_global_file",
+        stderr(&env, &refused).replace(&platform.head(), "[SHA]")
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
+        edited
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE5
+#[test]
+fn a_domain_without_an_index_is_published_but_absent_from_the_global_files() {
+    let env = TestEnv::new();
+    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, "");
+    platform
+        .write(
+            "docs/domain/ops/policy/oncall.md",
+            &snippet("policy", "Oncall", "", &[]),
+        )
+        .commit("ops without index");
+
+    let synced = env.run(platform.path(), ["sync"]).success();
+
+    insta::assert_snapshot!(
+        "sync_domain_without_index",
+        stdout(&env, &synced).replace(&platform.head(), "[SHA]")
+    );
+    insta::assert_snapshot!(
+        "global_file_without_unindexed_domain",
+        std::fs::read_to_string(env.home().join(".claude/CLAUDE.md")).unwrap()
+    );
+    let listed = env
+        .run(platform.path(), ["docs", "index", "--domain", "ops"])
+        .success();
+    insta::assert_snapshot!(
+        "unindexed_domain_listing",
+        common::mask_published_commits(&stdout(&env, &listed))
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE4
+#[test]
+fn retracting_the_global_files_keeps_one_the_developer_edited_and_names_it() {
+    let env = TestEnv::new();
+    let home = env.home();
+    for dir in [".claude", ".codex"] {
+        std::fs::create_dir_all(home.join(dir)).unwrap();
+    }
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, "");
+    env.run(platform.path(), ["sync"]).success();
+    let edited = "# Mine now\n";
+    std::fs::write(home.join(".claude/CLAUDE.md"), edited).unwrap();
+    std::fs::remove_dir_all(platform.path().join("docs/general")).unwrap();
+    platform.git(["add", "--all", "docs"]);
+    platform.git(["commit", "--quiet", "-m", "stop publishing general"]);
+
+    let synced = env.run(platform.path(), ["sync"]).success();
+
+    insta::assert_snapshot!(
+        "retraction_keeps_edited_global_file",
+        stdout(&env, &synced).replace(&platform.head(), "[SHA]")
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
+        edited
+    );
+    assert!(!home.join(".codex/AGENTS.md").exists());
 }
