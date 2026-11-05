@@ -28,7 +28,8 @@ their wording.
 - A domain is a body of knowledge one publisher is the authority on,
   published as one unit — its own schema, its own index, optionally its own
   workflow — named after what it is about, never after a category it belongs
-  to. `general` and `project` are reserved and never a domain's name. Agents
+  to. `general` and `project` are reserved and never a domain's name, nor is
+  `third-party`, which keeps its existing special case. Agents
   find a domain by its `description` and its procedures' activation
   triggers; there are no tags.
 - A computer obtains a docs repository by cloning it and adopting it. instrukt

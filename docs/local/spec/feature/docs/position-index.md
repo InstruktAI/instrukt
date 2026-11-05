@@ -57,6 +57,7 @@ names the `index.yaml`, the key and the offending value.
 | --- |
 | a key the position does not allow appears, `agents` outside `docs/general/index.yaml` among them |
 | a value has the wrong shape: `expanded`, `listed` or an `agents` entry that is not a list of ids, a `description` that is not one non-empty line |
+| a domain's `index.yaml` has no `description` (the line the global agent files show for the domain) |
 | an id names no snippet, or names a pending snippet |
 | a domain's or the project's index names an id of another position |
 | an `agents` key is not a supported agent CLI |
@@ -80,6 +81,7 @@ A notice is reported with its file and code and never fails the run.
 Given a developer has written the index of a position they publish
 When they validate the project's documentation
 Then every key the position does not allow, every id that names no delivered snippet, and every agent name instrukt does not deploy to is reported with the index and the offending value
+And a domain's index without a description is reported
 And a listed snippet that the expanded snippets already bring in is reported, naming the expanded snippet that brings it
 And the run reports failure while any of these remains
 ```

@@ -1,5 +1,5 @@
 ---
-description: "Corrections for Codex's observed defaults: keep the user's distinctions, read the source when challenged, investigate a silent worker before acting on it, leave out-of-scope changes as found, quote prose safely in a shell, establish authority before acting on presented material."
+description: "Corrections for Codex's observed defaults: keep the user's distinctions, read the source when challenged, investigate a silent worker before acting on it, let a command finish its own durable operation, give a todo its kind, leave out-of-scope changes as found, quote prose safely in a shell, establish authority before acting on presented material."
 visibility: 'public'
 ---
 
@@ -25,6 +25,14 @@ visibility: 'public'
   restarting or duplicating its work, read its authoritative session record
   and act on the concrete evidence there.
 
+### Let a command finish its own operation
+
+- When a command owns waiting for a durable operation to complete, leave the
+  waiting to it: give it the bound it asks for, and never take over the
+  polling it does.
+- An early return from such a command is not completion. The operation is
+  complete only when the command reports it complete.
+
 ### Leave other work as you found it
 
 - Dirty tracked files, staged changes, untracked files and generated-looking
@@ -35,6 +43,11 @@ visibility: 'public'
 - Restore an accidental out-of-scope edit of your own only when your exact
   delta is mechanically distinguishable; otherwise leave it and report the
   ambiguity.
+
+### Give a todo its kind
+
+- Every todo you create states its kind explicitly
+  (`sdlc/policy/todo-creation-discipline`).
 
 ### Quote prose for the shell
 
@@ -55,6 +68,11 @@ visibility: 'public'
 - **Silent workers.** You react to startup silence by probing, restarting or
   duplicating work; silence alone proves none of those necessary, and a
   duplicate competes with a worker that is still running.
+- **Durable operations.** You take an early yield for completion and start
+  polling yourself, so work proceeds on an operation that has not finished and
+  two pollers race over one receipt.
+- **Todo kind.** A todo created without its kind is routed by a guess about
+  what it is.
 - **Other work.** You treat a dirty tree as cleanup work. Reverting,
   normalizing, restaging or reformatting another actor's change destroys work
   that is not yours, and only an exactly distinguishable delta can be undone

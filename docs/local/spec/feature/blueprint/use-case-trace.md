@@ -75,7 +75,7 @@ Given a project whose tests bind use cases and whose structure has been mapped
 When an agent working for a person traces the files it is about to change
 Then it sees each use case those files put at stake once, with the tests that reach the files
 And it sees the use cases grouped by the folder of the spec that holds them
-And it sees which of its files no test reaches
+And it sees which of its files no test binding a use case reaches, so the trace offers no use-case evidence for them
 And it sees which revision the answer reflects
 ```
 

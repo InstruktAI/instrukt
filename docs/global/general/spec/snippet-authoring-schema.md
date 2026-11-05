@@ -265,8 +265,9 @@ do not accumulate by default.
 
 - `type`: principle, concept, policy, procedure, design, spec, adr.
 - `scope`: global, project.
-- Domain names: any name except `general` and `project`, which are reserved;
-  a domain claiming one is refused, naming the rule.
+- Domain names: any name except `general` and `project`, which are reserved,
+  and `third-party`, which keeps its existing special case; a domain claiming
+  one is refused, naming the rule.
 - `agents` keys in `docs/general/index.yaml`: the supported agent CLIs —
   `claude`, `codex`, `gemini`, `deepseek`.
 - `visibility`: public, internal. Default: `internal`.

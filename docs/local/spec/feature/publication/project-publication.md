@@ -96,14 +96,14 @@ of other projects are carried over unchanged.
 
 | Refusal | Condition | Outcome |
 | --- | --- | --- |
-| Reserved name | a directory `docs/domain/general/` or `docs/domain/project/` | sync refused, naming the directory and the rule that `general` and `project` are reserved and no domain may take them |
+| Reserved name | a directory `docs/domain/general/`, `docs/domain/project/` or `docs/domain/third-party/` | sync refused, naming the directory and the rule that `general` and `project` are reserved, `third-party` keeps its special case, and no domain may take them |
 | Position owned by another project | `docs/general/`, or a `docs/domain/<x>/`, already claimed on this computer by another project | sync refused, naming the position and its current owner |
 | Duplicate id | a new entry's id is already held by another project's entry | sync refused, naming the id and its owner |
 
 A refused sync changes nothing in the home or the project, records no
 commit, and exits non-zero. A position becomes free to claim once its owner's
-sync retracts it. No name is reserved beyond `general` and `project`, and no
-claim is curated.
+sync retracts it. No name is reserved beyond `general` and `project`, besides
+`third-party`'s existing special case, and no claim is curated.
 
 ### What publication renders and refuses by
 

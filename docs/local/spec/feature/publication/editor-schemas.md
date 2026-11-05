@@ -74,8 +74,11 @@ names a home path.
 - A path the refresh writes that is a symbolic link is never written through:
   `init` reports it, and `sync` refuses as for any location publication writes
   (`local/projects/instrukt/spec/feature/publication/project-publication`).
-- A refresh that cannot write a schema or a modeline for another reason is
-  reported, naming the file, and does not undo the publication.
+- A refresh that cannot write a schema or a modeline for another reason fails
+  the operation, naming the file: `init` reports the failure and exits
+  non-zero, and a sync fails as any failed sync does — it records no
+  published commit, so the next sync tries again
+  (`local/projects/instrukt/spec/feature/publication/project-publication`).
 
 ### Use cases
 
@@ -83,9 +86,9 @@ names a home path.
 
 ```gherkin
 Given a developer has initialized instrukt in their repository
-When they open the project's configuration, a position's index or a snippet schema in an editor that reads schema modelines
-Then the editor offers the keys that file may hold
-And it marks a key the file may not hold, as validation would
+When their editor opens the project's configuration, a position's index or a snippet schema
+Then each of those files names, in its first line, the schema instrukt generated for it, by a path within the repository
+And that schema admits exactly the keys validation admits for that file, so the editor can offer and mark them as validation would
 And no file in the repository names a path in the developer's home
 ```
 

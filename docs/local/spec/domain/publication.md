@@ -53,7 +53,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 **Domain**
 :  A published `docs/domain/<x>/` position: a body of knowledge one project is
    the authority on, published as one unit, named after what it is about.
-   `general` and `project` are reserved and never a domain's name.
+   `general` and `project` are reserved and never a domain's name, nor is
+   `third-party`, which keeps its existing special case.
 
 **Owner**
 :  The project that published an index entry or a position. Every index entry

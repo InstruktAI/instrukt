@@ -201,14 +201,16 @@ And it is told, by id, which required reads it has not yet loaded
 And nothing it did not ask for is loaded
 ```
 
-#### UC-DR2: An agent starts a procedure with everything it requires
+#### UC-DR2: An agent reads a snippet with everything it requires
 
 ```gherkin
-Given an agent acting for a developer is directed to run a published procedure
-When it reads that procedure as a closure
-Then it receives the procedure, each of its transitive required reads once, and what the domains they name show in full, in one read
-But when one of those required reads is still pending or cannot be read
+Given an agent acting for a developer needs a snippet whose required reads name other snippets by id and domains by name
+When it reads that snippet as a closure, whether a procedure it is directed to run, a design or an overview
+Then it receives the snippet, each of its transitive required reads once, and what the domains they name show in full, in one read
+And nothing in what it reads names a path on the author's computer
+But when a procedure's required read is still pending or cannot be read
 Then the read is refused and names the required read that blocked it
+And for any other snippet such a read is left out and named
 But when it asks for a closure of several items at once
 Then the read is refused and says a closure is read for exactly one snippet
 ```
@@ -239,25 +241,9 @@ But when the domain has no index
 Then it is told the domain has no index and how to list the domain's snippets instead
 ```
 
-#### UC-DR5: An agent reads any snippet together with everything it requires
-
-```gherkin
-Given an agent acting for a developer needs a design or an overview, not a procedure
-When it reads that snippet as a closure
-Then it receives the snippet and each of its transitive required reads once, in one read
-And a required read that is still pending is left out
-```
-
-#### UC-DR6: An author's references by id reach the reader on every computer
-
-```gherkin
-Given an author writes a snippet whose required reads name another snippet by its id and a domain by its name
-When an agent on any computer where both are published reads the snippet as a closure
-Then it receives the named snippet and what that domain shows in full
-And nothing in what it reads names a path on the author's computer
-```
-
 ## Known caveats
+
+- UC-DR5 and UC-DR6 are retired: their goals are part of UC-DR2. Their ids are not reused.
 
 - The planned lens runs before configured values are resolved, so hidden content is never resolved.
 - `--project <slug>` lists only that project's snippets. An unknown slug lists nothing and says no such project has published.

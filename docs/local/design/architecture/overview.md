@@ -85,8 +85,8 @@ docs/project/       the project: rendered into its root AGENTS.md   ids project/
 ```
 
 Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
-publish it; one project owns each on a computer, and `general` and `project`
-are never a domain's name. Each position may carry an `index.yaml` selecting
+publish it; one project owns each on a computer, and `general`, `project` and
+`third-party` (whose published tree is unchanged) are never a domain's name. Each position may carry an `index.yaml` selecting
 what is rendered and a `schema.yaml` adding sections
 (`local/projects/instrukt/spec/domain/docs`). The project also carries its
 root `AGENTS.master.md` (its purpose only), any nested masters, the generated

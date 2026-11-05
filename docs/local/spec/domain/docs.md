@@ -65,6 +65,9 @@ wherever a domain name is accepted.
 **Reserved name**
 : `general` and `project`. No domain may carry either; a folder
 `docs/domain/general/` or `docs/domain/project/` is refused, naming the rule.
+`third-party` keeps its existing special case: it is not a domain, its
+published tree `~/.instrukt/docs/third-party/` is unchanged, and no domain may
+be called `third-party` either.
 
 **Position index**
 : A position's `index.yaml`: which of its snippets are rendered in full

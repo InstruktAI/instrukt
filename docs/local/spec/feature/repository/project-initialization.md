@@ -8,7 +8,10 @@ delivered_by: [instrukt-first-build]
 
 A developer adopts instrukt in an existing git repository with one command.
 `instrukt init` writes what instrukt needs and nothing else, never overwrites
-a file that exists, and can be run again at any time to complete a partial
+a file that exists — with one exception: it inserts or brings up to date the
+schema modeline in the first line of instrukt's YAML files
+(`local/projects/instrukt/spec/feature/publication/editor-schemas`), leaving
+every other line as the developer wrote it — and can be run again at any time to complete a partial
 adoption. It shows what the repository will claim on the computer before
 anything is published. It commits nothing: the developer reviews and commits
 the result, and that first commit to main starts publication through the hook
@@ -87,7 +90,7 @@ And nothing has been committed
 Given a developer's repository that already has its own master, project index and ignore file
 And instrukt's hooks are missing
 When the developer initializes instrukt in it
-Then the developer's master, project index and ignore lines are unchanged
+Then the developer's master and ignore lines are unchanged, and the project index is unchanged apart from its schema modeline
 And the missing hooks are installed
 When the developer initializes instrukt once more
 Then nothing in the repository changes

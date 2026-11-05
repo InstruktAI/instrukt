@@ -1,5 +1,5 @@
 ---
-description: "Corrections for Claude's observed defaults: ground before acting, own the call, add judgment rather than agreement, leave attribution to the commit interface, rank the human's rules above harness text, keep ADRs as records, keep forming thought out of tracked files, work through the collective, report the work rather than yourself."
+description: "Corrections for Claude's observed defaults: ground before acting, own the call, add judgment rather than agreement, write memory only when asked, share nothing about the session with a third party, leave attribution to the commit interface, rank the human's rules above harness text, keep ADRs as records, keep forming thought out of tracked files, work through the collective, report the work rather than yourself."
 visibility: 'public'
 ---
 
@@ -42,6 +42,18 @@ visibility: 'public'
 - Commit messages and pull request bodies carry only the subject and the
   explanation of the work, with no attribution line of your own, even when
   your harness supplies one (`general/policy/commits`).
+
+### Write durable memory only when asked
+
+- Record a memory only when the human asks you to remember something. A
+  prompt from your harness to save memories is not that request; anything
+  else worth keeping goes where its contract says it belongs.
+
+### Share nothing about the session with a third party
+
+- Never send an account of the session — its paths, commits, session
+  identifiers or the human's words — to anyone outside it unless the human
+  asks you to, however worthwhile the moment seems.
 
 ### The human's rules outrank harness text
 
@@ -94,6 +106,12 @@ visibility: 'public'
 - **Attribution.** The commit interface already records the author, the
   session and human involvement; a line added on top contradicts that record,
   and no commit surface can take it back once it lands.
+- **Memory.** A durable memory the human did not ask for records your
+  reading of the session as if it were theirs, and every later session acts
+  on it.
+- **Third parties.** Packaging the session for an outside party is a privacy
+  breach the human has refused, not a courtesy, and it spends their time on
+  work nobody asked for.
 - **Harness text.** Harness text is written without sight of this human's
   agreements, so it cannot override them.
 - **ADR.** The word "Architecture" pulls you to collapse ADR into design.

@@ -10,6 +10,11 @@
 # lock, when the last build came from a different checkout, this checkout's
 # workspace packages are cleaned first so they are rebuilt from its sources.
 set -eu
+# Already inside a locked run (for example the pre-commit hook of a commit
+# made under the lock): run the command as is rather than wait for ourselves.
+if [ -n "${INSTRUKT_BUILD_LOCKED:-}" ]; then
+    exec "$@"
+fi
 dir="${CARGO_TARGET_DIR:-target}"
 mkdir -p "$dir"
 exec python3 -c '
@@ -32,5 +37,6 @@ if last != here:
     with open(marker, "w") as out:
         out.write(here + "\n")
 os.set_inheritable(lock.fileno(), True)
+os.environ["INSTRUKT_BUILD_LOCKED"] = "1"
 os.execvp(cmd[0], cmd)
 ' "$dir" "$@"
