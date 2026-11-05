@@ -125,6 +125,7 @@ None.
 - **layered-configuration** — `docs/local/spec/feature/configuration/layered-configuration.md` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
 - **configuration-editing** — `docs/local/spec/feature/configuration/configuration-editing.md` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
 - **interpolation** — `docs/local/spec/feature/configuration/interpolation.md` — values resolve across keys, the environment and the caller's own runtime session when read.
+- **logging** — `docs/local/spec/feature/configuration/logging.md` — every command's diagnostics are recorded where the InstruktAI logging contract puts them, readable afterwards with `instrukt-ai-logs instrukt`.
 
 ### Governing designs and decisions (index)
 
