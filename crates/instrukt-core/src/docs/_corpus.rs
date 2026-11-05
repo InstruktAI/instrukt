@@ -54,12 +54,7 @@ impl Version {
         let frontmatter = Frontmatter::read(mapping.unwrap_or_default(), taxonomy);
         let body = split.body.to_owned();
         let lines = _text::lines(&body);
-        let section = required_reads_section(&lines);
-        let required_reads = _text::references(&lines)
-            .into_iter()
-            .filter(|r| section.as_ref().is_some_and(|s| s.contains(&r.line)))
-            .map(|r| _refs::parse(&r.target, project, user_home))
-            .collect();
+        let required_reads = section_reads(&lines, project, user_home);
         let directives = _text::directives(&lines);
         let markers = _markers::scan(&body);
         Self {
@@ -158,6 +153,62 @@ pub(super) fn required_reads_section(lines: &[_text::Line<'_>]) -> Option<std::o
         .find(|h| h.level <= 2)
         .map_or(lines.len(), |h| h.line);
     Some(from + 1..to)
+}
+
+/// The entries of the `## Required reads` section of `lines`, in order.
+///
+/// Outside fenced code and HTML comments, each non-blank line is one entry:
+/// a list item holding one token, read as a snippet id or a bare domain
+/// name ([`_refs::entry`]); a line holding `@` references, read in the path
+/// forms masters and baseline manifests still use ([`_refs::parse`]), which
+/// validation reports in a snippet; anything else an entry that names
+/// nothing.
+pub(super) fn section_reads(
+    lines: &[_text::Line<'_>],
+    project: Option<&ProjectSlug>,
+    user_home: &Path,
+) -> Vec<Reference> {
+    let Some(section) = required_reads_section(lines) else {
+        return Vec::new();
+    };
+    let at_refs = _text::references(lines);
+    let mut out = Vec::new();
+    for index in section {
+        let Some(line) = lines.get(index) else {
+            continue;
+        };
+        if line.fenced {
+            continue;
+        }
+        let paths: Vec<Reference> = at_refs
+            .iter()
+            .filter(|r| r.line == index)
+            .map(|r| _refs::parse(&r.target, project, user_home))
+            .collect();
+        if !paths.is_empty() {
+            out.extend(paths);
+            continue;
+        }
+        let visible = _text::without_comments(line.text);
+        let text = visible.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let item = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|bullet| text.strip_prefix(bullet))
+            .map(str::trim);
+        out.push(match item {
+            Some(token) if !token.is_empty() && !token.contains(char::is_whitespace) => {
+                _refs::entry(token)
+            }
+            _ => Reference {
+                raw: item.unwrap_or(text).to_owned(),
+                target: None,
+            },
+        });
+    }
+    out
 }
 
 /// One in-body pending block (`planned:<slug>` or `planned-change:<slug>`)
@@ -663,7 +714,7 @@ impl Corpus {
                     .join(format!("{}.md", id.as_str()))
                     .is_file(),
             },
-            RefTarget::Bundle(domain) => {
+            RefTarget::Domain(domain) | RefTarget::Bundle(domain) => {
                 self.owned_domains.contains(domain) || self.home.domain_dir(domain).is_dir()
             }
             RefTarget::LocalFile(path) => self.paths.contains(path),

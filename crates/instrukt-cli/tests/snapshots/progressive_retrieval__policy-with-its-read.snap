@@ -10,6 +10,7 @@ type: policy
 domain: acme
 scope: global
 description: The rules of the work.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
 ---
 # Rules — Policy
 
@@ -49,6 +50,7 @@ type: principle
 domain: acme
 scope: global
 description: Why care matters.
+source: [TMP]/demo/docs/domain/acme/principle/care.md
 ---
 # Care — Principle
 

@@ -63,7 +63,6 @@ pub(super) fn check(
     let cx = RenderContext {
         fragments: Fragments::CorpusFirst(corpus),
         values,
-        repo_root: Some(repo_root),
         project: corpus.project(),
     };
     let mut walk = Compiled {
@@ -150,7 +149,9 @@ impl Compiled<'_, '_> {
                     self.file(&path, &body)?;
                 }
             }
-            RefTarget::Bundle(domain) => {
+            // Until rendering reads position indexes, a bare-domain read
+            // is compiled as that domain's bundle.
+            RefTarget::Bundle(domain) | RefTarget::Domain(domain) => {
                 let entries: Vec<Reference> = self
                     .corpus
                     .baselines()

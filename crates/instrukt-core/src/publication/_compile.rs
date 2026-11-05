@@ -38,9 +38,6 @@ pub(super) struct Compiler<'a> {
     /// listed.
     pub events: bool,
     pub values: &'a Values<'a>,
-    /// The project's primary worktree, against which its `docs/…`
-    /// references resolve.
-    pub primary: &'a Path,
     /// Bundles compiled so far, by domain.
     bundles: BTreeMap<DomainName, String>,
     compiling: BTreeSet<DomainName>,
@@ -59,7 +56,6 @@ impl<'a> Compiler<'a> {
         index: &'a GlobalIndex,
         events: bool,
         values: &'a Values<'a>,
-        primary: &'a Path,
     ) -> Self {
         Self {
             home,
@@ -69,7 +65,6 @@ impl<'a> Compiler<'a> {
             index,
             events,
             values,
-            primary,
             bundles: BTreeMap::new(),
             compiling: BTreeSet::new(),
         }
@@ -79,7 +74,6 @@ impl<'a> Compiler<'a> {
         RenderContext {
             fragments: Fragments::CorpusFirst(self.corpus),
             values: self.values,
-            repo_root: Some(self.primary),
             project: Some(self.project),
         }
     }
@@ -88,7 +82,6 @@ impl<'a> Compiler<'a> {
         RenderContext {
             fragments: Fragments::Home(self.home),
             values: self.values,
-            repo_root: None,
             project: None,
         }
     }
@@ -287,7 +280,9 @@ impl<'a> Compiler<'a> {
             )
         };
         match &target {
-            RefTarget::Bundle(domain) => {
+            // Until rendering reads position indexes, a bare-domain read
+            // is compiled as that domain's bundle.
+            RefTarget::Bundle(domain) | RefTarget::Domain(domain) => {
                 let text = if self.owned.contains(domain) {
                     self.bundle(domain)?
                 } else {

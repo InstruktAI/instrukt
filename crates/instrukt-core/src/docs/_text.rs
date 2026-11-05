@@ -230,6 +230,21 @@ pub(super) fn normalize_title(title: &str) -> String {
         .join(" ")
 }
 
+/// `line` with its HTML comments removed (inline code kept as written).
+pub(super) fn without_comments(line: &str) -> String {
+    let masked = mask_inline_code(line);
+    let mut blank = vec![false; masked.len()];
+    for comment in comments(&masked) {
+        blank[comment.whole]
+            .iter_mut()
+            .for_each(|flag| *flag = true);
+    }
+    line.char_indices()
+        .filter(|(at, _)| !blank.get(*at).copied().unwrap_or(false))
+        .map(|(_, ch)| ch)
+        .collect()
+}
+
 /// One `@` reference written in a body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RawRef {

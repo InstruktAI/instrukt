@@ -3,7 +3,8 @@ source: crates/instrukt-cli/tests/pending-documentation.rs
 expression: "stdout(&env, &listed)"
 ---
 # instrukt docs index: snippet ids with their descriptions
-# Filter with --domains <acme>, --areas <principle|concept|policy|procedure|design|spec|adr>, --baseline-only, --third-party, --target <slug>, --project <slug>
+# Filter with --domain <acme> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Source of project demo: [TMP]/demo/docs/project/ — published commit [SHA] — remote none
 
 acme/concept/old: A concept build-it retires. (superseded by: build-it)
 acme/policy/reworked: A live policy with a next version. (superseded by: build-it)

@@ -19,6 +19,7 @@ use crate::docs::{
     PositionIndex, ValidationRequest, Values,
 };
 use crate::fsx::{LockGuard, atomic_write};
+use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, DomainName, ProjectSlug};
 use crate::index::GlobalIndex;
@@ -266,7 +267,8 @@ fn publish(
         home,
         paths: &[],
         wiring: &wiring,
-    })?;
+    })?
+    .findings;
     if !findings.is_empty() {
         return Ok(refused(Refusal::Findings(findings)));
     }
@@ -301,7 +303,6 @@ fn publish(
         &patched,
         events,
         &values,
-        &project.primary,
     );
     let mut bundles = BTreeMap::new();
     for domain in &held {
@@ -658,6 +659,7 @@ fn write(
         project: project.slug.clone(),
         commit: commit.clone(),
         checkout: project.primary.clone(),
+        remote: remote_url(&project.primary)?,
     };
     let text = serde_yaml_ng::to_string(&record).map_err(PublicationError::Render)?;
     tx.write(
@@ -665,6 +667,14 @@ fn write(
         text.as_bytes(),
     )?;
     Ok(())
+}
+
+/// The URL of the `origin` remote of the repository at `dir`; `None` when
+/// it has none.
+fn remote_url(dir: &Path) -> Result<Option<String>, PublicationError> {
+    let output = git::run_output(dir, ["config", "--get", "remote.origin.url"])?;
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((output.status.success() && !url.is_empty()).then_some(url))
 }
 
 /// The `description` of the committed `docs/domain/<x>/index.yaml` of

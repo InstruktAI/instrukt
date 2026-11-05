@@ -2,8 +2,8 @@
 //! publication's compilation.
 //!
 //! One rendering takes a text through, in order: the frontmatter strip, the
-//! `@include` expansion, the planned lens, the `@config` configured values,
-//! the inline references and the `Required reads` strip
+//! `@include` expansion, the planned lens, the `@config` configured values
+//! and the `Required reads` strip; references are ids and stay as written
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`, read
 //! pipeline). The lens goes before `@config`, so hidden content is never
 //! resolved. Nothing runs a command: a leftover `@exec` stays inert text.
@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::_corpus::{Corpus, Lens, Version, required_reads_section};
 use super::_markers::{self, Side};
-use super::_refs::{self, Reference};
+use super::_refs::Reference;
 use super::_text::{self, Directive};
 use super::DocsError;
 use crate::config::{Configuration, Env, render_yaml};
@@ -176,15 +176,12 @@ pub(super) fn is_runtime(path: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
     /// Where `@include` fragments come from; also the home whose user
-    /// directory `~/` references expand to.
+    /// directory a master's `~/` path references are read against.
     pub fragments: Fragments<'a>,
     /// How `@config` directives resolve.
     pub values: &'a Values<'a>,
-    /// The root of the repository the text belongs to, against which
-    /// `docs/…` references resolve; `None` for text read from the home,
-    /// whose relative references stay as written.
-    pub repo_root: Option<&'a Path>,
-    /// The slug that repository declares, which local required reads name.
+    /// The slug the text's repository declares, which a master's
+    /// `docs/project/…` path references name.
     pub project: Option<&'a ProjectSlug>,
 }
 
@@ -229,10 +226,8 @@ fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Ren
     let lensed = include_and_lens(body, lens, cx)?;
     let required_reads = section_reads(&lensed, cx);
     let (resolved, config_refusals) = resolve_values(&lensed, cx.values)?;
-    // The section is stripped before references expand, which leaves the
-    // text the same.
-    let stripped = strip_required_reads(&resolved);
-    let text = expand_references(&stripped, cx);
+    // References are ids and stay as written: no step rewrites them.
+    let text = strip_required_reads(&resolved);
     Ok(Rendered {
         text,
         required_reads,
@@ -340,40 +335,10 @@ fn fenced(value: &str) -> String {
     format!("{fence}\n{output}\n{fence}")
 }
 
-/// Every `@<path>.md` reference outside code and comments, as an absolute
-/// path: `~/` expands to the user's home directory, a relative path
-/// resolves against the repository root when the text has one.
-fn expand_references(body: &str, cx: &RenderContext<'_>) -> String {
-    let user_home = cx.fragments.home().user_home();
-    let replacements = _text::references(&_text::lines(body))
-        .into_iter()
-        .filter(|r| r.target.ends_with(".md") && !r.target.contains("://"))
-        .filter_map(|r| {
-            let absolute = if let Some(rest) = r.target.strip_prefix("~/") {
-                user_home.join(rest)
-            } else if Path::new(&r.target).is_absolute() {
-                return None;
-            } else {
-                cx.repo_root?.join(&r.target)
-            };
-            Some((r.span, format!("@{}", absolute.display())))
-        })
-        .collect();
-    splice(body, replacements)
-}
-
-/// The references of `body`'s `## Required reads` section.
+/// The entries of `body`'s `## Required reads` section.
 fn section_reads(body: &str, cx: &RenderContext<'_>) -> Vec<Reference> {
     let lines = _text::lines(body);
-    let Some(section) = required_reads_section(&lines) else {
-        return Vec::new();
-    };
-    let user_home = cx.fragments.home().user_home();
-    _text::references(&lines)
-        .into_iter()
-        .filter(|r| section.contains(&r.line))
-        .map(|r| _refs::parse(&r.target, cx.project, user_home))
-        .collect()
+    super::_corpus::section_reads(&lines, cx.project, cx.fragments.home().user_home())
 }
 
 /// `body` without its `## Required reads` section, heading included.

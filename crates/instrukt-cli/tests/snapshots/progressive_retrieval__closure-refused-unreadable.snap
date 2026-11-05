@@ -1,5 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stderr(&env, &refused)"
+expression: "refused_closure(&env, &demo, \"acme/procedure/broken\")"
 ---
-instrukt: cannot read acme/procedure/broken as a closure: its required read `~/.instrukt/docs/acme/spec/absent.md` names no published snippet
+instrukt: cannot read acme/procedure/broken as a closure: its required read `acme/spec/absent` names no published snippet

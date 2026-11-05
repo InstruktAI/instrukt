@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
-use instrukt_core::docs::{self, GetRequest, IndexRequest, Taxonomy, ValidationRequest};
+use instrukt_core::docs::{
+    self, DomainRequest, GetRequest, IndexRequest, Taxonomy, ValidationRequest,
+};
 use instrukt_core::git;
-use instrukt_core::ids::{DomainName, ProjectSlug, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, TodoSlug};
 
 use crate::context::Ctx;
 use crate::wiring::core_wiring;
@@ -22,8 +24,9 @@ enum DocsCommand {
     /// Check the repository's documentation against the snippet contract.
     ///
     /// Reads the working tree and changes nothing. Prints one line per
-    /// finding (`<file>: <code>[: <value>]`) and exits non-zero while any
-    /// finding remains.
+    /// finding (`<file>: <code>[: <value>]`), then each notice
+    /// (`notice: <file>: <code>[: <value>]`), and exits non-zero while any
+    /// finding remains; notices never fail the run.
     Validate(ValidateArgs),
     /// Apply one delivery's pending documentation to the working tree.
     ///
@@ -34,33 +37,35 @@ enum DocsCommand {
     Fold(FoldArgs),
     /// List published snippet ids with their descriptions (phase 1).
     ///
-    /// Shows every published domain and the local snippets of the project
-    /// the working directory belongs to. Each filter only narrows. Pending
-    /// snippets are flagged `(delivered by: …)`, live snippets with pending
-    /// changes `(superseded by: …)`.
+    /// Shows `general`, every published domain and the snippets of the
+    /// project the working directory belongs to. Each filter only narrows.
+    /// A listing naming a position opens with its source: its folder in the
+    /// checkout it was published from, the published commit and the
+    /// remote. Pending snippets are flagged `(delivered by: …)`, live
+    /// snippets with pending changes `(superseded by: …)`.
     Index(IndexArgs),
     /// Read snippets through the read pipeline (phase 2).
     ///
-    /// Prints each snippet's header and body, with fragments included,
-    /// configured values resolved for this session, and references made
-    /// absolute. Names the required reads it did not load; `--closure`
-    /// loads them with one procedure instead. Exits non-zero when an id is
-    /// unknown or a configured value cannot be resolved.
+    /// Prints each snippet's header (naming its source file) and body, with
+    /// fragments included and configured values resolved for this session.
+    /// Names the required reads it did not load; `--closure` loads them
+    /// with one snippet instead. `--domain <x>` reads what a domain shows:
+    /// its index's snippets in full with their closures, its listed
+    /// snippets and its triggered procedures. Exits non-zero when an id or
+    /// domain is unknown or a configured value cannot be resolved.
     Get(GetArgs),
 }
 
 #[derive(Debug, clap::Args)]
 struct IndexArgs {
-    /// Only snippets of these published domains (comma-separated).
-    #[arg(long, value_delimiter = ',', value_name = "DOMAIN")]
-    domains: Vec<DomainName>,
+    /// Only snippets of this published domain (`general` included);
+    /// repeatable.
+    #[arg(long = "domain", value_name = "DOMAIN")]
+    domains: Vec<String>,
     /// Only these taxonomy types: principle, concept, policy, procedure,
     /// design, spec, adr (comma-separated).
     #[arg(long, value_delimiter = ',', value_name = "TYPE", value_parser = taxonomy)]
     areas: Vec<Taxonomy>,
-    /// Only snippets a domain's or the project's baseline manifest names.
-    #[arg(long)]
-    baseline_only: bool,
     /// Add the third-party documentation section.
     #[arg(long)]
     third_party: bool,
@@ -75,15 +80,19 @@ struct IndexArgs {
 #[derive(Debug, clap::Args)]
 struct GetArgs {
     /// Snippet ids, as `instrukt docs index` lists them.
-    #[arg(required = true, value_name = "ID")]
+    #[arg(required_unless_present = "domain", value_name = "ID")]
     ids: Vec<String>,
-    /// Read one delivered procedure with every transitive required read and
-    /// the domain bundles they name, in one pass.
+    /// Read one delivered snippet with every transitive required read and
+    /// what the domains they name show in full, in one pass.
     #[arg(long, conflicts_with = "target")]
     closure: bool,
     /// Read the documentation as this todo will deliver it.
     #[arg(long, value_name = "SLUG")]
     target: Option<TodoSlug>,
+    /// Read what a domain (`general` included) shows, as its index renders
+    /// it; takes no ids.
+    #[arg(long, value_name = "DOMAIN", conflicts_with_all = ["ids", "closure", "target"])]
+    domain: Option<String>,
 }
 
 fn taxonomy(value: &str) -> Result<Taxonomy, String> {
@@ -124,7 +133,6 @@ fn index(args: IndexArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         cwd: &ctx.cwd,
         domains: &args.domains,
         areas: &args.areas,
-        baseline_only: args.baseline_only,
         third_party: args.third_party,
         target: args.target.as_ref(),
         project: args.project.as_ref(),
@@ -134,13 +142,20 @@ fn index(args: IndexArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let reading = docs::get(&GetRequest {
-        home: &ctx.home,
-        cwd: &ctx.cwd,
-        ids: &args.ids,
-        closure: args.closure,
-        target: args.target.as_ref(),
-    })?;
+    let reading = match &args.domain {
+        Some(domain) => docs::get_domain(&DomainRequest {
+            home: &ctx.home,
+            cwd: &ctx.cwd,
+            domain,
+        })?,
+        None => docs::get(&GetRequest {
+            home: &ctx.home,
+            cwd: &ctx.cwd,
+            ids: &args.ids,
+            closure: args.closure,
+            target: args.target.as_ref(),
+        })?,
+    };
     ctx.out.text(&reading.text)?;
     Ok(if reading.unresolved {
         ExitCode::FAILURE
@@ -158,17 +173,25 @@ fn validate(args: ValidateArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = repo_root(&ctx.cwd)?;
     let paths: Vec<PathBuf> = args.paths.iter().map(|p| ctx.cwd.join(p)).collect();
     let wiring = core_wiring(ctx)?;
-    let findings = docs::validate(&ValidationRequest {
+    let validation = docs::validate(&ValidationRequest {
         repo_root: &root,
         home: &ctx.home,
         paths: &paths,
         wiring: &wiring,
     })?;
+    let findings = &validation.findings;
     if args.json {
-        ctx.out.json(&findings)?;
+        // The findings are the JSON list; notices go to stderr, apart.
+        ctx.out.json(findings)?;
+        for notice in &validation.notices {
+            eprintln!("notice: {notice}");
+        }
     } else {
-        for finding in &findings {
+        for finding in findings {
             ctx.out.line(&finding.to_string())?;
+        }
+        for notice in &validation.notices {
+            ctx.out.line(&format!("notice: {notice}"))?;
         }
     }
     Ok(if findings.is_empty() {

@@ -449,7 +449,7 @@ fn a_bundle_left_with_a_reference_fails_the_sync() {
     env.run(repo.path(), ["docs", "validate"]).success();
 
     let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/domain/acme/bundle.md: the compiled text still references `@[TMP]/demo/docs/project/policy/house.md`");
+    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot compile docs/domain/acme/bundle.md: the compiled text still references `@docs/project/policy/house.md`");
     assert_eq!(published_tree(&env), before);
     assert_eq!(published_commit(&env, "demo"), published);
 }

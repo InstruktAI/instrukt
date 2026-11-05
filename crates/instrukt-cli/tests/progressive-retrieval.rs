@@ -17,7 +17,7 @@ use documented::{project, snippet, sync};
 /// Command output with the test's temporary directory shown as `[TMP]`.
 fn text(env: &TestEnv, bytes: &[u8]) -> String {
     let base = env.home().parent().unwrap().display().to_string();
-    String::from_utf8_lossy(bytes).replace(&base, "[TMP]")
+    common::mask_published_commits(&String::from_utf8_lossy(bytes).replace(&base, "[TMP]"))
 }
 
 fn stdout(env: &TestEnv, assert: &Assert) -> String {
@@ -28,13 +28,14 @@ fn stderr(env: &TestEnv, assert: &Assert) -> String {
     text(env, &assert.get_output().stderr)
 }
 
-const CARE: &str = "- @~/.instrukt/docs/acme/principle/care.md";
-const RULES: &str = "- @~/.instrukt/docs/acme/policy/rules.md";
-const TERMS: &str = "- @~/.instrukt/docs/acme/concept/terms.md";
-const BUNDLE: &str = "- @~/.instrukt/docs/acme/bundle.md";
+const CARE: &str = "- acme/principle/care";
+const RULES: &str = "- acme/policy/rules";
+const TERMS: &str = "- acme/concept/terms";
+const BETA: &str = "- beta";
 
-/// What project `demo` documents: two domains, fragments (one carrying a
-/// required read), a baseline, a third-party doc and two local snippets.
+/// What project `demo` documents: three domains (`acme` and `beta` with an
+/// index, `gamma` without), fragments (one carrying a required read), a
+/// third-party doc and two local snippets.
 fn demo_files() -> Vec<(&'static str, String)> {
     vec![
         (
@@ -72,8 +73,8 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "procedure",
                 "Work",
                 "How the work is done.",
-                "",
-                &[RULES, BUNDLE],
+                "activation_trigger: When work arrives.\n",
+                &[RULES, BETA],
                 "Work.\n",
             ),
         ),
@@ -84,23 +85,51 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "Start",
                 "Starts a session.",
                 "role: starter\n",
-                &[RULES, "<!-- @include: docs/snippets/reads.md -->", BUNDLE],
+                &[RULES, "<!-- @include: docs/snippets/reads.md -->", BETA],
                 "Start.\n",
             ),
         ),
         (
+            "docs/domain/acme/procedure/greet.md",
+            snippet(
+                "procedure",
+                "Greet",
+                "Greets a newcomer.",
+                "activation_trigger: When someone arrives.\n",
+                &[],
+                "Greet.\n",
+            ),
+        ),
+        (
+            "docs/domain/acme/index.yaml",
+            "description: How acme works.\nexpanded: [acme/procedure/work]\n\
+             listed: [acme/concept/terms]\n"
+                .to_owned(),
+        ),
+        (
             "docs/domain/beta/spec/thing.md",
-            snippet("spec", "Thing", "What a thing is.", "", &[], "A thing.\n"),
+            snippet(
+                "spec",
+                "Thing",
+                "What a thing is.",
+                "",
+                &[],
+                "### Detail\n\nA thing.\n",
+            ),
+        ),
+        (
+            "docs/domain/beta/index.yaml",
+            "description: What beta holds.\nexpanded: [beta/spec/thing]\n".to_owned(),
+        ),
+        (
+            "docs/domain/gamma/concept/loose.md",
+            snippet("concept", "Loose", "Not on any map.", "", &[], "Loose.\n"),
         ),
         (
             "docs/global/snippets/shared.md",
             "Shared text.\n".to_owned(),
         ),
         ("docs/global/snippets/reads.md", format!("{TERMS}\n")),
-        (
-            "docs/domain/acme/baseline.md",
-            "@~/.instrukt/docs/acme/principle/care.md\n".to_owned(),
-        ),
         (
             "docs/third-party/tool/guide.md",
             "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n".to_owned(),
@@ -112,17 +141,13 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "X",
                 "The x feature.",
                 "",
-                &["- @docs/project/design/y.md"],
+                &["- project/demo/design/y"],
                 "The x feature.\n",
             ),
         ),
         (
             "docs/project/design/y.md",
             snippet("design", "Y", "How y is built.", "", &[], "Y.\n"),
-        ),
-        (
-            "docs/project/baseline.md",
-            "@docs/project/design/y.md\n".to_owned(),
         ),
     ]
 }
@@ -146,7 +171,7 @@ fn an_agent_lists_what_its_task_concerns_and_reads_only_what_it_selects() {
             [
                 "docs",
                 "index",
-                "--domains",
+                "--domain",
                 "acme",
                 "--areas",
                 "policy,procedure",
@@ -222,14 +247,9 @@ fn an_agent_sees_its_own_project_and_reads_another_projects_local_documentation(
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
 #[test]
-fn an_agent_narrows_to_baselines_and_adds_third_party_documentation() {
+fn an_agent_adds_third_party_documentation() {
     let env = TestEnv::new();
     let demo = published_demo(&env);
-
-    let baseline = env
-        .run(demo.path(), ["docs", "index", "--baseline-only"])
-        .success();
-    insta::assert_snapshot!("baseline-index", stdout(&env, &baseline));
 
     let with_third_party = env
         .run(demo.path(), ["docs", "index", "--third-party"])
@@ -273,13 +293,13 @@ fn an_agent_reads_the_general_owners_third_party_documentation_as_global() {
 #[test]
 fn the_general_owner_is_known_by_its_claim_even_without_snippets() {
     let env = TestEnv::new();
-    // `general` is published with an empty baseline and no snippet: no
+    // `general` is published with an empty index and no snippet: no
     // index entry names its owner.
     let platform = project(
         &env,
         "platform",
         &[
-            ("docs/general/baseline.md", String::new()),
+            ("docs/general/index.yaml", String::new()),
             (
                 "docs/third-party/tool/guide.md",
                 "---\ndescription: How the tool works.\n---\n\n# Tool guide\n\nUse it.\n"
@@ -308,7 +328,7 @@ fn an_agent_is_warned_when_main_is_ahead_of_what_was_published() {
     let main = demo.commit("docs: more");
 
     let listed = env
-        .run(demo.path(), ["docs", "index", "--domains", "beta"])
+        .run(demo.path(), ["docs", "index", "--domain", "beta"])
         .success();
     let listed = stdout(&env, &listed)
         .replace(&main, "[MAIN]")
@@ -351,7 +371,10 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
     insta::assert_snapshot!("unknown-id", stderr(&env, &unknown));
 
     let domain = env
-        .run(demo.path(), ["docs", "index", "--domains", "acme,gamma"])
+        .run(
+            demo.path(),
+            ["docs", "index", "--domain", "acme", "--domain", "delta"],
+        )
         .failure();
     insta::assert_snapshot!("unknown-domain", stderr(&env, &domain));
 
@@ -369,7 +392,8 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
 
 /// Procedures with root frontmatter whose closures must refuse: one
 /// requires a pending snippet, one requires through a fragment a pending
-/// snippet, one requires through a fragment what is not published.
+/// snippet, one requires through a fragment what is not published; and an
+/// overview requiring a pending snippet, whose closure leaves it out.
 fn refused_files() -> Vec<(&'static str, String)> {
     vec![
         (
@@ -379,7 +403,7 @@ fn refused_files() -> Vec<(&'static str, String)> {
                 "Blocked",
                 "Cannot start yet.",
                 "role: blocked\n",
-                &["- @~/.instrukt/docs/acme/spec/coming.md"],
+                &["- acme/spec/coming"],
                 "Wait.\n",
             ),
         ),
@@ -417,12 +441,23 @@ fn refused_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
+            "docs/domain/acme/design/overview.md",
+            snippet(
+                "design",
+                "Overview",
+                "How acme fits together.",
+                "",
+                &["- acme/spec/coming", RULES],
+                "Overview.\n",
+            ),
+        ),
+        (
             "docs/global/snippets/coming.md",
-            "- @~/.instrukt/docs/acme/spec/coming.md\n".to_owned(),
+            "- acme/spec/coming\n".to_owned(),
         ),
         (
             "docs/global/snippets/absent.md",
-            "- @~/.instrukt/docs/acme/spec/absent.md\n".to_owned(),
+            "- acme/spec/absent\n".to_owned(),
         ),
     ]
 }
@@ -452,8 +487,9 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     let env = TestEnv::new();
     let demo = published_closures(&env);
 
-    // `start` requires `rules` and, through a fragment, `terms`; both
-    // require `care`, which the closure holds once.
+    // `start` requires `rules`, through a fragment `terms`, and domain
+    // `beta`; both snippets require `care`, which the closure holds once,
+    // and `beta` brings its expanded `thing`.
     let closure = env
         .run(
             demo.path(),
@@ -498,7 +534,7 @@ fn a_closure_whose_required_read_cannot_be_read_is_refused_naming_it() {
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
-fn a_closure_is_read_for_exactly_one_procedure() {
+fn a_closure_is_read_for_exactly_one_snippet() {
     let env = TestEnv::new();
     let demo = published_closures(&env);
 
@@ -519,17 +555,102 @@ fn a_closure_is_read_for_exactly_one_procedure() {
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
 #[test]
-fn a_closure_is_read_only_for_a_procedure() {
+fn a_closure_of_a_third_party_doc_is_refused() {
+    let env = TestEnv::new();
+    let demo = published_closures(&env);
+    insta::assert_snapshot!(
+        "closure-of-a-third-party-doc",
+        refused_closure(&env, &demo, "third-party/tool/guide")
+    );
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR2
+#[test]
+fn a_closure_of_any_snippet_leaves_out_and_names_what_cannot_be_read() {
     let env = TestEnv::new();
     let demo = published_closures(&env);
 
-    let not_a_procedure = env
+    let overview = env
         .run(
             demo.path(),
-            ["docs", "get", "--closure", "acme/policy/rules"],
+            ["docs", "get", "--closure", "acme/design/overview"],
         )
+        .success();
+    insta::assert_snapshot!("closure-of-an-overview", stdout(&env, &overview));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR4
+#[test]
+fn an_agent_reads_a_domain_with_what_it_shows_in_full_and_what_it_lists() {
+    let env = TestEnv::new();
+    let demo = published_demo(&env);
+
+    // `acme` expands `work`, which requires `rules` (requiring `care`) and
+    // domain `beta`; it lists `terms` and has the triggered `greet`.
+    let read = env
+        .run(demo.path(), ["docs", "get", "--domain", "acme"])
+        .success();
+    insta::assert_snapshot!("domain-read", stdout(&env, &read));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR4
+#[test]
+fn an_agent_reading_a_domain_without_an_index_is_told_how_to_list_it() {
+    let env = TestEnv::new();
+    let demo = published_demo(&env);
+
+    let read = env
+        .run(demo.path(), ["docs", "get", "--domain", "gamma"])
+        .success();
+    insta::assert_snapshot!("domain-without-index", stdout(&env, &read));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR4
+#[test]
+fn an_agent_reading_a_reserved_name_as_a_domain_is_told_the_valid_ones() {
+    let env = TestEnv::new();
+    let demo = published_demo(&env);
+
+    let reserved = env
+        .run(demo.path(), ["docs", "get", "--domain", "project"])
         .failure();
-    insta::assert_snapshot!("closure-of-a-policy", stderr(&env, &not_a_procedure));
+    insta::assert_snapshot!("domain-reserved", stderr(&env, &reserved));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR7
+#[test]
+fn an_agent_finds_where_a_domain_is_authored() {
+    let env = TestEnv::new();
+    let demo = project(&env, "demo", &demo_files());
+    demo.git([
+        "remote",
+        "add",
+        "origin",
+        "https://example.invalid/demo/docs.git",
+    ]);
+    sync(&env, &demo);
+
+    let listed = env
+        .run(
+            demo.path(),
+            ["docs", "index", "--domain", "beta", "--domain", "acme"],
+        )
+        .success();
+    insta::assert_snapshot!("domain-sources", stdout(&env, &listed));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR8
+#[test]
+fn an_agent_finds_the_file_behind_a_snippet_it_read() {
+    let env = TestEnv::new();
+    published_demo(&env);
+    let outside = env.path("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+
+    let read = env
+        .run(&outside, ["docs", "get", "beta/spec/thing"])
+        .success();
+    insta::assert_snapshot!("snippet-source", stdout(&env, &read));
 }
 
 const RUNTIMES: &str = "schema_version: 1

@@ -1,0 +1,103 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &overview)"
+---
+# instrukt docs get --closure: acme/design/overview
+# Required reads (included): acme/policy/rules, acme/principle/care
+# Required reads left out: acme/spec/coming (is still pending)
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
+---
+# Rules — Policy
+
+## Rules
+
+Follow the rules.
+
+Shared text.
+
+<!-- @include: docs/snippets/missing.md -->
+
+A reference is written `@docs/project/design/y.md`, for example:
+
+```
+- @~/.instrukt/docs/acme/principle/care.md
+```
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
+
+---
+id: acme/principle/care
+type: principle
+domain: acme
+scope: global
+description: Why care matters.
+source: [TMP]/demo/docs/domain/acme/principle/care.md
+---
+# Care — Principle
+
+## Principle
+
+Care.
+
+## Rationale
+
+Text.
+
+## Implications
+
+Text.
+
+## Tensions
+
+Text.
+
+---
+id: acme/design/overview
+type: design
+domain: acme
+scope: global
+description: How acme fits together.
+source: [TMP]/demo/docs/domain/acme/design/overview.md
+---
+# Overview — Design
+
+## Purpose
+
+Overview.
+
+## Inputs/Outputs
+
+Text.
+
+## Invariants
+
+Text.
+
+## Primary flows
+
+Text.
+
+## Failure modes
+
+Text.

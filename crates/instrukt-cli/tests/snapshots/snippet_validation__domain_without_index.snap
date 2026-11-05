@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+expression: run.out
+---
+notice: docs/domain/beta/: domain-without-index: `beta` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain beta`

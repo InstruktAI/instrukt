@@ -126,15 +126,20 @@ pub enum PublicationStateError {
 }
 
 /// What publication records per project under `state/publication/`: the
-/// commit of canonical main last published and the project's checkout path.
-/// Docs compares it with main for the behind-main warning; the runner finds
-/// projects through it.
+/// commit of canonical main last published, the project's checkout path and
+/// its repository's remote. Docs compares it with main for the behind-main
+/// warning and names it as the source of what the project publishes; the
+/// runner finds projects through it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedRecord {
     pub project: ProjectSlug,
     pub commit: CommitSha,
-    /// The project's primary worktree.
+    /// The project's primary worktree: the checkout its positions are
+    /// published from.
     pub checkout: PathBuf,
+    /// The URL of the repository's `origin` remote; `None` without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
 }
 
 impl PublishedRecord {
@@ -179,6 +184,42 @@ impl PublishedRecord {
         records.sort_by(|a, b| a.project.cmp(&b.project));
         Ok(records)
     }
+}
+
+/// Every claimed published position's owner, by the domain name the
+/// position is addressed by (`general` for `docs/general/`).
+pub fn position_owners(
+    home: &Home,
+) -> Result<std::collections::BTreeMap<crate::ids::DomainName, ProjectSlug>, PublicationStateError>
+{
+    let dir = home.claims_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        Err(source) => return Err(PublicationStateError::Read { path: dir, source }),
+    };
+    let mut owners = std::collections::BTreeMap::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| PublicationStateError::Read {
+            path: dir.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "yaml") {
+            continue;
+        }
+        let text =
+            std::fs::read_to_string(&path).map_err(|source| PublicationStateError::Read {
+                path: path.clone(),
+                source,
+            })?;
+        let record: _tree::ClaimRecord = serde_yaml_ng::from_str(&text)
+            .map_err(|source| PublicationStateError::Parse { path, source })?;
+        owners.insert(record.position, record.owner);
+    }
+    Ok(owners)
 }
 
 /// The project that owns the published position `domain` addresses

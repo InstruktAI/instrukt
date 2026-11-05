@@ -34,31 +34,7 @@ pub(super) fn claim_path(home: &Home, domain: &DomainName) -> PathBuf {
 
 /// Every claimed position's owner, by the domain name it is addressed by.
 pub(super) fn claims(home: &Home) -> Result<BTreeMap<DomainName, ProjectSlug>, PublicationError> {
-    let dir = home.claims_dir();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(source) => return Err(PublicationError::Io { path: dir, source }),
-    };
-    let mut owners = BTreeMap::new();
-    for entry in entries {
-        let entry = entry.map_err(|source| PublicationError::Io {
-            path: dir.clone(),
-            source,
-        })?;
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "yaml") {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).map_err(|source| PublicationError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        let record: ClaimRecord = serde_yaml_ng::from_str(&text)
-            .map_err(|source| PublicationError::Parse { path, source })?;
-        owners.insert(record.position, record.owner);
-    }
-    Ok(owners)
+    Ok(super::position_owners(home)?)
 }
 
 /// The published positions the committed tree holds, by the domain name

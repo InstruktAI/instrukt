@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/progressive-retrieval.rs
 expression: "stdout(&env, &closure)"
 ---
 # instrukt docs get --closure: acme/procedure/start
-# Required reads (included): acme/policy/rules, acme/principle/care, acme/concept/terms, [TMP]/home/.instrukt/docs/acme/bundle.md
+# Required reads (included): acme/policy/rules, acme/principle/care, acme/concept/terms, beta, beta/spec/thing
 
 ---
 id: acme/policy/rules
@@ -11,6 +11,7 @@ type: policy
 domain: acme
 scope: global
 description: The rules of the work.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
 ---
 # Rules — Policy
 
@@ -50,6 +51,7 @@ type: principle
 domain: acme
 scope: global
 description: Why care matters.
+source: [TMP]/demo/docs/domain/acme/principle/care.md
 ---
 # Care — Principle
 
@@ -75,6 +77,7 @@ type: concept
 domain: acme
 scope: global
 description: The words used.
+source: [TMP]/demo/docs/domain/acme/concept/terms.md
 ---
 # Terms — Concept
 
@@ -87,36 +90,24 @@ Terms.
 Text.
 
 ---
-bundle: acme
-path: [TMP]/home/.instrukt/docs/acme/bundle.md
+id: beta/spec/thing
+type: spec
+domain: beta
+scope: global
+description: What a thing is.
+source: [TMP]/demo/docs/domain/beta/spec/thing.md
 ---
-# acme — Platform Baseline
+# Thing — Spec
 
-id: acme/principle/care
+## What it is
 
-# Care — Principle
+### Detail
 
-## Principle
+A thing.
 
-Care.
-
-## Rationale
+## Canonical fields
 
 Text.
-
-## Implications
-
-Text.
-
-## Tensions
-
-Text.
-
----
-
-## Activatable Procedures — load via `instrukt docs get <id> --closure` before acting
-
-- `acme/procedure/broken` — Requires what is not published. — When broken.
 
 ---
 id: acme/procedure/start
@@ -124,6 +115,7 @@ type: procedure
 domain: acme
 scope: global
 description: Starts a session.
+source: [TMP]/demo/docs/domain/acme/procedure/start.md
 ---
 # Start — Procedure
 
