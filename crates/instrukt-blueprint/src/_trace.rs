@@ -7,10 +7,11 @@
 //! or trailing `()`) — when the graph has one, otherwise by every node of
 //! its file. Test files are the files that hold a binding.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use instrukt_core::ids::UseCaseRef;
-use instrukt_core::specs::{Binding, TestLocation};
+use instrukt_core::specs::{Binding, Inventory, TestLocation};
 
 use crate::_contract::{Graph, Node, normalize_path};
 use crate::_traversal::Direction;
@@ -25,11 +26,40 @@ pub struct UseCaseTrace {
     pub reached: Option<Vec<Node>>,
 }
 
-/// A test reaching a traced file, with the use cases it binds.
+/// Files traced back to the use cases at stake.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReachingTest {
-    pub test: TestLocation,
-    pub use_cases: Vec<UseCaseRef>,
+pub struct FileTrace {
+    /// One group per spec folder, ordered by folder.
+    pub groups: Vec<SpecFolder>,
+    /// The given files no use-case-binding test reaches, in the order
+    /// given; files the graph does not know are among them.
+    pub untraced: Vec<UntracedFile>,
+}
+
+/// The use cases at stake whose spec files share a folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecFolder {
+    /// The repository-relative folder holding the spec files, with a
+    /// trailing `/`.
+    pub folder: String,
+    /// Each use case at stake once, ordered by spec id, then use-case id.
+    pub use_cases: Vec<AtStake>,
+}
+
+/// A use case at stake, with the tests binding it that reach any of the
+/// traced files, in test order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtStake {
+    pub use_case: UseCaseRef,
+    pub tests: Vec<TestLocation>,
+}
+
+/// A traced file that no use-case-binding test reaches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UntracedFile {
+    pub file: String,
+    /// Whether the graph defines any node in it.
+    pub known: bool,
 }
 
 /// The tests binding `use_case` and, over `graph` when there is one, the
@@ -71,28 +101,98 @@ pub fn trace_use_case(
     UseCaseTrace { tests, reached }
 }
 
-/// The tests from whose nodes a node of `file` is reachable over
-/// dependency links, each with the use cases it binds, in test order.
-/// `file` is repository-relative.
-pub fn trace_file(graph: &Graph, bindings: &[Binding], file: &str) -> Vec<ReachingTest> {
-    let targets: BTreeSet<&str> = graph.nodes_in_file(file).map(|n| n.id.as_str()).collect();
-    if targets.is_empty() {
-        return Vec::new();
+/// The use cases at stake when `files` change: every use case bound by a
+/// test from whose nodes a node of any of `files` is reachable over
+/// dependency links, grouped by the folder of its spec file in
+/// `inventory`, and the files no such test reaches. `files` are
+/// repository-relative; a file given twice counts once. A binding naming a
+/// use case the inventory does not hold has no spec folder and is left out.
+pub fn trace_files<S: AsRef<str>>(
+    graph: &Graph,
+    bindings: &[Binding],
+    inventory: &Inventory,
+    files: &[S],
+) -> FileTrace {
+    let mut given: Vec<String> = Vec::new();
+    for file in files {
+        let file = normalize_path(file.as_ref());
+        if !given.contains(&file) {
+            given.push(file);
+        }
     }
-    let mut reaching = graph.reach(targets.iter().copied(), Direction::Backward);
-    reaching.extend(targets.iter().copied());
-    tests(bindings)
+    let tests: Vec<(TestLocation, BTreeSet<UseCaseRef>, Vec<&str>)> = tests(bindings)
         .into_iter()
-        .filter(|(test, _)| {
-            test_nodes(graph, test)
-                .iter()
-                .any(|id| reaching.contains(id))
+        .map(|(test, use_cases)| {
+            let nodes = test_nodes(graph, &test);
+            (test, use_cases, nodes)
         })
-        .map(|(test, use_cases)| ReachingTest {
-            test,
-            use_cases: use_cases.into_iter().collect(),
+        .collect();
+    let mut reached_files: BTreeSet<&str> = BTreeSet::new();
+    let mut reaching_tests: BTreeSet<usize> = BTreeSet::new();
+    for file in &given {
+        let targets: BTreeSet<&str> = graph.nodes_in_file(file).map(|n| n.id.as_str()).collect();
+        if targets.is_empty() {
+            continue;
+        }
+        let mut reaching = graph.reach(targets.iter().copied(), Direction::Backward);
+        reaching.extend(targets.iter().copied());
+        for (index, (_, _, nodes)) in tests.iter().enumerate() {
+            if nodes.iter().any(|id| reaching.contains(id)) {
+                reaching_tests.insert(index);
+                reached_files.insert(file.as_str());
+            }
+        }
+    }
+    let mut folders: BTreeMap<String, BTreeMap<UseCaseRef, Vec<TestLocation>>> = BTreeMap::new();
+    for index in &reaching_tests {
+        let (test, use_cases, _) = &tests[*index];
+        for use_case in use_cases {
+            let Some(known) = inventory.use_case(use_case) else {
+                continue;
+            };
+            folders
+                .entry(spec_folder(known.file()))
+                .or_default()
+                .entry(use_case.clone())
+                .or_default()
+                .push(test.clone());
+        }
+    }
+    let groups = folders
+        .into_iter()
+        .map(|(folder, use_cases)| SpecFolder {
+            folder,
+            use_cases: use_cases
+                .into_iter()
+                .map(|(use_case, tests)| AtStake { use_case, tests })
+                .collect(),
         })
-        .collect()
+        .collect();
+    let untraced = given
+        .iter()
+        .filter(|file| !reached_files.contains(file.as_str()))
+        .map(|file| UntracedFile {
+            file: file.clone(),
+            known: graph.nodes_in_file(file).next().is_some(),
+        })
+        .collect();
+    FileTrace { groups, untraced }
+}
+
+/// The repository-relative folder holding `spec_file`, with a trailing
+/// `/`; empty for a spec at the repository root.
+fn spec_folder(spec_file: &Path) -> String {
+    let folder = normalize_path(
+        &spec_file
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    );
+    if folder.is_empty() {
+        folder
+    } else {
+        format!("{folder}/")
+    }
 }
 
 /// Every bound test with the use cases it binds, in binding order. A test
@@ -158,7 +258,9 @@ fn bare_name(name: &str) -> &str {
 mod tests {
     use std::path::PathBuf;
 
-    use instrukt_core::ids::{SnippetId, UseCaseId};
+    use instrukt_core::docs::{Corpus, SourceFile};
+    use instrukt_core::home::Home;
+    use instrukt_core::ids::{ProjectSlug, SnippetId, UseCaseId};
     use instrukt_core::specs::Citation;
     use serde_json::json;
 
@@ -231,20 +333,126 @@ mod tests {
         assert_eq!(trace.reached, None);
     }
 
-    #[test]
-    fn a_file_is_reached_by_the_tests_whose_nodes_lead_to_it() {
-        let bindings = [
-            binding("tests/t.rs", "one", "UC-A1"),
-            binding("tests/t.rs", "two", "UC-A2"),
+    fn spec(title: &str, use_cases: &[&str]) -> String {
+        let cases: String = use_cases
+            .iter()
+            .map(|uc| format!("#### {uc}: case\n\n```gherkin\nGiven a\nWhen b\nThen c\n```\n\n"))
+            .collect();
+        format!(
+            "---\ndescription: {title}.\n---\n\n# {title} — Spec\n\n## What it is\n\nx\n\n\
+             ## Canonical fields\n\n### Use cases\n\n{cases}"
+        )
+    }
+
+    /// `a/b` holds UC-A1 and UC-A2, `c/d` holds UC-C1.
+    fn inventory() -> Inventory {
+        let sources = [
+            (
+                "docs/project/spec/feature/a/b.md",
+                spec("B", &["UC-A1", "UC-A2"]),
+            ),
+            ("docs/project/spec/feature/c/d.md", spec("D", &["UC-C1"])),
         ];
-        let reaching = trace_file(&graph(), &bindings, "src/b.rs");
+        Inventory::read(&Corpus::from_sources(
+            ProjectSlug::parse("demo").ok(),
+            &Home::at_user_home(PathBuf::from("/nonexistent-home")),
+            sources.into_iter().map(|(path, text)| SourceFile {
+                path: path.to_owned(),
+                text,
+            }),
+        ))
+    }
+
+    fn cites(spec: &str, uc: &str) -> UseCaseRef {
+        UseCaseRef {
+            spec: SnippetId::parse(spec).unwrap(),
+            use_case: UseCaseId::parse(uc).unwrap(),
+        }
+    }
+
+    fn bound(file: &str, function: &str, spec: &str, uc: &str) -> Binding {
+        Binding {
+            test: TestLocation {
+                file: PathBuf::from(file),
+                line: 1,
+                function: Some(function.to_owned()),
+            },
+            cites: Citation::UseCase(cites(spec, uc)),
+        }
+    }
+
+    const B: &str = "project/demo/spec/feature/a/b";
+    const D: &str = "project/demo/spec/feature/c/d";
+
+    /// `one` binds UC-C1 and UC-A2 and reaches a.rs, b.rs and c.rs; `two`
+    /// binds UC-A1 and reaches c.rs only.
+    fn file_bindings() -> [Binding; 3] {
+        [
+            bound("tests/t.rs", "one", D, "UC-C1"),
+            bound("tests/t.rs", "two", B, "UC-A1"),
+            bound("tests/t.rs", "one", B, "UC-A2"),
+        ]
+    }
+
+    #[test]
+    fn files_put_each_use_case_at_stake_once_grouped_by_spec_folder() {
+        let bindings = file_bindings();
+        let trace = trace_files(&graph(), &bindings, &inventory(), &["src/b.rs", "src/c.rs"]);
+        let one = bindings[0].test.clone();
+        let two = bindings[1].test.clone();
         assert_eq!(
-            reaching,
-            [ReachingTest {
-                test: bindings[0].test.clone(),
-                use_cases: vec![reference("UC-A1")],
-            }]
+            trace.groups,
+            [
+                SpecFolder {
+                    folder: "docs/project/spec/feature/a/".to_owned(),
+                    use_cases: vec![
+                        AtStake {
+                            use_case: cites(B, "UC-A1"),
+                            tests: vec![two],
+                        },
+                        AtStake {
+                            use_case: cites(B, "UC-A2"),
+                            tests: vec![one.clone()],
+                        },
+                    ],
+                },
+                SpecFolder {
+                    folder: "docs/project/spec/feature/c/".to_owned(),
+                    use_cases: vec![AtStake {
+                        use_case: cites(D, "UC-C1"),
+                        tests: vec![one],
+                    }],
+                },
+            ]
         );
-        assert!(trace_file(&graph(), &bindings, "src/unknown.rs").is_empty());
+    }
+
+    #[test]
+    fn files_no_binding_test_reaches_follow_once_each_with_unknown_files_among_them() {
+        let trace = trace_files(
+            &graph(),
+            &file_bindings(),
+            &inventory(),
+            &["src/unknown.rs", "src/b.rs", "./src/unknown.rs"],
+        );
+        let lone = Graph::from_value(json!({
+            "nodes": [{"id": "lone", "source_file": "src/lone.rs"}],
+            "links": []
+        }))
+        .unwrap();
+        let unreached = trace_files(&lone, &file_bindings(), &inventory(), &["src/lone.rs"]);
+        assert_eq!(
+            (trace.untraced, unreached.untraced),
+            (
+                vec![UntracedFile {
+                    file: "src/unknown.rs".to_owned(),
+                    known: false,
+                }],
+                vec![UntracedFile {
+                    file: "src/lone.rs".to_owned(),
+                    known: true,
+                }],
+            )
+        );
     }
 }

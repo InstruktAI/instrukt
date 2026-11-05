@@ -21,6 +21,8 @@ const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const SPEC_ID: &str = "project/demo/spec/feature/things/thing";
 const SPEC_PATH: &str = "docs/project/spec/feature/things/thing.md";
 const TESTS: &str = "crates/thing/tests/thing.rs";
+const GADGET_ID: &str = "project/demo/spec/feature/gadgets/gadget";
+const GADGET_PATH: &str = "docs/project/spec/feature/gadgets/gadget.md";
 
 fn use_case(id: &str, title: &str) -> String {
     format!(
@@ -29,8 +31,9 @@ fn use_case(id: &str, title: &str) -> String {
 }
 
 /// A project `demo` with the blueprint module on, a feature spec holding
-/// UC-TH1 and UC-TH2, and tests binding them: `first_works` binds UC-TH1,
-/// `second_works` UC-TH2 and `both_work` both.
+/// UC-TH1 and UC-TH2, another in its own folder holding UC-GA1, and tests
+/// binding them: `first_works` binds UC-TH1, `second_works` UC-TH2,
+/// `both_work` both and `gadget_works` UC-GA1.
 fn project(env: &TestEnv) -> Repo {
     let repo = env.git_repo("demo");
     repo.write(
@@ -47,11 +50,20 @@ fn project(env: &TestEnv) -> Repo {
         ),
     )
     .write(
+        GADGET_PATH,
+        &format!(
+            "---\ndescription: A gadget.\n---\n\n# Gadget — Spec\n\n## What it is\n\nA gadget.\n\n\
+             ## Canonical fields\n\n### Use cases\n\n{}",
+            use_case("UC-GA1", "gadget")
+        ),
+    )
+    .write(
         TESTS,
         &format!(
             "// spec: {SPEC_ID} UC-TH1\n#[test]\nfn first_works() {{}}\n\n\
              // spec: {SPEC_ID} UC-TH2\n#[test]\nfn second_works() {{}}\n\n\
-             // spec: {SPEC_ID} UC-TH1\n// spec: {SPEC_ID} UC-TH2\n#[test]\nfn both_work() {{}}\n"
+             // spec: {SPEC_ID} UC-TH1\n// spec: {SPEC_ID} UC-TH2\n#[test]\nfn both_work() {{}}\n\n\
+             // spec: {GADGET_ID} UC-GA1\n#[test]\nfn gadget_works() {{}}\n"
         ),
     );
     repo.commit("feat: a thing");
@@ -75,6 +87,7 @@ fn seed(env: &TestEnv) {
             node("tests_second", "second_works()", TESTS, "L7"),
             node("tests_both", "both_work()", TESTS, "L12"),
             node("tests_fixture", "fixture()", TESTS, "L15"),
+            node("tests_gadget", "gadget_works()", TESTS, "L18"),
             node("thing_make", "make()", "src/thing.rs", "L1"),
             node("thing_check", "check()", "src/thing.rs", "L9"),
             node("store_open", "open()", "src/store.rs", "L4"),
@@ -86,6 +99,7 @@ fn seed(env: &TestEnv) {
             link("thing_make", "store_open", "imports"),
             link("tests_second", "thing_check", "calls"),
             link("tests_both", "thing_check", "calls"),
+            link("tests_gadget", "thing_check", "calls"),
             link("cli_main", "thing_make", "calls"),
             link("src/thing.rs", "thing_make", "contains")
         ]
@@ -131,28 +145,44 @@ fn tracing_a_use_case_shows_its_tests_and_the_code_they_reach() {
 
 // spec: project/instrukt/spec/feature/blueprint/use-case-trace UC-ST2
 #[test]
-fn tracing_a_file_shows_the_tests_reaching_it_and_the_use_cases_they_bind() {
+fn tracing_files_shows_the_use_cases_at_stake_by_spec_folder_and_the_files_without_any() {
     let env = TestEnv::new();
     let repo = project(&env);
     seed(&env);
+    let absolute = repo.path().join("src/thing.rs");
     let out = stdout(
-        env.run(repo.path(), ["specs", "trace", "--file", "src/store.rs"])
-            .success(),
+        env.run(
+            repo.path(),
+            [
+                "specs",
+                "trace",
+                "--file",
+                "src/thing.rs",
+                "--file",
+                "src/main.rs",
+                "--file",
+                "src/missing.rs",
+                "--file",
+                absolute.to_str().unwrap(),
+            ],
+        )
+        .success(),
     );
     insta::assert_snapshot!(out, @r"
-    trace of src/store.rs from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
-    tests reaching it, with the use cases they bind:
-      crates/thing/tests/thing.rs::first_works: project/demo/spec/feature/things/thing UC-TH1
-    ");
-    let out = stdout(
-        env.run(repo.path(), ["specs", "trace", "--file", "src/thing.rs"])
-            .success(),
-    );
-    insta::assert_snapshot!(out, @r"
-    trace of src/thing.rs from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
-    tests reaching it, with the use cases they bind:
-      crates/thing/tests/thing.rs::first_works: project/demo/spec/feature/things/thing UC-TH1
-      crates/thing/tests/thing.rs::second_works: project/demo/spec/feature/things/thing UC-TH2
-      crates/thing/tests/thing.rs::both_work: project/demo/spec/feature/things/thing UC-TH1, project/demo/spec/feature/things/thing UC-TH2
+    trace of 3 files from the blueprint graph of 0123456789abcdef0123456789abcdef01234567
+    use cases at stake, by spec folder:
+      docs/project/spec/feature/gadgets/
+        project/demo/spec/feature/gadgets/gadget UC-GA1
+          crates/thing/tests/thing.rs::gadget_works
+      docs/project/spec/feature/things/
+        project/demo/spec/feature/things/thing UC-TH1
+          crates/thing/tests/thing.rs::first_works
+          crates/thing/tests/thing.rs::both_work
+        project/demo/spec/feature/things/thing UC-TH2
+          crates/thing/tests/thing.rs::second_works
+          crates/thing/tests/thing.rs::both_work
+    files no use-case-binding test reaches (the trace offers no use-case evidence for them):
+      src/main.rs
+      src/missing.rs (the graph does not know it)
     ");
 }
