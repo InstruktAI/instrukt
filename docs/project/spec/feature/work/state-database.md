@@ -251,25 +251,14 @@ set for).
 
 **`wakeups`** — one row: `last_at`, the last wake-up.
 
-**`disk_headroom`** — one row: the disk-headroom guard's last run
-(`project/instrukt/spec/feature/runner/disk-headroom`).
-
-| Column | Meaning |
-| --- | --- |
-| `run_at` | When the guard last ran; with the five-minute cadence it decides whether a wake-up runs it. |
-| `level` | The last level: `ok`, `warn`, `floor`, or `unmeasured` when free space could not be measured. A report fires on a change of level. |
-| `free_bytes` | Free space at the last run, or `NULL` when unmeasured. |
-| `report` | The last report the guard made, as JSON (level, free space, candidates, removals, skips, failures, and whether headroom was restored), or `NULL` before the first. |
-| `reported_at` | When that report was made. |
-
 ### Retention
 
 A removed todo's rows are purged with it when its recovery window expires.
 An execution's row goes when its todo is released; a standing start's when it
 is bound or resolved; a task failure's is kept after its hold is released, so the same failed run
 never sets the hold again, and is replaced by the task's next failed run. Validators,
-deferrals, watched-ref observations, listing copies and the disk guard's row
-are replaced in place. Events, cursors and handled marks are kept.
+deferrals, watched-ref observations and listing copies are replaced in place.
+Events, cursors and handled marks are kept.
 
 ### Use cases
 

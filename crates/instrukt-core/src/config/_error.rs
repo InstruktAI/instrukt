@@ -60,6 +60,8 @@ pub enum FindingKind {
     UnresolvedReference,
     /// A reference that leads back to itself.
     ReferenceCycle,
+    /// `modules.todos` is on for a project whose code is not on GitHub.
+    TodosNeedGitHub,
 }
 
 /// The findings that refused a write, one per line.

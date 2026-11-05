@@ -7,6 +7,8 @@
 //!   never a repository's, because the token is sent there.
 //! - [`repository`]: `github.repository`, else the remote the default
 //!   branch tracks when it is a repository on the API's host.
+//! - [`code_host`]: whether the project's code is on GitHub, which todos
+//!   need; [`todos_need_github`] is the refusal when it is not.
 //! - [`credentials`]: `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`;
 //!   never stored.
 
@@ -45,6 +47,17 @@ pub fn api_url(home: &Home) -> Result<String, ConfigError> {
         .to_owned())
 }
 
+/// Where a project's code is hosted, as todos need to know it
+/// (`github-record`, "Code on GitHub").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeHost {
+    /// The code is in this GitHub repository (`owner/repo`).
+    GitHub { repository: String },
+    /// The code is not on GitHub: why, naming the remote or
+    /// `github.repository`.
+    Elsewhere { reason: String },
+}
+
 /// The GitHub repository (`owner/repo`) of the project rooted at `root`
 /// with effective configuration `config`: `github.repository`, or the
 /// repository of the remote its default branch tracks when that remote is
@@ -54,27 +67,68 @@ pub fn repository(
     api_url: &str,
     root: &Path,
 ) -> Result<String, ResolveError> {
-    if let Some(configured) = config.github_repository()? {
-        return owner_repo(configured).ok_or_else(|| ResolveError::NoRepository {
-            reason: format!("`github.repository: {configured}` is not `<owner>/<repo>`"),
-        });
+    match code_host(config, api_url, root)? {
+        CodeHost::GitHub { repository } => Ok(repository),
+        CodeHost::Elsewhere { reason } => Err(ResolveError::NoRepository { reason }),
+    }
+}
+
+/// Whether the code of the project rooted at `root` is on GitHub: the
+/// remote its default branch tracks is a repository on `api_url`'s host,
+/// or `github.repository` names the repository (taken as written).
+pub fn code_host(
+    config: &Configuration,
+    api_url: &str,
+    root: &Path,
+) -> Result<CodeHost, ResolveError> {
+    Ok(resolve_code_host(
+        config.github_repository()?,
+        api_url,
+        root,
+    )?)
+}
+
+/// [`code_host`] for a `github.repository` value read by the caller.
+pub fn resolve_code_host(
+    configured: Option<&str>,
+    api_url: &str,
+    root: &Path,
+) -> Result<CodeHost, GitError> {
+    let elsewhere = |reason: String| Ok(CodeHost::Elsewhere { reason });
+    if let Some(configured) = configured {
+        return match owner_repo(configured) {
+            Some(repository) => Ok(CodeHost::GitHub { repository }),
+            None => elsewhere(format!(
+                "`github.repository: {configured}` is not `<owner>/<repo>`"
+            )),
+        };
     }
     let host = api_host(api_url);
     let branch = default_branch(root)?;
-    let remote =
-        git_value(root, &["config", &format!("branch.{branch}.remote")])?.ok_or_else(|| {
-            ResolveError::NoRepository {
-                reason: format!("the default branch `{branch}` tracks no remote"),
-            }
-        })?;
-    let url = git_value(root, &["remote", "get-url", &remote])?.ok_or_else(|| {
-        ResolveError::NoRepository {
-            reason: format!("the remote `{remote}` has no URL"),
-        }
-    })?;
-    parse_remote_url(&url, &host).ok_or_else(|| ResolveError::NoRepository {
-        reason: format!("the remote `{remote}` is not a GitHub repository on {host}"),
-    })
+    let Some(remote) = git_value(root, &["config", &format!("branch.{branch}.remote")])? else {
+        return elsewhere(format!(
+            "the default branch `{branch}` tracks no remote and `github.repository` is not set"
+        ));
+    };
+    let Some(url) = git_value(root, &["remote", "get-url", &remote])? else {
+        return elsewhere(format!(
+            "the remote `{remote}` has no URL and `github.repository` is not set"
+        ));
+    };
+    match parse_remote_url(&url, &host) {
+        Some(repository) => Ok(CodeHost::GitHub { repository }),
+        None => elsewhere(format!(
+            "the remote `{remote}` ({url}) is not a GitHub repository on {host} and `github.repository` is not set"
+        )),
+    }
+}
+
+/// The plain refusal when todos are on for a project whose code is not on
+/// GitHub, for `reason` from [`CodeHost::Elsewhere`].
+pub fn todos_need_github(reason: &str) -> String {
+    format!(
+        "todos need the project's code on GitHub: {reason}; when the remote reaches a GitHub repository through an address that does not read as one, name it with `github.repository: <owner>/<repo>` in the project's instrukt.yaml"
+    )
 }
 
 /// The token to authenticate with: `GITHUB_TOKEN`, `GH_TOKEN`, then

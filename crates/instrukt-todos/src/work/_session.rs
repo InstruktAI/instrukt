@@ -16,9 +16,8 @@ use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_inbound;
 use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
-pub(crate) use super::_reflect::PullFor;
 use super::_reflect::{self, Pulled};
-use super::_store::{self, IssueRef, LocalItem, Store};
+use super::_store::{self, IssueRef, ListingCopy, LocalItem, Store};
 use super::Work;
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ModelIdentity, ModelProvenance, StampFact, StampRecord,
@@ -76,8 +75,13 @@ enum Remote {
 /// Where [`Session::locate`] found an entry.
 pub(crate) enum Located {
     Local(usize),
-    /// Reflected work of another computer, read and not stored.
-    Remote(Box<LocalItem>),
+    /// A todo that is not a local item: as GitHub holds it now when
+    /// `refreshed`, else its last known copy. Never a local item.
+    Remote {
+        item: Box<LocalItem>,
+        refreshed: bool,
+        copied_at: Timestamp,
+    },
 }
 
 pub(crate) struct Session<'w> {
@@ -87,8 +91,14 @@ pub(crate) struct Session<'w> {
     store: Store,
     pub items: Vec<LocalItem>,
     remote: Remote,
-    /// Live reflected work read directly from GitHub this command.
-    remote_live: Option<Vec<(TodoRecord, IssueRef)>>,
+    /// The last known copies of the project's todos that are not local
+    /// items (`listing_copies`).
+    pub copies: Vec<ListingCopy>,
+    /// The pickup listing read this command: every open todo issue with
+    /// the head of its revision chain. `None` until read.
+    listed: Option<Vec<(TodoRecord, IssueRef)>>,
+    /// The todos refreshed for this command's relationship checks.
+    current: Vec<TodoId>,
     /// A listing of reflected work GitHub failed this command, short of
     /// being unreachable: what is not local is then undetermined, never
     /// absent.
@@ -118,8 +128,14 @@ impl<'w> Session<'w> {
         // The address the token is sent to comes from the machine's own
         // layer, never from a repository's.
         let api_url = github::api_url(work.home())?;
-        let repository = github::repository(&config, &api_url, &project.root)?;
+        let repository = match github::code_host(&config, &api_url, &project.root)? {
+            github::CodeHost::GitHub { repository } => repository,
+            github::CodeHost::Elsewhere { reason } => {
+                return Err(WorkError::CodeNotOnGitHub { reason });
+            }
+        };
         let items = store.items()?;
+        let copies = store.copies()?;
         let now = work.now();
         let remote = match github::credentials(work.env()) {
             None => Remote::Unavailable(PendingReason::NoCredentials),
@@ -141,7 +157,9 @@ impl<'w> Session<'w> {
             store,
             items,
             remote,
-            remote_live: None,
+            copies,
+            listed: None,
+            current: Vec::new(),
             lookup_failed: None,
             now,
             base,
@@ -231,17 +249,16 @@ impl<'w> Session<'w> {
         self.items.iter().position(|it| &it.record.id == id)
     }
 
-    /// The item `slug` addresses, made local when it is reflected work of
-    /// another computer, and pulled through. A conflicted item refuses.
+    /// The item `slug` addresses, refreshed from GitHub before the command
+    /// acts on it (`github-record`, "Interest-driven refresh"): a local item
+    /// is pulled through; a todo known only as a listing copy is read from
+    /// GitHub and becomes a local item. A conflicted item refuses.
     pub fn enter(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
         let index = match self.find(slug, false) {
             Some(index) => index,
-            None => match self.localize_slug(slug)? {
-                Some(index) => index,
-                None => return Err(self.absent(slug)),
-            },
+            None => self.localize_slug(slug)?,
         };
-        self.pull_through(index, PullFor::Change)?;
+        self.pull_through(index)?;
         Ok(index)
     }
 
@@ -249,47 +266,56 @@ impl<'w> Session<'w> {
     pub fn enter_ref(&mut self, target: &TodoRef) -> Result<usize, WorkError> {
         match self.find_id(&target.id) {
             Some(index) => {
-                self.pull_through(index, PullFor::Change)?;
+                self.pull_through(index)?;
                 Ok(index)
             }
             None => self.enter(&target.slug),
         }
     }
 
-    fn localize_slug(&mut self, slug: &TodoSlug) -> Result<Option<usize>, WorkError> {
-        let Some((record, issue)) = self
-            .remote_live()
-            .into_iter()
-            .find(|(record, _)| &record.slug == slug)
-        else {
-            return Ok(None);
+    /// Makes the live todo `slug`, known here only as a listing copy, a
+    /// local item as GitHub holds it now. Acting on it needs its committed
+    /// record and contents, so a GitHub that cannot be read refuses.
+    fn localize_slug(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
+        let Some(copy) = self.known_copy(slug) else {
+            return Err(self.absent(slug));
         };
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::localize(gh, record, issue),
-            _ => return Ok(None),
-        };
-        match result {
-            Ok(item) => {
-                self.store.save(&item)?;
-                self.items.push(item);
-                Ok(Some(self.items.len() - 1))
-            }
-            Err(err) => Err(self.github_failure(err)),
+        if !matches!(self.remote, Remote::Client { down: None, .. }) {
+            return Err(self.unreadable(slug));
+        }
+        match self.refresh_copy(copy.issue_number)? {
+            Some(item) if &item.record.slug == slug && item.record.is_live() => self.adopt(item),
+            _ => Err(self.absent(slug)),
         }
     }
 
-    /// Pulls item `index` from GitHub with a conditional request; refuses
-    /// when it is (or becomes) conflicted, and, for a change, when GitHub
-    /// holds a revision newer than the one this computer last read.
-    pub fn pull_through(&mut self, index: usize, purpose: PullFor) -> Result<(), WorkError> {
+    /// The refusal for acting on `slug`, known here only as a listing copy,
+    /// while GitHub cannot be read.
+    fn unreadable(&self, slug: &TodoSlug) -> WorkError {
+        let cause = match self.github_read() {
+            GitHubRead::NotRead(reason) => describe(&reason),
+            GitHubRead::Read => "GitHub's answer was not read".to_owned(),
+        };
+        WorkError::refused(format!(
+            "`{slug}` is not on this computer, and acting on it needs its record from GitHub, which cannot be read now: {cause}"
+        ))
+    }
+
+    /// Pulls item `index` from GitHub with a conditional request: a newer
+    /// remote revision enters the local record, so the command acts on the
+    /// todo's current state. A newer revision meeting a pending local
+    /// change marks it conflicted, and a conflicted item refuses. A GitHub
+    /// that cannot be read leaves the item as this computer holds it.
+    pub fn pull_through(&mut self, index: usize) -> Result<(), WorkError> {
+        let id = self.items[index].record.id.clone();
+        if !self.current.contains(&id) {
+            self.current.push(id);
+        }
         let before = self.items[index].clone();
         let result = match &self.remote {
-            Remote::Client { gh, down: None } => {
-                Some(_reflect::pull(gh, &mut self.items[index], purpose))
-            }
+            Remote::Client { gh, down: None } => Some(_reflect::pull(gh, &mut self.items[index])),
             _ => None,
         };
-        let newer = matches!(result, Some(Ok(Pulled::Newer)));
         match result {
             Some(Ok(Pulled::Adopted)) => tracing::info!(
                 event = "work_pulled",
@@ -304,23 +330,20 @@ impl<'w> Session<'w> {
         if self.items[index] != before {
             self.store.save(&self.items[index])?;
         }
-        if !self.items[index].reflection.conflicted && !newer {
+        if !self.items[index].reflection.conflicted {
             self.answer_commands(index)?;
         }
-        if self.items[index].reflection.conflicted || newer {
-            if newer {
-                tracing::debug!(
-                    event = "work_change_refused_stale",
-                    project = %self.project.slug,
-                    todo = %self.items[index].record.slug,
-                    "GitHub holds a newer revision than this computer last read; refresh first"
-                );
-            }
+        if self.items[index].reflection.conflicted {
             return Err(WorkError::Conflicted {
                 todo: self.items[index].record.slug.clone(),
             });
         }
         Ok(())
+    }
+
+    /// Whether GitHub could be read for this command's refreshes so far.
+    pub fn refreshed(&self) -> bool {
+        matches!(self.remote, Remote::Client { down: None, .. })
     }
 
     /// Answers the approvers' `/instrukt` commands the last pull found on
@@ -468,7 +491,7 @@ impl<'w> Session<'w> {
     /// Pulls every local item, without refusing conflicted ones.
     pub fn pull_all(&mut self) -> Result<(), WorkError> {
         for index in 0..self.items.len() {
-            match self.pull_through(index, PullFor::Read) {
+            match self.pull_through(index) {
                 Ok(()) | Err(WorkError::Conflicted { .. }) => {}
                 Err(err) => return Err(err),
             }
@@ -719,10 +742,12 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// Live reflected work on GitHub (open issues with records), read once
-    /// per command; empty when GitHub cannot be read.
-    pub fn remote_live(&mut self) -> Vec<(TodoRecord, IssueRef)> {
-        if let Some(records) = &self.remote_live {
+    /// The pickup listing: every open todo issue with the head of its
+    /// revision chain, read once per command. Its result replaces the
+    /// project's listing copies with the todos that are not local items.
+    /// Empty when GitHub cannot be read; the copies then stay as they were.
+    pub fn pickup_listing(&mut self) -> Vec<(TodoRecord, IssueRef)> {
+        if let Some(records) = &self.listed {
             return records.clone();
         }
         let result = match &self.remote {
@@ -733,11 +758,97 @@ impl<'w> Session<'w> {
             Some(Ok(records)) => records,
             Some(Err(err)) => {
                 self.lookup_failure(err);
-                Vec::new()
+                self.listed = Some(Vec::new());
+                return Vec::new();
             }
-            None => Vec::new(),
+            None => {
+                self.listed = Some(Vec::new());
+                return Vec::new();
+            }
         };
-        self.remote_live = Some(records.clone());
+        let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
+        let copies: Vec<ListingCopy> = records
+            .iter()
+            .filter(|(record, _)| !local.contains(&record.id))
+            .map(|(record, issue)| ListingCopy {
+                issue_number: issue.number,
+                record: record.without_contents(),
+                copied_at: self.now,
+            })
+            .collect();
+        match self.store.replace_copies(&copies) {
+            Ok(()) => self.copies = copies,
+            Err(err) => tracing::warn!(
+                event = "work_listing_copies_unsaved",
+                project = %self.project.slug,
+                error = %err,
+                "cannot keep the pickup listing's copies"
+            ),
+        }
+        self.listed = Some(records.clone());
+        records
+    }
+
+    /// The live listing copy of `slug`; when there is none, the pickup
+    /// listing is read once to find it (a todo this computer has never
+    /// seen).
+    pub fn known_copy(&mut self, slug: &TodoSlug) -> Option<ListingCopy> {
+        let find = |copies: &[ListingCopy]| {
+            copies
+                .iter()
+                .find(|c| &c.record.slug == slug && c.record.is_live())
+                .cloned()
+        };
+        if let Some(copy) = find(&self.copies) {
+            return Some(copy);
+        }
+        if self.listed.is_none() {
+            self.pickup_listing();
+            return find(&self.copies);
+        }
+        None
+    }
+
+    /// Reads the one todo on issue `number` from GitHub, with its verified
+    /// contents, and replaces its listing copy; the todo does not become a
+    /// local item. `None` when the issue holds no committed record.
+    pub fn refresh_copy(&mut self, number: u64) -> Result<Option<LocalItem>, WorkError> {
+        let result = match &self.remote {
+            Remote::Client { gh, down: None } => _reflect::read_one(gh, number),
+            _ => return Ok(None),
+        };
+        let item = match result {
+            Ok(item) => item,
+            Err(err) => return Err(self.github_failure(err)),
+        };
+        match &item {
+            Some(item) => {
+                let copy = ListingCopy {
+                    issue_number: number,
+                    record: item.record.without_contents(),
+                    copied_at: self.now,
+                };
+                self.store.save_copy(&copy)?;
+                self.copies.retain(|c| c.issue_number != number);
+                self.copies.push(copy);
+            }
+            None => {
+                self.store.drop_copy(number)?;
+                self.copies.retain(|c| c.issue_number != number);
+            }
+        }
+        Ok(item)
+    }
+
+    /// Every record this computer holds for the project: its local items',
+    /// then the listing copies'. Reads nothing from GitHub.
+    pub fn known_records(&self) -> Vec<TodoRecord> {
+        let mut records: Vec<TodoRecord> = self.items.iter().map(|it| it.record.clone()).collect();
+        for copy in &self.copies {
+            if !records.iter().any(|r| r.id == copy.record.id) {
+                records.push(copy.record.clone());
+            }
+        }
         records
     }
 
@@ -786,10 +897,8 @@ impl<'w> Session<'w> {
             if let Some(index) = self.find(slug, false) {
                 return Ok(Located::Local(index));
             }
-            if let Some(item) =
-                self.remote_matching(&format!("`{slug}`"), |r| &r.slug == slug && r.is_live())?
-            {
-                return Ok(Located::Remote(Box::new(item)));
+            if let Some(copy) = self.known_copy(slug) {
+                return self.located_copy(copy);
             }
             let retained: Vec<String> = self
                 .items
@@ -827,9 +936,48 @@ impl<'w> Session<'w> {
                 )));
             }
         }
+        let copied: Vec<ListingCopy> = self
+            .copies
+            .iter()
+            .filter(|c| address.names(&c.record))
+            .cloned()
+            .collect();
+        if let [copy] = copied.as_slice() {
+            return self.located_copy(copy.clone());
+        }
         match self.remote_matching(&format!("`{address}`"), |r| address.names(r))? {
-            Some(item) => Ok(Located::Remote(Box::new(item))),
+            Some(item) => Ok(Located::Remote {
+                item: Box::new(item),
+                refreshed: true,
+                copied_at: self.now,
+            }),
             None => Err(self.absent(slug)),
+        }
+    }
+
+    /// The todo of listing copy `copy`, refreshed from GitHub when it can
+    /// be read, else as last known.
+    fn located_copy(&mut self, copy: ListingCopy) -> Result<Located, WorkError> {
+        let stale = |copy: ListingCopy| Located::Remote {
+            item: Box::new(LocalItem {
+                record: copy.record,
+                reflection: Default::default(),
+            }),
+            refreshed: false,
+            copied_at: copy.copied_at,
+        };
+        if !self.refreshed() {
+            return Ok(stale(copy));
+        }
+        match self.refresh_copy(copy.issue_number) {
+            Ok(Some(item)) => Ok(Located::Remote {
+                item: Box::new(item),
+                refreshed: true,
+                copied_at: self.now,
+            }),
+            Ok(None) => Err(self.absent(&copy.record.slug)),
+            Err(WorkError::GitHub(err)) if err.is_reach() => Ok(stale(copy)),
+            Err(err) => Err(err),
         }
     }
 
@@ -910,7 +1058,11 @@ impl<'w> Session<'w> {
 
     /// Makes a reflected record found by [`Session::locate`] a local item.
     pub fn adopt(&mut self, item: LocalItem) -> Result<usize, WorkError> {
+        // Saving drops its listing copy (`listing_copies`).
         self.store.save(&item)?;
+        if let Some(issue) = item.reflection.issue {
+            self.copies.retain(|c| c.issue_number != issue.number);
+        }
         self.items.push(item);
         Ok(self.items.len() - 1)
     }
@@ -959,27 +1111,49 @@ impl<'w> Session<'w> {
         Ok(())
     }
 
-    /// A record known to this command by identity: a local item's, or live
-    /// reflected work's.
+    /// A record this computer holds by identity: a local item's, else a
+    /// listing copy's (the pickup listing is read once when it has
+    /// neither).
     pub fn record_by_id(&mut self, id: &TodoId) -> Option<TodoRecord> {
-        if let Some(index) = self.find_id(id) {
-            return Some(self.items[index].record.clone());
+        let find = |s: &Self| s.known_records().into_iter().find(|r| &r.id == id);
+        if let Some(record) = find(self) {
+            return Some(record);
         }
-        self.remote_live()
-            .into_iter()
-            .map(|(record, _)| record)
-            .find(|record| &record.id == id)
+        if self.listed.is_none() {
+            self.pickup_listing();
+            return find(self);
+        }
+        None
     }
 
-    /// The live todo `slug` names, local or reflected.
+    /// The record of todo `id` as GitHub holds it now, for judging a
+    /// relationship the command records (a prerequisite edge or a group):
+    /// each todo the judgement consults is refreshed once per command, a
+    /// local item pulled through and a listing copy read again. What
+    /// GitHub cannot answer is judged as this computer holds it.
+    pub fn record_current(&mut self, id: &TodoId) -> Option<TodoRecord> {
+        if !self.current.contains(id) {
+            self.current.push(id.clone());
+            if let Some(index) = self.find_id(id) {
+                if let Err(err) = self.pull_through(index) {
+                    tracing::debug!(event = "work_relationship_unrefreshed", error = %err, "judged as held here");
+                }
+            } else if let Some(copy) = self.copies.iter().find(|c| &c.record.id == id).cloned()
+                && self.refreshed()
+                && let Err(err) = self.refresh_copy(copy.issue_number)
+            {
+                tracing::debug!(event = "work_relationship_unrefreshed", error = %err, "judged as last known");
+            }
+        }
+        self.record_by_id(id)
+    }
+
+    /// The live todo `slug` names, a local item or a listing copy.
     pub fn live_ref(&mut self, slug: &TodoSlug) -> Option<TodoRecord> {
         if let Some(index) = self.find(slug, false) {
             return Some(self.items[index].record.clone());
         }
-        self.remote_live()
-            .into_iter()
-            .map(|(record, _)| record)
-            .find(|record| &record.slug == slug && record.is_live())
+        self.known_copy(slug).map(|copy| copy.record)
     }
 
     /// Deletes the item from the local record and this session.
