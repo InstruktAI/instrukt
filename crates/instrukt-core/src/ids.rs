@@ -97,7 +97,7 @@ identifier!(
     DomainName,
     "domain",
     is_domain,
-    "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit, and not a reserved name (`project`, `snippets`, `third-party`)"
+    "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit, and not a reserved name (`project`, `third-party`)"
 );
 
 identifier!(
