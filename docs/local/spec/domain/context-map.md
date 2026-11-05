@@ -19,7 +19,7 @@ contracts and the designs governing their relationships.
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `local/projects/instrukt/spec/domain/docs` |
 | configuration | Layered settings, validation, migration and interpolation | `local/projects/instrukt/spec/domain/configuration` |
-| publication | Committed-state publication, index patching, entrypoint compilation and agent settings | `local/projects/instrukt/spec/domain/publication` |
+| publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims and editor schemas | `local/projects/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `local/projects/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `local/projects/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `local/projects/instrukt/spec/domain/blueprint` |

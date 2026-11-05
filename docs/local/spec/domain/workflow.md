@@ -78,7 +78,7 @@ runner and event capability. Workflow stores no phase.
 ### Flavor-facing contract
 
 Project key `workflow.domain` selects the published domain, default `sdlc`.
-The publishing project authors the flavor under `docs/global/<domain>/workflow/`;
+The publishing project authors the flavor under `docs/domain/<domain>/workflow/`;
 publication copies it to `~/.instrukt/docs/<domain>/workflow/`, where the engine
 loads it. Paths below are relative to that published domain.
 
