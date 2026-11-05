@@ -115,15 +115,11 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     );
     let project = env.run(repo.path(), ["config", "get", "project"]).success();
     insta::assert_snapshot!(stdout(&env, &project), @"my-demo");
-    assert!(repo.path().join("docs/project").is_dir(), "docs/project");
+    insta::assert_snapshot!("seeded-index", repo.read("docs/project/index.yaml"));
     insta::assert_snapshot!("seeded-master", repo.read("AGENTS.master.md"));
     insta::assert_snapshot!(
         "own-hook-beside-section",
         repo.read(".git/hooks/post-commit")
-    );
-    assert!(
-        repo.read("docs/project/baseline.md").is_empty(),
-        "the local baseline the master requires is seeded empty"
     );
 
     repo.commit("adopt instrukt");
@@ -168,7 +164,8 @@ fn a_folder_without_a_usable_slug_needs_one_supplied_and_outside_a_repository_in
 }
 
 const OWN_MASTER: &str = "## Purpose\n\nThe developer's own master.\n";
-const OWN_BASELINE: &str = "@docs/project/policy/house-rules.md\n";
+const OWN_INDEX: &str = "expanded: [project/demo/policy/house-rules]\n";
+const OWN_IGNORES: &str = "/build\n*.log";
 const OWN_ATTRIBUTES: &str = "*.png binary\ndocs/**/*.md text eol=lf\n";
 
 // spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2
@@ -178,24 +175,20 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
     let repo = env.git_repo("demo");
     repo.write("AGENTS.master.md", OWN_MASTER);
     repo.write(".gitattributes", OWN_ATTRIBUTES);
-    repo.write("docs/project/baseline.md", OWN_BASELINE);
+    repo.write(".gitignore", OWN_IGNORES);
+    repo.write("docs/project/index.yaml", OWN_INDEX);
     env.run(repo.path(), ["config", "init"]).success();
     repo.commit("the developer's partial adoption");
-    let master = std::fs::read(repo.path().join("AGENTS.master.md")).unwrap();
-    let baseline = std::fs::read(repo.path().join("docs/project/baseline.md")).unwrap();
 
     let completed = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("completing-init", stdout(&env, &completed));
     assert_eq!(
-        std::fs::read(repo.path().join("AGENTS.master.md")).unwrap(),
-        master,
+        repo.read("AGENTS.master.md"),
+        OWN_MASTER,
         "the developer's master is unchanged"
     );
-    assert_eq!(
-        std::fs::read(repo.path().join("docs/project/baseline.md")).unwrap(),
-        baseline,
-        "the developer's local baseline is unchanged"
-    );
+    insta::assert_snapshot!("index-with-modeline", repo.read("docs/project/index.yaml"));
+    insta::assert_snapshot!("completed-ignores", repo.read(".gitignore"));
     assert_eq!(
         repo.read(".gitattributes"),
         OWN_ATTRIBUTES,
@@ -214,28 +207,30 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
 
 const HAND_WRITTEN: &str = "# Instructions\n\nWritten by hand.\n";
 
-// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN5
 #[test]
-fn a_hand_written_agents_file_holds_back_the_master_until_its_content_has_moved() {
+fn a_hand_written_agents_file_is_kept_aside_and_left_until_the_first_publication_renders_it() {
     let env = machine();
     let repo = env.git_repo("demo");
     repo.write("AGENTS.md", HAND_WRITTEN);
-    let hand_written = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
+    repo.commit("the developer's own instructions");
 
     let first = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("init-beside-hand-written-agents", stdout(&env, &first));
-    assert!(!repo.path().join("AGENTS.master.md").exists());
     assert_eq!(
-        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
-        hand_written,
-        "the hand-written file is untouched"
+        repo.read(".instrukt/adopted/AGENTS.md"),
+        HAND_WRITTEN,
+        "the hand-written instructions are kept byte for byte"
     );
-
-    repo.write("docs/project/instructions.md", HAND_WRITTEN);
-    std::fs::remove_file(repo.path().join("AGENTS.md")).unwrap();
-    let next = env.run(repo.path(), ["init"]).success();
-    insta::assert_snapshot!("init-after-content-moved", stdout(&env, &next));
-    assert!(repo.path().join("AGENTS.master.md").exists());
+    insta::assert_snapshot!(
+        "master-beside-kept-instructions",
+        repo.read("AGENTS.master.md")
+    );
+    assert_eq!(
+        repo.read("AGENTS.md"),
+        HAND_WRITTEN,
+        "the hand-written file is left as it was"
+    );
 
     let before = tree(repo.path());
     env.run(repo.path(), ["init"]).success();
@@ -244,6 +239,19 @@ fn a_hand_written_agents_file_holds_back_the_master_until_its_content_has_moved(
         before,
         "nothing in the repository changed"
     );
+
+    repo.git(["rm", "--cached", "--quiet", "AGENTS.md"]);
+    repo.commit("adopt instrukt");
+    wait_for_run(&env, "demo", Hook::PostCommit);
+    env.run(repo.path(), ["sync"]).success();
+    insta::assert_snapshot!("first-rendered-agents", repo.read("AGENTS.md"));
+    assert_eq!(
+        repo.read(".instrukt/adopted/AGENTS.md"),
+        HAND_WRITTEN,
+        "the kept copy outlives the first publication"
+    );
+    let after = env.run(repo.path(), ["init"]).success();
+    insta::assert_snapshot!("init-after-first-publication", stdout(&env, &after));
 }
 
 // spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2
@@ -281,5 +289,141 @@ fn an_ignore_file_linked_outside_the_repository_refuses_init_and_nothing_changes
     assert!(
         !env.instrukt_home().join("instrukt.yaml").exists(),
         "nothing was written in the home"
+    );
+}
+
+/// A policy snippet with every required section.
+fn policy(title: &str) -> String {
+    format!(
+        "---\ndescription: The {title} policy.\n---\n\n# {title} — Policy\n\n\
+         ## Rules\n\nFollow it.\n\n## Rationale\n\nBecause.\n\n## Scope\n\nAll work.\n\n\
+         ## Enforcement\n\nReview.\n\n## Exceptions\n\nNone.\n"
+    )
+}
+
+/// Another project on the computer, `name`, publishing `domain` with
+/// `files` (repository path, contents) beside one policy snippet.
+fn publisher(env: &TestEnv, name: &str, domain: &str, files: &[(&str, &str)]) -> common::Repo {
+    let repo = env.git_repo(name);
+    repo.write(
+        "instrukt.yaml",
+        &format!("schema_version: 1\nproject: {name}\n"),
+    );
+    repo.write(
+        &format!("{}/policy/rules.md", common::position_dir(domain)),
+        &policy(&format!("{domain} rules")),
+    );
+    for (path, contents) in files {
+        repo.write(path, contents);
+    }
+    repo.commit("publish");
+    env.run(repo.path(), ["sync"]).success();
+    repo
+}
+
+/// Every file below `dir`, with its bytes.
+fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    tree(dir)
+        .into_iter()
+        .map(|(path, (bytes, _, _))| (path, bytes))
+        .collect()
+}
+
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN3
+#[test]
+fn adopting_a_docs_repository_reports_its_claims_before_anything_is_published() {
+    let env = machine();
+    publisher(&env, "other", "ops", &[]);
+    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    std::fs::write(
+        env.home().join(".claude/CLAUDE.md"),
+        "My own instructions.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
+    let published = |env: &TestEnv| {
+        let home = env.instrukt_home();
+        (files(&home.join("docs")), files(&home.join("state")))
+    };
+    let before = published(&env);
+
+    let repo = env.git_repo("doctrine");
+    repo.write("docs/general/policy/always.md", &policy("Always"));
+    repo.write("docs/domain/free/policy/free.md", &policy("Free"));
+    repo.write("docs/domain/ops/policy/ops.md", &policy("Ops"));
+    repo.write(
+        "docs/domain/project/policy/reserved.md",
+        &policy("Reserved"),
+    );
+    repo.commit("the developer's doctrine");
+
+    let init = env.run(repo.path(), ["init"]).success();
+    insta::assert_snapshot!("claims-report", stdout(&env, &init));
+    assert_eq!(published(&env), before, "nothing was published or claimed");
+    assert_eq!(
+        std::fs::read_to_string(env.home().join(".claude/CLAUDE.md")).unwrap(),
+        "My own instructions.\n",
+        "no global agent file was written"
+    );
+    assert!(
+        !env.home().join(".codex/AGENTS.md").exists(),
+        "no global agent file was written"
+    );
+}
+
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN3
+#[test]
+fn a_repository_holding_only_domains_writes_no_global_agent_files() {
+    let env = machine();
+    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    let repo = env.git_repo("ops-docs");
+    repo.write("docs/domain/ops/policy/ops.md", &policy("Ops"));
+
+    let init = env.run(repo.path(), ["init"]).success();
+    insta::assert_snapshot!("claims-without-general", stdout(&env, &init));
+}
+
+const SDLC_SCHEMA: &str = "spec/feature:\n  required: [Use cases]\n";
+const CHANGED_SDLC_SCHEMA: &str = "spec/feature:\n  required: [Use cases, Known caveats]\n";
+
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN4
+#[test]
+fn a_new_project_is_given_its_own_copy_of_the_published_sdlc_schema() {
+    let env = machine();
+    let sdlc = publisher(
+        &env,
+        "doctrine",
+        "sdlc",
+        &[("docs/domain/sdlc/schema.yaml", SDLC_SCHEMA)],
+    );
+    let repo = env.git_repo("demo");
+
+    let init = env.run(repo.path(), ["init"]).success();
+    insta::assert_snapshot!("given-the-sdlc-schema", stdout(&env, &init));
+    insta::assert_snapshot!("project-schema-copy", repo.read("docs/project/schema.yaml"));
+
+    sdlc.write("docs/domain/sdlc/schema.yaml", CHANGED_SDLC_SCHEMA);
+    sdlc.commit("change the sdlc schema");
+    env.run(sdlc.path(), ["sync"]).success();
+    let own = std::fs::read(repo.path().join("docs/project/schema.yaml")).unwrap();
+    env.run(repo.path(), ["init"]).success();
+    assert_eq!(
+        std::fs::read(repo.path().join("docs/project/schema.yaml")).unwrap(),
+        own,
+        "the project's own schema is unchanged"
+    );
+}
+
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN4
+#[test]
+fn without_a_published_sdlc_no_project_schema_is_written() {
+    let env = machine();
+    let repo = env.git_repo("demo");
+
+    let init = env.run(repo.path(), ["init"]).success();
+    insta::assert_snapshot!("without-sdlc", stdout(&env, &init));
+    assert!(
+        !repo.path().join("docs/project/schema.yaml").exists(),
+        "no project schema"
     );
 }

@@ -1,0 +1,32 @@
+---
+source: crates/instrukt-cli/tests/project-initialization.rs
+expression: "stdout(&env, &init)"
+---
+project layer (instrukt.yaml): created
+project docs (docs/project/): created
+project index (docs/project/index.yaml): created
+project schema (docs/project/schema.yaml): not written: sdlc is not published on this computer, so the project follows the root rules only
+master (AGENTS.master.md): created
+editor schemas (.instrukt/schemas/): created
+  .instrukt/schemas/general-index.schema.json: schema written
+  .instrukt/schemas/domain-index.schema.json: schema written
+  .instrukt/schemas/project-index.schema.json: schema written
+  .instrukt/schemas/snippet-schema.schema.json: schema written
+  .instrukt/schemas/instrukt.schema.json: schema written
+  instrukt.yaml: modeline inserted
+  docs/project/index.yaml: modeline inserted
+ignores of AGENTS.md and .instrukt/ (.gitignore): created
+hook sections: created
+  hooks directory: [TMP]/doctrine/.git/hooks
+  post-commit: written
+  post-merge: written
+  post-rewrite: written
+  post-checkout: written
+claims of the first sync (nothing is published until it runs):
+  docs/general/: free; the sync claims it
+  docs/domain/free/: free; the sync claims it
+  docs/domain/ops/: owned by project `other`; the sync would be refused
+  docs/domain/project/: refused: a reserved name; no domain may be called `general`, `project` or `third-party`
+  global agent file of claude: the sync writes [TMP]/home/.claude/CLAUDE.md
+  global agent file of codex: the sync writes [TMP]/home/.codex/AGENTS.md
+  [TMP]/home/.claude/CLAUDE.md: not written by instrukt; it stops the sync until its content moves into docs or the file moves out of the way

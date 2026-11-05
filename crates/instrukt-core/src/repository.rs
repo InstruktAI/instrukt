@@ -1,8 +1,10 @@
 //! The repository context: adoption, hook sections and attributed commits
 //! (`docs/project/spec/domain/repository.md`).
 //!
-//! - [`init`] adopts a repository: project layer, docs folders, master
-//!   and hook sections, never overwriting a file.
+//! - [`init`] adopts a repository: project layer, `docs/project/` with its
+//!   index and schema, master, kept instructions, editor schemas, ignores
+//!   and hook sections, never overwriting a file, and reports the claims
+//!   its first sync will make.
 //! - [`install_hooks`], [`remove_hooks`] and [`hooks_status`] manage
 //!   instrukt's one marked section per hook file and touch nothing else.
 //! - [`run_hook`] is what a section calls: it starts what acts on the hook
@@ -25,7 +27,8 @@ mod _section;
 mod _stamp;
 
 pub use _adoption::{
-    GENERATED_FILE, InitPart, InitReport, LOCAL_BASELINE, MASTER_FILE, PartOutcome, init,
+    GENERATED_FILE, InitPart, InitReport, KEPT_INSTRUCTIONS, KeptInstructions, MASTER_FILE,
+    NotWritten, PROJECT_DOCS, PartOutcome, init,
 };
 pub use _commit::{CommitRequest, OWNED_TRAILERS, commit};
 pub use _error::RepositoryError;

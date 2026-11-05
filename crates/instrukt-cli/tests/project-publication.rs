@@ -113,7 +113,15 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
         .write("docs/domain/acme/policy/draft.md", &policy("Draft", ""));
 
     let run = sync(&env, &repo).success();
-    insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"published demo at [SHA]");
+    insta::assert_snapshot!(text(&run.get_output().stdout, &[&sha]), @"
+    published demo at [SHA]
+    .instrukt/schemas/general-index.schema.json: schema written
+    .instrukt/schemas/domain-index.schema.json: schema written
+    .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/snippet-schema.schema.json: schema written
+    .instrukt/schemas/instrukt.schema.json: schema written
+    instrukt.yaml: modeline inserted
+    ");
 
     let docs = env.instrukt_home().join("docs");
     assert_eq!(
@@ -190,7 +198,15 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     env.git(&linked, ["commit", "--quiet", "-m", "feature"]);
 
     let run = env.run(&linked, ["sync"]).success();
-    insta::assert_snapshot!(text(&run.get_output().stdout, &[&main]), @"published demo at [SHA]");
+    insta::assert_snapshot!(text(&run.get_output().stdout, &[&main]), @"
+    published demo at [SHA]
+    .instrukt/schemas/general-index.schema.json: schema written
+    .instrukt/schemas/domain-index.schema.json: schema written
+    .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/snippet-schema.schema.json: schema written
+    .instrukt/schemas/instrukt.schema.json: schema written
+    instrukt.yaml: modeline inserted
+    ");
     assert!(!ids(&index(&env)).contains(&"acme/policy/feature"));
 }
 

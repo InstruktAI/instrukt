@@ -3,3 +3,4 @@ AGENTS.md
 /.claude/worktrees/
 *.pending-snap
 *.snap.new
+.instrukt/

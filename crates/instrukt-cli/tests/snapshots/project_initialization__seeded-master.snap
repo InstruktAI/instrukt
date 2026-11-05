@@ -5,7 +5,3 @@ expression: "repo.read(\"AGENTS.master.md\")"
 ## Purpose
 
 my-demo
-
-## Required reads
-
-@docs/project/baseline.md

@@ -1,0 +1,64 @@
+---
+source: crates/instrukt-cli/tests/editor-schemas.rs
+expression: "String::from_utf8(bytes).unwrap()"
+---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "expanded": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnippetId"
+      },
+      "description": "Rendered in full, each with its closure; may name any domain's ids."
+    },
+    "listed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnippetId"
+      },
+      "description": "Rendered as one listing line each; may name any domain's ids."
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claude": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        },
+        "codex": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        },
+        "deepseek": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        },
+        "gemini": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        }
+      },
+      "description": "Snippets appended to one agent CLI's global file only."
+    }
+  },
+  "description": "`docs/general/index.yaml`.",
+  "title": "GeneralIndex",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SnippetId": {
+      "type": "string",
+      "description": "A snippet id: `<domain>/<taxonomy>/<rest>` or `project/<slug>/<taxonomy>/<rest>`."
+    }
+  }
+}
