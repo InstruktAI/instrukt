@@ -80,7 +80,7 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     folder in the checkout it was published from, its published commit and
     its repository's remote, and `instrukt docs get <id>` names the snippet's
     source file. Edit that file in that checkout and commit it there; the
-    hook republishes it. Never edit anything under `~/.instrukt/`.
+    hook republishes it.
 10. Authoring a snippet publishes nothing. Readers receive committed
     documentation: the git hooks publish the committed state of the project's
     main after a commit, merge, rebase or checkout, and `instrukt sync`, run in
