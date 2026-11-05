@@ -7,6 +7,7 @@ use instrukt_core::config::Configuration;
 use instrukt_core::git;
 use instrukt_core::ids::{RuntimeName, SessionId, SessionRef, TodoSlug};
 use instrukt_core::machine::{self, MachineId};
+use instrukt_core::state_db::rusqlite::Transaction;
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::{SignedDuration, Timestamp};
 
@@ -520,6 +521,31 @@ impl<'w> Session<'w> {
         events: Option<(&dyn EventLog, &[Event])>,
         change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
     ) -> Result<T, WorkError> {
+        self.commit_with(what, change, |tx| {
+            if let Some((log, events)) = events {
+                for event in events {
+                    let appended = log.append(tx, event)?;
+                    tracing::info!(
+                        event = "work_event_logged",
+                        name = event.name(),
+                        project = %event.project(),
+                        appended = ?appended,
+                        "an event committed with the work record change"
+                    );
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Commits a work change and its related runner rows together. The
+    /// runner owns the additional writes; work owns their transaction.
+    pub fn commit_with<T>(
+        &mut self,
+        what: &'static str,
+        change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
+        write_related: impl FnOnce(&Transaction<'_>) -> Result<(), WorkError>,
+    ) -> Result<T, WorkError> {
         let before: Vec<LocalItem> = self.items.clone();
         let value = match change(self) {
             Ok(value) => value,
@@ -541,7 +567,7 @@ impl<'w> Session<'w> {
             }
         }
         let transfer = self.pending_transfer.take();
-        let written = self.write_change(&changed, events, transfer.as_ref());
+        let written = self.write_change(&changed, write_related, transfer.as_ref());
         let docs = match written {
             Ok(docs) => docs,
             Err(err) => {
@@ -565,15 +591,15 @@ impl<'w> Session<'w> {
         Ok(value)
     }
 
-    /// Writes the changed items, the events and the documentation transfer
-    /// in one transaction; returns the documentation files the transfer
+    /// Writes the changed items, related runner rows and documentation
+    /// transfer in one transaction; returns the documentation files the transfer
     /// rewrote. Nothing commits unless everything succeeded: documentation
     /// moves only once every row is written, and a failing transfer writes
     /// nothing of its own.
     fn write_change(
         &mut self,
         changed: &[usize],
-        events: Option<(&dyn EventLog, &[Event])>,
+        write_related: impl FnOnce(&Transaction<'_>) -> Result<(), WorkError>,
         transfer: Option<&(TodoSlug, TodoSlug)>,
     ) -> Result<Vec<std::path::PathBuf>, WorkError> {
         let path = self.store.path().to_path_buf();
@@ -581,18 +607,7 @@ impl<'w> Session<'w> {
         for &index in changed {
             _store::save_in(&tx, &path, &self.items[index])?;
         }
-        if let Some((log, events)) = events {
-            for event in events {
-                let appended = log.append(&tx, event)?;
-                tracing::info!(
-                    event = "work_event_logged",
-                    name = event.name(),
-                    project = %event.project(),
-                    appended = ?appended,
-                    "an event committed with the work record change"
-                );
-            }
-        }
+        write_related(&tx)?;
         let docs = match transfer {
             Some((parent, child)) => {
                 super::_ops::transfer_documentation(&self.project, parent, child)?

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/snippet-validation.rs
+assertion_line: 690
+expression: run.out
+---
+docs/project/concept/leaf.md: hygiene-required-read-implied: ops, implied by project/demo/concept/overview
