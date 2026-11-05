@@ -13,6 +13,7 @@ revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
 reflection: pending: GitHub is unreachable
+not refreshed from GitHub (GitHub is unreachable); shown as this computer last knew it
 issue: #1
 claim: not held
 hold: none

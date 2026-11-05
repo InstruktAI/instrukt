@@ -168,7 +168,10 @@ pub trait Pickup: Send + Sync {
     /// dispatch hold, no execution claim held. Lane readiness (which flow
     /// is owed and whether prerequisites satisfy it) is workflow's, through
     /// [`WorkflowAssignments`]. Serves `work-dispatch`, "Todo pickup", and
-    /// `dependencies-and-holds`, "Prerequisites".
+    /// `dependencies-and-holds`, "Prerequisites". Reads the tick's one
+    /// pickup listing of the project from GitHub, whose result replaces the
+    /// project's listing copies (`github-record`, "Interest-driven
+    /// refresh").
     fn pickup_candidates(
         &self,
         project: &ProjectRef,
@@ -297,9 +300,12 @@ pub struct ReflectionReport {
 /// `github-record`, "Local-leading pull-through" and "Writer and
 /// convergence").
 pub trait Reflection: Send + Sync {
-    /// Pulls GitHub changes for the project's local items with conditional
-    /// requests and flushes pending reflection, under the per-computer
-    /// writer lock. An unreachable GitHub is a report, not an error.
+    /// Polls GitHub, with conditional requests, for the todos this
+    /// computer holds claims on and the prerequisites that claimed work is
+    /// blocked on (`github-record`, "Interest-driven refresh"), then flushes
+    /// pending reflection, under the per-computer writer lock. The tick's
+    /// pickup listing is [`Pickup::pickup_candidates`]. An unreachable
+    /// GitHub is a report, not an error.
     fn sync_reflection(&self, project: &ProjectRef)
     -> Result<ReflectionReport, WorkInterfaceError>;
 }

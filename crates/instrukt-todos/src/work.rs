@@ -46,8 +46,8 @@ pub use _model::{
     TodoRecord, TodoRef, Version,
 };
 pub use _ops::{
-    CreateRequest, ListEntry, Listing, Outcome, PrerequisiteView, RecordedWork, Selection,
-    TodoView, UpdateReport, UpdateRequest,
+    CreateRequest, LastKnown, ListEntry, Listing, Outcome, PrerequisiteView, RecordedWork,
+    Selection, TodoView, UpdateReport, UpdateRequest,
 };
 pub use _ports::WorkExistence;
 pub use _session::{GitHubRead, PendingReason, ReflectionStatus, describe};
