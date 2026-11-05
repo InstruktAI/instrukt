@@ -759,9 +759,14 @@ fn check_implied(
         .collect();
     let mut closures: Vec<Option<BTreeSet<SnippetId>>> = vec![None; named.len()];
     for (index, (raw, target)) in named.iter().enumerate() {
-        let RefTarget::Snippet(id) = target else {
-            continue;
+        let required = match target {
+            RefTarget::Snippet(id) => BTreeSet::from([id.clone()]),
+            RefTarget::Domain(_) => reads.reach(vec![target.clone()])?,
+            _ => continue,
         };
+        if required.is_empty() {
+            continue;
+        }
         for other in 0..named.len() {
             if other == index || named[other].1 == *target {
                 continue;
@@ -773,7 +778,10 @@ fn check_implied(
                 };
                 closures[other] = Some(reads.reach(start)?);
             }
-            if closures[other].as_ref().is_some_and(|c| c.contains(id)) {
+            if closures[other]
+                .as_ref()
+                .is_some_and(|c| required.is_subset(c))
+            {
                 push(
                     out,
                     version.path(),

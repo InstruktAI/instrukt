@@ -339,13 +339,16 @@ impl AutomaticHolds for Work {
     ) -> Result<(), WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
-        if s.items[index].record.hold.is_some() {
+        let held = s.items[index].record.hold.is_some();
+        if held {
             tracing::debug!(
                 event = "work_hold_kept",
                 todo = %todo,
                 "the todo is already on hold; the automatic hold adds nothing"
             );
-            return Ok(());
+            if matches!(cause, HoldCause::Anomaly { .. }) {
+                return Ok(());
+            }
         }
         if s.items[index].record.status == TodoStatus::StructuralHolder {
             return Err(WorkError::refused(format!(
@@ -354,21 +357,36 @@ impl AutomaticHolds for Work {
             .into());
         }
         let reason = match cause {
-            HoldCause::TaskFailed { reason } => format!("task failed: {reason}"),
+            HoldCause::TaskFailed { reason, .. } => format!("task failed: {reason}"),
             HoldCause::Anomaly { reason } => format!("anomaly: {reason}"),
         };
         let now = s.now;
-        s.commit("automatic hold", |s| {
-            s.items[index].record.hold = Some(HoldRecord {
-                source: HoldSource::Automatic,
-                reason,
-                by: Actor::Person {
-                    name: RUNNER.to_owned(),
-                },
-                at: now,
-            });
-            Ok(())
-        })?;
+        let id = s.items[index].record.id.clone();
+        s.commit_with(
+            "automatic hold",
+            |s| {
+                if !held {
+                    s.items[index].record.hold = Some(HoldRecord {
+                        source: HoldSource::Automatic,
+                        reason,
+                        by: Actor::Person {
+                            name: RUNNER.to_owned(),
+                        },
+                        at: now,
+                    });
+                }
+                Ok(())
+            },
+            |tx| {
+                instrukt_runner::dispatch::record_task_failure(
+                    tx,
+                    &project.slug,
+                    id.as_str(),
+                    cause,
+                )?;
+                Ok(())
+            },
+        )?;
         s.flush()?;
         Ok(())
     }

@@ -24,6 +24,8 @@ mod work;
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
 
 use common::TestEnv;
 use flavor::Tracked;
@@ -273,6 +275,50 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     project.tick_at("2030-01-06T09:30:20Z");
     project.tick_at("2030-01-06T09:45:20Z");
     assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.notifications().len(), 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT4
+#[test]
+fn a_task_failure_committed_before_interrupted_reflection_is_notified_on_the_next_tick() {
+    let mut project = Tracked::new(true);
+    project.authorized_task("quarter-hourly-sync", "cron:*/15 * * * *", &[]);
+    project.tick_at("2030-01-06T09:00:20Z");
+    project.todo_in_session(
+        "s1",
+        [
+            "stamp",
+            "quarter-hourly-sync",
+            "--task-outcome",
+            "error",
+            "--reason",
+            "the sync target refused our credentials",
+        ],
+    );
+    project.rt.set_status("s1", "ended failed");
+
+    // The first new revision is the automatic hold. Keep GitHub's answer
+    // pending so the runner cannot proceed beyond local commit/reflection.
+    let pause = project.github.pause_once("POST", "/comments");
+    let mut tick = project
+        .env
+        .instrukt_process(project.env.home())
+        .arg("tick")
+        .env("INSTRUKT_NOW", "2030-01-06T09:01:20Z")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let reached = pause.wait_until_received(Duration::from_secs(30));
+    tick.kill().unwrap();
+    tick.wait().unwrap();
+    drop(pause);
+    assert!(reached, "the runner never reached hold reflection");
+
+    project.tick_at("2030-01-06T09:15:20Z");
+    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"rt:s1");
+    project.tick_at("2030-01-06T09:30:20Z");
+    assert_eq!(project.rt.calls().len(), 1);
     assert_eq!(project.rt.notifications().len(), 1);
 }
 

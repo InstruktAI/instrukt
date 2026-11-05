@@ -464,7 +464,11 @@ pub trait TaskFirings: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HoldCause {
     /// A task execution failed.
-    TaskFailed { reason: String },
+    TaskFailed {
+        reason: String,
+        occurrence: Timestamp,
+        session: Option<SessionRef>,
+    },
     /// An anomaly the runner raised for this todo.
     Anomaly { reason: String },
 }
@@ -473,6 +477,8 @@ pub enum HoldCause {
 pub trait AutomaticHolds: Send + Sync {
     /// Sets an automatic dispatch hold on `todo` with `cause`. A hold
     /// pauses future automatic pickup; it terminates nothing running.
+    /// A failed firing's notification record commits with its hold in
+    /// one state-database transaction, before reflection to GitHub.
     fn set_automatic_hold(
         &self,
         project: &ProjectRef,
