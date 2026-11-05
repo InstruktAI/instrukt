@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+expression: stdout(&run)
+---
+runtime `rt` needs no ending; nothing was done

@@ -12,7 +12,9 @@ Commands:
   alive          Print a session's status: running, needs-input, ended ok, ended failed or gone
   conversation   Print a session's conversation
   link           Link two sessions of one runtime, or remove their link
-  end            End a session
+  end            End a session, your own (`self`), or a todo's bound sessions (`--todo`); says so
+                 when the runtime needs no ending
+  history        Look up earlier conversations in the runtime you are running in
   resolve-start  Resolve a standing agent's start whose result never arrived: bind the session the
                  runtime did create, or declare that none was
   help           Print this message or the help of the given subcommand(s)
@@ -20,3 +22,7 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
+Exit status 3, "yours to do": the runtime fills this call as an instruction for you. instrukt ran
+nothing; it printed the instruction (with the call's inputs after it, one per line). Carry it out
+with your own runtime's tools; that completes the call. It is neither success nor failure.

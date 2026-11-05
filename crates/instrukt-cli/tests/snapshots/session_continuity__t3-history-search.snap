@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+expression: stdout(&run)
+---
+Search T3's threads for the text below with the T3 thread search tool (`t3_thread_search`), and read the thread ids it names; `instrukt sessions history show <id>` shows one of them.
+flaky test

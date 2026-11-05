@@ -7,7 +7,7 @@ use serde_yaml_ng::{Mapping, Value};
 use super::_error::FindingKind;
 use super::_interpolate::{join, key_text, mask_references};
 use super::_module::Module;
-use super::_runtime::{OPTIONAL_FIELDS, REQUIRED_FIELDS};
+use super::_runtime::{AGENT_FIELD, HISTORY_FIELD, REQUIRED_FIELDS, VerbName, parse_verb};
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
@@ -21,6 +21,29 @@ pub const SHIPPED_BLUEPRINT_ENGINES: [&str; 1] = ["graphify"];
 
 /// The default `github.api_url`.
 pub(crate) const DEFAULT_GITHUB_API_URL: &str = "https://api.github.com";
+
+/// The default `runner.disk_headroom.warn`: below it the guard warns.
+pub(crate) const DEFAULT_HEADROOM_WARN: &str = "30GiB";
+
+/// The default `runner.disk_headroom.floor`: below it the guard reclaims.
+pub(crate) const DEFAULT_HEADROOM_FLOOR: &str = "10GiB";
+
+/// The bytes a `runner.disk_headroom` size (`30GiB`, `0.5GiB`) stands for;
+/// `None` for anything else.
+pub(crate) fn gib_bytes(text: &str) -> Option<u64> {
+    let number = text.trim().strip_suffix("GiB")?;
+    let well_formed = !number.is_empty()
+        && number.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && number.chars().filter(|c| *c == '.').count() <= 1
+        && !number.starts_with('.')
+        && !number.ends_with('.');
+    if !well_formed {
+        return None;
+    }
+    let gib: f64 = number.parse().ok()?;
+    // `as` saturates: a size beyond u64 is larger than any volume.
+    Some((gib * f64::from(1u32 << 30)).round() as u64)
+}
 
 /// One of the two layers of configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +110,8 @@ enum Shape {
     AgentOrder,
     ThinkingMode,
     Identity,
+    /// `off`, or `{warn, floor, roots}` (`runner.disk_headroom`).
+    DiskHeadroom,
 }
 
 enum Node {
@@ -155,6 +180,7 @@ fn schema() -> Node {
                 ("notify", Leaf(GlobalOnly, Shape::Str)),
                 ("runtime", Leaf(GlobalOnly, Shape::Str)),
                 ("autostart", Leaf(Both, Shape::Autostart)),
+                ("disk_headroom", Leaf(GlobalOnly, Shape::DiskHeadroom)),
             ]),
         ),
         ("runtimes", Leaf(GlobalOnly, Shape::Runtimes)),
@@ -373,6 +399,7 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                 "expected true, false or a mapping of kind to true or false",
             )),
         },
+        Shape::DiskHeadroom => check_disk_headroom(value, path, out),
         Shape::StrList => {
             if !value
                 .as_sequence()
@@ -443,16 +470,150 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
         },
         Shape::Runtimes => match value.as_sequence() {
             Some(seq) => {
-                let required: Vec<(&str, Field)> =
-                    REQUIRED_FIELDS.iter().map(|f| (*f, Field::Str)).collect();
-                let optional: Vec<(&str, Field)> =
-                    OPTIONAL_FIELDS.iter().map(|f| (*f, Field::Str)).collect();
                 for (i, item) in seq.iter().enumerate() {
-                    check_record(item, &join(path, &i.to_string()), &required, &optional, out);
+                    check_runtime_entry(item, &join(path, &i.to_string()), out);
                 }
             }
             None => out.push(invalid("expected a list of runtime entries")),
         },
+    }
+}
+
+/// `runner.disk_headroom`: `off`, or a map of `warn` and `floor` sizes and
+/// `roots` directories, whose floor is positive and below the warn level
+/// (each unset size at its default).
+fn check_disk_headroom(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+    let map = match value {
+        Value::String(text) if text == "off" => return,
+        Value::Mapping(map) => map,
+        _ => {
+            out.push(KeyFinding::new(
+                path,
+                FindingKind::InvalidValue,
+                "expected `off` or a mapping of `warn`, `floor` and `roots`",
+            ));
+            return;
+        }
+    };
+    let mut sizes = [DEFAULT_HEADROOM_WARN, DEFAULT_HEADROOM_FLOOR].map(gib_bytes);
+    for (key, field_value) in map {
+        let name = key_text(key);
+        let child = join(path, &name);
+        let slot = match name.as_str() {
+            "warn" => 0,
+            "floor" => 1,
+            "roots" => {
+                if !field_value
+                    .as_sequence()
+                    .is_some_and(|seq| seq.iter().all(Value::is_string))
+                {
+                    out.push(KeyFinding::new(
+                        &child,
+                        FindingKind::InvalidValue,
+                        "expected a list of directories",
+                    ));
+                }
+                continue;
+            }
+            _ => {
+                out.push(KeyFinding::new(
+                    &child,
+                    FindingKind::UnknownKey,
+                    "unknown key",
+                ));
+                continue;
+            }
+        };
+        sizes[slot] = field_value.as_str().and_then(gib_bytes);
+        if sizes[slot].is_none() {
+            out.push(KeyFinding::new(
+                &child,
+                FindingKind::InvalidValue,
+                "expected a size in GiB, such as `30GiB`",
+            ));
+        }
+    }
+    if let [Some(warn), Some(floor)] = sizes
+        && (floor == 0 || floor >= warn)
+    {
+        out.push(KeyFinding::new(
+            &join(path, "floor"),
+            FindingKind::InvalidValue,
+            "the floor must be positive and below the warn level",
+        ));
+    }
+}
+
+/// One runtime-mapping entry: `name` and `session_id_env`, an optional
+/// `agent`, and verbs each in a verb form of a kind the verb takes
+/// (`layered-configuration`, "Runtime entries").
+fn check_runtime_entry(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+    let Some(map) = value.as_mapping() else {
+        out.push(KeyFinding::new(
+            path,
+            FindingKind::InvalidValue,
+            "expected a mapping",
+        ));
+        return;
+    };
+    for field in REQUIRED_FIELDS {
+        if !map.contains_key(field) {
+            out.push(KeyFinding::new(
+                &join(path, field),
+                FindingKind::Missing,
+                "missing",
+            ));
+        }
+    }
+    for (key, field_value) in map {
+        let name = key_text(key);
+        let child = join(path, &name);
+        if REQUIRED_FIELDS.contains(&name.as_str()) || name == AGENT_FIELD {
+            check_field(Field::Str, field_value, &child, out);
+        } else if name == HISTORY_FIELD {
+            check_history(field_value, &child, out);
+        } else if let Some(verb) = VerbName::from_key(&name).filter(|v| v.top_level()) {
+            check_verb(verb, field_value, &child, out);
+        } else {
+            out.push(KeyFinding::new(
+                &child,
+                FindingKind::UnknownKey,
+                "unknown key",
+            ));
+        }
+    }
+}
+
+fn check_history(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+    let Some(map) = value.as_mapping() else {
+        out.push(KeyFinding::new(
+            path,
+            FindingKind::InvalidValue,
+            "expected a mapping with the verbs `search` and `show`",
+        ));
+        return;
+    };
+    for (key, verb_value) in map {
+        let name = key_text(key);
+        let child = join(path, &name);
+        match VerbName::from_key(&format!("{HISTORY_FIELD}.{name}")) {
+            Some(verb) => check_verb(verb, verb_value, &child, out),
+            None => out.push(KeyFinding::new(
+                &child,
+                FindingKind::UnknownKey,
+                "unknown key",
+            )),
+        }
+    }
+}
+
+fn check_verb(verb: VerbName, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+    if let Err(err) = parse_verb(verb, value) {
+        out.push(KeyFinding::new(
+            path,
+            FindingKind::InvalidValue,
+            err.to_string(),
+        ));
     }
 }
 
@@ -658,6 +819,20 @@ fn json_shape(shape: Shape) -> serde_json::Value {
                 { "type": "object", "additionalProperties": { "type": "boolean" } },
             ],
         }),
+        Shape::DiskHeadroom => json!({
+            "anyOf": [
+                { "const": "off" },
+                {
+                    "type": "object",
+                    "properties": {
+                        "warn": { "type": "string" },
+                        "floor": { "type": "string" },
+                        "roots": { "type": "array", "items": { "type": "string" } },
+                    },
+                    "additionalProperties": false,
+                },
+            ],
+        }),
         Shape::StrList => json!({ "type": "array", "items": { "type": "string" } }),
         Shape::ModuleList => {
             let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
@@ -677,13 +852,44 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         }),
         Shape::WatchList => json!({ "type": "array", "items": record(&["remote", "ref"], &[]) }),
         Shape::Runtimes => {
-            let optional: Vec<(&str, serde_json::Value)> = OPTIONAL_FIELDS
-                .iter()
-                .map(|name| (*name, json!({ "type": "string" })))
-                .collect();
+            let mut optional: Vec<(&str, serde_json::Value)> =
+                vec![(AGENT_FIELD, json!({ "type": "string" }))];
+            optional.extend(
+                VerbName::ALL
+                    .into_iter()
+                    .filter(|verb| verb.top_level())
+                    .map(|verb| (verb.key(), json_verb(verb))),
+            );
+            let history = json!({
+                "type": "object",
+                "properties": {
+                    "search": json_verb(VerbName::HistorySearch),
+                    "show": json_verb(VerbName::HistoryShow),
+                },
+                "additionalProperties": false,
+            });
+            optional.push((HISTORY_FIELD, history));
             json!({ "type": "array", "items": record(&REQUIRED_FIELDS, &optional) })
         }
     }
+}
+
+/// The forms `verb` takes: a command string, `{kind: command, template}`,
+/// and, where an agent may carry it out, `{kind: agent, instruction}`.
+fn json_verb(verb: VerbName) -> serde_json::Value {
+    let form = |kind: &str, field: &str| {
+        json!({
+            "type": "object",
+            "properties": { "kind": { "const": kind }, field: { "type": "string" } },
+            "required": ["kind", field],
+            "additionalProperties": false,
+        })
+    };
+    let mut forms = vec![json!({ "type": "string" }), form("command", "template")];
+    if !verb.command_only() {
+        forms.push(form("agent", "instruction"));
+    }
+    json!({ "anyOf": forms })
 }
 
 /// The values reads answer for unset keys of `layer`'s own keys.
@@ -702,6 +908,10 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 text(DEFAULT_GITHUB_API_URL),
             );
             insert_at(&mut root, &["runner", "autostart"], Value::Bool(false));
+            let headroom = |key| ["runner", "disk_headroom", key];
+            insert_at(&mut root, &headroom("warn"), text(DEFAULT_HEADROOM_WARN));
+            insert_at(&mut root, &headroom("floor"), text(DEFAULT_HEADROOM_FLOOR));
+            insert_at(&mut root, &headroom("roots"), Value::Sequence(Vec::new()));
         }
         LayerKind::Project => {
             insert_at(&mut root, &["board"], Value::Bool(false));
@@ -742,7 +952,7 @@ mod tests {
 
     const GLOBAL_ONLY: &str = "runtimes: []\n\
         agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
-        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
+        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true, disk_headroom: 'off'}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
         requires: [todos]\nactions: {test: make test, lint: {command: lint, takes_files: true}}\n\
@@ -874,8 +1084,43 @@ mod tests {
                 ("ticks", N),
                 ("runner.notify", N),
                 ("runner.runtime", N),
+                ("runner.disk_headroom", N),
                 ("github.api_url", N),
             ]
+        );
+    }
+
+    #[test]
+    fn a_headroom_size_is_a_number_of_gib() {
+        assert_eq!(gib_bytes("30GiB"), Some(30 << 30));
+        assert_eq!(gib_bytes("0.5GiB"), Some(1 << 29));
+        assert_eq!(gib_bytes("30"), None);
+        assert_eq!(gib_bytes("30GB"), None);
+        assert_eq!(gib_bytes("-1GiB"), None);
+        assert_eq!(gib_bytes(".5GiB"), None);
+    }
+
+    #[test]
+    fn a_headroom_floor_at_or_above_the_warn_level_is_a_finding() {
+        let findings = check(
+            &yaml("schema_version: 1\nrunner: {disk_headroom: {warn: 20GiB, floor: 20GiB}}\n"),
+            LayerKind::Global,
+        );
+        assert_eq!(
+            judged(&findings),
+            [("runner.disk_headroom.floor", FindingKind::InvalidValue)]
+        );
+    }
+
+    #[test]
+    fn a_headroom_floor_is_judged_against_the_default_warn_level() {
+        let findings = check(
+            &yaml("schema_version: 1\nrunner: {disk_headroom: {floor: 40GiB}}\n"),
+            LayerKind::Global,
+        );
+        assert_eq!(
+            judged(&findings),
+            [("runner.disk_headroom.floor", FindingKind::InvalidValue)]
         );
     }
 
@@ -929,7 +1174,6 @@ mod tests {
                 ("modules.todos", I),
                 ("ticks", I),
                 ("runner.autostart", I),
-                ("runtimes.0.conversation", M),
                 ("runtimes.0.bogus", U),
                 ("agents.thinking_mode", I),
                 ("agents.order.1", I),
@@ -942,6 +1186,39 @@ mod tests {
             LayerKind::Global,
         );
         assert_eq!(judged(&empty_order), [("agents.order", I)]);
+    }
+
+    #[test]
+    fn a_verb_outside_its_forms_or_of_a_kind_it_does_not_take_is_a_finding() {
+        let findings = check(
+            &yaml(
+                "schema_version: 1\nruntimes:\n\
+                 \x20 - name: a\n    session_id_env: A\n    send: s\n\
+                 \x20   end: {kind: agent, instruction: close it}\n\
+                 \x20   end_self: {kind: command, template: x}\n\
+                 \x20   history: {show: s, search: {kind: agent, instruction: look}}\n\
+                 \x20 - name: b\n    session_id_env: B\n\
+                 \x20   start: {kind: agent, instruction: start one}\n\
+                 \x20   send: {kind: shell, template: x}\n\
+                 \x20   alive: {kind: command, template: x, instruction: y}\n\
+                 \x20   conversation: {kind: command, instruction: y}\n\
+                 \x20   link: [x]\n\
+                 \x20   history: {search: s, browse: s}\n",
+            ),
+            LayerKind::Global,
+        );
+        use FindingKind::{InvalidValue as I, UnknownKey as U};
+        assert_eq!(
+            judged(&findings),
+            [
+                ("runtimes.1.start", I),
+                ("runtimes.1.send", I),
+                ("runtimes.1.alive", I),
+                ("runtimes.1.conversation", I),
+                ("runtimes.1.link", I),
+                ("runtimes.1.history.browse", U),
+            ]
+        );
     }
 
     #[test]
