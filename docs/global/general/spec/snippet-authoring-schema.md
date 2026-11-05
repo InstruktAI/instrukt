@@ -78,12 +78,16 @@ the position's rendering carries; depth below that comes from required reads.
   snippets are ordinary `policy` snippets, appended to that one CLI's global
   file only.
 - `general`'s `expanded` and `listed` may name ids from any domain, which is
-  how always-on content from several domains is chosen in one place.
+  how always-on content from several domains is chosen in one place. A
+  domain's index and the project's index name only snippets of their own
+  position.
 
-An `agents` entry naming an unsupported CLI or an unknown or undelivered id,
-and an `agents` key in any other position's `index.yaml`, are refused. Sync and
-validation report as findings an unknown key for the position, an unknown or
-undelivered id, and a `listed` id already in the closure of `expanded`. A domain without `index.yaml` is a notice: it is
+`instrukt docs validate`, and the sync that publishes the position, report as
+findings a key the position does not allow (`agents` outside
+`docs/general/index.yaml` among them), an id that names no delivered snippet,
+an `agents` key that is not a supported agent CLI, a `listed` id already in the
+closure of `expanded`, and an `index.yaml` anywhere but a position's root; sync
+refuses on them. A domain without `index.yaml` is a notice: it is
 absent from the global file and found only through `instrukt docs index`.
 
 What each rendering carries — the global agent files, `instrukt docs get
