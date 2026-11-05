@@ -55,17 +55,17 @@ the runtime adapter provides session capabilities rather than workflow policy.
 | Claim adoption, holds, role and title | Work-record entry and runner commands | Enforce one live driver and lane ownership. A denied operation remains denied; it is not a workflow phase. |
 | Entry existence, delivery, dependency and stash-debt checks | Entry commands and provider | Admit eligible work or expose the concrete refusal before dispatch. Manual preparation retains its separate dependency rule. |
 | Drift detection and stale checks | Orchestrator evidence-refresh command and fact provider | Obtain current repository and artifact evidence; publish facts for derivation. Agent analysis supplies classifications. |
-| Worktree creation or reattachment | Runtime through setup-only `instrukt sessions run --worktree <name> --brief -` | Create or reattach the todo worktree from the canonical branch or existing remote todo branch and return its path; wait without implementation instructions. |
+| Setup and role worktree creation | Runtime through the sessions facade | Establish the todo branch from the canonical or existing remote todo head; create a separate T3 worktree per role attempt at its captured head and return its path. Setup receives only its setup brief. |
 | Merge of upstream canonical branch | Orchestrator merge command before initial build-start evidence | Expose skipped merges, fetch failures and conflicts. On conflict, abort the merge and route recovery to the live builder's own procedure. An absent builder is an explicit dispatch gap. |
 | Opening commit and project preparation | Orchestrator after upstream synchronization | Make the opening commit, then run the project’s `prepare` action when declared, before build-start evidence. |
 | First-entry branch publication | Orchestrator branch-publication command | Publish with lease protection; report the outcome rather than assuming publication. |
 | Build-start evidence | Record-writing command at builder admission | Capture base, plan and checklist without recording a workflow phase. |
-| Build dispatch and plan reconciliation | Orchestrator action using configured session capabilities | Reuse the recorded live builder or start the required worker; present the current plan or reconciliation obligation. |
-| Build completion | Builder completion-stamp command | Record completion, invalidate the previous build verdict and reset finalization. |
+| Build dispatch and plan reconciliation | Orchestrator action using configured session capabilities | Reuse an active, unreleased builder attempt or start a new attempt at the current todo head; present the current plan or reconciliation obligation. |
+| Build completion and role handoff | Completion-stamp command and orchestrator ref advance | Record the role head, advance the todo branch by fast-forward only, retain released attempt evidence, invalidate the previous build verdict and reset finalization. |
 | Review dispatch and rounds | Orchestrator dispatch and verdict stamps | Count rounds from verdict stamps; no admission write. Re-evaluation or session reuse alone counts no round. |
 | Verdict currency | Provider over target, findings and repository evidence | Supply current, stale or undetermined binding facts without executing a hidden transition. |
-| Findings relay and fixes | Orchestrator action addressing the recorded live builder | Deliver findings for disposition and revision; expose an unavailable builder. |
-| Deferrals | Orchestrator deferrals action | Obtain a disposition per deferred item and record processing before finalizer dispatch. |
+| Findings relay and fixes | Orchestrator dispatch | Deliver findings to an active builder attempt, or start a new fixer attempt at the current todo head after the preceding attempt is released. |
+| Deferrals | Orchestrator deferrals action | Obtain a disposition per deferred item and stamp current processing, releasing the deferrer attempt without a branch advance before finalizer dispatch. |
 | Review-approved notification | Orchestrator's finalization action | Convey current approval directly to the finalizer; there is no separate review-approved event. |
 | Finalizer dispatch and readiness check | Orchestrator action and provider | Dispatch finalization, then compare the clean worktree, branch, remote and readiness stamp. |
 | Kickback | Work-orchestrator record command and lane-release commands | Append the reason to input, invalidate the plan, reset finalization, release the lane and retain worktree, branch and commits. |
@@ -80,32 +80,66 @@ the role's procedure and configured template.
 
 Builder admission requires the quality-checklist artifact to exist. Setup
 orders worktree creation, upstream synchronization, opening commit, project
-preparation when declared, first branch publication, build-start record, quality-checklist presence, then builder dispatch. Plan reconciliation
+preparation when declared, first branch publication, setup completion and confirmed
+fast-forward handoff, build-start record, quality-checklist presence, then builder dispatch. Plan reconciliation
 re-records `--build-started` against the current plan before resuming the build.
-Cleanup uses `worktree.exists` with `done_when: {not: {exists: worktree.exists}}`.
+Cleanup observes each retained attempt path with `worktree.exists` and
+`done_when: {not: {exists: worktree.exists}}`.
 
 A checklist-only admission gap does not repeat synchronization after the
 build-start stamp. First branch publication follows the opening commit and
 project preparation. Once finalize readiness is recorded, confirmation and
 handoff owe no merge or branch-publication effect.
 
-### Session reuse
+### Sequential role attempts and branch handoff
 
-Worktree creation and attachment are distinct adapter capabilities. T3's
-published `--worktree <base>` and `--branch <name>` create a new worktree; they
-cannot attach a new role's thread to the setup thread's existing worktree. Reuse
-that bound thread where the assignment permits it. A new role requiring the same
-worktree remains pending with the capability gap reported; the adapter neither
-repeats setup nor runs that role in the project root.
+The todo branch is the durable handoff between roles. On T3, setup, builder,
+reviewer, fixer, deferrer and finalizer each use their own role worktree under
+`project/instrukt/spec/feature/runner/session-continuity`. Only one workspace-role attempt of
+that todo is admitted at a time; the claim-holding orchestrator
+coordinates their serialized work and mechanical handoffs. A pending start or branch handoff prevents the next role
+from starting. Reuse is limited to follow-ups within an active attempt.
 
-Every role dispatch in this cycle uses recorded-session reuse under
-`project/instrukt/spec/feature/runner/session-continuity`.
+A code-writing role completes by committing its work and recording the required
+completion stamp bound to its branch head. The orchestrator checks that head
+and a clean worktree, and advances the todo branch to it only when the current
+todo head is an ancestor. The ref update compares the expected old head;
+a concurrent ref change requires re-observation. This moves only the todo
+branch, never the canonical branch. No merge, rebase or force-update substitutes
+for the fast-forward. A read-only review records its verdict at the captured
+todo head and releases its attempt in the verdict transaction without changing
+either branch. Deferral processing records dispositions covering the current
+deferrals artifact and releases the deferrer attempt in the
+`--deferrals-processed` transaction, also without a branch advance. Both
+read-only releases require a clean worktree at the captured todo head.
+
+If advancement is not a fast-forward, preserve both heads and the role worktree,
+record a plain finding naming the branches and commits, and automatically hold
+the todo with that reason. Later roles and integration handoff remain blocked.
+The orchestrator reconciles the finding through the workflow's revision route;
+release of the hold follows the existing work-record command contract.
+
+Git refs and SQLite have no shared transaction. Before advancing, persist the
+attempt's stamped source head and expected todo head as pending handoff evidence.
+After the ref update, record its resulting todo head and mark the attempt
+released in one work-record transaction. Recovery observes the refs: an exact
+match with the recorded source head completes that recording idempotently;
+an unchanged expected head permits retry; any other head requires a fresh
+fast-forward check or the same finding and hold. A stamp alone never releases
+an unfinished handoff. Released bindings retain branch, base, head and path.
 
 ### Finalization and integration handoff
 
 Deferrals are settled before finalizer dispatch. Readiness requires a clean
-worktree and equality of its head, the local todo branch, the remote branch
-and the commit named by the finalize-ready stamp. A readiness mismatch returns
+finalizer worktree and equality of its head, the advanced local todo branch,
+the remote todo branch and the commit named by the finalize-ready stamp. A
+finalizer first records a `role_complete` stamp; its handoff advances the todo
+branch and confirms attempt release before the finalize-ready stamp and
+`workflow.finalized` commit together. The finalizer records readiness against
+that retained binding; this record-only write admits no further workspace work.
+Further workspace changes require a new finalizer attempt at the current todo
+head and its own completion and confirmed handoff.
+A readiness mismatch returns
 an explicit reconciliation and restamping obligation; it does not hand off a
 candidate under an earlier stamp.
 
@@ -116,22 +150,28 @@ does not create a new logical handoff. Integration is governed by
 
 ### Settled command bindings
 
-- Runtime setup uses setup-only `instrukt sessions run --worktree <name> --brief -`; the binding
-  exposes `worktree.path`. After creation and upstream synchronization, make
-  the opening commit and run the
-  project's `prepare` action when declared, before implementation.
+- Runtime setup uses setup-only `instrukt sessions run --worktree <name> --todo <slug> --brief -`;
+  its durable start key and setup-attempt binding expose `worktree.path`. After
+  upstream synchronization, the opening commit and project preparation, release
+  setup through the same fast-forward handoff before builder admission.
 - `instrukt todo stamp <slug> --build-started` captures the original base and
   approved plan digest; write the quality checklist separately before admission.
 - Review rounds count verdict stamps; dispatch requires no admission write.
-- `instrukt todo stamp <slug> --finalize-ready` records the handoff and appends
-  `workflow.finalized` idempotently by project/todo/SHA.
+- Setup and finalizer completion use `instrukt todo stamp <slug> --role-complete`;
+  builder/fixer completion uses `--build-complete`. Role-attempt evidence and
+  admissibility are owned by `project/instrukt/spec/feature/work/stamps`.
+- `instrukt todo stamp <slug> --finalize-ready` follows the finalizer branch
+  handoff and records readiness with `workflow.finalized` in one transaction,
+  idempotently by project/todo/SHA.
 - Release with `instrukt todo update <slug> --unclaim`; confirm `claim.held`
   is false and record the handoff. The runtime owns session ending and
   cleanup; preserve conversations still needed for review or human input.
 - The integrator runs `instrukt docs fold <slug>` before candidate verification,
   then `instrukt todo deliver <slug> --commit <sha>` after confirmed promotion.
-  Delivered worktree cleanup is `git worktree remove <path>` with `done_when`
-  the worktree is absent. Returned preparation work retains its working resources.
+  Delivered worktree cleanup covers every retained role-attempt path with
+  `git worktree remove <path>` and `done_when` the path is absent, through the
+  runtime's supported cleanup path. Returned preparation work retains its
+  working resources.
 
 ## Use cases
 
@@ -144,12 +184,63 @@ Then an integration candidate is handed off only after current independent appro
 And findings requiring changes return to implementation before that handoff
 ```
 
+### UC-DC2: A fix reaches the next review and the delivered todo branch
+
+```gherkin
+Given a developer's change has review findings requiring fixes
+When the workflow dispatches a fixer on T3
+Then the fixer works in its own worktree at the todo branch's current head
+When the fixer commits the corrections and stamps completion
+Then the todo branch advances by fast-forward to the fixer's stamped head
+And the next independent review sees those corrections in its own worktree
+And the released fixer branch and worktree remain recorded as evidence
+```
+
+### UC-DC3: Divergent work is preserved for reconciliation
+
+```gherkin
+Given a developer's completed role branch diverges from the current todo branch
+When the workflow attempts to hand that role's work to the next role
+Then the todo branch is unchanged and the todo is held
+And the finding identifies both branches and commits for reconciliation
+And the role's work is preserved without dispatching the next role
+```
+
+### UC-DC4: The builder receives the completed workspace setup
+
+```gherkin
+Given a developer's prepared change needs its workspace initialized on T3
+When the workflow completes the todo-bound setup attempt
+Then its committed setup reaches the todo branch by confirmed fast-forward handoff
+And the builder starts in a new worktree at that advanced head only after setup is released
+```
+
+### UC-DC5: Deferral disposition permits finalization without changing the code
+
+```gherkin
+Given a developer's approved change has deferred items awaiting disposition
+When the deferrer records dispositions covering the current deferrals artifact and stamps processing
+Then that attempt is released without changing the todo branch
+And a finalizer can start in its own worktree at the current todo head
+But missing or stale processing evidence keeps the deferrer outstanding and finalization pending
+```
+
+### UC-DC6: Integration receives only a candidate whose finalizer handoff is confirmed
+
+```gherkin
+Given a developer's approved change has been synchronized and published by a finalizer
+When the finalizer records role completion
+Then integration readiness remains pending until the todo branch has reached that stamped head by confirmed fast-forward handoff
+When the finalizer records readiness against matching clean worktree, local todo branch and remote branch evidence
+Then the readiness stamp and finalized event are recorded together for that candidate
+```
+
 ## Known caveats
 
-- T3's host CLI creates new worktrees but cannot attach a new role to an
-  existing one. Such a dispatch remains pending with that capability gap;
-  the setup and multi-role delivery sequence is not fully supported by this
-  adapter until the runtime supplies attachment.
+- T3's host CLI creates worktrees but has no attach-existing-worktree option.
+  The shipped sdlc delivery workflow uses sequential per-role worktrees and
+  needs creation only. An upstream attach option would let roles share one
+  worktree again; it is to be requested from T3, alongside pingdotgg/t3code#31621.
 
 ## See Also
 

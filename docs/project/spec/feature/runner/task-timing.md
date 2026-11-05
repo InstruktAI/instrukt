@@ -46,25 +46,48 @@ daylight-saving rules. `at` is ISO-8601 with an offset. An occurrence is
 missed when it fell before this wake-up and after the last one and did not
 fire. Last-fired accounting is a stamp on the task record. The runner lock
 serializes wake-ups; an in-flight task is not fired again, and a failed
-dispatch counts as not fired.
+dispatch proven rejected before creation counts as not fired. An ambiguous
+start remains in flight until reconciled, even without a task-started stamp.
+
+### Occurrence identity and interrupted dispatch
+
+Each occurrence has one title key:
+`instrukt:task:<encoded-project>/<encoded-slug>:<encoded-occurrence>` under
+`project/instrukt/spec/feature/runner/session-continuity`. The occurrence is
+its scheduled instant in canonical RFC 3339 UTC with `Z`; a catch-up selects one
+missed instant and persists it before dispatch. A later wake-up retries that
+same occurrence, rather than selecting another while its start is unresolved.
+
+Commit its `runtime_starts` marker before invoking the runtime. After restart,
+keyed discovery recovers the existing thread before any new start for that
+occurrence. A successful empty listing leaves it unresolved and exposes
+`instrukt sessions resolve-start <key>`; it does not make the task eligible for
+another firing. A failed send retains its recorded target. Acceptance binds
+the thread and last-fired evidence to that occurrence; completion or error
+still requires its matching outcome stamp. Only after the occurrence resolves
+may the recurring schedule select the next due occurrence under `catch_up`.
 
 ### Wake-up installation and visibility
 
-`instrukt install` registers the generic wake-up with the available OS
-scheduler, using the machine's native scheduler or its fallback. The wake-up
-calls `instrukt tick` every minute. There is no per-task
-registration with an external scheduler and no tick-adapter layer.
+`instrukt install` converges a single shared minute wake-up only when an
+adopted project's effective todos or events module needs it and `ticks: on`.
+Core-only adoption installs none. The native scheduler or tick-only cron
+fallback calls `instrukt tick` every minute; no task has its own external
+registration. Installation, checks, repair and shared-resource withdrawal follow
+`project/instrukt/spec/feature/runner/module-installation`.
 
-`ticks: off` opts out of installation of the wake-up. A developer supplying
-their own scheduler calls `instrukt tick` every minute. The configured runtime
-supplies session execution; instrukt owns the task calendar.
+`ticks: off` leaves scheduling to the operator calling `instrukt tick` each
+minute and withdraws an unneeded owned registration on explicit convergence.
+Task selection and catch-up remain instrukt's, with the configured runtime
+supplying execution. An event receiver's socket service is independent of ticks.
 
-`instrukt ticks status` shows the last wake-up and warns when no wake-up has
-arrived for five minutes. It reports "no wake-up ever recorded" when none
-has been recorded. The last wake-up is a row of the state database
-(`project/instrukt/spec/feature/work/state-database`). A wake-up is evidence that the runner was invoked,
-not evidence that any task finished. Completion follows the record contract
-in `project/instrukt/spec/feature/runner/session-continuity`.
+`instrukt ticks status` identifies no module demand, native/fallback registration,
+missing or broken registration, or operator scheduling. It independently reports
+the last wake-up, including "no wake-up ever recorded"; enabled scheduled work
+with no wake-up for five minutes gets a stale warning. Inactivity with no enabled
+work is not missing required infrastructure. Last wake is a state-database row.
+A wake proves invocation, not event delivery or task completion; completion
+follows `project/instrukt/spec/feature/runner/session-continuity`.
 
 Task execution records its result with
 `instrukt todo stamp <slug> --task-outcome success|error [--reason <text>]`,
@@ -103,7 +126,7 @@ Scenario Outline: Resume after several scheduled occurrences were missed
 ### UC-TT3: A developer enables unattended scheduled work
 
 ```gherkin
-Given a developer has authorized scheduled work for their project
+Given a developer has enabled todos and authorized scheduled work for their project
 When the developer installs the periodic wake-up
 Then due work can run without an interactive runner
 And missed-run decisions remain governed by each task’s policy
@@ -121,9 +144,26 @@ Then the task is held with that reason and the developer is notified
 And no further occurrence runs until the developer resolves it
 ```
 
+### UC-TT5: Recover scheduled work after an interrupted start
+
+```gherkin
+Given a developer's scheduled task was started but instrukt lost the reply
+When a later wake-up finds that occurrence's keyed thread
+Then the task continues in that thread without firing the occurrence again
+But when listing finds no matching thread
+Then the occurrence remains unresolved and the developer sees its resolve-start command
+And later occurrences wait until the interrupted occurrence is resolved
+```
+
 ## Known caveats
 
-None.
+- A keyed thread prevents duplicate starts during recovery, but unconfirmed
+  input can be delivered again. Task operations reconcile their external result;
+  this is not an exactly-once side-effect guarantee.
 
 ## See Also
+
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
+- [project/instrukt/spec/feature/runner/module-installation](module-installation.md)

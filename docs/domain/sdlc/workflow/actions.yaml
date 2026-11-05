@@ -27,8 +27,11 @@ roles:
   - work-orchestrator
 # Commands are configured obligations, not evaluator side effects.
 # A sessions.run command is used only after record lookup/alive requires a start;
-# available recorded sessions receive the rendered brief through sessions.send.
-# Run build Git effects in the runtime-reported todo worktree; worktree.remove
+# Workspace-role reuse first requires an active, unreleased attempt, then an
+# available recorded session. Send follow-ups only within that attempt. After
+# release, start the next attempt at the current todo head; pending starts and
+# handoffs remain outstanding and block another workspace-role dispatch.
+# Run build Git effects in the runtime-reported active role worktree; worktree.remove
 # runs from the project checkout outside that worktree. Resolve main to
 # the actual canonical default branch. Stop on failure; re-derive after mutation.
 # Render the brief as UTF-8 stdin for --brief -, never interpolate prose into shell text.
@@ -116,7 +119,7 @@ await-build-start:
   command: instrukt todo show {slug}
   template: templates/await-build-start.md
 setup-workspace:
-  command: instrukt sessions run --worktree {slug}/work --brief -
+  command: instrukt sessions run --worktree {slug}/work --todo {slug} --brief -
   template: templates/setup-workspace.md
 cleanup-delivered:
   command: instrukt todo show {slug}

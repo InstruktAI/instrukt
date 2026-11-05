@@ -44,6 +44,12 @@ the meaning and the writes of the runner tables.
   Network waits and reaction execution run outside that section, so a blocked
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
+- A separate per-computer reflection lock
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
+  across GitHub requests and takes the writer lock only briefly for each local
+  transaction that records what reflection learned. Lock order is always
+  reflection → writer; a local writer releases the writer lock before acquiring
+  the reflection lock. Local readers take neither lock.
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -144,7 +150,7 @@ Approvals and intent checks are stamps: `fact = 'approval'` and
 | Column | Meaning |
 | --- | --- |
 | `todo_id`, `sequence` | The todo and record order. |
-| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
+| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
 | `at`, `actor` | Time and acting session, GitHub account or person. |
 | `role` | The role the acting session played, or `NULL`. |
 | `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
@@ -157,9 +163,42 @@ Approvals and intent checks are stamps: `fact = 'approval'` and
 `reason`, `set_by`, `set_at`, `released_at`, `released_by`. The current hold
 is the row with `released_at IS NULL`; at most one per todo.
 
-**`session_bindings`** — started sessions per todo and role. Key:
-`(todo_id, role)`. Columns: `todo_id`, `role`, `session`, `worktree` (the
-returned worktree path, kept after the session ends).
+**`session_bindings`** — retained sessions per todo, role and attempt. Key:
+`(todo_id, role, attempt)`; unique `(runtime, key_title)`.
+
+| Column | Meaning |
+| --- | --- |
+| `todo_id`, `role`, `attempt` | Assignment and monotonic positive attempt number; allocated before dispatch and reused on retry. |
+| `runtime`, `key_title` | Adapter and durable exact title key. |
+| `session` | Bound runtime identity, or `NULL` while start recovery is pending. |
+| `worktree`, `branch`, `base_head` | Returned worktree path, role branch and captured starting SHA. Retained after release. |
+| `completion_sequence`, `role_head` | Releasing or handoff-enabling stamp and its bound role head. Read-only roles retain their captured head; `NULL` before completion. |
+| `advance_from`, `advance_to`, `advanced_at` | Expected todo head, intended stamped role head and confirmed handoff time. Intent commits before the Git ref update; confirmation commits with release. A read-only role has no ref-advance values. |
+| `released_at` | Time the completed handoff, read-only verdict or deferral-processing evidence released this attempt; `NULL` while it remains outstanding. |
+
+One todo has at most one outstanding dispatched workspace-role attempt. The claim-holding
+orchestrator coordinates the serialized work and its mechanical handoffs. A new attempt retains
+prior rows, starts at the current todo head and gets a fresh key. An unresolved
+start or pending handoff keeps the current attempt outstanding. Branch advancement
+and crash reconciliation follow
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
+
+Every workspace role in the shipped work workflow has a release boundary:
+
+| Role | Evidence and release |
+| --- | --- |
+| Setup | `--role-complete`, followed by confirmed fast-forward handoff to the todo branch. |
+| Builder, including a fixer or plan-reconciliation attempt | `--build-complete`, followed by confirmed fast-forward handoff. |
+| Build reviewer | Verdict bound to the complete findings and captured todo head; release commits with the verdict, without a branch advance. |
+| Deferrer (`process-deferrals`) | `--deferrals-processed` bound to dispositions covering the current deferrals artifact; release commits with the stamp, without a branch advance. |
+| Finalizer, including reconciliation | `--role-complete`, followed by confirmed fast-forward handoff; readiness is a later record-only write against that retained binding. |
+
+A read-only release requires a clean role worktree whose head still equals its
+captured todo head. Its `advance_from`, `advance_to` and `advanced_at` remain
+`NULL`. Missing or stale completion evidence leaves the attempt outstanding;
+runtime idleness does not release it. The claim-holding orchestrator is not a
+workspace-role attempt; preparation and task firings keep their own completion
+contracts.
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
@@ -237,18 +276,39 @@ records or database tables. Redis and SQLite have no shared transaction.
 exact_home)`, where home includes kind and slug or platform. Retains immutable
 event, accepted identity/attendance/delivery declaration, procedure-read references,
 acceptance state and visible failure/outcome. A duplicate key returns its existing
-acceptance. Submission failures leave the consumer unsettled; accepted rows precede the final consumer-outcome, handled-mark and cursor transaction before Redis ACK. Later runtime execution is separate; session/delivery-table realization is
-owned by S6, within this same database.
+acceptance. Submission failures leave the consumer unsettled; accepted rows precede the final consumer-outcome, handled-mark and cursor transaction before Redis ACK. Later runtime execution and hook handoff are separate boundaries under
+`project/instrukt/spec/feature/runner/procedure-event-delivery`.
 
-**`standing_deliveries`** — pending deliveries with a fixed runtime target.
-Key: `(consumer, seq)`, referring to the event's consumer and event-log sequence.
-Columns: `consumer`, `seq`, `session` (the selected `<runtime>:<id>`).
-Commit the target before `send`; a failed or interrupted send retries that
-same session. A later absent or conflicting runtime listing cannot retarget
-it or start a replacement. Delete the row in the transaction that records
-accepted delivery and its handled mark. A start with an unknown result keeps
-its start marker until its session can be recovered, then records this target
-before any recovery send.
+**`procedure_responsibilities`** — continuing procedure/home[/subject] assignments.
+Key: `(procedure, exact_home, subject_or_none)`, with typed home and subject
+identity, next enqueue position and current session generation. One per-procedure/
+home resolution guard covers all its subjects. Generation history retains the
+runtime key, native session, execution checkout, system-origin assignment evidence,
+initialized role, attendance, cardinality and interruptibility, and confirmed
+terminal/continuation disposition. Revival preserves initialized settings;
+a successor adopts current publication. This is assignment bookkeeping, not a
+runtime session, transcript or lifecycle store. A conflicting title or uncertain
+observation cannot advance the generation.
+
+**`standing_deliveries`** — one durable procedure-event record per activation.
+Key: `(event_id, procedure, exact_home)`, referencing `procedure_activations`.
+Retains responsibility key, ordered enqueue position, immutable envelope,
+accepted declaration, pending/selected/delivered/failed state, selected boundary,
+target generation/session, handoff outcome/time and visible failure evidence.
+Uniqueness is by activation, never `(consumer, seq)`; local sequence and transport
+coordinates are accounting references only. The initial row exists before
+runtime startup. Selection records one oldest pending event or an ordered
+snapshot, leaving unselected rows pending. Only successful eligible hook handoff
+marks delivery; start/send/wake acceptance does not. Retryable pre-handoff
+failures retain pending work; terminal failure remains distinct and visible.
+
+Commit the runtime target before dispatch. Failed or interrupted send retries
+that same target without a replacement. Confirmed session closure is a separate
+continuation decision: under the responsibility guard, retain undelivered work
+through suspension and transfer it only to an eligible resumed session or
+confirmed successor. Retain delivered activation identities to suppress repeats;
+a crash after external handoff but before commit can still repeat data. No
+second SQLite-cursor scheduler independently executes these rows.
 
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
@@ -262,38 +322,53 @@ source may run, from `X-Poll-Interval`. Key: `project`.
 `observed_at`.
 
 **`executions`** — dispatched executions the runner watches until their todo
-is released. Key: `(project, todo_id, role)`. Columns: `project`, `todo_id`,
-`role`, `session`, `workflow_state` (the state at the last look),
+is released. Key: `(project, todo_id, role, attempt)`. Columns: `project`, `todo_id`,
+`role`, `attempt`, `key_title`, `occurrence` (for a task), `session`, `workflow_state` (the state at the last look),
 `recovery_sent`, `anomaly_raised`.
 
-**`standing_bindings`** — cached standing-agent sessions. Key:
-`(procedure, project)`. Columns: `procedure`, `project`, `session`, `key_title`.
-A binding is repaired from the runtime thread's exact key title before a new
-start is considered; deleting this cache never establishes absence in T3.
+**`runtime_bindings`** — cached sessions for all start kinds. Key:
+`(runtime, key_title)`. Columns: `runtime`, `key_title`, `kind` (`standing`,
+`todo`, `task` or `run`), `project` (nullable for platform standing assignments), `exact_home`,
+`responsibility`, `generation` for standing keys, `subject` (procedure, todo/role/attempt,
+task/occurrence or request id), `session`, `worktree`, `branch`, `base_head`.
+Repair this cache from exact keyed discovery before considering a start.
+Its removal establishes no runtime absence. Work's `session_bindings` owns
+retained todo-role evidence; task occurrence stamps own whether a run finished.
 
-**`runtime_key_locks`** — one standing-agent starter/deliverer per runtime
-and singleton key. Key: `(runtime, project, procedure)`.
+**`runtime_key_locks`** — one starter/deliverer per runtime and exact key.
+Key: `(runtime, key_title)`.
 
 | Column | Meaning |
 | --- | --- |
-| `runtime`, `project`, `procedure` | The compiled adapter name and singleton scope. |
-| `owner` | Owning runner invocation token; `NULL` when released. |
-| `acquired_at` | Acquisition time, for diagnosis; not a timeout permitting takeover. |
+| `runtime`, `key_title`, `project` | Adapter, exact title and execution scope; project is nullable for platform, whose registered checkout is retained with the standing assignment. |
+| `owner` | Owning invocation token, including manual sessions commands; `NULL` when released. |
+| `acquired_at` | Acquisition time for diagnosis; elapsed time permits no new start. |
 
-Acquisition is an atomic conditional write under the existing writer lock. Only
-the recorded owner can perform the key's list/start/send sequence and release
-the row. No database transaction spans a runtime command. A successor holding
-the machine runner lock can recover dead invocation ownership; unresolved
-`standing_starts` remains in force after that recovery. Every standing
-start-or-wake goes through this row, even with a cached binding.
+Acquisition is an atomic conditional write under the writer lock. Only the owner
+performs the list/start/send sequence and releases the row. No transaction spans
+a runtime command. A successor holding the machine runner lock can recover dead
+ownership while preserving unresolved `runtime_starts`. Every start and wake,
+including todo roles, task occurrences and setup-only runs, uses this table.
 
-**`standing_starts`** — standing-agent starts recorded before the runtime
-was asked and not yet bound or resolved. Key: `(procedure, project)`.
-Columns: `procedure`, `project`, `runtime`, `key_title`, `begun_at`, `reported`.
-The marker commits before the external start. A later keyed runtime match can
-resolve it without a replacement start; an empty list alone cannot clear an
-ambiguous marker. Explicit resolution or proof of rejection before creation
-is required before trying a new start.
+**`runtime_starts`** — starts recorded before calling the runtime and not yet
+completely bound. Key: `(runtime, key_title)`.
+
+| Column | Meaning |
+| --- | --- |
+| `runtime`, `key_title`, `project`, `kind`, `subject`, standing responsibility/generation and execution checkout | Same scope as the binding, including the allocated role attempt or normalized task occurrence. |
+| `brief`, `request` | Opening input and structured start request, including requested branch, captured base SHA and worktree requirement. Persisted before the external start. |
+| `begun_at`, `reported` | Start time and whether the unresolved-start finding was reported. |
+| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and no-thread confirmation or proof of rejection; `NULL` until resolved. |
+| `state` | `unresolved` while creation may be in flight; `retry_allowed` after `resolve-start --none` or proof of rejection before creation. The request and key are retained for retry. |
+
+One design covers every start kind under
+`project/instrukt/spec/feature/runner/session-continuity`. Commit the marker
+before calling start; bind and clear it in the same transaction only after
+recovering all requested evidence. On restart, discover its exact key before
+any new start. An empty listing alone never clears it. `resolve-start` or proof
+of rejection before creation permits retry of the same key; the marker returns
+to `unresolved` before that retry calls the runtime. Removing a todo or
+releasing its execution never discards an unresolved marker.
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
@@ -305,13 +380,20 @@ set for).
 ### Retention
 
 A removed todo's rows are purged with it when its recovery window expires.
-An execution's row goes when its todo is released; a standing start's when it
-is bound or resolved. A pending standing delivery's row goes with its accepted
-delivery and handled mark. A task failure's row is kept after its hold is
+An execution's row goes when its todo is released; a runtime start's when it
+is completely bound. Explicit no-thread resolution retains the request for retry.
+Standing deliveries retain pending work until eligible handoff or visible
+terminal failure, and retain terminal activation identity while the local event
+and activation records are retained. Session close deletes no responsibility
+work. Responsibility generation evidence remains while needed by pending work,
+start recovery or retained delivery identities. Runtime record retention is
+separate and may limit resumption. A task failure's row is kept after its hold is
 released, so the same failed run never sets the hold again, and is replaced by
 the task's next failed run. Validators, deferrals, watched-ref observations
 and listing copies are replaced in place. Key-lock rows are reused with
-ownership cleared on release; they are not event history. Local events and settled cursors are retained as operational accounting. Redis
+ownership cleared on release; they are not event history. Runtime bindings
+remain as identity caches, including completed occurrences and standalone runs.
+Local events and settled cursors are retained as operational accounting. Redis
 stream retention separately bounds replay; occurrence duplicate marks expire
 after seven days. Local history does not backfill a newly created Redis group.
 
@@ -328,12 +410,6 @@ after seven days. Local history does not backfill a newly created Redis group.
 
 ## Known caveats
 
-- A3's existing standing bindings, starts, fixed delivery targets and key locks
-  below retain their project-keyed adapter contract. S6 reconciles these with
-  exact home/subject identities and durable procedure delivery. They create no
-  second path independently executing Redis events from SQLite cursors.
-
-
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
@@ -342,7 +418,7 @@ after seven days. Local history does not backfill a newly created Redis group.
   the database again by pull-through.
 - Deleting the database loses work-record writes not yet reflected to
   GitHub. Reflected work returns by pull-through; the runner's state starts
-  empty, so watched refs are observed afresh. Before any new standing-agent
+  empty, so watched refs are observed afresh. Before any new
   start, the adapter discovers the thread's key title in T3; existing keyed
   threads are rebound rather than duplicated. A lost ambiguous start marker
   cannot be reconstructed when the runtime has no discoverable matching thread.
@@ -352,5 +428,7 @@ after seven days. Local history does not backfill a newly created Redis group.
 - [project/instrukt/spec/domain/work](../../domain/work.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/work/github-record](github-record.md) — reflection of the work tables to GitHub
+- [project/instrukt/spec/feature/runner/procedure-standing-agent](../runner/procedure-standing-agent.md)
+- [project/instrukt/spec/feature/runner/procedure-event-delivery](../runner/procedure-event-delivery.md)
 - [project/instrukt/spec/feature/runner/event-activation](../runner/event-activation.md) — the event log's events and consumers
 - [sdlc/policy/state-storage](../../../../domain/sdlc/policy/state-storage.md)

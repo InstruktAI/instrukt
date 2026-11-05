@@ -61,6 +61,29 @@ expanded signing/Redis credentials never enter their output. Reference text is
 stored unexpanded. No config read or patch installs services. The next received
 request observes a valid source change without receiver restart.
 
+### Module infrastructure workflow
+
+Enabling a module is a desired-state change, not evidence that its dependencies
+are installed. The configuration agent reads settings and their revision, patches
+the intended switches, validates, then invokes `instrukt install` and
+`instrukt install --check`. It inspects `instrukt ticks status` and, for events,
+`instrukt events status`; dead letters are available through
+`instrukt events dead-letters`. These commands are defined by
+`project/instrukt/spec/feature/runner/module-installation`.
+
+Rerunning `instrukt install` repairs missing or stale owned resources and reuses
+working infrastructure. It evaluates all adopted projects before shared withdrawal.
+`--check` compares without changing configuration, services, data or reader
+positions. Failed setup reports unmet prerequisites separately from the committed
+configuration; it never quietly changes the module switch or reports installation
+success. Ordinary config reads, patch and publication install no resources.
+
+A disable patch removes any conflicting webhook declarations atomically. It stops
+new module admissions; the agent's subsequent installation convergence withdraws
+only unneeded instrukt-owned units. Other projects' dependencies, all durable
+state and foreign services remain. A13's configuration skill selects participating
+computers and local agents; these CLI commands act only on their own computer.
+
 ### Revision
 
 A revision is an opaque digest of the layer document's content. Two reads of
@@ -98,6 +121,16 @@ But when existing configuration has a newer schema
 Then initialization is refused and the developer is directed to upgrade instrukt
 ```
 
+### UC-CE3: Know whether a module's infrastructure is ready
+
+```gherkin
+Given an agent has recorded a developer's valid module enablement
+When it installs and checks the module's infrastructure
+Then the developer sees the installed or reused dependencies and any unmet prerequisite
+And configuration success is distinguishable from installation success
+And a repeated setup repairs only differing owned resources
+```
+
 ## Known caveats
 
 - `instrukt config get --revision` prints the addressed layer's current revision.
@@ -107,3 +140,4 @@ Then initialization is refused and the developer is directed to upgrade instrukt
 
 - [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
 - [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)
+- [project/instrukt/spec/feature/runner/module-installation](../runner/module-installation.md)

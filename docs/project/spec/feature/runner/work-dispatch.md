@@ -22,8 +22,10 @@ receiver under `project/instrukt/spec/feature/runner/single-ingress-webhook-term
 that narrow intake outlives runner invocations and exposes no session-control API.
 The runner's local state is the state database
 (`project/instrukt/spec/feature/work/state-database`), written by
-whichever instrukt process holds the writer lock. A running process can read events and react to them; the
-scheduled tick supplies time-based wake-ups. These are execution forms of the
+whichever instrukt process holds the writer lock for a local write transaction.
+Network waits and reactions run outside that lock. A running process can read
+events and react to them; the scheduled tick supplies time-based wake-ups.
+These are execution forms of the
 same runner, not separate services per module.
 
 | Capability | Runner responsibility |
@@ -61,8 +63,29 @@ with conditional requests: the todos it holds claims on, one pickup listing per
 project with `todos` on, and the prerequisites its own work is blocked on
 (`project/instrukt/spec/feature/work/github-record`). Pickup considers the todos
 of that listing. Every tick flushes pending work-record reflection under the
-per-computer writer lock; commands that write the record flush it under that
-lock too.
+per-computer reflection lock; commands that write the record flush it under that
+lock too. Reflection holds that lock across GitHub requests and takes the writer
+lock only briefly for each local commit of what it learned. Lock order is always
+reflection → writer; the local transaction releases the writer lock before a
+flush acquires the reflection lock. Local readers take neither lock.
+
+### Enablement and infrastructure
+
+Infrastructure follows
+`project/instrukt/spec/feature/runner/module-installation`. Core installs none.
+Enabling todos demands only its shared wake-up and existing work/runtime
+prerequisites; local finalize-ready recording needs no Redis. Enabling events
+adds scoped Redis setup/checks and prepared retained readers. Only enabled
+nonempty project sources on the designated ingress demand the independent
+socket-held receiver. No consumer daemon is installed.
+
+The configuration agent changes desired settings through revision-checked config
+commands, invokes `instrukt install`, and verifies `instrukt install --check`
+with `ticks status` and, for events, `events status`. Config writes and ordinary
+publication install nothing. Disabling stops that module's admissions on the
+next effective-config evaluation; explicit convergence withdraws only unneeded
+instrukt-owned units across all projects, retaining data and pending work.
+A receiver or wake-up another enabled project needs stays installed.
 
 ### Todo pickup
 
@@ -109,6 +132,16 @@ record's artifact and stamp establish completion of a step. A runtime reply,
 successful process exit, or turn-completion event does not establish that
 completion on its own.
 
+Todo roles use the durable title key and start marker defined by
+`project/instrukt/spec/feature/runner/session-continuity`. Allocate an attempt
+once and retain it across retries. An unresolved marker is reconciled by exact
+key discovery after restart; an empty listing leaves it pending for
+`resolve-start`. T3 dispatches each role attempt into a new worktree from the
+captured todo head. Roles of one todo run sequentially; completion is admitted
+for the next role only after the fast-forward handoff defined by
+`project/instrukt/spec/feature/workflow/delivery-cycle` is recorded. A review
+releases its attempt without moving the todo branch.
+
 ### Deliberate pickup and switched-off modules
 
 With `runner.autostart` false, a session picks up work deliberately with
@@ -149,9 +182,9 @@ Then the command refuses and names both switches that would enable it
 
 ## Known caveats
 
-- T3's current CLI cannot attach a newly dispatched role to an existing
-  worktree. Work requiring that attachment remains pending with the missing
-  capability named; the adapter does not silently create another worktree.
+- T3 supports worktree creation but not attachment. The shipped sdlc workflow
+  uses per-role worktrees; a workflow requiring attachment is refused at
+  enablement with that capability named.
 - Preferred-agent selection on T3 has the limitation recorded in
   `project/instrukt/spec/feature/runner/session-continuity`.
 
@@ -161,3 +194,4 @@ Then the command refuses and names both switches that would enable it
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/runner/task-timing](task-timing.md)
 - [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)
+- [project/instrukt/spec/feature/runner/module-installation](module-installation.md)

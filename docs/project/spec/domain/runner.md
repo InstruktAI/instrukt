@@ -47,7 +47,7 @@ recognises caller identity without runtime I/O,
 and reports optional capabilities. Configuration contains no runtime verbs.
 
 **Singleton key**
-: The standing procedure and project identity carried in its runtime thread
+: The standing procedure, exact home and optional subject identity carried in its runtime thread
  title; the database binding is a cache. A per-key database lock admits one
  starter or deliverer at a time.
 
@@ -95,10 +95,12 @@ and reports optional capabilities. Configuration contains no runtime verbs.
   `instrukt sessions run|send|alive|conversation|link|resolve-start` surface,
   `instrukt ticks status`, and wake-up registration by `instrukt install`;
   structured adapter operations, five-state observation, bounded conversation
-  reads, optional linked input and notification; singleton key/title discovery
+  reads, optional linked input and notification; all-start key/title discovery
   and database locking. Every facade command accepts `--json`.
   Worktree creation returns the runtime path; reattachment requires a distinct
-  runtime capability. Events include `runner.upstream_changed`,
+  runtime capability. Shipped T3 todo delivery uses sequential per-role worktrees
+  with fast-forward handoff through the work and workflow contracts. Events include
+  `runner.upstream_changed`,
   `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and
@@ -145,12 +147,12 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
   completion requires its owning work record's evidence. Linked input is an
   optional adapter capability.
 - **Identifier:** Procedure and exact home, plus subject when declared; todo-role
-  bindings remain work-owned. A3's project-keyed adapter mapping is extended at
-  the S6 home/subject-delivery boundary.
+  bindings remain work-owned. The adapter key carries the exact home and optional subject;
+  confirmed successors retain separate generation keys.
 - **Lifecycle:** A3 owns serialized discovery/start-or-wake, pending fixed targets
   and ambiguous-start recovery. List/send failure leaves work pending and starts
-  no replacement. S6 realizes continuing home/subject responsibility and eligible
-  event delivery; routing itself resolves no session.
+  no replacement. The standing-agent and procedure-event-delivery contracts own continuing
+  home/subject responsibility and eligible event delivery; routing itself resolves no session.
 
 #### Event activation
 
@@ -296,6 +298,9 @@ has no origin, as declared in Canonical fields.
 - **Signed project sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
 - **Single cluster intake** — `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`.
 - **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
+- **Enablement-driven infrastructure** — `project/instrukt/spec/feature/runner/module-installation`.
+- **Continuing procedure responsibility** — `project/instrukt/spec/feature/runner/procedure-standing-agent`.
+- **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
 ## Governing designs and decisions

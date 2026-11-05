@@ -4,6 +4,7 @@ visibility: public
 role: upstream-watcher
 subscriptions:
   - runner.upstream_changed
+subscription_home: project
 ---
 # Upstream Watch — Procedure
 

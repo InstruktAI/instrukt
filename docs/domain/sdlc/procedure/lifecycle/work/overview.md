@@ -92,25 +92,37 @@ Worktree preparation, first branch publication, build-start evidence, stale
 checks and admission synchronization are explicit orchestrator
 commands. Finalization synchronizes again before handoff; after the readiness
 stamp, work derives confirmation and cleanup without merging or republishing. Record their outcomes. On a merge conflict, abort that merge and
-route recovery to the recorded builder; a missing builder is a dispatch gap.
+route recovery to the active builder attempt, or dispatch a new builder attempt
+at the current todo head after release. A missing binding is a dispatch gap.
 A failed fetch or skipped merge is not successful synchronization.
 
 Select workers using the procedure's `dispatch` or global `agents.order`,
 availability first. Use `med` for builders and fixers, `slow` for build
-reviewers and `fast` for finalizers. Preserve a recorded session per todo and
-role; observe it with `instrukt sessions alive`, continue through `send`, and
-start through `run` only when a new session is required by the runner contract.
+reviewers and `fast` for finalizers. Retain bindings per todo, role and attempt.
+Before reuse, confirm that the attempt is active and unreleased, then observe it
+with `instrukt sessions alive` and deliver follow-ups through `send`. After
+release, start a new attempt through `run --todo {slug}` in its own
+runtime-created worktree at the current todo head. One outstanding workspace-role
+attempt blocks another dispatch, including while its start or branch handoff is
+pending. Runtime availability alone never reopens a released attempt.
 
 ### 2. Build
 
-Create or reattach the runtime worktree with its setup-only brief, synchronize
-upstream, make the opening commit and run configured project preparation. Record
+Start a todo-bound setup attempt with
+`instrukt sessions run --worktree {slug}/work --todo {slug} --brief -` and its
+setup-only brief. Use the returned worktree to synchronize upstream, make the
+opening commit, run configured project preparation and publish the branch. Have
+the setup session record `instrukt todo stamp {slug} --role-complete`;
+fast-forward the todo branch to its stamped head and confirm the handoff and
+setup-attempt release. Record
 the base commit and approved plan digest with `instrukt todo stamp {slug} --build-started`,
 then write the quality checklist. Only then dispatch
 `sdlc/procedure/lifecycle/work/build` with the approved plan. The builder
 executes tasks, commits per task and stamps
 `instrukt todo stamp {slug} --build-complete`. That stamp clears the prior
-build verdict and finalize readiness. Re-enter `instrukt todo work {slug}`;
+build verdict and finalize readiness. Check the clean role worktree and stamped
+head, fast-forward the todo branch and confirm the builder-attempt handoff and
+release before review admission. Re-enter `instrukt todo work {slug}`;
 commits or a completion reply alone do not advance the work.
 
 When a revised plan meets an existing build, direct the builder to reconcile
@@ -121,18 +133,22 @@ original base before continuing. No stored lifecycle phase supplies this decisio
 ### 3. Review
 
 Dispatch `review-build`, counting rounds from verdict stamps and recording the exact
-commit under review. Reuse the recorded reviewer while its session remains
-available; a successful upstream merge does not itself admit another review.
+commit under review. Each new review attempt uses its own worktree at the current
+todo head; follow-ups reuse only an active, unreleased review attempt. A
+successful upstream merge does not itself admit another review.
 The reviewer executes the shared lanes, writes `review-findings` and stamps
-its verdict bound to the report and target. Read both and verify substantive
+its verdict bound to the report and captured todo head. That evidence releases
+the read-only attempt without a branch advance. Read both and verify substantive
 review under `general/procedure/orchestration` before deriving the next action.
 
 ### 4. Fix (if needed)
 
-A current changes-requested verdict sends the findings to the recorded builder
-with `instrukt sessions send`. The builder applies
-`sdlc/procedure/lifecycle/fix-review-findings`, records dispositions, commits
-fixes and stamps completion. Reuse the reviewer for the next admitted round.
+A current changes-requested verdict sends the findings to an active builder
+attempt, or starts a new builder-role attempt as fixer at the current todo head
+after release. The fixer applies `sdlc/procedure/lifecycle/fix-review-findings`,
+records dispositions, commits fixes and stamps `--build-complete`. Confirm the
+fast-forward handoff and attempt release, then dispatch the next independent
+review as a new attempt at the advanced todo head.
 
 Recoverable process failures belong to the worker: upstream conflicts, failed
 project checks, dirty worktrees, missing stamps and stale branch publication.
@@ -148,7 +164,11 @@ not transfer ownership or weaken an unresolved finding.
 
 Current approval permits finalization only after deferrals are settled.
 Dispatch `finalize` with the approval evidence. The finalizer merges latest
-upstream main, resolves conflicts, publishes the branch and stamps readiness.
+upstream main, resolves conflicts, publishes the branch and stamps
+`--role-complete`. Confirm the fast-forward of the todo branch to the stamped
+finalizer head and the attempt release. The finalizer then records
+`--finalize-ready` against its retained binding; this record-only step admits no
+further workspace work.
 Re-enter `instrukt todo work {slug}`. Compare the clean worktree head, local
 branch head, remote branch head and stamped commit. A mismatch requires
 reconciliation and a new stamp before handoff.
@@ -165,11 +185,13 @@ A blocked finalizer returns to recovery, not a wider integration mandate.
 
 If `deferrals` exists and is pending, execute the deferrals action before
 finalizer dispatch. Decide each entry under
-`sdlc/procedure/lifecycle/work/deferrals`, record dispositions and stamp processing.
+`sdlc/procedure/lifecycle/work/deferrals`, record dispositions and stamp
+`--deferrals-processed` for the current artifact. That stamp releases the deferrer
+attempt without a branch advance. Confirm release before dispatching a finalizer.
 
 ### 7. Bug fix
 
-Bug work uses the same builder. Its mandate is the checked `input`, settled
+Bug work follows the same builder-role attempt rules. Its mandate is the checked `input`, settled
 causal `diagnosis` and reviewed plan. Diagnosis prescribes no fix or verification
 approach; the plan derives them. The builder implements that plan, binds the
 prepared scenarios where permitted and stamps build completion as above.

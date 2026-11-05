@@ -1,5 +1,5 @@
 ---
-description: 'Where snippets live and how they are named: the three positions, ids, domains, index.yaml and schema.yaml, frontmatter, and the reference forms. Section shape comes from instrukt docs schema.'
+description: 'Where snippets live and how they are named: the three positions, ids, domains, index.yaml and schema.yaml, frontmatter including event subscription home, identity and attendance, and the reference forms. Section shape comes from instrukt docs schema.'
 visibility: 'public'
 ---
 
@@ -111,7 +111,7 @@ rule, and a skeleton. Validation findings name the same file and key.
 
 ### Frontmatter
 
-A task may carry an optional agent/model dispatch preference. Subscriptions carry event names only, with no home, identity or attendance fields.
+A task may carry an optional agent/model dispatch preference. A subscribed procedure declares event type patterns and its subscription home, with optional identity and attendance settings as defined under Event subscription declarations.
 
 Frontmatter (required, authored):
 
