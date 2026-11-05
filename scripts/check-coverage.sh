@@ -6,4 +6,4 @@ set -eu
 cargo build --locked --quiet --bin instrukt
 home="$(mktemp -d)"
 trap 'rm -rf "$home"' EXIT
-HOME="$home" target/debug/instrukt specs coverage --check
+HOME="$home" "${CARGO_TARGET_DIR:-target}/debug/instrukt" specs coverage --check
