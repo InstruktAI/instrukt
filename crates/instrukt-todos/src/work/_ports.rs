@@ -13,7 +13,7 @@ use jiff::Timestamp;
 
 use super::_error::WorkError;
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
-use super::_session::{GitHubRead, PendingReason, PullFor, ReflectionStatus, Session};
+use super::_session::{GitHubRead, PendingReason, ReflectionStatus, Session};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
@@ -32,7 +32,9 @@ impl Pickup for Work {
         kinds: &[TodoKind],
     ) -> Result<Vec<PickupCandidate>, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
-        s.pull_all()?;
+        // The tick's one pickup listing of the project: its result replaces
+        // the listing copies (`github-record`, "Interest-driven refresh").
+        let listed = s.pickup_listing();
         let machine = s.machine()?;
         // The runner's own claims on this computer that no session took up
         // yet are offered again (ruling D): one still awaiting reflection is
@@ -51,15 +53,26 @@ impl Pickup for Work {
             })
             .map(|it| it.record.id.clone())
             .collect();
+        // A local item is judged as the listing read it when GitHub holds
+        // a newer revision than this computer last read and nothing local is
+        // pending: another computer may have claimed or changed it. Claiming
+        // refreshes it before the claim is committed.
         let mut records: Vec<TodoRecord> = s
             .items
             .iter()
             .filter(|it| !it.reflection.conflicted)
-            .map(|it| it.record.clone())
+            .map(|it| {
+                let newer = listed.iter().find(|(remote, _)| {
+                    remote.id == it.record.id
+                        && !it.reflection.pending
+                        && Some(remote.revision) > it.reflection.remote_revision
+                });
+                newer.map_or_else(|| it.record.clone(), |(remote, _)| remote.clone())
+            })
             .collect();
-        for (record, _) in s.remote_live() {
-            if !records.iter().any(|r| r.id == record.id) {
-                records.push(record);
+        for copy in &s.copies {
+            if !records.iter().any(|r| r.id == copy.record.id) {
+                records.push(copy.record.clone());
             }
         }
         records.retain(|r| {
@@ -201,6 +214,69 @@ impl Claims for Work {
     }
 }
 
+/// The tick's polling of the todos this computer has an interest in,
+/// beyond the pickup listing (`github-record`, "Interest-driven refresh"):
+/// the todos it holds claims on, so what a human does on GitHub reaches the
+/// worker holding the claim, and the prerequisites that claimed work is
+/// blocked on. Local items are pulled with conditional requests; a
+/// prerequisite that is not a local item refreshes its listing copy.
+fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
+    let machine = s.machine()?;
+    let claimed: Vec<usize> = (0..s.items.len())
+        .filter(|&index| {
+            s.items[index]
+                .record
+                .claim
+                .as_ref()
+                .is_some_and(|c| c.machine == machine)
+        })
+        .collect();
+    let mut blocking: Vec<TodoId> = Vec::new();
+    for &index in &claimed {
+        match s.pull_through(index) {
+            Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+            Err(err) => return Err(err),
+        }
+        for prerequisite in &s.items[index].record.after {
+            if !blocking.contains(&prerequisite.id) {
+                blocking.push(prerequisite.id.clone());
+            }
+        }
+    }
+    let known = s.known_records();
+    blocking.retain(|id| {
+        known
+            .iter()
+            .find(|r| &r.id == id)
+            .is_none_or(|r| r.status != TodoStatus::Delivered)
+    });
+    for id in blocking {
+        if let Some(index) = s.find_id(&id) {
+            if claimed.contains(&index) {
+                continue;
+            }
+            match s.pull_through(index) {
+                Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+                Err(err) => return Err(err),
+            }
+        } else if let Some(copy) = s.copies.iter().find(|c| c.record.id == id).cloned()
+            && s.refreshed()
+        {
+            match s.refresh_copy(copy.issue_number) {
+                Ok(_) => {}
+                Err(WorkError::GitHub(err)) => tracing::warn!(
+                    event = "work_prerequisite_unread",
+                    todo = %copy.record.slug,
+                    error = %err,
+                    "a prerequisite of claimed work could not be refreshed"
+                ),
+                Err(err) => return Err(err),
+            }
+        }
+    }
+    Ok(())
+}
+
 fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
     match status {
         ReflectionStatus::Reflected => ClaimOutcome::Claimed,
@@ -259,7 +335,7 @@ impl Reflection for Work {
         project: &ProjectRef,
     ) -> Result<ReflectionReport, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
-        s.pull_all()?;
+        poll_interest(&mut s)?;
         s.flush()?;
         let reach = match s.github_read() {
             GitHubRead::Read => GitHubReach::Reachable,
@@ -390,12 +466,15 @@ impl WorkEvidence for Work {
         let mut s = Session::open(self, project)?;
         let record = match s.find(todo, true) {
             Some(index) => {
-                s.pull_through(index, PullFor::Read)?;
+                read_through(&mut s, index)?;
                 s.items[index].record.clone()
             }
-            None => match s.remote_item(todo)? {
-                Some(item) => item.record,
-                None => return Ok(None),
+            None => match s.known_copy(todo) {
+                Some(copy) => copy_record(&mut s, copy)?,
+                None => match s.remote_item(todo)? {
+                    Some(item) => item.record,
+                    None => return Ok(None),
+                },
             },
         };
         let prerequisites = expand(&mut s, &record);
@@ -410,16 +489,44 @@ impl WorkEvidence for Work {
         let mut s = Session::open(self, project)?;
         let record = match s.find_id(id) {
             Some(index) => {
-                s.pull_through(index, PullFor::Read)?;
+                read_through(&mut s, index)?;
                 s.items[index].record.clone()
             }
-            None => match s.remote_matching(&format!("todo {id}"), |r| &r.id == id)? {
-                Some(item) => item.record,
-                None => return Ok(None),
+            None => match s.copies.iter().find(|c| &c.record.id == id).cloned() {
+                Some(copy) => copy_record(&mut s, copy)?,
+                None => match s.remote_matching(&format!("todo {id}"), |r| &r.id == id)? {
+                    Some(item) => item.record,
+                    None => return Ok(None),
+                },
             },
         };
         let prerequisites = expand(&mut s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
+    }
+}
+
+/// Pulls local item `index` for a read: a conflicted item is still read.
+fn read_through(s: &mut Session<'_>, index: usize) -> Result<(), WorkError> {
+    match s.pull_through(index) {
+        Ok(()) | Err(WorkError::Conflicted { .. }) => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// The record of listing copy `copy`, refreshed from GitHub when it can be
+/// read, else as last known.
+fn copy_record(
+    s: &mut Session<'_>,
+    copy: super::_store::ListingCopy,
+) -> Result<TodoRecord, WorkError> {
+    if !s.refreshed() {
+        return Ok(copy.record);
+    }
+    match s.refresh_copy(copy.issue_number) {
+        Ok(Some(item)) => Ok(item.record),
+        Ok(None) => Ok(copy.record),
+        Err(WorkError::GitHub(err)) if err.is_reach() => Ok(copy.record),
+        Err(err) => Err(err),
     }
 }
 
@@ -489,14 +596,16 @@ fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
             .map(|it| it.record.clone())
             .filter(|r| r.group.as_ref().is_some_and(|g| g.id == prerequisite.id))
             .collect();
-        for (remote, _) in s.remote_live() {
+        for copy in &s.copies {
+            let remote = &copy.record;
             if remote
                 .group
                 .as_ref()
                 .is_some_and(|g| g.id == prerequisite.id)
+                && remote.is_live()
                 && !children.iter().any(|c| c.id == remote.id)
             {
-                children.push(remote);
+                children.push(remote.clone());
             }
         }
         if children.is_empty() {

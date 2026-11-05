@@ -405,12 +405,6 @@ impl Session<'_> {
                 for entry in &listing.entries {
                     ctx.out.line(&list_line(entry))?;
                 }
-                if let instrukt_todos::work::GitHubRead::NotRead(reason) = &listing.github {
-                    ctx.out.line(&format!(
-                        "GitHub not read ({}); showing local items only",
-                        describe(reason)
-                    ))?;
-                }
                 Ok(ExitCode::SUCCESS)
             }
             TodoCommand::Show(args) => {
@@ -847,8 +841,18 @@ fn list_line(entry: &ListEntry) -> String {
     if let Some(hold) = &record.hold {
         parts.push(format!("on hold: {}", hold.reason));
     }
-    if record.claim.is_some() {
-        parts.push("claimed".to_owned());
+    match &entry.last_known {
+        None if record.claim.is_some() => parts.push("claimed here".to_owned()),
+        None => {}
+        Some(last_known) => {
+            parts.push(match &last_known.runs_on {
+                Some(machine) => format!("runs on {machine}"),
+                None => "unclaimed".to_owned(),
+            });
+            if let Some(at) = last_known.copied_at {
+                parts.push(format!("last known {}", time(at)));
+            }
+        }
     }
     if !entry.local {
         parts.push("not on this computer".to_owned());
@@ -898,6 +902,15 @@ fn render_view(view: &TodoView) -> String {
         Some(status) => format!("reflection: {}", reflection_word(status)),
         None => "reflection: read from GitHub; not on this computer".to_owned(),
     });
+    if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.refresh {
+        out.push(format!(
+            "not refreshed from GitHub ({}); shown as this computer last knew it",
+            describe(reason)
+        ));
+        if let Some(at) = view.copied_at.filter(|_| !view.local) {
+            out.push(format!("last known copy: {}", time(at)));
+        }
+    }
     if let Some(issue) = view.issue {
         out.push(format!("issue: #{issue}"));
     }
