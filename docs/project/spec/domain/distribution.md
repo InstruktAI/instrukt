@@ -1,5 +1,5 @@
 ---
-description: Distribution — how instrukt reaches a computer: the versioned GitHub release, the release installer, and the Claude plugin with its cockpit skill and startup hook. Release tooling outside the binary.
+description: "Distribution — how instrukt reaches a computer: the versioned GitHub release, the release installer, and the Claude plugin with its cockpit skill and startup hook. Release tooling outside the binary."
 delivered_by: [instrukt-first-build]
 ---
 # Distribution — Spec
