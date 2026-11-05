@@ -19,7 +19,7 @@ use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
 use instrukt_runner::sessions::{Answer, Ending, Instruction, Observation, Sessions, StartRequest};
 use instrukt_runner::standing::{self, StartResolution};
 use instrukt_runner::state::RunnerState;
-use instrukt_runner::{headroom, launch, ticks};
+use instrukt_runner::{launch, ticks};
 use jiff::tz::TimeZone;
 use serde_json::json;
 
@@ -84,12 +84,7 @@ pub struct TicksArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum TicksCommand {
-    /// Show the last wake-up and the disk-headroom guard's last run.
-    ///
-    /// Warns when no wake-up arrived for five minutes. The guard's line gives
-    /// its level and free space; its last report lists the largest
-    /// regenerable directories, or what a run at the floor removed and
-    /// skipped.
+    /// Show the last wake-up; warns when none arrived for five minutes.
     Status(JsonArgs),
 }
 
@@ -105,21 +100,8 @@ pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         TicksCommand::Status(args) => {
             let state = RunnerState::new(&ctx.home);
             let status = ticks::status(ticks::last_wakeup(&state)?, ctx.clock.now());
-            let guard = headroom::last_run(&state)?;
-            // `ticks status` always works: an unreadable configuration
-            // shows the guard's last run as if it were on.
-            let guard_on = Configuration::load_global(&ctx.home)
-                .map(|config| headroom::switched_on(&config, &Env::from_process()))
-                .unwrap_or(true);
             if args.json {
-                let mut value = serde_json::to_value(&status)?;
-                if let Some(object) = value.as_object_mut() {
-                    object.insert(
-                        "disk_headroom".to_owned(),
-                        json!({"on": guard_on, "last_run": guard}),
-                    );
-                }
-                ctx.out.json(&value)?;
+                ctx.out.json(&status)?;
             } else {
                 match status.last_wakeup {
                     None => ctx.out.line("no wake-up ever recorded")?,
@@ -131,9 +113,6 @@ pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                             )?;
                         }
                     }
-                }
-                for line in headroom::status_lines(guard_on, guard.as_ref()) {
-                    ctx.out.line(&line)?;
                 }
             }
             Ok(ExitCode::SUCCESS)

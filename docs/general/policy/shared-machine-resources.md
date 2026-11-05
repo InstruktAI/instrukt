@@ -47,12 +47,7 @@ All agents, all sessions, all projects, on every machine they run on.
 
 ## Enforcement
 
-instrukt's runner runs a disk-headroom standing job on its wake-ups. It
-measures the volume's free space, tells the human once when it runs low and,
-below a hard floor, removes regenerable build output from linked checkouts no
-running process uses. It never touches a primary clone or a nested repository
-and removes nothing it cannot fully read. `instrukt ticks status` shows its
-last run. Reviewers treat a finished checkout left with its build output as a
+Reviewers treat a finished checkout left with its build output as a
 process miss.
 
 ## Exceptions

@@ -3,8 +3,7 @@
 //! work and `instrukt run` repeats it until stopped. One runner lock per
 //! machine serializes them; a tick exits at once while it is held.
 //!
-//! A wake-up records itself, gives the disk-headroom guard its turn
-//! whatever modules are on, then considers every published project whose
+//! A wake-up records itself, then considers every published project whose
 //! effective configuration enables `events` or `todos`: with `events` on it
 //! reads the event sources and delivers pending events to standing agents;
 //! with `todos` on it dispatches eligible todos.
@@ -25,7 +24,6 @@ use crate::ci::{self, CiClient, CiRead};
 use crate::dispatch::{self, DispatchContext};
 use crate::event_log::DbEventLog;
 use crate::events::Event;
-use crate::headroom;
 use crate::interfaces::{ProjectRef, RunnerWiring};
 use crate::sources;
 use crate::standing;
@@ -138,7 +136,6 @@ pub fn run(
 fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(), RunnerError> {
     let previous = ticks::last_wakeup(state)?;
     ticks::record_wakeup(state, now)?;
-    headroom::guard(cx.home, cx.env, now);
     let log = DbEventLog::new(state.clone(), now);
     let index = match GlobalIndex::load(cx.home) {
         Ok(index) => index.unwrap_or_default(),
