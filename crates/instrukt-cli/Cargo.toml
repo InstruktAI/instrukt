@@ -27,6 +27,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+redis.workspace = true
 assert_cmd.workspace = true
 insta.workspace = true
 predicates.workspace = true

@@ -43,6 +43,10 @@ impl RunnerState {
         Self { home: home.clone() }
     }
 
+    pub(crate) fn home(&self) -> &Home {
+        &self.home
+    }
+
     /// The machine's runner lock: one runner invocation at a time.
     pub fn runner_lock(&self) -> PathBuf {
         self.home.runner_lock_file()

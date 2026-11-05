@@ -29,6 +29,7 @@ use crate::sources;
 use crate::standing;
 use crate::state::{RunnerState, StateError};
 use crate::ticks;
+use crate::transport::{ScopedTransport, TransportError};
 
 /// How long `instrukt run` waits for a tick in progress to finish.
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
@@ -36,6 +37,8 @@ const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 /// A runner invocation could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
+    #[error(transparent)]
+    Transport(#[from] TransportError),
     #[error(transparent)]
     Lock(#[from] FsError),
     #[error(transparent)]
@@ -152,7 +155,17 @@ fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(
         previous_wake: previous,
         state,
     };
-    for considered in considered_projects(cx.home)? {
+    let considered = considered_projects(cx.home)?;
+    let transport = if considered.iter().any(|project| project.events) {
+        Some(ScopedTransport::from_config(
+            &Configuration::load_global(cx.home)?,
+            cx.env,
+            state,
+        )?)
+    } else {
+        None
+    };
+    for considered in considered {
         let project = &considered.project;
         if considered.events {
             read_sources(cx, state, &log, &considered, now);
@@ -173,6 +186,9 @@ fn wake(cx: &RunnerContext<'_>, state: &RunnerState, now: Timestamp) -> Result<(
         if considered.todos && code_on_github(cx.home, &considered) {
             dispatch::dispatch_project(&dispatch_cx, &considered.config, cx.wiring, project);
         }
+    }
+    if let Some(transport) = transport {
+        transport.publish_pending(&log)?;
     }
     tracing::debug!(event = "runner_wakeup_done", at = %now);
     Ok(())

@@ -144,6 +144,10 @@ pub enum AppendOutcome {
 #[derive(Debug, thiserror::Error)]
 pub enum EventLogError {
     #[error(transparent)]
+    Envelope(#[from] EnvelopeError),
+    #[error(transparent)]
+    Machine(#[from] instrukt_core::machine::MachineError),
+    #[error(transparent)]
     State(#[from] crate::state::StateError),
 }
 

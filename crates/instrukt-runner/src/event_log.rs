@@ -3,21 +3,19 @@
 //! restart boundary"; `state-database`, `events`, `consumer_cursors`,
 //! `handled_events`).
 //!
-//! Each event is one `events` row: its vocabulary name, project and payload
-//! under a sequence number `seq`, starting at 1 and increasing by one per
-//! appended event. An event's idempotency key is its whole payload, so
-//! appending an event equal to a logged one changes nothing. A consumer's
-//! cursor is the highest `seq` up to which every event it selects is
-//! handled; each event handed to it carries a handled mark, committed with
-//! the cursor in one transaction, and is never handed to it again.
+//! Stable occurrence identity and publication obligations are separate from local
+//! sequence and Redis coordinates. Work appends inside its source transaction.
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use crate::events::{AppendOutcome, Event, EventLog, EventLogError};
+use crate::events::{
+    AppendOutcome, EmissionContext, Event, EventEnvelope, EventHomeOwner, EventLog, EventLogError,
+};
 use crate::state::{self, RunnerState, StateError};
+use crate::transport::{EventScope, TransportCoordinate};
 
 /// One logged event with its position in the log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,8 +54,8 @@ impl DbEventLog {
             let mut statement = conn
                 .prepare(
                     "SELECT seq, name, payload FROM events
-                     WHERE seq > COALESCE((SELECT seq FROM consumer_cursors WHERE consumer = ?1), 0)
-                       AND seq NOT IN (SELECT seq FROM handled_events WHERE consumer = ?1)
+                     WHERE seq > COALESCE((SELECT seq FROM consumer_cursors WHERE consumer = ?1 AND source = 'local-log'), 0)
+                       AND idempotency_key IS NOT NULL AND seq NOT IN (SELECT seq FROM handled_events WHERE consumer = ?1)
                      ORDER BY seq",
                 )
                 .map_err(&sql)?;
@@ -101,15 +99,15 @@ impl DbEventLog {
             let sql = state::sql(&path);
             for seq in seqs {
                 tx.execute(
-                    "INSERT OR IGNORE INTO handled_events (consumer, seq, handled_at)
-                     VALUES (?1, ?2, ?3)",
+                    "INSERT OR IGNORE INTO handled_events (consumer, event_id, seq, handled_at)
+                     SELECT ?1, id, ?2, ?3 FROM events WHERE seq = ?2",
                     params![consumer, seq, at],
                 )
                 .map_err(&sql)?;
             }
             tx.execute(
-                "INSERT INTO consumer_cursors (consumer, seq) VALUES (?1, ?2)
-                 ON CONFLICT (consumer) DO UPDATE SET seq = MAX(seq, excluded.seq)",
+                "INSERT INTO consumer_cursors (consumer, source, stream, entry_id, seq) VALUES (?1, 'local-log', '', '', ?2)
+                 ON CONFLICT (consumer, source, stream) DO UPDATE SET seq = MAX(seq, excluded.seq)",
                 params![consumer, last],
             )
             .map_err(&sql)?;
@@ -123,9 +121,51 @@ impl DbEventLog {
     }
 }
 
+/// One committed source fact still awaiting stream acceptance.
+pub struct PendingPublication {
+    pub scope: EventScope,
+    pub envelope: EventEnvelope,
+}
+
+impl DbEventLog {
+    pub fn unconfirmed(&self) -> Result<Vec<PendingPublication>, EventLogError> {
+        Ok(self.state.read(|conn, path| {
+            let mut stmt = conn.prepare("SELECT publication_scope, envelope FROM events WHERE publication_state = 'pending' ORDER BY seq").map_err(state::sql(path))?;
+            let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))?;
+            rows.into_iter().map(|(scope, envelope)| {
+                let scope = match scope.as_str() { "local" => EventScope::Local, "cluster" => EventScope::Cluster, _ => return Err(state::invalid(path, "invalid publication scope")) };
+                Ok(PendingPublication { scope, envelope: EventEnvelope::decode(&envelope).map_err(|e| state::invalid(path, e))? })
+            }).collect::<Result<Vec<_>, StateError>>()
+        })?.unwrap_or_default())
+    }
+
+    pub fn confirm(&self, id: &str, coordinate: &TransportCoordinate) -> Result<(), EventLogError> {
+        self.state.write(|tx| {
+            let path = state::db_path(tx);
+            tx.execute("INSERT OR IGNORE INTO event_coordinates (source, stream, entry_id, seq) SELECT ?1, ?2, ?3, seq FROM events WHERE id = ?4", params![coordinate.source, coordinate.stream, coordinate.entry_id, id]).map_err(state::sql(&path))?;
+            tx.execute("UPDATE events SET publication_state = 'confirmed', publication_failure = NULL WHERE id = ?1", [id]).map_err(state::sql(&path))?;
+            Ok(())
+        })
+    }
+
+    pub fn publication_failed(&self, id: &str, failure: &str) -> Result<(), EventLogError> {
+        self.state.write(|tx| {
+            let path = state::db_path(tx);
+            tx.execute("UPDATE events SET publication_failure = ?2 WHERE id = ?1 AND publication_state = 'pending'", params![id, failure]).map_err(state::sql(&path))?;
+            Ok(())
+        })
+    }
+}
+
 impl EventLog for DbEventLog {
     fn append(&self, tx: &Transaction<'_>, event: &Event) -> Result<AppendOutcome, EventLogError> {
-        append(tx, event, self.now)
+        let context = EmissionContext {
+            source: instrukt_core::machine::machine_id(self.state.home())?.to_string(),
+            time: self.now,
+            project_owner: EventHomeOwner::Unresolved,
+            caller_session: None,
+        };
+        append(tx, event, &context)
     }
 }
 
@@ -133,11 +173,11 @@ impl EventLog for DbEventLog {
 pub(crate) fn append(
     tx: &Connection,
     event: &Event,
-    now: Timestamp,
+    context: &EmissionContext,
 ) -> Result<AppendOutcome, EventLogError> {
     let path = state::db_path(tx);
     let sql = state::sql(&path);
-    let key = serde_json::to_string(event).map_err(|e| state::invalid(&path, e))?;
+    let key = event.occurrence_id();
     let known: Option<u64> = tx
         .query_row(
             "SELECT seq FROM events WHERE idempotency_key = ?1",
@@ -155,16 +195,18 @@ pub(crate) fn append(
             row.get(0)
         })
         .map_err(&sql)?;
+    let envelope = event.envelope(context)?.encode()?;
     tx.execute(
-        "INSERT INTO events (seq, name, project, payload, idempotency_key, logged_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO events (seq, id, name, project, payload, envelope, idempotency_key, logged_at, publication_scope, publication_state)
+         VALUES (?1, ?5, ?2, ?3, ?4, ?7, ?5, ?6, 'local', 'pending')",
         params![
             seq,
             event.name(),
             event.project().as_str(),
             payload_of(&path, event)?,
             key,
-            now.to_string()
+            context.time.to_string(),
+            envelope
         ],
     )
     .map_err(&sql)?;

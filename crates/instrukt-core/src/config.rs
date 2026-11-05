@@ -15,6 +15,7 @@ mod _interpolate;
 mod _layer;
 mod _merge;
 mod _module;
+mod _redis;
 mod _render;
 mod _runtime;
 mod _schema;
@@ -33,6 +34,7 @@ pub use _layer::{
     patch, revision,
 };
 pub use _module::Module;
+pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
 pub use _render::render_yaml;
 pub use _runtime::{Env, RuntimeEntry, Verb, VerbKind, VerbName};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};

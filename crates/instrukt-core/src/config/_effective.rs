@@ -119,6 +119,22 @@ impl Configuration {
         Interpolator::new(&self.value, &self.runtimes, Mode::Expand(env)).get(path)
     }
 
+    /// Read machine-owned Redis settings, resolving credential references for I/O.
+    pub fn redis(&self, env: &Env) -> Result<super::RedisSettings, ConfigError> {
+        super::_redis::settings(self, env)
+    }
+
+    pub(super) fn redis_raw(&self) -> Option<&Value> {
+        self.value.get("redis")
+    }
+
+    /// A user-facing read masks transport credentials before expansion.
+    pub fn public_get(&self, path: Option<&str>, env: &Env) -> Result<Value, ConfigError> {
+        let mut value = self.value.clone();
+        super::_redis::redact(&mut value, "");
+        Interpolator::new(&value, &self.runtimes, Mode::Expand(env)).get(path)
+    }
+
     /// The value at dotted `path` as a string, interpolated in `env`; a
     /// mapping or list is refused.
     pub fn get_str(&self, path: &str, env: &Env) -> Result<String, ConfigError> {

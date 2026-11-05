@@ -70,6 +70,9 @@ impl Rule {
 #[derive(Debug, Clone, Copy)]
 enum Shape {
     Version,
+    RedisTimeout,
+    Credential,
+    LocalRedisUrl,
     Slug,
     Domain,
     Bool,
@@ -144,6 +147,13 @@ fn schema() -> Node {
             "events",
             map(vec![("watch", Leaf(ProjectOnly, Shape::WatchList))]),
         ),
+        (
+            "redis",
+            map(vec![
+                ("cluster", redis_scope(false)),
+                ("local", redis_scope(true)),
+            ]),
+        ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
         (
             "blueprint",
@@ -171,6 +181,28 @@ fn schema() -> Node {
                 )]))),
             },
         ),
+    ])
+}
+
+fn redis_scope(local: bool) -> Node {
+    use Node::Leaf;
+    use Rule::GlobalOnly;
+    map(vec![
+        (
+            "url",
+            Leaf(
+                GlobalOnly,
+                if local {
+                    Shape::LocalRedisUrl
+                } else {
+                    Shape::Str
+                },
+            ),
+        ),
+        ("username", Leaf(GlobalOnly, Shape::Credential)),
+        ("password", Leaf(GlobalOnly, Shape::Credential)),
+        ("max_connections", Leaf(GlobalOnly, Shape::Version)),
+        ("socket_timeout", Leaf(GlobalOnly, Shape::RedisTimeout)),
     ])
 }
 
@@ -310,6 +342,30 @@ enum Field {
 fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     let invalid = |message: &str| KeyFinding::new(path, FindingKind::InvalidValue, message);
     match shape {
+        Shape::Credential => {
+            if !value
+                .as_str()
+                .is_some_and(|s| mask_references(s, "reference").1)
+            {
+                out.push(invalid("credentials must be references"));
+            }
+        }
+        Shape::LocalRedisUrl => {
+            if !value
+                .as_str()
+                .is_some_and(|s| s.starts_with("unix://") || mask_references(s, "reference").1)
+            {
+                out.push(invalid("local Redis requires a unix:// socket URL"));
+            }
+        }
+        Shape::RedisTimeout => {
+            if value
+                .as_u64()
+                .is_none_or(|v| v <= super::_redis::REDIS_BLOCK_SECONDS)
+            {
+                out.push(invalid("must outlast the 10 second blocking read"));
+            }
+        }
         Shape::Version => {
             if value.as_u64().is_none_or(|v| v < 1) {
                 out.push(invalid("expected a positive integer"));
@@ -712,6 +768,8 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         })
     };
     match shape {
+        Shape::Credential | Shape::LocalRedisUrl => json!({ "type": "string" }),
+        Shape::RedisTimeout => json!({ "type": "integer", "minimum": 11 }),
         Shape::Version => json!({ "type": "integer", "minimum": 1 }),
         Shape::Slug | Shape::Domain | Shape::Str | Shape::Identity => json!({ "type": "string" }),
         Shape::Bool => json!({ "type": "boolean" }),

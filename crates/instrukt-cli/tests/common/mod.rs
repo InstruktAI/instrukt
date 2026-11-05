@@ -26,6 +26,7 @@
 )]
 
 pub mod github;
+pub mod redis;
 
 /// `text` with every published commit a source line names
 /// (`published commit <sha>`) shown as `[SHA]`: commits made in a test
@@ -83,6 +84,7 @@ pub struct TestEnv {
     home: PathBuf,
     vars: BTreeMap<String, String>,
     guard: LiveGuard,
+    redis: std::sync::Mutex<Option<redis::RedisServer>>,
 }
 
 impl TestEnv {
@@ -127,7 +129,17 @@ impl TestEnv {
             home,
             vars,
             guard,
+            redis: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Lazily start this temporary computer's Redis; it dies with the test.
+    pub fn redis_url(&self) -> String {
+        let mut server = self.redis.lock().unwrap();
+        server
+            .get_or_insert_with(|| redis::RedisServer::new(self))
+            .url
+            .clone()
     }
 
     /// The temporary user home (`HOME` of every subprocess).

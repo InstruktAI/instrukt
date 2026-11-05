@@ -272,6 +272,12 @@ pub fn global_layer_with(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime]
     for runtime in runtimes {
         text.push_str(&runtime.entry());
     }
+    if modules.contains("events: true") {
+        text.push_str(&format!(
+            "redis:\n  cluster:\n    url: '{}'\n",
+            env.redis_url()
+        ));
+    }
     text.push_str(extra);
     let path = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

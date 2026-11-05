@@ -154,23 +154,69 @@ CREATE TABLE listing_copies (
 
 CREATE TABLE events (
     seq             INTEGER PRIMARY KEY NOT NULL,
+    id              TEXT NOT NULL UNIQUE,
     name            TEXT NOT NULL,
-    project         TEXT NOT NULL,
+    project         TEXT,
     payload         TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL UNIQUE,
-    logged_at       TEXT NOT NULL
+    envelope        TEXT NOT NULL,
+    idempotency_key TEXT UNIQUE,
+    logged_at       TEXT NOT NULL,
+    publication_scope TEXT CHECK (publication_scope IN ('local', 'cluster')),
+    publication_state TEXT CHECK (publication_state IN ('pending', 'confirmed')),
+    publication_failure TEXT
+);
+
+CREATE TABLE redis_reachability (
+    source TEXT PRIMARY KEY NOT NULL,
+    reachable INTEGER NOT NULL
+);
+
+CREATE TABLE event_coordinates (
+    source   TEXT NOT NULL,
+    stream   TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    seq      INTEGER NOT NULL REFERENCES events (seq),
+    PRIMARY KEY (source, stream, entry_id)
 );
 
 CREATE TABLE consumer_cursors (
-    consumer TEXT PRIMARY KEY NOT NULL,
-    seq      INTEGER NOT NULL
+    consumer TEXT NOT NULL,
+    source   TEXT NOT NULL,
+    stream   TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    seq      INTEGER REFERENCES events (seq),
+    PRIMARY KEY (consumer, source, stream)
 );
 
 CREATE TABLE handled_events (
     consumer   TEXT NOT NULL,
-    seq        INTEGER NOT NULL REFERENCES events (seq),
+    event_id   TEXT NOT NULL,
+    seq        INTEGER REFERENCES events (seq),
     handled_at TEXT NOT NULL,
-    PRIMARY KEY (consumer, seq)
+    PRIMARY KEY (consumer, event_id)
+);
+
+CREATE TABLE consumer_outcomes (
+    consumer TEXT NOT NULL,
+    source   TEXT NOT NULL,
+    stream   TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    outcome  TEXT NOT NULL,
+    settled_at TEXT NOT NULL,
+    PRIMARY KEY (consumer, source, stream, entry_id)
+);
+
+-- Reliability journal; the dead letter itself belongs to the source Redis.
+CREATE TABLE event_attempts (
+    consumer TEXT NOT NULL,
+    source   TEXT NOT NULL,
+    stream   TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    first_attempt_at TEXT NOT NULL,
+    last_attempt_at TEXT NOT NULL,
+    failure TEXT NOT NULL,
+    PRIMARY KEY (consumer, source, stream, entry_id)
 );
 
 CREATE TABLE request_validators (
