@@ -208,9 +208,9 @@ Given an agent acting for a developer needs a snippet whose required reads name 
 When it reads that snippet as a closure, whether a procedure it is directed to run, a design or an overview
 Then it receives the snippet, each of its transitive required reads once, and what the domains they name show in full, in one read
 And nothing in what it reads names a path on the author's computer
-But when a procedure's required read is still pending or cannot be read
+But when a required read of a procedure that carries root frontmatter is still pending or cannot be read
 Then the read is refused and names the required read that blocked it
-And for any other snippet such a read is left out and named
+And for a supporting procedure or any other snippet such a read is left out and named
 But when it asks for a closure of several items at once
 Then the read is refused and says a closure is read for exactly one snippet
 ```

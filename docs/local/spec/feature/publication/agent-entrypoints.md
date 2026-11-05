@@ -40,10 +40,14 @@ section, in order:
    capitalised (`# General`, `# Sdlc`, `# Project`).
 2. **Expanded.** Each id in `expanded`, in the order listed, in full with its
    closure: its transitive required reads, each before the snippet that
-   requires it. Expanded snippets are grouped under the `# <Domain>` heading
-   of the domain each snippet belongs to, so an `sdlc` snippet that
-   `general`'s `expanded` selects sits under `# Sdlc`, not `# General`; the
-   groups follow the order of first appearance. Every heading of a rendered
+   requires it. The traversal order is kept: each snippet sits under the
+   `# <Domain>` heading of the domain it belongs to, so an `sdlc` snippet
+   that `general`'s `expanded` selects sits under `# Sdlc`, not `# General`,
+   and when the traversal moves to a snippet of another domain a heading for
+   that domain opens there — a domain's heading appears again when the
+   traversal returns to it (`general/A`, then `sdlc/B`, then `general/C`
+   renders `# General`, `# Sdlc`, `# General`). Order is never changed to
+   group a domain's snippets together. Every heading of a rendered
    snippet is demoted one level, except inside fenced code; an H6 stays H6.
 3. **Listed.** One listing line per id in `listed`, naming
    `instrukt docs get <id>`.
@@ -155,7 +159,7 @@ And the computer publishes always-on doctrine and an on-demand domain with a des
 And the CLIs' settings hold the developer's own preferences
 When publication runs for the project that owns the always-on doctrine
 Then each installed agent CLI starts with the always-on doctrine in full
-And always-on doctrine taken from another domain sits under that domain's heading
+And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
 And it reads one line naming the on-demand domain, its description and the command that loads it
 And it reads the domain's triggered procedure with the command that loads it with its closure
 And each agent CLI that needs it is set to load project instruction files

@@ -42,19 +42,22 @@ like any command, and their diagnostics would otherwise be gone with them.
   `INSTRUKT_THIRD_PARTY_LOGGERS`, `INSTRUKT_MUTED_LOGGERS`); the default level
   is the contract's production level. An invalid value is reported to the
   caller, never silently replaced.
-- A log that cannot be written (an unwritable state directory) does not fail
-  the command; the command reports once on standard error that its
-  diagnostics could not be recorded, naming the path.
+- A log that cannot be opened fails fast, as the contract requires: a
+  command whose log directory or file cannot be created or opened stops
+  before doing anything, exits non-zero and names the path on standard error.
+  There is no degraded mode and no fallback destination; a command never runs
+  blind. A later write failure is the logging crate's to report.
 
 ### Use cases
 
 #### UC-LG1: A developer reads what instrukt did after a command ended
 
 ```gherkin
-Given a developer's computer ran instrukt commands, including a sync triggered by a git hook
-When they read instrukt's logs with the InstruktAI log reader
-Then they find each command's diagnostics under their own state directory, one file per command that wrote them
-And a command whose log cannot be written still completes and says its diagnostics were not recorded
+Given a developer commits to their project's main and the hook publishes its documentation
+When they later want to know what that publication did
+Then the published documentation is retrievable and the publication's record sits in instrukt's log under their own state directory, in the file of the command that wrote it, where the InstruktAI log reader finds it
+But when instrukt's log cannot be opened
+Then the command does nothing, exits with failure and names the log path it could not open
 ```
 
 ## Known caveats
