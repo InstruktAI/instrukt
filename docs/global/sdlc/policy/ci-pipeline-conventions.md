@@ -87,6 +87,11 @@ keeps the way back open. Logic that encodes one project's domain gains nothing
 from sharing and would make the shared repository carry knowledge it does not
 own.
 
+One change to a shared workflow reaches every project consuming it at once,
+including projects that never asked for it. Keeping changes compatible, and
+shipping the ones that cannot be as a release callers adopt deliberately, keeps
+a change made for one project from breaking unrelated projects without warning.
+
 A shared workflow runs inside its caller, with the caller's token and every
 secret passed to it, so whoever can move a reference controls code running on
 those secrets. Within an organisation that publisher is the organisation
@@ -107,13 +112,10 @@ scripts may omit it.
 
 - A deployed repo whose CI does not run `make e2e` (or whose Makefile lacks
   the target) fails review.
-- Pipeline changes are reviewed under the paradigm-fit lane's existing-path
-  check (`sdlc/policy/definition-of-done-lanes`). The existing path for generic
-  pipeline logic is the organisation's shared workflows repository: an
-  undeclared local copy of it is an undeclared parallel, and a declared
-  divergence is judged on whether its reason holds.
-- A reference to another organisation's workflow or action that can still move
-  fails review.
+- Composition and divergence are judged by the paradigm-fit lane's
+  existing-path check (`sdlc/policy/definition-of-done-lanes`).
+- References, secrets and permissions handed across organisations are judged
+  by the security lane.
 
 ## Exceptions
 
