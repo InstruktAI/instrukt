@@ -10,10 +10,8 @@ A developer, or an agent acting for one, gets the `instrukt` binary onto a
 computer with one command, and gets a newer one the same way. The installer
 is a POSIX shell script published with every release. It installs the release
 built for the computer it runs on, refuses a download that does not match the
-release's checksums, and writes only the binary. It is the one way the
-Claude plugin
-(`project/instrukt/spec/feature/distribution/claude-plugin`) and a
-developer without Claude install instrukt.
+release's checksums, and writes only the binary. It is the one way instrukt is installed, by a developer and by the instrukt
+skill (`project/instrukt/spec/feature/distribution/agent-skill`).
 
 ## Canonical fields
 
@@ -31,8 +29,8 @@ GitHub release of that tag (`.github/workflows/release.yml`). Its assets:
 - Supported targets: `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`,
   `aarch64-unknown-linux-gnu`.
 - The release is refused, and nothing is published, unless `<version>`
-  equals the workspace version in `Cargo.toml` and the `version` of the
-  Claude plugin's manifest at the tagged commit.
+  equals the workspace version in `Cargo.toml` and the `metadata.version` of
+  the instrukt skill (`skills/instrukt/SKILL.md`) at the tagged commit.
 - A published release is never changed; a fix is a new version. There is one
   release channel: every release is the latest when it is published.
 
@@ -89,7 +87,9 @@ intact download of what that release published, not who published it.
 - When the directory is not on the caller's `PATH`, the installer says so and
   prints the line that would add it; it changes no file to do that.
 - It ends by naming the installed version and path, and the next steps:
-  `instrukt -h`, and in Claude Code the plugin install command.
+  `instrukt -h`, and the command that installs the instrukt skill of the same
+  release into the computer's agent CLIs
+  (`npx skills add InstruktAI/instrukt@v<version> --skill instrukt -g -y`).
 
 ### Upgrade
 
@@ -154,5 +154,5 @@ And nothing is downloaded or written
 ## See Also
 
 - project/instrukt/spec/domain/distribution
-- project/instrukt/spec/feature/distribution/claude-plugin
+- project/instrukt/spec/feature/distribution/agent-skill
 - project/instrukt/design/architecture/overview

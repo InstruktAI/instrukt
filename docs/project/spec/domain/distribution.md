@@ -1,5 +1,5 @@
 ---
-description: "Distribution — how instrukt reaches a computer: the versioned GitHub release, the release installer, and the Claude plugin with its cockpit skill and startup hook. Release tooling outside the binary."
+description: "Distribution — how instrukt reaches a computer: the versioned GitHub release, the release installer, and the instrukt cockpit skill installed into every agent CLI. Release tooling outside the binary."
 delivered_by: [instrukt-first-build]
 ---
 # Distribution — Spec
@@ -8,10 +8,11 @@ delivered_by: [instrukt-first-build]
 
 The distribution context owns how instrukt gets onto a computer and into the
 agents that use it: the release a version tag publishes, the installer that
-puts the binary on a computer and upgrades it, and the Claude plugin that
-installs with one sentence and gives every session one way in. Nothing in it
-is part of the `instrukt` binary or one of its modules. It adds no daemon and
-no agent configuration beyond what Claude Code's own plugin system installs.
+puts the binary on a computer and upgrades it, and the cockpit skill that
+installs with one sentence into every agent CLI on the computer and is the
+one way in. Nothing in it is part of the `instrukt` binary or one of its
+modules. It adds no daemon, no plugin, no hook and no agent configuration
+beyond the skill the `skills` command installs.
 
 ## Canonical fields
 
@@ -32,45 +33,38 @@ no agent configuration beyond what Claude Code's own plugin system installs.
 : Where the installer writes `instrukt`: `$INSTRUKT_INSTALL_DIR`, else
   `$XDG_BIN_HOME`, else `~/.local/bin`.
 
-**Marketplace**
-: instrukt's Claude Code plugin catalog, `.claude-plugin/marketplace.json` at
-  the repository root, named `instrukt`.
-
-**Plugin**
-: `instrukt@instrukt`, the Claude Code plugin under `plugins/claude/`,
-  versioned with the release.
-
 **Cockpit**
-: The plugin's one skill: it reads `instrukt status`, then sets up or changes
-  instrukt through an interview the agent guides.
+: The instrukt skill, `skills/instrukt/SKILL.md`, versioned with the
+  release: it reads `instrukt status`, then sets up or changes instrukt
+  through an interview the agent guides.
 
-**Startup hook**
-: The plugin's `SessionStart` hook, telling each session that instrukt is
-  installed and that the cockpit is the way in.
+**Skill install**
+: `npx skills add InstruktAI/instrukt@v<version> --skill instrukt -g -y`:
+  the `skills` command (`skills.sh`) installing the cockpit of one release
+  into every agent CLI on the computer.
 
 ### Ownership boundary
 
 - **Owns:** the release workflow and its assets; the installer's platform
-  selection, verification, install directory and upgrade; the marketplace
-  file; the plugin's manifest, cockpit skill, startup hook and its script.
+  selection, verification, install directory and upgrade; the cockpit
+  skill.
 - **Does not own:** any command of the binary, including `instrukt status`
   (publication) and `instrukt -h`; the configuration the cockpit writes
   (configuration); adoption (repository); the wake-up registration
   `instrukt install` (runner); the global agent files sync renders
-  (publication); Claude Code's plugin loading, scopes and updates (Claude
-  Code).
+  (publication); where each agent CLI reads skills and when it loads them
+  (the agent CLIs and the `skills` command).
 - **Published contracts:** the release asset names and the `SHA256SUMS`
   format; `install.sh` with `--version <tag>`, `INSTRUKT_VERSION`,
-  `INSTRUKT_INSTALL_DIR`; the marketplace name `instrukt` and plugin id
-  `instrukt@instrukt`; the install command
-  `claude plugin install instrukt --marketplace InstruktAI/instrukt`.
+  `INSTRUKT_INSTALL_DIR`; the skill name `instrukt` at
+  `skills/instrukt/SKILL.md`; the skill install command.
 - **Allowed dependencies:** publication's `instrukt status` report and the
-  CLI's `-h`, which the cockpit and hook name; configuration's, repository's
-  and runner's commands, which the cockpit runs; GitHub Releases; Claude
-  Code's plugin and marketplace formats.
+  CLI's `-h`, which the cockpit names; configuration's, repository's
+  and runner's commands, which the cockpit runs; GitHub Releases; the Agent
+  Skills format and the `skills` command.
 - **Implementation roots:** `.github/workflows/release.yml`,
   `scripts/package-release.sh`, `scripts/install.sh`,
-  `.claude-plugin/marketplace.json`, `plugins/claude/`.
+  `skills/instrukt/`.
 
 ### Aggregates
 
@@ -79,8 +73,8 @@ no agent configuration beyond what Claude Code's own plugin system installs.
 - **Root entity:** the tag `v<version>`.
 - **Contains:** the archives of every supported target, `SHA256SUMS`,
   `install.sh`.
-- **Invariants:** `<version>` equals the workspace version and the plugin
-  manifest's `version` at the tagged commit; every archive has its line in
+- **Invariants:** `<version>` equals the workspace version and the cockpit
+  skill's `metadata.version` at the tagged commit; every archive has its line in
   `SHA256SUMS`; a published release is never changed.
 - **Identifier:** the tag.
 - **Lifecycle:** built and published by the release workflow on the tag's
@@ -108,7 +102,7 @@ None.
 ### Use cases (index of feature specs)
 
 - **release-installer** — `project/instrukt/spec/feature/distribution/release-installer` — install, upgrade or pin the instrukt binary with one verified command.
-- **claude-plugin** — `project/instrukt/spec/feature/distribution/claude-plugin` — install instrukt into Claude with one sentence, learn at startup how to reach it, and set it up or change it through the cockpit.
+- **agent-skill** — `project/instrukt/spec/feature/distribution/agent-skill` — install instrukt into every agent CLI with one sentence, and set it up or change it through the cockpit.
 
 ### Governing designs and decisions (index)
 
@@ -118,13 +112,13 @@ None.
 ### Context map position
 
 - **publication → distribution — Published language:** `instrukt status`
-  (and the CLI's `-h`) is the state the cockpit reads and the startup hook
-  points at.
+  (and the CLI's `-h`) is the state the cockpit reads.
 - **configuration, repository, runner → distribution — Published language:**
   `instrukt config`, `instrukt init` and `instrukt install` are the commands
   the cockpit runs; it writes no instrukt file itself.
-- **Claude Code → distribution — Conformist:** the plugin and marketplace
-  follow Claude Code's formats as published.
+- **Agent Skills and `skills` → distribution — Conformist:** the cockpit
+  follows the Agent Skills format, and is installed by the `skills` command
+  as published.
 - **GitHub Releases → distribution — Conformist:** the release and the
   installer use GitHub's release asset URLs as they are.
 

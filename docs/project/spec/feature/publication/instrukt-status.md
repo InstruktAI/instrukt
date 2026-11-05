@@ -11,7 +11,7 @@ asks before changing anything about instrukt on a computer: is it configured,
 which runtime does it call and what can that runtime carry, which modules are
 on, is this repository adopted, which domains are published and by whom, and
 which other projects publish here. The instrukt cockpit skill
-(`project/instrukt/spec/feature/distribution/claude-plugin`) opens
+(`project/instrukt/spec/feature/distribution/agent-skill`) opens
 every visit with it. The command only reads: it writes no file, takes no
 lock, reaches no network and starts no session.
 
@@ -120,6 +120,6 @@ And shows that this repository's publication of it would be refused
 ## See Also
 
 - project/instrukt/spec/domain/publication
-- project/instrukt/spec/feature/distribution/claude-plugin
+- project/instrukt/spec/feature/distribution/agent-skill
 - project/instrukt/spec/feature/configuration/layered-configuration
 - project/instrukt/spec/feature/repository/project-initialization

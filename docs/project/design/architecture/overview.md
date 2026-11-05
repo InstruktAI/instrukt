@@ -113,7 +113,7 @@ commands. Docs name `-h`.
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
-| Claude Code plugin system | distribution | the `instrukt` marketplace and plugin `instrukt@instrukt`: one cockpit skill and one startup hook |
+| Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 
 ## Invariants
 
@@ -147,21 +147,20 @@ commands. Docs name `-h`.
 
 ```mermaid
 flowchart LR
-  A["Claude, install instrukt"] --> B[claude plugin install instrukt --marketplace InstruktAI/instrukt]
-  B --> C[next session: startup hook says instrukt's skill is the way in]
-  C --> D[cockpit skill: no binary]
-  D --> E[install.sh: platform, download, SHA256SUMS, --version check]
-  E --> F[instrukt in the install directory]
-  F --> G[cockpit: instrukt status, then the interview]
+  A["install instrukt"] --> B[install.sh: platform, download, SHA256SUMS, --version check]
+  B --> C[instrukt in the install directory]
+  C --> D[npx skills add InstruktAI/instrukt@vX.Y.Z --skill instrukt -g]
+  D --> E[next session, any agent CLI: cockpit skill]
+  E --> F[cockpit: instrukt status, then the interview]
 ```
 
 The release installer is the one way the binary is installed or upgraded,
-with or without Claude: it writes only `instrukt` into the install directory
+from any agent or none: it writes only `instrukt` into the install directory
 (`$INSTRUKT_INSTALL_DIR`, else `$XDG_BIN_HOME`, else `~/.local/bin`) and
-touches no profile, home or agent setting. The plugin carries no binary and
-upgrades none on its own; a plugin and a binary of the same release share one
+touches no profile, home or agent setting. The skill carries no binary and
+upgrades none on its own; a skill and a binary of the same release share one
 version. Everything set up afterwards goes through the CLI into the
-configuration layers, never into the plugin
+configuration layers, never into the skill
 (`project/instrukt/spec/domain/distribution`).
 
 ### Publish

@@ -27,7 +27,7 @@ contracts and the designs governing their relationships.
 | work | Local-leading work record, GitHub reflection, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources and scheduled ticks | `project/instrukt/spec/domain/runner` |
-| distribution | The release, the release installer and the Claude plugin with its cockpit skill and startup hook | `project/instrukt/spec/domain/distribution` |
+| distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
 ### Modules
 
@@ -38,7 +38,7 @@ contracts and the designs governing their relationships.
 | todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime mapping required; runner autostart or manual concerns todos only |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime mapping required; shares the single runner process |
 
-Distribution is in no module: it is release tooling and plugin files beside
+Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
 
 Events are a module switch within the runner's semantic boundary, not a tenth
@@ -98,8 +98,8 @@ relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime mapping and event-source boundary translate
 session operations and external notifications. These are boundary locations,
-not additional contexts. Distribution is **Conformist** to Claude Code's
-plugin and marketplace formats and to GitHub's release assets.
+not additional contexts. Distribution is **Conformist** to the Agent Skills
+format, the `skills` command and GitHub's release assets.
 
 ### Cross-cutting designs and rulings
 

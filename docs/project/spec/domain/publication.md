@@ -270,7 +270,7 @@ runs it.
   project key `workflow.domain` (default `sdlc`); these files have no snippet
   index entries.
 - **distribution** — Published language. `instrukt status` is the state the
-  Claude plugin's cockpit skill reads on every visit
+  instrukt cockpit skill reads on every visit
   (`project/instrukt/spec/domain/distribution`).
 
 ## Known caveats
