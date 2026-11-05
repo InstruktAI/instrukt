@@ -97,10 +97,12 @@ and reports optional capabilities. Configuration contains no runtime verbs.
   `instrukt sessions run|send|alive|conversation|link|resolve-start` surface,
   `instrukt ticks status`, and wake-up registration by `instrukt install`;
   structured adapter operations, five-state observation, bounded conversation
-  reads, optional linked input and notification; singleton key/title discovery
+  reads, optional linked input and notification; all-start key/title discovery
   and database locking. Every facade command accepts `--json`.
   Worktree creation returns the runtime path; reattachment requires a distinct
-  runtime capability. Events include `runner.upstream_changed`,
+  runtime capability. Shipped T3 todo delivery uses sequential per-role worktrees
+  with fast-forward handoff through the work and workflow contracts. Events include
+  `runner.upstream_changed`,
   `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and

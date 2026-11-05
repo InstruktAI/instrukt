@@ -46,7 +46,26 @@ daylight-saving rules. `at` is ISO-8601 with an offset. An occurrence is
 missed when it fell before this wake-up and after the last one and did not
 fire. Last-fired accounting is a stamp on the task record. The runner lock
 serializes wake-ups; an in-flight task is not fired again, and a failed
-dispatch counts as not fired.
+dispatch proven rejected before creation counts as not fired. An ambiguous
+start remains in flight until reconciled, even without a task-started stamp.
+
+### Occurrence identity and interrupted dispatch
+
+Each occurrence has one title key:
+`instrukt:task:<encoded-project>/<encoded-slug>:<encoded-occurrence>` under
+`project/instrukt/spec/feature/runner/session-continuity`. The occurrence is
+its scheduled instant in canonical RFC 3339 UTC with `Z`; a catch-up selects one
+missed instant and persists it before dispatch. A later wake-up retries that
+same occurrence, rather than selecting another while its start is unresolved.
+
+Commit its `runtime_starts` marker before invoking the runtime. After restart,
+keyed discovery recovers the existing thread before any new start for that
+occurrence. A successful empty listing leaves it unresolved and exposes
+`instrukt sessions resolve-start <key>`; it does not make the task eligible for
+another firing. A failed send retains its recorded target. Acceptance binds
+the thread and last-fired evidence to that occurrence; completion or error
+still requires its matching outcome stamp. Only after the occurrence resolves
+may the recurring schedule select the next due occurrence under `catch_up`.
 
 ### Wake-up installation and visibility
 
@@ -121,6 +140,25 @@ Then the task is held with that reason and the developer is notified
 And no further occurrence runs until the developer resolves it
 ```
 
+#### UC-TT5: Recover scheduled work after an interrupted start
+
+```gherkin
+Given a developer's scheduled task was started but instrukt lost the reply
+When a later wake-up finds that occurrence's keyed thread
+Then the task continues in that thread without firing the occurrence again
+But when listing finds no matching thread
+Then the occurrence remains unresolved and the developer sees its resolve-start command
+And later occurrences wait until the interrupted occurrence is resolved
+```
+
 ## Known caveats
 
-None.
+- A keyed thread prevents duplicate starts during recovery, but unconfirmed
+  input can be delivered again. Task operations reconcile their external result;
+  this is not an exactly-once side-effect guarantee.
+
+## See Also
+
+- project/instrukt/spec/domain/runner
+- project/instrukt/spec/feature/runner/session-continuity
+- project/instrukt/spec/feature/work/state-database

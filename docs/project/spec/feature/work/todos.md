@@ -74,7 +74,8 @@ default view; iceboxed, removed and delivered work are available through the
 corresponding listing selections. Ordering is derived from readiness and
 dependencies. `instrukt todo show <slug>` exposes the record, current evidence,
 holds, prerequisites, group context, execution claim and per-role session
-bindings (runtime, id and returned worktree path). These bindings form the
+attempt bindings (runtime, id, key, attempt, branch, base, returned worktree
+path and release evidence), including released attempts. These bindings form the
 assignment child set exposed as `sessions.bound`; `claim.held` exposes whether
 the execution claim remains held. `instrukt todo list` reads only this
 computer's state database and fetches nothing: todos held elsewhere show as

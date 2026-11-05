@@ -109,6 +109,16 @@ record's artifact and stamp establish completion of a step. A runtime reply,
 successful process exit, or turn-completion event does not establish that
 completion on its own.
 
+Todo roles use the durable title key and start marker defined by
+`project/instrukt/spec/feature/runner/session-continuity`. Allocate an attempt
+once and retain it across retries. An unresolved marker is reconciled by exact
+key discovery after restart; an empty listing leaves it pending for
+`resolve-start`. T3 dispatches each role attempt into a new worktree from the
+captured todo head. Roles of one todo run sequentially; completion is admitted
+for the next role only after the fast-forward handoff defined by
+`project/instrukt/spec/feature/workflow/delivery-cycle` is recorded. A review
+releases its attempt without moving the todo branch.
+
 ### Deliberate pickup and switched-off modules
 
 With `runner.autostart` false, a session picks up work deliberately with
@@ -149,9 +159,9 @@ Then the command refuses and names both switches that would enable it
 
 ## Known caveats
 
-- T3's current CLI cannot attach a newly dispatched role to an existing
-  worktree. Work requiring that attachment remains pending with the missing
-  capability named; the adapter does not silently create another worktree.
+- T3 supports worktree creation but not attachment. The shipped sdlc workflow
+  uses per-role worktrees; a workflow requiring attachment is refused at
+  enablement with that capability named.
 - Preferred-agent selection on T3 has the limitation recorded in
   `project/instrukt/spec/feature/runner/session-continuity`.
 

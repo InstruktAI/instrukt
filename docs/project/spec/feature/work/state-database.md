@@ -144,7 +144,7 @@ Approvals and intent checks are stamps: `fact = 'approval'` and
 | Column | Meaning |
 | --- | --- |
 | `todo_id`, `sequence` | The todo and record order. |
-| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
+| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
 | `at`, `actor` | Time and acting session, GitHub account or person. |
 | `role` | The role the acting session played, or `NULL`. |
 | `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
@@ -157,9 +157,25 @@ Approvals and intent checks are stamps: `fact = 'approval'` and
 `reason`, `set_by`, `set_at`, `released_at`, `released_by`. The current hold
 is the row with `released_at IS NULL`; at most one per todo.
 
-**`session_bindings`** — started sessions per todo and role. Key:
-`(todo_id, role)`. Columns: `todo_id`, `role`, `session`, `worktree` (the
-returned worktree path, kept after the session ends).
+**`session_bindings`** — retained sessions per todo, role and attempt. Key:
+`(todo_id, role, attempt)`; unique `(runtime, key_title)`.
+
+| Column | Meaning |
+| --- | --- |
+| `todo_id`, `role`, `attempt` | Assignment and monotonic positive attempt number; allocated before dispatch and reused on retry. |
+| `runtime`, `key_title` | Adapter and durable exact title key. |
+| `session` | Bound runtime identity, or `NULL` while start recovery is pending. |
+| `worktree`, `branch`, `base_head` | Returned worktree path, role branch and captured starting SHA. Retained after release. |
+| `completion_sequence`, `role_head` | Completion stamp and its bound role head, or `NULL` before completion. |
+| `advance_from`, `advance_to`, `advanced_at` | Expected todo head, intended stamped role head and confirmed handoff time. Intent commits before the Git ref update; confirmation commits with release. A read-only role has no ref-advance values. |
+| `released_at` | Time the completed handoff or read-only verdict released this attempt; `NULL` while it remains outstanding. |
+
+One todo has at most one outstanding dispatched workspace-role attempt. The claim-holding
+orchestrator coordinates the serialized work and its mechanical handoffs. A new attempt retains
+prior rows, starts at the current todo head and gets a fresh key. An unresolved
+start or pending handoff keeps the current attempt outstanding. Branch advancement
+and crash reconciliation follow
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
@@ -246,7 +262,8 @@ Columns: `consumer`, `seq`, `session` (the selected `<runtime>:<id>`).
 Commit the target before `send`; a failed or interrupted send retries that
 same session. A later absent or conflicting runtime listing cannot retarget
 it or start a replacement. Delete the row in the transaction that records
-accepted delivery and its handled mark. A start with an unknown result keeps
+runtime-accepted delivery result. Consumer handling is the separate durable
+activation-acceptance boundary above. A start with an unknown result keeps
 its start marker until its session can be recovered, then records this target
 before any recovery send.
 
@@ -262,38 +279,52 @@ source may run, from `X-Poll-Interval`. Key: `project`.
 `observed_at`.
 
 **`executions`** — dispatched executions the runner watches until their todo
-is released. Key: `(project, todo_id, role)`. Columns: `project`, `todo_id`,
-`role`, `session`, `workflow_state` (the state at the last look),
+is released. Key: `(project, todo_id, role, attempt)`. Columns: `project`, `todo_id`,
+`role`, `attempt`, `key_title`, `occurrence` (for a task), `session`, `workflow_state` (the state at the last look),
 `recovery_sent`, `anomaly_raised`.
 
-**`standing_bindings`** — cached standing-agent sessions. Key:
-`(procedure, project)`. Columns: `procedure`, `project`, `session`, `key_title`.
-A binding is repaired from the runtime thread's exact key title before a new
-start is considered; deleting this cache never establishes absence in T3.
+**`runtime_bindings`** — cached sessions for all start kinds. Key:
+`(runtime, key_title)`. Columns: `runtime`, `key_title`, `kind` (`standing`,
+`todo`, `task` or `run`), `project`, `subject` (procedure, todo/role/attempt,
+task/occurrence or request id), `session`, `worktree`, `branch`, `base_head`.
+Repair this cache from exact keyed discovery before considering a start.
+Its removal establishes no runtime absence. Work's `session_bindings` owns
+retained todo-role evidence; task occurrence stamps own whether a run finished.
 
-**`runtime_key_locks`** — one standing-agent starter/deliverer per runtime
-and singleton key. Key: `(runtime, project, procedure)`.
+**`runtime_key_locks`** — one starter/deliverer per runtime and exact key.
+Key: `(runtime, key_title)`.
 
 | Column | Meaning |
 | --- | --- |
-| `runtime`, `project`, `procedure` | The compiled adapter name and singleton scope. |
-| `owner` | Owning runner invocation token; `NULL` when released. |
-| `acquired_at` | Acquisition time, for diagnosis; not a timeout permitting takeover. |
+| `runtime`, `key_title`, `project` | Adapter, exact title and registered project scope. |
+| `owner` | Owning invocation token, including manual sessions commands; `NULL` when released. |
+| `acquired_at` | Acquisition time for diagnosis; elapsed time permits no new start. |
 
-Acquisition is an atomic conditional write under the existing writer lock. Only
-the recorded owner can perform the key's list/start/send sequence and release
-the row. No database transaction spans a runtime command. A successor holding
-the machine runner lock can recover dead invocation ownership; unresolved
-`standing_starts` remains in force after that recovery. Every standing
-start-or-wake goes through this row, even with a cached binding.
+Acquisition is an atomic conditional write under the writer lock. Only the owner
+performs the list/start/send sequence and releases the row. No transaction spans
+a runtime command. A successor holding the machine runner lock can recover dead
+ownership while preserving unresolved `runtime_starts`. Every start and wake,
+including todo roles, task occurrences and setup-only runs, uses this table.
 
-**`standing_starts`** — standing-agent starts recorded before the runtime
-was asked and not yet bound or resolved. Key: `(procedure, project)`.
-Columns: `procedure`, `project`, `runtime`, `key_title`, `begun_at`, `reported`.
-The marker commits before the external start. A later keyed runtime match can
-resolve it without a replacement start; an empty list alone cannot clear an
-ambiguous marker. Explicit resolution or proof of rejection before creation
-is required before trying a new start.
+**`runtime_starts`** — starts recorded before calling the runtime and not yet
+completely bound. Key: `(runtime, key_title)`.
+
+| Column | Meaning |
+| --- | --- |
+| `runtime`, `key_title`, `project`, `kind`, `subject` | Same scope as the binding, including the allocated role attempt or normalized task occurrence. |
+| `brief`, `request` | Opening input and structured start request, including requested branch, captured base SHA and worktree requirement. Persisted before the external start. |
+| `begun_at`, `reported` | Start time and whether the unresolved-start finding was reported. |
+| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and no-thread confirmation or proof of rejection; `NULL` until resolved. |
+| `state` | `unresolved` while creation may be in flight; `retry_allowed` after `resolve-start --none` or proof of rejection before creation. The request and key are retained for retry. |
+
+One design covers every start kind under
+`project/instrukt/spec/feature/runner/session-continuity`. Commit the marker
+before calling start; bind and clear it in the same transaction only after
+recovering all requested evidence. On restart, discover its exact key before
+any new start. An empty listing alone never clears it. `resolve-start` or proof
+of rejection before creation permits retry of the same key; the marker returns
+to `unresolved` before that retry calls the runtime. Removing a todo or
+releasing its execution never discards an unresolved marker.
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
@@ -305,13 +336,16 @@ set for).
 ### Retention
 
 A removed todo's rows are purged with it when its recovery window expires.
-An execution's row goes when its todo is released; a standing start's when it
-is bound or resolved. A pending standing delivery's row goes with its accepted
-delivery and handled mark. A task failure's row is kept after its hold is
+An execution's row goes when its todo is released; a runtime start's when it
+is completely bound. Explicit no-thread resolution retains the request for retry.
+A pending standing delivery's row goes with its runtime-accepted delivery
+result. A task failure's row is kept after its hold is
 released, so the same failed run never sets the hold again, and is replaced by
 the task's next failed run. Validators, deferrals, watched-ref observations
 and listing copies are replaced in place. Key-lock rows are reused with
-ownership cleared on release; they are not event history. Local events and settled cursors are retained as operational accounting. Redis
+ownership cleared on release; they are not event history. Runtime bindings
+remain as identity caches, including completed occurrences and standalone runs.
+Local events and settled cursors are retained as operational accounting. Redis
 stream retention separately bounds replay; occurrence duplicate marks expire
 after seven days. Local history does not backfill a newly created Redis group.
 
@@ -342,7 +376,7 @@ after seven days. Local history does not backfill a newly created Redis group.
   the database again by pull-through.
 - Deleting the database loses work-record writes not yet reflected to
   GitHub. Reflected work returns by pull-through; the runner's state starts
-  empty, so watched refs are observed afresh. Before any new standing-agent
+  empty, so watched refs are observed afresh. Before any new
   start, the adapter discovers the thread's key title in T3; existing keyed
   threads are rebound rather than duplicated. A lost ambiguous start marker
   cannot be reconstructed when the runtime has no discoverable matching thread.
