@@ -85,13 +85,26 @@ of workflow progress. A turn-completion event cannot stand in for a step's
 artifact and stamp. Session observation follows
 `local/projects/instrukt/spec/feature/runner/session-continuity`.
 
-Events persist in the event log in `state/runner/`, with per-consumer cursors
-and idempotency keys. Restart resumes from those cursors; handlers reconcile
+Events persist in the event log of the state database
+(`local/projects/instrukt/spec/feature/work/state-database`, Runner tables),
+with per-consumer cursors, per-consumer handled marks and idempotency keys.
+An event is appended with its idempotency key in one transaction, so it is
+logged once. A delivery's handled marks, one per event it hands over, and
+the consumer's cursor commit in one transaction with the delivery's outcome
+once the runtime has answered; an event carrying a mark is never handed to
+that consumer again. A send interrupted before that commit is repeated once
+at the next delivery, which the handler absorbs by reconciling its subject.
+Restart resumes from the cursors; handlers reconcile
 their subject against current state, making replay idempotent. Event payloads
 and keys are defined in `local/projects/instrukt/spec/domain/runner`.
 A standing agent's session is recorded per (subscribing procedure, project).
 
-A start is recorded before the runtime is asked. A start whose result never
+Conditional-request validators are kept in the state database per project
+and request, so a later invocation asks only for what changed, beside each
+watched ref's last observed revision.
+
+A start is recorded before the runtime is asked, and its handled marks
+commit with the session it binds. A start whose result never
 arrived (the invocation ended after the runtime may have created the session)
 is never repeated, so no second standing session is created for the same
 agent: it is reported once as an anomaly naming the exact command line that
@@ -109,8 +122,3 @@ resolves it, `instrukt sessions resolve-start <procedure>@<project> --session
   Then a standing agent reports the changes
   And offers reconciliation that retains the fork's local modifications
 ```
-
-Conditional-request validators are kept in the runner's state per project and
-watched source, so a later invocation asks only for what changed. A standing
-agent's session binding is kept there too, keyed by subscribing procedure and
-project.

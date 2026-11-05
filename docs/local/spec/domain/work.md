@@ -73,8 +73,10 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 - **Owns:** todo identity and record mutations; artifact versions; stamp
   evidence; approvals and intent-check records; prerequisite and group facts;
-  holds; per-role session bindings and task schedules; local-leading persistence; GitHub reflection and recovery; reports
-  derived from that record.
+  holds; per-role session bindings and task schedules; local-leading
+  persistence in the state database — its file, writer rules, migrations and
+  work tables (`local/projects/instrukt/spec/feature/work/state-database`);
+  GitHub reflection and recovery; reports derived from that record.
 - **Does not own:** workflow definitions and next-action derivation, execution
   and integration decisions, runner scheduling and dispatch, runtime thread
   status and conversation storage, or documentation publication. Those
@@ -110,7 +112,8 @@ Direct-commit review verdicts belong to repository git notes through
   after session end for delivered cleanup), task
   schedule (`at`/`cron`, `catch_up`), optional agent/model preference consulted
   before procedure dispatch defaults and global `agents.order`, and reflected revision.
-- **Invariants:** creation is locally atomic; identity survives rename and
+- **Invariants:** every change, creation included, commits in one
+  transaction of the state database; identity survives rename and
   recovery; workflow facts bind the evidence they concern. The detailed
   record lifecycle belongs to
   `local/projects/instrukt/spec/feature/work/todos`, evidence validity to
@@ -156,6 +159,9 @@ local records and workflow results enter as evidence-bound mutations.
   attributed evidence for approval, workflow and evaluation goals.
 - **Approvals** — `local/projects/instrukt/spec/feature/work/approvals` —
   authorize reviewed outcomes and hand off checked intent.
+- **State database** — `local/projects/instrukt/spec/feature/work/state-database`
+  — read the local work record while instrukt writes and keep the last
+  completed state through an interrupted write.
 - **Dependencies and holds** —
   `local/projects/instrukt/spec/feature/work/dependencies-and-holds` — sequence
   dependent work and pause pickup with an inspectable reason.
@@ -179,7 +185,11 @@ owning design snippet or decision record is declared.
   stamps and automatic holds, purges expired retained records, and updates
   per-role session bindings through work’s command contract.
 - **Runner → work** — customer-supplier. The finalize-ready stamp appends
-  `workflow.finalized` through the runner's event-log interface.
+  `workflow.finalized` through the runner's event-log interface, in the
+  stamp's own transaction.
+- **Work → runner (state database)** — customer-supplier. The runner's tables
+  live in work's state database, under its writer lock and migrations; the
+  runner owns their meaning and is their only writer.
 - **Work → docs** — customer-supplier. Work supplies pending todo-slug existence
   through the core-declared interface wired by the CLI.
 - **Work → repository** — customer-supplier. Work supplies todo existence

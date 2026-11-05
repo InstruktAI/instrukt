@@ -73,7 +73,10 @@ conversation becomes the checkable basis.
 ### Command boundary
 
 Approvals and intent checks are recorded through `instrukt todo stamp` and
-are visible through `instrukt todo show`. Approval stamps distinguish human decisions from peer judgments and retain
+are visible through `instrukt todo show`. They are stamps of the work record:
+rows of the state database's `stamps` table with `fact` `approval` or
+`intent_checked`
+(`local/projects/instrukt/spec/feature/work/state-database`). Approval stamps distinguish human decisions from peer judgments and retain
 the source attribution above even when an agent records the decision.
 
 Approval commands are `instrukt todo stamp <slug> --prd-approved --by human|peer
