@@ -129,6 +129,7 @@ None.
 
 - **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
 - **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
+- **configuration-skill** — [project/instrukt/spec/feature/configuration/configuration-skill](../feature/configuration/configuration-skill.md) — one skill coordinates local configuration and infrastructure verification across participating computers through the selected runtime, or locally without a route.
 - **interpolation** — `project/instrukt/spec/feature/configuration/interpolation` — values resolve across keys, the environment and the caller's own runtime session when read.
 - **logging** — `project/instrukt/spec/feature/configuration/logging` — every command's diagnostics are recorded where the InstruktAI logging contract puts them, readable afterwards with `instrukt-ai-logs instrukt`.
 
