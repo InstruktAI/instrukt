@@ -7,7 +7,7 @@ description: Shared review execution contract for lanes, evidence, citations, se
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/bundle.md
+- sdlc
 - [sdlc/policy/definition-of-done-lanes](../../policy/definition-of-done-lanes.md)
 - [sdlc/policy/process-change-authority](../../policy/process-change-authority.md)
 - [general/policy/human-involvement-recording](../../../../general/policy/human-involvement-recording.md)

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../../.instrukt/schemas/domain-index.schema.json
 description: Writing, reviewing, testing, refactoring, or debugging code or tests
 expanded:
   - sdlc/concept/defect-evidence

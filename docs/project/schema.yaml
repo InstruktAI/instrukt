@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../.instrukt/schemas/snippet-schema.schema.json
 spec/feature:
   required:
     - Use cases

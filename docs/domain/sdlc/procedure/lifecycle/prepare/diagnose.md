@@ -9,7 +9,7 @@ role: diagnosis-driver
 
 ## Required reads
 
-- @~/.instrukt/docs/sdlc/bundle.md
+- sdlc
 - [sdlc/procedure/debugging](../../debugging.md)
 - [sdlc/policy/process-change-authority](../../../policy/process-change-authority.md)
 - [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)

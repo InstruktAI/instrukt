@@ -130,7 +130,7 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
               <!-- /planned:<slug> -->
               ```
 
-              Gherkin appends as more `#### UC-…` blocks; never reshuffle. On delivery the two marker lines are removed and the content stays exactly where it is, now live.
+              Gherkin appends as more `### UC-…` blocks; never reshuffle. On delivery the two marker lines are removed and the content stays exactly where it is, now live.
 
             - **CHANGE / REMOVE** (bounded replacement or localized removal). Author the current text and its replacement in place, wrapped in a planned-change marker that names the slug:
 
