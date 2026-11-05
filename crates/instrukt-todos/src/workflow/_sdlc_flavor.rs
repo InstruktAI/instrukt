@@ -302,6 +302,7 @@ fn building_change() -> Facts {
         prepared_change(),
         vec![
             ("worktree.path".into(), text("/wt/add-login")),
+            ("setup.worktree.path".into(), text("/wt/add-login")),
             ("build.start_base_sha".into(), text("base-1")),
             ("build.plan_digest".into(), text("plan-1")),
             ("quality_checklist.digest".into(), text("qc-1")),
@@ -392,6 +393,8 @@ fn a_prepared_change_without_a_worktree_owes_workspace_setup() {
 fn build_admission_owes_refresh_and_upstream_sync_until_the_base_is_recorded() {
     let mut f = prepared_change();
     f.insert("worktree.path", text("/wt/add-login")).unwrap();
+    f.insert("setup.worktree.path", text("/wt/add-login"))
+        .unwrap();
     let derived = derive("work", f.clone());
     assert_eq!(
         at(&derived),
@@ -520,7 +523,9 @@ fn a_task_routes_to_the_task_runner() {
 // ---- responsibility ----
 
 /// The sdlc actions whose commands name no procedure.
-const ORCHESTRATOR_STEPS: [&str; 10] = [
+const ORCHESTRATOR_STEPS: [&str; 12] = [
+    "handoff-role",
+    "record-finalize-readiness",
     "release-prepared",
     "return-to-prepare-kickback",
     "return-to-prepare-drift",

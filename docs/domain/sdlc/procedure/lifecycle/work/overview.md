@@ -91,20 +91,50 @@ executable work input.
 Worktree preparation, first branch publication, build-start evidence, stale
 checks and admission synchronization are explicit orchestrator
 commands. Finalization synchronizes again before handoff; after the readiness
-stamp, work derives confirmation and cleanup without merging or republishing. Record their outcomes. On a merge conflict, abort that merge and
-route recovery to the active builder attempt, or dispatch a new builder attempt
-at the current todo head after release. A missing binding is a dispatch gap.
-A failed fetch or skipped merge is not successful synchronization.
+stamp, work derives confirmation and cleanup without merging or republishing.
+Record their outcomes. The outstanding setup, builder or finalizer attempt
+resolves its own synchronization conflict when it can. When it cannot, preserve
+its committed role head and retained worktree, then run
+`instrukt todo handoff {slug} --failed --reason <text>`. Confirm failed release
+before dispatching a recovery builder with `--recover-attempt <role/attempt>`;
+its new worktree starts at that failed role head. The failed release records
+failure evidence and leaves the todo branch unchanged. The recovery builder
+resolves synchronization, completes the approved build and stamps
+`--build-complete`; its normal handoff fast-forwards onto the todo branch before
+independent review. A missing binding is a dispatch gap. A failed fetch or
+skipped merge is not successful synchronization.
 
 Select workers using the procedure's `dispatch` or global `agents.order`,
-availability first. Use `med` for builders and fixers, `slow` for build
+availability first. Use the adapter's supported selection against that order;
+when selection is unsupported, report the runtime's project defaults. Use `med`
+for builders and fixers, `slow` for build
 reviewers and `fast` for finalizers. Retain bindings per todo, role and attempt.
 Before reuse, confirm that the attempt is active and unreleased, then observe it
 with `instrukt sessions alive` and deliver follow-ups through `send`. After
 release, start a new attempt through `run --todo {slug}` in its own
-runtime-created worktree at the current todo head. One outstanding workspace-role
-attempt blocks another dispatch, including while its start or branch handoff is
-pending. Runtime availability alone never reopens a released attempt.
+runtime-created worktree at the current todo head, or at the recorded failed
+role head for an explicit `--recover-attempt <role/attempt>` builder. One
+outstanding workspace-role attempt blocks another dispatch, including while its start or branch handoff is
+pending. Runtime availability alone never reopens a released attempt. An
+unavailable active session follows recovery for that same attempt.
+
+Request `{slug}/work` as the logical worktree name through the configured
+workspace-role action. The runtime creates each new role attempt at the current
+todo head, with the explicit recovery-builder exception above; use its returned
+path. Bind every Git effect and workspace observation
+to the attempt it concerns: setup during build admission, the active dispatched
+role during workspace work, and the retained finalizer for readiness. Read each
+worker template as that worker's brief; carry selection, reuse and attempt
+creation here rather than delivering dispatcher instructions to the worker.
+
+After any setup/finalizer `--role-complete` or builder/fixer `--build-complete`,
+re-enter work and execute the emitted `instrukt todo handoff {slug}` action.
+It owns the persisted advancement intent, expected-head ref update, confirmation
+and release. Retry that command after interruption; status 0 confirms handoff,
+status 1 retains a recoverable failure and status 2 names a refused condition.
+A non-fast-forward holds the todo with the role branch and worktree retained.
+Resolve the recorded finding through the revision route before another role.
+Read-only verdicts and deferral-processing stamps release directly.
 
 ### 2. Build
 
@@ -113,16 +143,16 @@ Start a todo-bound setup attempt with
 setup-only brief. Use the returned worktree to synchronize upstream, make the
 opening commit, run configured project preparation and publish the branch. Have
 the setup session record `instrukt todo stamp {slug} --role-complete`;
-fast-forward the todo branch to its stamped head and confirm the handoff and
-setup-attempt release. Record
+re-enter work and execute `instrukt todo handoff {slug}` to confirm the setup
+handoff and attempt release. Record
 the base commit and approved plan digest with `instrukt todo stamp {slug} --build-started`,
 then write the quality checklist. Only then dispatch
 `sdlc/procedure/lifecycle/work/build` with the approved plan. The builder
 executes tasks, commits per task and stamps
 `instrukt todo stamp {slug} --build-complete`. That stamp clears the prior
-build verdict and finalize readiness. Check the clean role worktree and stamped
-head, fast-forward the todo branch and confirm the builder-attempt handoff and
-release before review admission. Re-enter `instrukt todo work {slug}`;
+build verdict and finalize readiness. Execute the emitted
+`instrukt todo handoff {slug}` action and confirm builder-attempt release before
+review admission. Re-enter `instrukt todo work {slug}`;
 commits or a completion reply alone do not advance the work.
 
 When a revised plan meets an existing build, direct the builder to reconcile
@@ -146,8 +176,8 @@ review under `general/procedure/orchestration` before deriving the next action.
 A current changes-requested verdict sends the findings to an active builder
 attempt, or starts a new builder-role attempt as fixer at the current todo head
 after release. The fixer applies `sdlc/procedure/lifecycle/fix-review-findings`,
-records dispositions, commits fixes and stamps `--build-complete`. Confirm the
-fast-forward handoff and attempt release, then dispatch the next independent
+records dispositions, commits fixes and stamps `--build-complete`. Execute
+`instrukt todo handoff {slug}` and confirm attempt release, then dispatch the next independent
 review as a new attempt at the advanced todo head.
 
 Recoverable process failures belong to the worker: upstream conflicts, failed
@@ -165,10 +195,24 @@ not transfer ownership or weaken an unresolved finding.
 Current approval permits finalization only after deferrals are settled.
 Dispatch `finalize` with the approval evidence. The finalizer merges latest
 upstream main, resolves conflicts, publishes the branch and stamps
-`--role-complete`. Confirm the fast-forward of the todo branch to the stamped
-finalizer head and the attempt release. The finalizer then records
-`--finalize-ready` against its retained binding; this record-only step admits no
-further workspace work.
+`--role-complete`. Re-enter work and execute `instrukt todo handoff {slug}` to
+confirm the finalizer handoff and attempt release. Before `--role-complete`,
+the finalizer checks only its clean worktree, role branch and published head
+for equality; approval of a changed head follows handoff. If todo content or
+review evidence changed, dispatch a new independent review at that advanced todo head in its own
+worktree. Resolve an undetermined binding through the evidence route. The
+review verdict releases its attempt; changes requested route through a new
+fixer attempt, completion and handoff before another review.
+
+After current approval and reviewer release, the flow returns
+`record-finalize-readiness` when the retained finalizer candidate still matches
+clean worktree, todo branch and remote evidence. Send that retained finalizer
+its record-only `--finalize-ready` step. If only this write was interrupted,
+verify and retry it against the same retained binding. Workspace changes instead
+require a new finalizer attempt at the current todo head, followed by completion,
+`todo handoff` and any review owed before readiness. The worker's restamp brief
+is delivered only for workspace reconciliation; selection and review routing
+remain the orchestrator's work.
 Re-enter `instrukt todo work {slug}`. Compare the clean worktree head, local
 branch head, remote branch head and stamped commit. A mismatch requires
 reconciliation and a new stamp before handoff.
@@ -177,9 +221,14 @@ The `--finalize-ready` stamp records the handoff and appends `workflow.finalized
 idempotently by project/todo/SHA, making the exact finalized commit available
 to the standing integrator. Run
 `instrukt todo update <slug> --unclaim` and confirm lane release
-and execute the configured terminal cleanup obligations. The work orchestrator
-ends this assignment here; integration remains the standing integrator's work.
-A blocked finalizer returns to recovery, not a wider integration mandate.
+and execute the configured terminal obligations. After confirmed delivery,
+resource cleanup enumerates every retained attempt path and role branch from
+the project checkout, refreshing and re-deriving between removals. Preserve
+dirty or in-use paths, unmerged branches and failed removals as owed obligations.
+The work orchestrator ends this assignment here; integration remains the standing integrator's work.
+A finalizer that cannot resolve synchronization follows the same failed-release
+and recovery-builder route as setup. After the builder's completion and normal
+handoff, obtain current independent review and dispatch a new finalizer.
 
 ### 6. Deferrals
 

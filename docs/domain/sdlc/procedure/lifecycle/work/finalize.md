@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Finalize phase. The finalizer records the handoff; the work orchestrator confirms it and exits.'
+description: 'Finalize the bound candidate, report role completion, and record readiness after confirmed handoff and current review.'
 visibility: 'public'
 role: finalizer
 parameters:
@@ -17,21 +17,22 @@ dispatch:
 
 ## Goal
 
-Prepare a reviewed branch for integration and close the work assignment after
-the finalize-ready handoff is recorded. The standing integrator owns advancement
-of main; the finalizer records readiness and the handoff, and the work
-orchestrator confirms them and releases its lane.
+Prepare the candidate in your bound finalizer worktree, report role completion
+to the work orchestrator, and record finalize readiness after confirmed handoff
+and current independent approval. Report blockers to that orchestrator with
+the affected evidence and preserved work location.
 
 ## Preconditions
 
 - `instrukt todo artifacts read {slug} review-findings` exists with APPROVE.
-- The bound build-review stamp is current for the target and report.
+- At admission, the bound build-review stamp is current for the target and report.
+  Changes made during finalization are reviewed after completed handoff and release.
 - `instrukt todo artifacts read {slug} quality-checklist` exists.
 - Deferrals are resolved and their processing is recorded.
 
 ## Steps
 
-### Stage A — Worker: finalize-prepare (worktree)
+### Prepare the bound candidate
 
 1. Read the approved findings and current verdict binding.
 2. Integrate latest main inside the worktree:
@@ -46,23 +47,29 @@ orchestrator confirms them and releases its lane.
    test fails before its implementation change and passes afterward, per the
    testing policy. After resolving a conflict, rerun only the tests bound to
    the affected use cases. Commit resolutions and record the resulting evidence. A changed
-   todo requires current review before readiness; no full-suite admission gate
-   is added here. If Git refuses to overwrite
-   an ignored local file, leave it intact and report the failed merge for
-   builder recovery (`sdlc/policy/version-control-safety`).
+   todo is reported to the orchestrator for independent review after this
+   attempt's completed handoff and release; no full-suite admission gate
+   is added here. If synchronization cannot be completed in this attempt,
+   preserve its branch, worktree and local files and report the failure and role
+   head to the orchestrator. It releases the failed attempt before admitting a
+   recovery builder from that head (`sdlc/policy/version-control-safety`).
 4. Publish the finalized branch:
 
    ```sh
    git push origin HEAD:{slug}
    ```
 
-5. Confirm the worktree is clean and its head, local role branch and remote todo branch
-   match the reviewed candidate. Report the commit prepared for handoff.
+5. Confirm the worktree is clean and its head, local role branch and published
+   remote todo branch match each other. Report that finalized commit and any
+   changes to reviewed content; current approval of this new head is checked
+   after handoff and release.
 6. Stamp `instrukt todo stamp {slug} --role-complete`, binding this clean
    worktree's exact committed head to the finalizer attempt. Report that evidence
-   to the work orchestrator. The orchestrator checks the stamped head,
-   fast-forwards the local todo branch to it and confirms the recorded handoff
-   and attempt release under `project/instrukt/spec/feature/workflow/delivery-cycle`.
+   to the work orchestrator for `instrukt todo handoff {slug}` under
+   `project/instrukt/spec/feature/workflow/delivery-cycle`. Await its confirmed
+   handoff, attempt release and current independent approval. A changed candidate
+   is reviewed at the advanced todo head in the reviewer's own worktree after
+   this attempt is released.
 7. After that confirmation, recheck equality of the clean finalizer worktree
    head, local todo branch and published remote todo branch. Record
    `instrukt todo stamp {slug} --finalize-ready` against this retained finalizer
@@ -71,25 +78,6 @@ orchestrator confirms them and releases its lane.
    `workflow.finalized` idempotently keyed by project/todo/SHA; reporting readiness
    alone establishes nothing. Any further workspace changes require a new
    finalizer attempt at the current todo head and its own completion and handoff.
-
-### Stage B — Work orchestrator: confirm handoff and end
-
-The finalizer's readiness stamp records the handoff; integration belongs to the standing
-integrator in its own worktree under `sdlc/procedure/lifecycle/integrate`.
-
-1. Re-run `instrukt todo work {slug}` and read the derived obligation and effects.
-2. Confirm the finalizer role-completion stamp, fast-forward handoff and attempt
-   release before accepting readiness. Check readiness against the clean worktree,
-   local todo branch, remote and stamped SHA.
-   A mismatch returns to reconciliation and restamping; no earlier stamp admits it.
-3. Confirm the handoff and `workflow.finalized` event recorded by the stamp, then
-   `instrukt todo update <slug> --unclaim` for lane release
-   and terminal cleanup commands supplied by the flavor. Confirm release before
-   leaving this assignment. Session lifecycle follows
-   `general/principle/session-lifecycle`; this handoff does not end an unfinished
-   human conversation.
-4. If the handoff cannot complete, preserve the blocker and route recovery
-   inside work scope. No work-role call performs integration.
 
 Worker report format:
 
@@ -105,11 +93,19 @@ Readiness stamp: <record reference>
 
 - Branch merged with latest upstream main and pushed to `origin/{slug}`.
 - Readiness bound to the matching clean worktree, local branch and remote head.
-- Recorded handoff to the standing integrator and confirmed lane release.
+- Completion evidence and readiness reported to the work orchestrator; readiness
+  records the exact candidate handoff to the standing integrator.
 
 ## Recovery
 
-- Resolve conflicts in the worktree before recording readiness. Return an intent,
-  scope or reviewed-contract defect through the work orchestrator's kickback path.
-- Repair branch publication or record-write failures and re-run the slug-scoped
-  handoff. Missing evidence or failed cleanup remains an explicit obligation.
+- Resolve synchronization conflicts within your outstanding attempt when you can.
+  When you cannot, report the reason, committed role head and retained worktree
+  to the orchestrator for `instrukt todo handoff {slug} --failed --reason <text>`.
+  That release preserves the failed attempt's work for a recovery builder and
+  leaves the todo branch unchanged. Resume finalization only under a new
+  assignment after recovery, normal handoff and current independent approval.
+  Return an intent, scope or reviewed-contract defect through the orchestrator's
+  kickback path.
+- Report branch-publication, handoff or record-write failures to the work
+  orchestrator. A readiness-only retry uses the retained finalizer binding after
+  confirmation; further workspace changes return for a new assignment.

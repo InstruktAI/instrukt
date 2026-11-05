@@ -29,11 +29,13 @@ roles:
 # A sessions.run command is used only after record lookup/alive requires a start;
 # Workspace-role reuse first requires an active, unreleased attempt, then an
 # available recorded session. Send follow-ups only within that attempt. After
-# release, start the next attempt at the current todo head; pending starts and
-# handoffs remain outstanding and block another workspace-role dispatch.
-# Run build Git effects in the runtime-reported active role worktree; worktree.remove
-# runs from the project checkout outside that worktree. Resolve main to
-# the actual canonical default branch. Stop on failure; re-derive after mutation.
+# release, start the next attempt at the current todo head, or use the explicit
+# recover-attempt source for a recovery builder. Pending starts and handoffs
+# remain outstanding and block another workspace-role dispatch.
+# Run Git effects in the concerned attempt: setup for build admission, the active
+# dispatched role for workspace work, retained finalizer for readiness. Cleanup
+# enumerates every retained attempt path, then role branch, from the project checkout.
+# Resolve main to the actual canonical default branch. Stop on failure; re-derive after mutation.
 # Render the brief as UTF-8 stdin for --brief -, never interpolate prose into shell text.
 # For sessions.send, pass the rendered brief as one argument through an argv API
 # or correct shell quoting; never substitute its raw bytes into command text.
@@ -121,12 +123,21 @@ await-build-start:
 setup-workspace:
   command: instrukt sessions run --worktree {slug}/work --todo {slug} --brief -
   template: templates/setup-workspace.md
+handoff-role:
+  command: instrukt todo handoff {slug}
+  template: templates/handoff-role.md
+record-finalize-readiness:
+  command: instrukt todo show {slug}
+  template: templates/record-finalize-readiness.md
 cleanup-delivered:
   command: instrukt todo show {slug}
   template: templates/cleanup-delivered.md
 dispatch-build:
   command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/dispatch-build.md
+recover-build:
+  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --recover-attempt {recovery.attempt} --brief -
+  template: templates/recover-build.md
 reconcile-build:
   command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
   template: templates/reconcile-build.md
@@ -157,11 +168,19 @@ effects:
   git.fetch-main:
     command: git fetch origin main
     done_when:
-      exists: build.start_base_sha
+      any:
+      - exists: build.start_base_sha
+      - equals:
+        - setup.handoff_confirmed
+        - true
   git.merge-main:
     command: git merge origin/main --no-edit --no-overwrite-ignore
     done_when:
-      exists: build.start_base_sha
+      any:
+      - exists: build.start_base_sha
+      - equals:
+        - setup.handoff_confirmed
+        - true
   branch.publish:
     command: git push --force-with-lease origin HEAD:{slug}
     done_when:
@@ -173,3 +192,8 @@ effects:
     done_when:
       not:
         exists: worktree.exists
+  role-branch.remove:
+    command: git branch -d {role_branch.name}
+    done_when:
+      not:
+        exists: role_branch.exists

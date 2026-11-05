@@ -20,10 +20,10 @@ target evidence, model identity, model version and eval fingerprint. A stamp's
 actor and its model provenance are distinct. A GitHub approval retains the
 identity GitHub reports; a human approval stated in a session is attributed
 to that session’s runtime and id and recorded by its agent. No identity is
-guessed. An agent session's model and version come from the active runtime's
-optional `model` template, called with the session id, which prints
-`<model> <version>`; without that template, or when it fails, the stamp records
-the model as explicitly unknown, never a guess. Outside an agent session, model
+guessed. An agent session's model and version come from the active runtime adapter's
+read of that session's state (on T3, the provider and model `t3 thread show`
+reports for the caller's thread); when the adapter reports none, or the read
+fails, the stamp records the model as explicitly unknown, never a guess. Outside an agent session, model
 and version are explicitly absent and the actor is named. Every stamp copies the current published eval
 fingerprint at write time.
 
@@ -118,19 +118,32 @@ and approved plan digest before builder admission; recovery preserves the origin
 
 Completion commands resolve the caller's current todo-role attempt, require a
 clean worktree and bind its exact committed head. The completion stamp permits
-the orchestrator's fast-forward handoff under
+`instrukt todo handoff <slug>`, invoked by the orchestrator under
 `project/instrukt/spec/feature/workflow/delivery-cycle`; it does not itself
 move a Git ref. The expected promotion of that exact role head to the todo
 branch preserves the completion binding. A different head requires fresh
 evidence. A review verdict targets the captured todo head and never advances
-a branch.
+a branch. After every writing-role completion, the workflow emits the
+orchestrator-facing handoff command before another role is admitted. The
+command owns durable advance intent, ref update, confirmation and release;
+its exit statuses are specified by `project/instrukt/spec/feature/work/todos`.
 
 A build-review verdict requires a clean review worktree at the captured todo
 head and releases that bound attempt in the verdict transaction without a
 branch advance. Follow-up workspace work after release requires a new attempt;
 runtime availability alone never permits reuse.
 
-`instrukt todo stamp <slug> --finalize-ready` requires the finalizer's completed
+A finalizer's `--role-complete` requires only a clean committed worktree whose
+head matches its role branch and published todo head. It does not require the
+new head to match the earlier reviewed candidate. After confirmed handoff and
+release, changed content or review evidence requires independent review of the
+advanced todo head before readiness. An attempt unable to finish synchronization
+uses `todo handoff --failed --reason <text>` without a completion stamp;
+that release establishes failure evidence only. Its recovery builder stamps
+`--build-complete` and hands off normally before review.
+
+`instrukt todo stamp <slug> --finalize-ready` requires current independent
+approval, no outstanding workspace-role attempt, the finalizer's confirmed
 handoff and equality of its clean worktree head, local todo branch and published
 todo branch. It records the exact-commit handoff
 and appends `workflow.finalized` through the runner's event-log interface idempotently, keyed by
@@ -151,6 +164,10 @@ alone counts no round.
 
 Stamp capture and validation support the goals in the approval, GitHub-record
 and evaluation-report specs. They introduce no separate stakeholder goal.
+Completion and crash-safe handoff
+are exercised by UC-TD6 in `project/instrukt/spec/feature/work/todos` and
+UC-DC2, UC-DC3, UC-DC4, UC-DC6 and UC-DC7 in
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 ## Known caveats
 
@@ -163,3 +180,4 @@ and evaluation-report specs. They introduce no separate stakeholder goal.
 - [project/instrukt/spec/domain/work](../../domain/work.md)
 - [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)
 - [project/instrukt/spec/feature/work/state-database](state-database.md)
+- [project/instrukt/spec/feature/work/todos](todos.md)
