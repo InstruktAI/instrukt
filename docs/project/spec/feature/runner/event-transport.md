@@ -161,3 +161,4 @@ And no local sequence or entry ID from the other scope advances it
 - project/instrukt/spec/domain/runner
 - project/instrukt/spec/feature/work/state-database
 - project/instrukt/spec/feature/runner/event-envelope
+- project/instrukt/spec/feature/runner/event-consumers

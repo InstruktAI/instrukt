@@ -235,6 +235,15 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 | `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
 
+### Event-platform facts emitted
+
+`instrukt.system.event.dead_lettered` ports
+`teleclaude.system.event.dead_lettered`: subject is the failing stream entry,
+origin is none, and data declares string fields `attempt_count`, `consumer`,
+`consumer_id`, `dlq_destination`, `failing_stage`, `original_entry_id` and
+`original_stream`. It reports a parked act, not a failing lifecycle state.
+No signal/correlation or runtime-lifecycle producer is added by this declaration.
+
 ### Domain events consumed
 
 | Event | Producer | Payload | Idempotency key | Reaction |

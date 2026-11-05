@@ -224,6 +224,11 @@ stream entries carrying one ID share the mark. Successful local reaction outcome
 handled mark and settled cursor commit together before Redis ACK. Seven-day
 retention is distinct from the local log and stream retention.
 
+A parked outcome is distinct from a successful handled mark. Retry and parking
+stage recovery retain enough identity to recognize completed stages after a
+crash; no later event settles past unfinished parking. Raw malformed entries
+remain diagnosable at the transport boundary.
+
 Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
 records or database tables. Redis and SQLite have no shared transaction.
