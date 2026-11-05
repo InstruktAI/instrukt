@@ -52,14 +52,16 @@ project-file reads.
   | `--target <slug>` | only snippets the todo delivers or has pending material for (`local/projects/instrukt/spec/feature/docs/pending-documentation`) |
   | `--project <slug>` | lists only that project's snippets |
 
-- **Source:** with `--domain <x>`, the listing opens with each named
-  position's source, read from publication state, which records the
-  publishing checkout per position: the absolute path of the position's
-  folder (`docs/domain/<x>/`, `docs/general/` or `docs/project/`) in the
-  checkout it was published from, the published commit, and the repository's
-  remote URL (`none` when the repository has no remote). The project position
-  read from the caller's own checkout shows that checkout. This is where the
-  position's snippets are changed.
+- **Source:** a listing that names a position opens with that position's
+  source, read from publication state, which records the publishing checkout
+  per position: the absolute path of the position's folder in the checkout it
+  was published from, the published commit, and the repository's remote URL
+  (`none` when the repository has no remote). `--domain <x>` opens with the
+  source of each named domain (`docs/domain/<x>/`, or `docs/general/` for
+  `general`); `--project <slug>`, and the project section of the default view,
+  opens with the project's source, its `docs/project/` folder in the
+  project's primary worktree — the same checkout its index entries point
+  into. This is where the position's snippets are changed.
 - **Entry line:** `<id>: <description>`, followed by `(delivered by: <slugs>)`
   for a pending snippet and `(superseded by: <slugs>)` for a live snippet with
   pending material. Entries are ordered by taxonomy (principle, concept,
@@ -218,7 +220,7 @@ And nothing it did not ask for is loaded
 Given an agent acting for a developer needs a snippet whose required reads name other snippets by id and domains by name
 When it reads that snippet as a closure, whether a procedure it is directed to run, a design or an overview
 Then it receives the snippet, each of its transitive required reads once, and what the domains they name show in full, in one read
-And nothing in what it reads names a path on the author's computer
+And the snippets' text names no path on the author's computer; only the source lines in the headers name where each snippet is authored
 But when a required read of a procedure that carries root frontmatter is still pending or cannot be read
 Then the read is refused and names the required read that blocked it
 And for a supporting procedure or any other snippet such a read is left out and named
