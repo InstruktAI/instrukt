@@ -8,20 +8,25 @@ visibility: 'public'
 ## What
 
 Documentation snippets are atomic markdown files that each capture one idea — a principle,
-concept, policy, procedure, design, spec, or decision record (ADR). Each snippet declares its type
-and scope in frontmatter, follows a schema specific to that type, and can declare hard
-dependencies on other snippets.
+concept, policy, procedure, design, spec, or decision record (ADR). Each snippet's type
+and scope follow from its path, it follows the section shape its folder's schema gives
+that type, and it can declare hard dependencies on other snippets.
 
-Snippets live in documentation homes — each repository — and every home keeps them in two halves:
+Snippets live in repositories, in up to three positions:
 
-- **Global** (`docs/global/`) — published to `~/.instrukt/docs/`. In a
-  repository it holds the domains that repository publishes (coding standards,
-  procedures, shared policies).
-- **Local** (`docs/local/`) — the home's own knowledge, living alongside what it
-  describes, never published, and served from the home's own index.
+- **General** (`docs/general/`) — published from committed main and rendered
+  into every agent CLI's user-scope instruction file: always on.
+- **Domain** (`docs/domain/<x>/`) — published from committed main; one line in
+  every global agent file, and the full rendering through
+  `instrukt docs get --domain <x>`: on demand.
+- **Project** (`docs/project/`) — the project's own knowledge, living alongside
+  what it describes, never published, rendered into the project's root
+  `AGENTS.md`.
+
+Each position's `index.yaml` selects what its rendering carries.
 
 Every snippet has one qualified identity, the same from every location, so a
-reader reaches any home's snippets from anywhere by naming the home or the
+reader reaches any repository's snippets from anywhere by naming the project or the
 identity.
 
 Agents retrieve snippets on demand via `instrukt docs index` + `instrukt docs get`
@@ -39,6 +44,7 @@ design.**
 
 AI agents work within limited context windows. Bundling all documentation into every
 prompt wastes tokens and dilutes signal. Snippets make knowledge modular and selectively
-retrievable — an agent pulls only what it needs for the task at hand. The global/local
-split keeps shared knowledge maintained once and published everywhere, and each home's
-own knowledge beside its owner, without duplication.
+retrievable — an agent pulls only what it needs for the task at hand. The three positions
+keep shared knowledge maintained once and published everywhere, domain knowledge out of
+context until a task needs it, and each project's own knowledge beside its owner,
+without duplication.

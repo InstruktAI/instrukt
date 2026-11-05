@@ -1,5 +1,5 @@
 ---
-description: 'Determine whether an artifact belongs in global or project scope before creating it.'
+description: 'Determine whether an artifact belongs in general, a domain, or the project before creating it.'
 visibility: 'public'
 ---
 
@@ -8,22 +8,24 @@ visibility: 'public'
 ## Rules
 
 - Every authored doc snippet must have its scope determined before creation.
-- Every repository has two halves, and a snippet belongs to exactly one:
-  - **Global** (`docs/global/`): the knowledge is published beyond its project — the domains it publishes. Examples: general procedures, cross-project policies.
-  - **Local** (`docs/local/`): the knowledge belongs to this project and is never published; only its index entry enters the home. Examples: project architecture, repo-specific workflows.
-- The half decides where a snippet is served from and how its identity reads: a local snippet's identity begins with `local/`, a published snippet's never does. A local snippet stays reachable from any location by that identity.
-- The half never decides who may read a snippet, and neither does `visibility`: every reader reads every snippet.
+- A snippet belongs to exactly one of three positions:
+  - **General** (`docs/general/`): every agent on every computer that adopts it needs it, in every project. Examples: collaboration principles, cross-project policies.
+  - **Domain** (`docs/domain/<x>/`): it belongs to one body of knowledge a single publisher is the authority on, read on demand when a task enters that domain. Examples: software-development policies and procedures in `sdlc`.
+  - **Project** (`docs/project/`): it belongs to this project and is never published; it is served from the project. Examples: project architecture, repo-specific workflows.
+- The position decides where a snippet is served from and how its identity reads: a project snippet's identity begins with `project/<slug>/`, a general one's with `general/`, a domain one's with the domain name. A project snippet stays reachable from any location by that identity.
+- The position never decides who may read a snippet, and neither does `visibility`: every reader reads every snippet.
 - Scope must not be inferred or assumed. Apply these criteria:
-  1. Does this snippet reference code, architecture, configuration, or knowledge specific to this project? → Local.
-  2. Would this snippet be useful in a different project with no changes? → Global.
-  3. If neither criterion gives a clear answer, ask the requester before proceeding.
+  1. Does this snippet reference code, architecture, configuration, or knowledge specific to this project? → Project.
+  2. Would every agent need it, in any project, with no changes? → General.
+  3. Would it be useful in a different project with no changes, but only for work in one body of knowledge? → that knowledge's domain.
+  4. If no criterion gives a clear answer, ask the requester before proceeding.
 
 ## Rationale
 
-- Agents default to guessing scope when it is not explicit, leading to project-specific knowledge polluting the global namespace or global knowledge trapped in a single repo.
+- Agents default to guessing scope when it is not explicit, leading to project-specific knowledge polluting the published namespace, global knowledge trapped in a single repo, or domain knowledge loaded by every agent when only work in that domain needs it.
 - A single shared policy prevents each authoring procedure from duplicating scope logic.
-- No reader is told apart from another, so the half answers only where a snippet is served from and how its identity reads.
-- Two halves of one repository must never share an identity, or a published snippet and a local one at the same relative path could not coexist. The `local/` prefix keeps them apart and lets any reader tell from the identity alone whether a snippet is published.
+- No reader is told apart from another, so the position answers only where a snippet is served from and how its identity reads.
+- Two positions of one repository must never share an identity, or snippets at the same relative path could not coexist. The identity's first segment keeps them apart and lets any reader tell from the identity alone whether a snippet is published.
 
 ## Scope
 

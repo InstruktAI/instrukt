@@ -83,13 +83,18 @@ The default is **skip unless justified**, not "produce when applicable."
   procedure owns the steps. Operational detail in a principle makes it read as
   one more rulebook, and the disposition that generalizes to unforeseen cases is
   lost in it.
-- **Manual in the baseline.** A snippet a baseline manifest makes ambient —
-  loaded by every session in the manifest's global, domain, or project scope —
-  carrying content only some of those sessions need: declaration schemas, catalogs, role-specific
-  mechanics, lookup tables. The baseline carries dispositions and the rules
-  every session acts on; the rest lives in on-demand snippets that a baseline
-  rule names at the moment it applies. Each ambient character is paid by every
-  session and dilutes the attention every other rule receives.
+- **Manual in the always-on set.** A snippet an `index.yaml` makes ambient —
+  an `expanded` entry with its closure, read by every session its position
+  reaches; or an `agents` entry, read by every session of that CLI — carrying
+  content only some of those sessions need: declaration schemas, catalogs,
+  role-specific mechanics, lookup tables. The always-on set carries
+  dispositions and the rules every session acts on; the rest lives in on-demand
+  snippets that an always-on rule names at the moment it applies. A `listed`
+  line and a procedure's `activation_trigger` are ambient too: each is one line
+  in every agent's context, earned only by knowledge those agents need to know
+  exists before a task names it. Each ambient character is paid by every session — for `docs/general/`
+  and a domain's triggers, on every computer that adopts them — and dilutes the
+  attention every other rule receives.
 - **Genericity.** Asserting things true of every repository in the same
   language or framework. The global language policy already covers it.
 - **Vendor restatement.** Stating how a system we do not own behaves as if it

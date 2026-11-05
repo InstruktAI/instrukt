@@ -141,7 +141,7 @@ Its refusal directs the caller to submit a subject and explanation through the
 supported command arguments. Reviewers judge authored content and command use;
 generated provenance defects belong to the platform implementation.
 
-Commit guidance, CLI help, agent addenda, and project-specific designs must not
+Commit guidance, CLI help, agent-specific policies, and project-specific designs must not
 require a pre-commit human decision for autonomously authorized work. They may reference this policy and document
 mechanics, but the commit-first rule and the human-conversation boundary live
 here.
