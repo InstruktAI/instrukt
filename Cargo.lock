@@ -647,7 +647,6 @@ dependencies = [
  "instrukt-core",
  "jiff",
  "proptest",
- "rustix",
  "serde",
  "serde_json",
  "serde_yaml_ng",

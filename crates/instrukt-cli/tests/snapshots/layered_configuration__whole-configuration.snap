@@ -11,10 +11,6 @@ github:
   api_url: https://api.github.com
 runner:
   autostart: false
-  disk_headroom:
-    warn: 30GiB
-    floor: 10GiB
-    roots: []
 schema_version: 1
 runtimes:
 - name: machine-host
