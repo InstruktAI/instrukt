@@ -1,5 +1,5 @@
 # Runtime workspace setup precedes sync, opening commit, build-start, checklist and implementation dispatch.
-# Delivery cleanup bypasses all build effects; worktree.exists is present only while the worktree exists.
+# Workspace facts select the concerned attempt; cleanup enumerates all retained paths, then role branches.
 # build.complete holds only for completion of the current build/fix target; changed todo
 # commits after changes_requested invalidate it until the builder stamps completion.
 # quality_checklist.digest is the current quality-checklist artifact digest.
@@ -17,6 +17,9 @@ states:
 - not_prepared
 - build_admission_pending
 - workspace_request
+- recovery_builder
+- role_handoff_pending
+- finalize_readiness_pending
 - building
 - build_reconcile
 - review
@@ -35,6 +38,7 @@ transitions:
   action: cleanup-delivered
   effects:
   - worktree.remove
+  - role-branch.remove
 - from: start
   to: task_runner_route
   when:
@@ -42,6 +46,13 @@ transitions:
     - kind
     - task
   action: await-task-runner
+- from: start
+  to: role_handoff_pending
+  when:
+    equals:
+    - handoff.pending
+    - true
+  action: handoff-role
 - from: start
   to: dependencies_open
   when:
@@ -158,10 +169,15 @@ transitions:
             - true
   action: await-prepare
 - from: start
+  to: recovery_builder
+  when:
+    exists: recovery.attempt
+  action: recover-build
+- from: start
   to: workspace_request
   when:
     not:
-      exists: worktree.path
+      exists: setup.worktree.path
   action: setup-workspace
 - from: start
   to: build_admission_pending
@@ -265,9 +281,27 @@ transitions:
 - from: building
   to: review
   when:
-    equals:
-    - build.complete
-    - true
+    any:
+    - equals:
+      - build.complete
+      - true
+    - equals:
+      - finalizer.review_pending
+      - true
+    - all:
+      - equals:
+        - build_review.verdict
+        - changes_requested
+      - any:
+        - equals:
+          - build_review.binding
+          - exact_target
+        - equals:
+          - build_review.binding
+          - clean_upstream_merges
+    - equals:
+      - build_review.binding
+      - undetermined
   action: review-build
 - from: review
   to: review_undetermined
@@ -333,6 +367,31 @@ transitions:
       - finalize.sha
       - worktree.head
   action: hand-off-integration
+- from: approved
+  to: finalize_readiness_pending
+  when:
+    all:
+    - equals:
+      - finalizer.handoff_current
+      - true
+    - equals:
+      - worktree.clean
+      - true
+    - same:
+      - worktree.head
+      - branch.head
+    - same:
+      - branch.head
+      - remote.head
+    - not:
+        all:
+        - equals:
+          - finalize.status
+          - ready
+        - same:
+          - finalize.sha
+          - worktree.head
+  action: record-finalize-readiness
 - from: approved
   to: finalize_mismatch
   when:

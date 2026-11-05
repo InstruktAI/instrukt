@@ -174,12 +174,21 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `worktree`, `branch`, `base_head` | Returned worktree path, role branch and captured starting SHA. Retained after release. |
 | `completion_sequence`, `role_head` | Releasing or handoff-enabling stamp and its bound role head. Read-only roles retain their captured head; `NULL` before completion. |
 | `advance_from`, `advance_to`, `advanced_at` | Expected todo head, intended stamped role head and confirmed handoff time. Intent commits before the Git ref update; confirmation commits with release. A read-only role has no ref-advance values. |
-| `released_at` | Time the completed handoff, read-only verdict or deferral-processing evidence released this attempt; `NULL` while it remains outstanding. |
+| `failure_reason`, `failure_head`, `failure_workspace`, `failed_at` | Reason, observed committed role head, workspace observation (including dirty or unfinished merge state) and time of confirmed failed release; `NULL` for other outcomes. Branch and path remain retained. |
+| `recovery_of_role`, `recovery_of_attempt` | Failed binding this builder recovers, or both `NULL`. The builder's `base_head` is that binding's immutable `failure_head`. |
+| `released_at` | Time the completed handoff, failed release, read-only verdict or deferral-processing evidence released this attempt; `NULL` while it remains outstanding. |
 
 One todo has at most one outstanding dispatched workspace-role attempt. The claim-holding
 orchestrator coordinates the serialized work and its mechanical handoffs. A new attempt retains
-prior rows, starts at the current todo head and gets a fresh key. An unresolved
-start or pending handoff keeps the current attempt outstanding. Branch advancement
+prior rows, starts at the current todo head and gets a fresh key. An explicitly
+admitted recovery builder instead captures the named failed attempt's
+`failure_head`; its recovery link retains the source binding. An unresolved
+start or pending handoff keeps the current attempt outstanding.
+`instrukt todo handoff <slug>` owns the advance intent, expected-head ref
+update, confirmation and release. Its immutable source is identified by the
+attempt and `completion_sequence`; only re-observation may update the expected
+`advance_from` before a ref retry. Confirmation, release, the new todo revision
+and pending GitHub reflection commit together. Branch advancement
 and crash reconciliation follow
 `project/instrukt/spec/feature/workflow/delivery-cycle`.
 
@@ -192,6 +201,21 @@ Every workspace role in the shipped work workflow has a release boundary:
 | Build reviewer | Verdict bound to the complete findings and captured todo head; release commits with the verdict, without a branch advance. |
 | Deferrer (`process-deferrals`) | `--deferrals-processed` bound to dispositions covering the current deferrals artifact; release commits with the stamp, without a branch advance. |
 | Finalizer, including reconciliation | `--role-complete`, followed by confirmed fast-forward handoff; readiness is a later record-only write against that retained binding. |
+| Writing attempt unable to finish synchronization | `todo handoff --failed --reason <text>` records the failure, committed role head and retained workspace evidence and releases without a ref advance or completion stamp. |
+
+Failed release commits its failure evidence, `released_at`, new todo revision
+and pending reflection together. It requires an observable role head and leaves
+completion and advance fields absent unless earlier recorded as history; it
+never confirms an advance. A possibly executed pending ref update must be
+reconciled before failed release. An unchanged retry reports the same failed
+outcome. A linked recovery builder has its own completion sequence and normal
+advance intent; only its confirmed fast-forward settles that recovery. Missing
+build-start and checklist evidence is recorded in the recovery workspace before
+implementation, preserving the original build base or, for a first build-start,
+the original setup's captured base. Failed setup is satisfied for later admission
+only after its recovery chain's confirmed successful handoff. Failure chains
+retain each source binding; only the latest unresolved failed head is selected
+for recovery, and successful handoff settles that chain's failed ancestors.
 
 A read-only release requires a clean role worktree whose head still equals its
 captured todo head. Its `advance_from`, `advance_to` and `advanced_at` remain

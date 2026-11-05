@@ -74,6 +74,19 @@ triage without a peer (`sdlc/procedure/lifecycle/prepare/diagnose`).
 
 Use `instrukt <command> -h` for individual commands.
 
+### Worker selection and reuse
+
+Select independent reviewers, commit reviewers and drift analysts using the
+procedure's dispatch preferences or the global agent order, availability first.
+When the adapter cannot select an agent, report its project defaults. Read the
+todo's recorded role binding before dispatch. Observe an active unreleased
+attempt through `instrukt sessions alive` and deliver its follow-up through
+`instrukt sessions send`. Start a new attempt only after the preceding attempt
+is released; unresolved starts remain pending for their keyed recovery.
+Retain the returned native id and attempt evidence. Deliver each worker only
+its assignment template, outputs and blocker destination. A reply or ended
+turn establishes no completion: read the required artifacts and stamps.
+
 ### 0. Resolve the entry mode
 
 The slug's presence and the human's presence determine the posture:

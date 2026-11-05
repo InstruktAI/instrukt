@@ -101,6 +101,49 @@ counterpart of the claim recorded before dispatch. Session bindings remain
 evidence of the assignment's conversations. The runtime owns ending those
 sessions; release changes the claim, not their lifecycle.
 
+### Completed role handoff
+
+`instrukt todo handoff <slug>` is the claim-holding work orchestrator's command
+for a completed setup, builder/fixer or finalizer attempt. It refreshes that
+todo under the existing command contract, resolves the outstanding attempt,
+and requires its bound completion stamp and clean worktree at the stamped
+role head. It persists source and expected todo heads in the state database,
+fast-forwards the todo branch with an expected-old-head comparison, then
+confirms the advance and releases the attempt. Recovery and divergence follow
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
+
+The durable attempt and completion sequence identify the operation. A retry
+finishes its pending intent or reports its confirmed handoff without advancing
+again. With no outstanding attempt, it reports the most recent confirmed
+handoff; it never selects an incomplete or read-only attempt as new work.
+Review verdicts and deferral-processing evidence release their attempts directly.
+
+`instrukt todo handoff <slug> --failed --reason <text>` is the alternative
+release for an outstanding writing attempt that cannot finish synchronization.
+It requires the claim-holding orchestrator, a non-empty reason and an observable
+committed role-branch head, but no completion stamp or clean worktree. It records
+the failure, role branch, head, path and any unfinished workspace state, releases
+the attempt and queues reflection in one local transaction. It changes no Git
+ref, preserves the worktree and role branch, and establishes neither completion
+nor readiness. A builder can then be admitted with
+`instrukt sessions run --todo <slug> --recover-attempt <role/attempt> …` at that
+recorded failed head. A completed recovery hands off through the normal command.
+
+Failed release is refused while a recorded ref advance may already have happened;
+reconcile that normal handoff's intent first. With no outstanding attempt,
+`--failed` reports the most recent confirmed failed release and its reason,
+without another mutation. With an outstanding attempt, either form addresses
+that attempt; re-observe the binding before invoking the command after dispatch.
+
+| Exit status | Meaning |
+| --- | --- |
+| `0` | The requested normal handoff or failed release is confirmed, including an unchanged replay. Normal output identifies attempt, role, source, expected head and confirmed head. Failed output explicitly names the failed outcome, reason, attempt, preserved role branch/head/path and unchanged todo head. |
+| `1` | Observation, Git or persistence prevented confirmation of the requested outcome. Output names the failure and any recorded intent; retry resumes that operation. Neither handoff nor failed release is implied. |
+| `2` | The requested operation is refused: wrong claim, read-only role, no matching outcome to replay, missing normal completion/clean-head evidence or non-fast-forward; for failed release, missing reason or observable role head, or an unresolved possible ref advance. Output names the condition. Normal divergence additionally records an automatic hold and both branches and heads, retaining the attempt and role branch. |
+
+A pending intent keeps the attempt outstanding and blocks later workspace-role
+admission. The command neither marks finalize readiness nor publishes a branch.
+
 ### Supported metadata and listing selections
 
 `instrukt todo update <slug>` admits `--slug <new-slug>`, `--kind <kind>`,
@@ -194,6 +237,18 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the withdrawal is refused and names where that work is
 ```
 
+### UC-TD6: Resume a completed change after an interrupted handoff
+
+```gherkin
+Given a developer's completed role work is committed and stamped in its own worktree
+When the agent acting for the developer runs instrukt todo handoff and it is interrupted
+Then the recorded handoff intent retains the completed work and intended todo head
+When the agent retries the handoff
+Then the todo branch reaches that stamped work once and the attempt is released
+And another retry reports the confirmed handoff without another branch advance
+But a divergent todo branch is held for reconciliation with the role work preserved
+```
+
 ## Known caveats
 
 None.
@@ -203,3 +258,4 @@ None.
 - [project/instrukt/spec/domain/work](../../domain/work.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
 - [project/instrukt/spec/feature/work/state-database](state-database.md)
+- [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)

@@ -33,7 +33,10 @@ Candidate verification belongs to the integration gate.
   the approved `prd` derives its requirements; for bug work, `diagnosis`
   sharpens the reported symptom without replacing `input` as intent.
 - `architecture` (thin doc-edit log) is readable when present and not skipped; consult the domain/design snippets it points to for technical context.
-- `instrukt todo artifacts read {slug} quality-checklist` exists and includes `## Build Gates (Builder)`.
+- Before implementation, `instrukt todo artifacts read {slug} quality-checklist`
+  exists and includes `## Build Gates (Builder)`. An explicit failed-attempt
+  recovery assignment may begin synchronization first; the orchestrator records
+  missing build-start and checklist evidence before implementation starts.
 - The todo scope is implementable in one build phase.
 
 ## Steps
@@ -196,8 +199,14 @@ Ready for review.
 - If a task fails, analyze the error and retry.
 - If stuck after two attempts, stop and report the blocker.
 - **Orchestrator-surfaced process failures are yours to recover.**
-  - **Upstream merge conflict:** the orchestrator's merge command aborts the
-    conflicting merge and returns the failure. Fetch accepted upstream main,
+  - **Upstream merge conflict:** resolve the conflict within your outstanding
+    builder attempt. For an explicit failed-attempt recovery assignment, work in
+    your new worktree at the recorded failed role head; recover applicable
+    unfinished work from the retained source path and synchronize the current
+    todo head for normal fast-forward handoff. Finish upstream synchronization and
+    any missing setup obligations, then report to the orchestrator for missing
+    build-start and checklist evidence before implementing the approved plan.
+    Fetch accepted upstream main,
     reapply the prepared intent in your worktree, resolve the conflicts and
     rerun only the tests bound to the affected use cases and commit the resolution. Preserve both
     sides' intended behavior. Record the
@@ -206,5 +215,8 @@ Ready for review.
     publication:** recover within the worktree and record the result; the
     orchestrator never edits code or tests. Candidate verification remains
     with integration.
+  - If synchronization cannot be completed, report the reason, committed role
+    head and preserved workspace to the orchestrator for failed release and a
+    successor recovery attempt. Your completion stamp records a completed build.
   - If the facts plus this procedure are not enough to proceed, report that
     explicitly — it is a defect in this brief, and saying so is the correct outcome.

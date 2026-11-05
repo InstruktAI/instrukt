@@ -149,19 +149,64 @@ Absent or empty evidence is absent; false and zero remain typed values.
 | `deferrals.pending` | bool |
 | `finalize.status` | pending\|ready |
 | `finalize.sha` | SHA |
-| `worktree.exists` | bool, present only while the assignment worktree exists; absence satisfies cleanup |
-| `worktree.path` | string, runtime-returned path retained in the assignment’s build-role session binding, including after that session ends |
+| `setup.worktree.path` | string, returned path of this todo's setup attempt, retained after release; used to leave `workspace_request` |
+| `setup.handoff_confirmed` | bool, setup's normal handoff is confirmed, or its recovery chain completed the remaining setup obligations and has a confirmed successful handoff |
+| `handoff.pending` | bool, an outstanding writing attempt has completion evidence or persisted unconfirmed advance intent |
+| `recovery.attempt` | string `<role>/<attempt>`, latest confirmed failed writing binding whose linked recovery builder has not completed a confirmed normal handoff; absent when settled |
+| `finalizer.review_pending` | bool, the latest confirmed finalizer handoff is the current todo head and its review binding is `todo_changed`, `report_changed` or `unbound` |
+| `finalizer.handoff_current` | bool, the latest finalizer attempt has a confirmed handoff at the current todo head |
+| `finalizer.session` | string, runtime id retained with that finalizer attempt for a record-only readiness follow-up |
+| `attempts.retained` | list of every todo-role attempt with role, attempt, returned path and role branch, including released attempts |
+| `worktree.exists` | bool, present only while the selected attempt's worktree exists; absence satisfies removal of that path |
+| `worktree.path` | string, runtime-returned path of the selected attempt, including retained bindings after release |
+| `role_branch.name` | string, next retained role branch selected for delivered cleanup after every retained worktree is absent |
+| `role_branch.exists` | bool, present only while that selected branch exists; absence satisfies removal of that branch |
 | `claim.held` | bool, execution claim currently held |
 | `sessions.bound` | list of runtime/id session bindings for this assignment |
 | `task_plan.digest` | string, current task-plan digest |
 | `task_approved.target_digest` | string, approved task-plan digest |
 | `task_approved.by` | human\|peer |
-| `worktree.clean` | bool |
-| `worktree.head` | SHA |
-| `branch.head` | SHA |
-| `remote.head` | SHA |
+| `worktree.clean` | bool, selected attempt's worktree |
+| `worktree.head` | SHA, selected attempt's worktree |
+| `branch.head` | SHA, durable todo branch, independently of the selected role branch |
+| `remote.head` | SHA, published todo branch |
 | `quality_checklist.digest` | string, current quality-checklist artifact digest |
 | `delivery.commit` | SHA, the confirmed delivered commit |
+
+Workspace observation selects the attempt the obligation concerns, never a
+single builder workspace. Setup detection uses `setup.worktree.path`; build
+admission and setup effects use that setup attempt. A pending handoff uses the
+outstanding completed attempt. Worker dispatch uses the active attempt of the
+role being dispatched, including the builder linked to `recovery.attempt`;
+before admission its workspace facts are absent and the runtime's returned path
+establishes them. Finalization readiness and mismatch
+checks use the latest retained finalizer attempt after confirmed handoff,
+including while an intervening independent review has its own worktree.
+An active finalizer's reconciliation uses its own attempt. No fallback to a
+builder or another role supplies missing workspace evidence.
+
+The provider resolves these selectors from record evidence and the obligation's
+role. Setup and readiness selectors remain explicit even before dispatch.
+`branch.head` and `remote.head` always concern the todo branch. Git effects run
+in the selected attempt's returned path; `done_when` reads the same attempt.
+Setup synchronization effects are satisfied by confirmed setup handoff as well
+as an existing build-start record, so a released setup is not edited again.
+During failed-setup recovery,
+synchronization and remaining setup effects select the active linked recovery
+builder's returned path. Its brief owns that recovery sequence before build
+admission evidence and implementation. `recovery.attempt` remains present while
+that builder works or awaits handoff; completion's `handoff.pending` takes
+precedence, and confirmation clears recovery. Another failed release replaces
+the recovery source with the latest failed binding, retaining the chain.
+
+Delivered cleanup enumerates `attempts.retained` in role/attempt order, selecting
+the next still-existing path for `worktree.path` and `worktree.exists`. Remove
+one path, refresh and re-derive until all are absent. Then select each remaining
+role branch as `role_branch.name` and `role_branch.exists`, remove it safely,
+and re-derive until all are absent. Exhaustion leaves the corresponding facts
+absent. Cleanup runs from the project checkout and retains failures, dirty or
+in-use worktrees and unmerged branches as explicit obligations. The retained
+bindings remain evidence after resource removal.
 
 The provider also keeps these facts honest when the record changes: a new
 build-relevant artifact version clears `build.complete`. Any work-branch commit
@@ -321,4 +366,11 @@ Placeholder paths may also name configuration values (for example
 
 ## Known caveats
 
-None.
+- A flavor using this vocabulary requires matching provider and validator
+  support. A consumer with an older fact catalogue refuses it before evaluation.
+
+## See Also
+
+- [project/instrukt/design/architecture/overview](../../design/architecture/overview.md)
+- [project/instrukt/spec/feature/workflow/delivery-cycle](../feature/workflow/delivery-cycle.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../feature/runner/session-continuity.md)

@@ -4,6 +4,6 @@ Owed: an independent review of the current `implementation-plan`, a complete `pl
 Write the report with `instrukt todo artifacts write {slug} plan-review-findings '<content>'` before `instrukt todo stamp {slug} --verdict approve --phase plan_review` or `instrukt todo stamp {slug} --verdict needs_work --phase plan_review`.
 The verdict must bind the current target and report; zero unresolved blocking findings earns approval.
 
-Before starting, read the role binding with `instrukt todo show {slug}` and observe its recorded session through `instrukt sessions alive <id>`. Continue an available session with `instrukt sessions send <id> '<brief>'`; `run` is the start branch, not an implicit reuse operation. The runner records the returned runtime-native id per todo and role; preserve that binding. Use the adapter's supported selection against the procedure's dispatch order or the global order; when selection is unsupported, report the runtime's project defaults. An ambiguous start remains pending for recovery, never a second dispatch. A reply or ended turn does not establish completion.
-
 Review rounds are counted from verdict stamps, including verdicts in a reused session. Re-evaluation alone is not a round; no admission write is required.
+
+Report the resulting artifact and stamp evidence to the dispatching orchestrator. Send missing evidence, scope questions and workspace or tooling blockers there with their concrete evidence.

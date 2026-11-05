@@ -68,7 +68,7 @@ execute in place of its operation.
 
 | Command | Contract |
 | --- | --- |
-| `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file\|->] [--worktree <name>] [--todo <slug>] [--start-key <key>]` | Call `start` and return the native id and requested worktree path. With `--todo`, record the role-attempt binding through work. `--start-key` resumes an existing recorded request and accepts no changed start inputs. |
+| `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file\|->] [--worktree <name>] [--todo <slug>] [--recover-attempt <role/attempt>] [--start-key <key>]` | Call `start` and return the native id and requested worktree path. With `--todo`, record the role-attempt binding through work. `--recover-attempt` selects a confirmed failed writing attempt as a new builder's base. `--start-key` resumes an existing recorded request and accepts no changed start inputs. |
 | `instrukt sessions send <id> <text>` | Call `send` for the identified session; return the id after acceptance. |
 | `instrukt sessions alive <id>` | Call `read_state`; print its semantic state or report observation failure. |
 | `instrukt sessions conversation <id>` | Call `read_conversation` for an identified conversation; report that this is a bounded recent read. |
@@ -246,6 +246,16 @@ encoded as lowercase hex. A branch collision is a finding, never permission to
 reuse an unrelated branch. Record the base SHA, branch and returned path before
 admitting work. Setup uses the same convention with role `setup`.
 
+`run --todo <slug> --recover-attempt <role/attempt>` is the explicit base
+exception for a new builder-role worktree. It requires a worktree request,
+current approved preparation, the claim-holding orchestrator and a confirmed
+failed writing attempt of that todo. Capture its immutable recorded failure
+head instead of the todo head and retain the recovery link before calling
+`start`. The source is the latest unsettled failed binding; a still-outstanding
+source or successor, an unknown or superseded binding, unavailable source
+commit, other role or absent `--todo` refuses dispatch. Holds retain their normal effect. Retry of an unresolved
+start retains that captured recovery source and the same durable key.
+
 After a code-writing role's completion stamp, advance the todo branch to the
 stamped role head by fast-forward only, then release that attempt as evidence.
 The next role starts only after that handoff is recorded. A read-only review
@@ -257,7 +267,8 @@ captured todo head. Branch handoff, refusal and crash reconciliation are
 owned by `project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 An active attempt may receive follow-ups in its bound thread. After release,
-a fixer or later round gets a new attempt at the current todo head; earlier
+a fixer or later round gets a new attempt at the current todo head, with the
+explicit failed-attempt recovery exception above; earlier
 conversations, branches and paths remain evidence. Workflows requiring shared
 worktree attachment are refused at enablement naming that missing capability;
 T3's shipped delivery workflow requires creation only.
