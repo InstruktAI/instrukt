@@ -77,7 +77,10 @@ failed observation or a failed revival attempt is a visible failure and never
 proves non-resumability. A purged runtime record loses earlier context only
 after that absence and the prior assignment's terminal disposition are resolved.
 
-An unattended session is usable while open, but is never revived after closure.
+For home identity, a confirmed closed agent no longer stands; a later activation
+may initialize a successor after retained work is accounted for. Subject identity
+instead preserves the attended subject's resumable conversation as described
+above. An unattended session is usable while open, but is never revived after closure.
 Its next eligible activation resolves a new successor. Explicit session close
 suspends pending work without itself starting a successor. A later eligible
 continuation reconciles retained older events before newer ones. Failed sends
@@ -89,7 +92,10 @@ The first uses its base standing key; a successor uses a recorded increasing
 generation under session-continuity. Retiring an old generation and admitting
 the next are one serialized durable decision, possible only after its terminal
 state is established and unresolved input is accounted for. No concurrent live
-generation is admitted. The runtime creates and resumes sessions; instrukt
+generation is admitted. Discovery considers the responsibility's generation
+family before admitting a start. If lost local evidence prevents establishing
+which generation is current, resolution fails visibly; an older exact-title
+match or an empty cache cannot select a retired generation or permit a duplicate. The runtime creates and resumes sessions; instrukt
 records assignment bindings and the continuation decision only.
 
 ### Fixed assignment and attendance

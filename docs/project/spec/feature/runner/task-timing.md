@@ -69,21 +69,25 @@ may the recurring schedule select the next due occurrence under `catch_up`.
 
 ### Wake-up installation and visibility
 
-`instrukt install` registers the generic wake-up with the available OS
-scheduler, using the machine's native scheduler or its fallback. The wake-up
-calls `instrukt tick` every minute. There is no per-task
-registration with an external scheduler and no tick-adapter layer.
+`instrukt install` converges a single shared minute wake-up only when an
+adopted project's effective todos or events module needs it and `ticks: on`.
+Core-only adoption installs none. The native scheduler or tick-only cron
+fallback calls `instrukt tick` every minute; no task has its own external
+registration. Installation, checks, repair and shared-resource withdrawal follow
+`project/instrukt/spec/feature/runner/module-installation`.
 
-`ticks: off` opts out of installation of the wake-up. A developer supplying
-their own scheduler calls `instrukt tick` every minute. The configured runtime
-supplies session execution; instrukt owns the task calendar.
+`ticks: off` leaves scheduling to the operator calling `instrukt tick` each
+minute and withdraws an unneeded owned registration on explicit convergence.
+Task selection and catch-up remain instrukt's, with the configured runtime
+supplying execution. An event receiver's socket service is independent of ticks.
 
-`instrukt ticks status` shows the last wake-up and warns when no wake-up has
-arrived for five minutes. It reports "no wake-up ever recorded" when none
-has been recorded. The last wake-up is a row of the state database
-(`project/instrukt/spec/feature/work/state-database`). A wake-up is evidence that the runner was invoked,
-not evidence that any task finished. Completion follows the record contract
-in `project/instrukt/spec/feature/runner/session-continuity`.
+`instrukt ticks status` identifies no module demand, native/fallback registration,
+missing or broken registration, or operator scheduling. It independently reports
+the last wake-up, including "no wake-up ever recorded"; enabled scheduled work
+with no wake-up for five minutes gets a stale warning. Inactivity with no enabled
+work is not missing required infrastructure. Last wake is a state-database row.
+A wake proves invocation, not event delivery or task completion; completion
+follows `project/instrukt/spec/feature/runner/session-continuity`.
 
 Task execution records its result with
 `instrukt todo stamp <slug> --task-outcome success|error [--reason <text>]`,
@@ -122,7 +126,7 @@ Scenario Outline: Resume after several scheduled occurrences were missed
 #### UC-TT3: A developer enables unattended scheduled work
 
 ```gherkin
-Given a developer has authorized scheduled work for their project
+Given a developer has enabled todos and authorized scheduled work for their project
 When the developer installs the periodic wake-up
 Then due work can run without an interactive runner
 And missed-run decisions remain governed by each task’s policy
@@ -159,6 +163,7 @@ And later occurrences wait until the interrupted occurrence is resolved
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/runner/session-continuity
-- project/instrukt/spec/feature/work/state-database
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
+- [project/instrukt/spec/feature/runner/module-installation](module-installation.md)

@@ -28,8 +28,8 @@ published documentation while off and produce no activation. A nonempty valid
 project `webhooks:` map adds receiver demand only while events are enabled; a
 declaration with events off produces a plain validation finding naming that
 switch. An empty map adds no receiver demand. Source declarations never silently
-enable events. Installation and withdrawal are owned by the later module
-installation contract; these schema rules install nothing.
+enable events. Installation and withdrawal are owned by
+`project/instrukt/spec/feature/runner/module-installation`; these schema rules install nothing.
 
 ### Layer rules
 
@@ -91,7 +91,27 @@ Invalid protocols, misplaced keys, malformed references, unreadable ingress
 values and configured sources with effective events off are findings. Unknown
 keys remain findings; no direction or `sources` subkey is accepted. The typed
 configuration also generates editor schemas. Schema validation itself starts
-no receiver, Redis or scheduler; infrastructure convergence belongs to S7.
+no receiver, Redis or scheduler; infrastructure convergence belongs to
+`project/instrukt/spec/feature/runner/module-installation`.
+
+### Enablement and installation demand
+
+Installation evaluates effective settings for every adopted project on the
+computer. Project overrides apply independently; global module defaults without
+an adopted enabled project install nothing. `ticks: on` permits the shared minute
+wake-up only while todos or events needs it. Todos alone installs no Redis or
+receiver. Events with no sources still needs scoped transport but no receiver.
+A nonempty valid source map adds receiver demand only on `ingress.computer`.
+An unreadable project's configuration never counts as proof its shared resources
+are unused.
+
+A revision-checked patch records desired enablement, never successful setup.
+The configuration agent follows it with `instrukt install` to converge dependencies
+and `instrukt install --check` to verify them. Disable stops workload admission;
+explicit convergence removes only owned units with no remaining enabled demand,
+retaining data and foreign services. Disabling events with sources declared
+requires removing those source declarations in the same valid patch. No new
+installer toggle, shared configuration layer or runtime detection is added.
 
 ### Runtime choice
 
@@ -233,7 +253,7 @@ And the configuration is unchanged
 
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
-| `ticks` | `on` or `off` | `on` (the install registers the wake-up; `off` opts out). |
+| `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; no runtime is chosen |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
@@ -267,3 +287,4 @@ introduced.
 - [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
 - [project/instrukt/spec/feature/configuration/configuration-editing](configuration-editing.md)
 - [project/instrukt/spec/feature/configuration/interpolation](interpolation.md)
+- [project/instrukt/spec/feature/runner/module-installation](../runner/module-installation.md)

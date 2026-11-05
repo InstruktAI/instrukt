@@ -64,6 +64,24 @@ of that listing. Every tick flushes pending work-record reflection under the
 per-computer writer lock; commands that write the record flush it under that
 lock too.
 
+### Enablement and infrastructure
+
+Infrastructure follows
+`project/instrukt/spec/feature/runner/module-installation`. Core installs none.
+Enabling todos demands only its shared wake-up and existing work/runtime
+prerequisites; local finalize-ready recording needs no Redis. Enabling events
+adds scoped Redis setup/checks and prepared retained readers. Only enabled
+nonempty project sources on the designated ingress demand the independent
+socket-held receiver. No consumer daemon is installed.
+
+The configuration agent changes desired settings through revision-checked config
+commands, invokes `instrukt install`, and verifies `instrukt install --check`
+with `ticks status` and, for events, `events status`. Config writes and ordinary
+publication install nothing. Disabling stops that module's admissions on the
+next effective-config evaluation; explicit convergence withdraws only unneeded
+instrukt-owned units across all projects, retaining data and pending work.
+A receiver or wake-up another enabled project needs stays installed.
+
 ### Todo pickup
 
 `runner.autostart` controls todos only. It is a boolean or a map
@@ -171,3 +189,4 @@ Then the command refuses and names both switches that would enable it
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/runner/task-timing](task-timing.md)
 - [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)
+- [project/instrukt/spec/feature/runner/module-installation](module-installation.md)

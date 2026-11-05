@@ -135,10 +135,15 @@ A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
 subject identity requires it. The first generation omits the generation suffix;
 a confirmed successor appends its positive generation number starting at 2.
-Only a separately established terminal/non-resumable disposition or closed
-unattended assignment permits succession. A failed send, failed observation or
+For home identity, confirmed closure permits succession. For attended subject
+identity, confirmed closure plus proven inability to resume permits succession;
+closed unattended assignments are not revived. A failed send, failed observation or
 unresolved start never does. Prior generations remain evidence; one current
-generation is admitted under the procedure/home guard and key lock.
+generation is admitted under the procedure/home guard and key lock. Discovery
+checks all generation-family titles for that responsibility before selection;
+missing evidence of which generation is current is a conflict, never permission
+to reuse a retired generation or start another. The four keyed-dispatch rules
+below apply to the established current generation.
 
 Components are UTF-8 percent-encoded, leaving only ASCII letters, digits, `-`,
 `_`, `.`, `~` unescaped; hex digits are uppercase. Occurrences are the scheduled
@@ -175,15 +180,16 @@ The same discovery and start rules govern every key, for both `start` and
    recorded branch rooted at the captured base; recover any requested worktree
    path with `show`.
    Commit the binding before sending unconfirmed input. For standing events,
-   commit the activation target in `standing_deliveries` before any runtime handoff. A busy thread receives ordinary follow-up text as its next turn. Procedure
+   commit the activation target in `standing_deliveries` before any runtime
+   handoff. A busy thread receives ordinary follow-up text as its next turn. Procedure
    events remain pending for the eligible hook boundary; only a content-free
    wake can enter conversational input.
 3. Zero matches permits a new start only with no unresolved `runtime_starts`
    marker, bound session or recorded delivery target. Commit the marker,
    key, brief and worktree request before `t3 thread start --title <key>
    <checkout> -`, adding worktree creation flags where requested. Its initial
-   message delivers the opening assignment brief, with any initial event retained separately; an acknowledged start needs no second
-   send. Commit the complete binding and acceptance before clearing the marker.
+   message delivers the opening assignment brief, with any initial event retained
+   separately; an acknowledged start needs no second send. Commit the complete binding and acceptance before clearing the marker.
 4. Listing failure, malformed output, an unknown listing shape or multiple
    exact matches leaves the assignment pending and starts nothing. Multiple
    matches report a key conflict. Failed sends retain the same target for

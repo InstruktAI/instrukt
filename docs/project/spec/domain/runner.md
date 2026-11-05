@@ -290,6 +290,7 @@ record-backed completion.
 - **Signed project sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
 - **Single cluster intake** — `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`.
 - **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
+- **Enablement-driven infrastructure** — `project/instrukt/spec/feature/runner/module-installation`.
 - **Continuing procedure responsibility** — `project/instrukt/spec/feature/runner/procedure-standing-agent`.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.

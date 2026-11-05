@@ -150,6 +150,5 @@ preserves this target delivery contract rather than equating a plain send with i
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-transport](event-transport.md)
-
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)
 - [project/instrukt/spec/feature/runner/procedure-event-delivery](procedure-event-delivery.md)
