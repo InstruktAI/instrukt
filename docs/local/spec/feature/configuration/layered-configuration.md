@@ -32,7 +32,8 @@ Runtime entries may declare an `available` check template. `dispatch` agent name
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
-| `runner.runtime` (default: first entry of `runtimes`) | global only | runner |
+| `runner.disk_headroom` (`off`, or `warn`, `floor` and `roots`) | global only | the runner's disk-headroom guard |
+| `runner.runtime` (the chosen runtime: an entry of `runtimes` or a shipped entry; default: first entry of `runtimes`) | global only | runner |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
 | `requires` (modules the flavor needs) | project only | publication |
@@ -48,6 +49,26 @@ A runtime mapping is never taken from a project: a cloned repository must not
 decide what runs on a machine, as git ignores machine-level keys in repository
 configuration. `actions` are called by name from procedures and never run by
 hooks.
+
+### Runtime choice and shipped entries
+
+The developer chooses the runtime; no configuration default detects or picks
+one. instrukt ships runtime entries the developer may choose by name; today
+that is `t3`, for T3 Code, filled from T3's `t3 thread` commands
+(`local/projects/instrukt/spec/feature/runner/session-continuity`).
+
+- `runner.runtime: <name>` chooses a runtime. It names an entry of `runtimes`
+  or a shipped entry; any other name is a validation finding.
+- A chosen shipped entry joins the effective `runtimes` exactly as shipped,
+  after the declared entries. A declared entry with the same name replaces it.
+  A shipped entry nobody chose is not in the effective mapping.
+- With `runner.runtime` unset, the runtime is the first declared entry of
+  `runtimes`; with neither set there is no runtime.
+- `config get runtimes` prints the effective mapping, shipped entries
+  included, as stored.
+
+Shipping an entry adds configuration only: the runner drives it through the
+same templates as a declared entry.
 
 ### Agent preferences and availability
 
@@ -89,7 +110,12 @@ with `--global` answers from the global layer alone. Writes address one layer
 
 - a key in a layer that does not permit it, naming the key and its layer;
 - a value of the wrong type or outside its allowed values;
-- a missing `schema_version`.
+- a missing `schema_version`;
+- a feature switched on whose templates the chosen runtime does not fill, or
+  switched on with no runtime chosen, naming each missing template and the
+  runtime entry
+  (`local/projects/instrukt/spec/feature/runner/session-continuity`). A write
+  that would switch such a feature on is refused with the same naming.
 
 Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
@@ -158,6 +184,8 @@ And the configuration is unchanged
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (the install registers the wake-up; `off` opts out). |
+| `runner.runtime` | name of a `runtimes` entry or a shipped entry (`t3`) | the first entry of `runtimes`; with none, no runtime |
+| `runner.disk_headroom` | `off`, or a map: `warn`, `floor` (sizes in GiB, `0 < floor < warn`), `roots` (directories) | `warn: 30GiB`, `floor: 10GiB`, `roots: []` (`local/projects/instrukt/spec/feature/runner/disk-headroom`) |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
@@ -183,7 +211,7 @@ introduced.
 - `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
-- Runtime entries carry `name`, `session_id_env`, `start`, `send`, `alive`, `conversation`, and optional command templates `notify`, `link`, `end`, `available` and `model`. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
+- Runtime entries carry `name` and `session_id_env`, and may fill the command templates `start`, `send`, `alive`, `conversation`, `notify`, `link`, `end`, `available` and `model` and the agent-facing templates `history.search` and `history.show`; an empty template leaves the features that need it unavailable. `agent: <name>` marks an agent CLI; its git author comes from `agents.<name>.git_author`.
 
 ## See Also
 

@@ -43,7 +43,11 @@ authorization and derived workflow state.
 
 **Runtime mapping**
 : Global configuration connecting facade operations and declared capabilities
-  to the configured runtime.
+  to the runtime the developer chose, as command templates instrukt fills
+  for the calls it makes, plus agent-facing history templates. A feature is
+  available only when the chosen runtime fills every template it needs.
+  instrukt ships an entry for T3 Code that a developer may choose; no code
+  detects or chooses a runtime.
 
 **Linked-session input**
 : Human words typed in one session also reaching a linked session with their
@@ -80,7 +84,11 @@ authorization and derived workflow state.
   configuration storage and interpolation, owned by configuration;
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
-  conversations and native session execution, supplied by the runtime.
+  session lifecycle, input delivery, restart, revival, handover,
+  transcripts and their search, cleanup and subscriptions to session
+  activity, all owned by the runtime and reached only through the runtime
+  mapping's templates. Events, schedules and dispatch decisions are the
+  runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, `instrukt sessions
   run|send|alive|conversation|link|end`, `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file|->] [--worktree <name>] [--todo <slug>]`
   (procedure required except setup-only `run --worktree <name> --brief <file|->`;
@@ -196,8 +204,10 @@ record-backed completion.
 - **Work dispatch** — `local/projects/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `local/projects/instrukt/spec/feature/runner/session-continuity`
-  — session reuse, five-state observation and sharing a human clarification
-  with linked collaborators.
+  — session reuse, five-state observation, sharing a human clarification
+  with linked collaborators, working on T3 Code once it is chosen, looking up
+  earlier conversations, and refusing a feature the chosen runtime cannot
+  carry.
 - **Event activation** — `local/projects/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `local/projects/instrukt/spec/feature/runner/task-timing`
@@ -225,7 +235,11 @@ record-backed completion.
 
 The runtime mapping and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are
-external boundaries, not additional bounded contexts.
+external boundaries, not additional bounded contexts. The runtime side of the
+ACL is configuration only: each runtime, including the T3 Code entry instrukt
+ships, is reached through its mapping entry's templates, never through a code
+path of its own
+(`local/projects/instrukt/spec/feature/runner/session-continuity`).
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract

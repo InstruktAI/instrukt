@@ -53,7 +53,10 @@ contributors; the index is a map to the work, not a session diary
      nothing about the reasoning built on it.
    - **Participants** — one row per session: session id, agent with model and
      thinking mode, role (author, peer, reviewer, dispatcher). Session ids are
-     the attribution evidence (`general/concept/lineage-vs-authorship`).
+     the attribution evidence (`general/concept/lineage-vs-authorship`); the
+     reasoning behind a participant's files is in that session's conversation,
+     shown with this runtime's history show and the session id:
+     <!-- @config: runtime.history.show -->
    - **Files** — every file and subdirectory, a one-line purpose, and a status:
      `forming`, `converged`, `superseded by <file>`, or `promoted to <target>`.
    - **Stated by the human** — relevant intent and constraints, verbatim or
