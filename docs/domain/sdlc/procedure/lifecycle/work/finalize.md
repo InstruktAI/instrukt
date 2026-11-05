@@ -56,11 +56,21 @@ orchestrator confirms them and releases its lane.
    git push origin HEAD:{slug}
    ```
 
-5. Confirm the worktree is clean and its head, local branch and remote branch
+5. Confirm the worktree is clean and its head, local role branch and remote todo branch
    match the reviewed candidate. Report the commit prepared for handoff.
-6. Stamp `instrukt todo stamp {slug} --finalize-ready`. A readiness stamp names
-   this exact commit, records the handoff and appends `workflow.finalized`
-   idempotently keyed by project/todo/SHA; reporting readiness alone establishes nothing.
+6. Stamp `instrukt todo stamp {slug} --role-complete`, binding this clean
+   worktree's exact committed head to the finalizer attempt. Report that evidence
+   to the work orchestrator. The orchestrator checks the stamped head,
+   fast-forwards the local todo branch to it and confirms the recorded handoff
+   and attempt release under `project/instrukt/spec/feature/workflow/delivery-cycle`.
+7. After that confirmation, recheck equality of the clean finalizer worktree
+   head, local todo branch and published remote todo branch. Record
+   `instrukt todo stamp {slug} --finalize-ready` against this retained finalizer
+   binding. This record-only step admits no further workspace work. A readiness
+   stamp names this exact commit, records the integration handoff and appends
+   `workflow.finalized` idempotently keyed by project/todo/SHA; reporting readiness
+   alone establishes nothing. Any further workspace changes require a new
+   finalizer attempt at the current todo head and its own completion and handoff.
 
 ### Stage B — Work orchestrator: confirm handoff and end
 
@@ -68,7 +78,9 @@ The finalizer's readiness stamp records the handoff; integration belongs to the 
 integrator in its own worktree under `sdlc/procedure/lifecycle/integrate`.
 
 1. Re-run `instrukt todo work {slug}` and read the derived obligation and effects.
-2. Check readiness against the clean worktree, branch, remote and stamped SHA.
+2. Confirm the finalizer role-completion stamp, fast-forward handoff and attempt
+   release before accepting readiness. Check readiness against the clean worktree,
+   local todo branch, remote and stamped SHA.
    A mismatch returns to reconciliation and restamping; no earlier stamp admits it.
 3. Confirm the handoff and `workflow.finalized` event recorded by the stamp, then
    `instrukt todo update <slug> --unclaim` for lane release

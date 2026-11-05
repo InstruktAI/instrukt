@@ -166,9 +166,9 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `runtime`, `key_title` | Adapter and durable exact title key. |
 | `session` | Bound runtime identity, or `NULL` while start recovery is pending. |
 | `worktree`, `branch`, `base_head` | Returned worktree path, role branch and captured starting SHA. Retained after release. |
-| `completion_sequence`, `role_head` | Completion stamp and its bound role head, or `NULL` before completion. |
+| `completion_sequence`, `role_head` | Releasing or handoff-enabling stamp and its bound role head. Read-only roles retain their captured head; `NULL` before completion. |
 | `advance_from`, `advance_to`, `advanced_at` | Expected todo head, intended stamped role head and confirmed handoff time. Intent commits before the Git ref update; confirmation commits with release. A read-only role has no ref-advance values. |
-| `released_at` | Time the completed handoff or read-only verdict released this attempt; `NULL` while it remains outstanding. |
+| `released_at` | Time the completed handoff, read-only verdict or deferral-processing evidence released this attempt; `NULL` while it remains outstanding. |
 
 One todo has at most one outstanding dispatched workspace-role attempt. The claim-holding
 orchestrator coordinates the serialized work and its mechanical handoffs. A new attempt retains
@@ -176,6 +176,23 @@ prior rows, starts at the current todo head and gets a fresh key. An unresolved
 start or pending handoff keeps the current attempt outstanding. Branch advancement
 and crash reconciliation follow
 `project/instrukt/spec/feature/workflow/delivery-cycle`.
+
+Every workspace role in the shipped work workflow has a release boundary:
+
+| Role | Evidence and release |
+| --- | --- |
+| Setup | `--role-complete`, followed by confirmed fast-forward handoff to the todo branch. |
+| Builder, including a fixer or plan-reconciliation attempt | `--build-complete`, followed by confirmed fast-forward handoff. |
+| Build reviewer | Verdict bound to the complete findings and captured todo head; release commits with the verdict, without a branch advance. |
+| Deferrer (`process-deferrals`) | `--deferrals-processed` bound to dispositions covering the current deferrals artifact; release commits with the stamp, without a branch advance. |
+| Finalizer, including reconciliation | `--role-complete`, followed by confirmed fast-forward handoff; readiness is a later record-only write against that retained binding. |
+
+A read-only release requires a clean role worktree whose head still equals its
+captured todo head. Its `advance_from`, `advance_to` and `advanced_at` remain
+`NULL`. Missing or stale completion evidence leaves the attempt outstanding;
+runtime idleness does not release it. The claim-holding orchestrator is not a
+workspace-role attempt; preparation and task firings keep their own completion
+contracts.
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
