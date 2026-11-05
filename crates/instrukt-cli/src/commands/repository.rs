@@ -1,8 +1,7 @@
 //! Repository commands: `instrukt init`, `instrukt hooks …`, `instrukt repo commit|stamp`.
 //!
-//! Two hidden entries serve git rather than people: `instrukt hooks worker`,
-//! the detached process a hook run starts, and `instrukt repo docs-filter`,
-//! the docs reference filter git runs on checkout and commit.
+//! One hidden entry serves git rather than people: `instrukt hooks worker`,
+//! the detached process a hook run starts.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -12,10 +11,9 @@ use anyhow::Context as _;
 use instrukt_core::config::Env;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
 use instrukt_core::repository::{
-    self, CommitRequest, FilterDirection, GENERATED_FILE, GenerationOutcome, Hook, HookChange,
-    HookInvocation, HookRunRecord, HooksDir, HooksReport, InitPart, LOCAL_BASELINE, MASTER_FILE,
-    NotesPush, PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, StampTime,
-    SyncOutcome,
+    self, CommitRequest, GENERATED_FILE, GenerationOutcome, Hook, HookChange, HookInvocation,
+    HookRunRecord, HooksDir, HooksReport, InitPart, LOCAL_BASELINE, MASTER_FILE, NotesPush,
+    PartOutcome, PendingReason, SectionChange, SectionStatus, Stamp, StampTime, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -53,11 +51,6 @@ fn part_label(part: InitPart) -> String {
         InitPart::DocsFolders => "docs folders (docs/project/)".to_owned(),
         InitPart::Master => format!("master ({MASTER_FILE})"),
         InitPart::LocalBaseline => format!("local baseline ({LOCAL_BASELINE})"),
-        InitPart::DocsFilter => format!(
-            "docs reference filter (git config filter.{})",
-            repository::FILTER_NAME
-        ),
-        InitPart::FilterPatterns => "filter patterns (.gitattributes)".to_owned(),
         InitPart::GeneratedIgnore => format!("generated {GENERATED_FILE} ignore (.gitignore)"),
         InitPart::HookSections => "hook sections".to_owned(),
     }
@@ -314,9 +307,6 @@ enum RepoCommand {
     /// exemption with its reason, as a git note on each named commit, and
     /// push the notes to the remote the default branch tracks.
     Stamp(StampArgs),
-    /// The docs reference filter git runs on checkout and commit.
-    #[command(hide = true)]
-    DocsFilter(DocsFilterArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -369,22 +359,10 @@ struct StampArgs {
     reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Direction {
-    Smudge,
-    Clean,
-}
-
-#[derive(Debug, clap::Args)]
-struct DocsFilterArgs {
-    direction: Direction,
-}
-
 pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         RepoCommand::Commit(args) => commit(args, ctx),
         RepoCommand::Stamp(args) => stamp(args, ctx),
-        RepoCommand::DocsFilter(args) => docs_filter(&args, ctx),
     }
 }
 
@@ -450,20 +428,6 @@ fn stamp(args: StampArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         }
     };
     ctx.out.line(&push)?;
-    Ok(ExitCode::SUCCESS)
-}
-
-fn docs_filter(args: &DocsFilterArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let mut input = Vec::new();
-    std::io::stdin()
-        .read_to_end(&mut input)
-        .context("cannot read the blob from standard input")?;
-    let direction = match args.direction {
-        Direction::Smudge => FilterDirection::Smudge,
-        Direction::Clean => FilterDirection::Clean,
-    };
-    let output = repository::apply_docs_filter(&input, &ctx.home, direction);
-    ctx.out.bytes(&output)?;
     Ok(ExitCode::SUCCESS)
 }
 

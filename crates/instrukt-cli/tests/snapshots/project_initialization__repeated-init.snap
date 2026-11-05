@@ -6,8 +6,6 @@ project layer (instrukt.yaml): already present
 docs folders (docs/project/): already present
 master (AGENTS.master.md): already present
 local baseline (docs/project/baseline.md): already present
-docs reference filter (git config filter.instrukt-docs): already present
-filter patterns (.gitattributes): already present
 generated AGENTS.md ignore (.gitignore): already present
 hook sections: already present
   hooks directory: [TMP]/demo/.git/hooks

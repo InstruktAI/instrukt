@@ -12,7 +12,6 @@ use crate::ids::ProjectSlug;
 
 use super::_contain::Bounds;
 use super::_error::RepositoryError;
-use super::_filter::{self, FILTER_PATTERN};
 use super::_git;
 use super::_hooks::{self, HooksReport, SectionChange};
 
@@ -38,10 +37,6 @@ pub enum InitPart {
     Master,
     /// `docs/project/baseline.md`, the manifest a seeded master requires.
     LocalBaseline,
-    /// The `instrukt-docs` filter in the repository's git configuration.
-    DocsFilter,
-    /// The filter's line in `.gitattributes`.
-    FilterPatterns,
     /// The ignore of generated `AGENTS.md` files in `.gitignore`.
     GeneratedIgnore,
     /// instrukt's sections in the hooks directory.
@@ -90,7 +85,6 @@ pub fn init(
         .collect::<Result<Vec<_>, _>>()?;
     let master_path = bounds.resolve(&root.join(MASTER_FILE))?;
     let baseline_path = bounds.resolve(&root.join(LOCAL_BASELINE))?;
-    let attributes = bounds.resolve(&root.join(".gitattributes"))?;
     let ignore = bounds.resolve(&root.join(".gitignore"))?;
     let hooks_plan = _hooks::plan_install_at(home, &root)?;
 
@@ -104,11 +98,6 @@ pub fn init(
     parts.push((InitPart::DocsFolders, docs_folders(&folders)?));
     parts.push((InitPart::Master, master(&root, &master_path)?));
     parts.push((InitPart::LocalBaseline, local_baseline(&baseline_path)?));
-    parts.push((InitPart::DocsFilter, docs_filter(&root)?));
-    parts.push((
-        InitPart::FilterPatterns,
-        ensure_line(&attributes, FILTER_PATTERN)?,
-    ));
     parts.push((
         InitPart::GeneratedIgnore,
         ensure_line(&ignore, GENERATED_FILE)?,
@@ -172,19 +161,6 @@ fn local_baseline(path: &Path) -> Result<PartOutcome, RepositoryError> {
     }
     atomic_write(path, b"")?;
     Ok(PartOutcome::Created)
-}
-
-fn docs_filter(root: &Path) -> Result<PartOutcome, RepositoryError> {
-    let (matching, total) = _filter::defined_keys(root)?;
-    if matching == total {
-        return Ok(PartOutcome::AlreadyPresent);
-    }
-    _filter::define(root)?;
-    Ok(if matching == 0 {
-        PartOutcome::Created
-    } else {
-        PartOutcome::Completed
-    })
 }
 
 /// Appends `line` to the file at `path` (already resolved) unless a line equal to it is there,

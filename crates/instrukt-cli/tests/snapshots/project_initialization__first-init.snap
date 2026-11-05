@@ -6,8 +6,6 @@ project layer (instrukt.yaml): created
 docs folders (docs/project/): created
 master (AGENTS.master.md): created
 local baseline (docs/project/baseline.md): created
-docs reference filter (git config filter.instrukt-docs): created
-filter patterns (.gitattributes): created
 generated AGENTS.md ignore (.gitignore): created
 hook sections: created
   hooks directory: [TMP]/My Demo/.git/hooks

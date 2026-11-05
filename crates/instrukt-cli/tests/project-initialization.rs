@@ -19,7 +19,7 @@ use common::TestEnv;
 use instrukt_core::repository::{Hook, HookRunRecord, SyncOutcome};
 
 /// A test machine whose `PATH` holds the built `instrukt`, as an installed
-/// one would: hook sections and the docs filter call it by name.
+/// one would: hook sections call it by name.
 fn machine() -> TestEnv {
     let mut env = TestEnv::new();
     let bin = Path::new(env!("CARGO_BIN_EXE_instrukt")).parent().unwrap();
@@ -143,21 +143,6 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     let validated = env.run(repo.path(), ["docs", "validate"]).success();
     insta::assert_snapshot!("adopted-docs-validate", stdout(&env, &validated));
     insta::assert_snapshot!("compiled-seeded-master", repo.read("AGENTS.md"));
-
-    repo.write(
-        "docs/project/reference.md",
-        "Read @~/.instrukt/docs/general/x.md first.\n",
-    );
-    repo.commit("a doc referring to the home");
-    wait_for_run(&env, "my-demo", Hook::PostCommit);
-    let committed = repo.git(["show", "HEAD:docs/project/reference.md"]);
-    insta::assert_snapshot!("committed-reference", committed);
-
-    std::fs::remove_file(repo.path().join("docs/project/reference.md")).unwrap();
-    repo.git(["checkout", "--", "docs/project/reference.md"]);
-    wait_for_run(&env, "my-demo", Hook::PostCheckout);
-    let checked_out = std::fs::read(repo.path().join("docs/project/reference.md")).unwrap();
-    insta::assert_snapshot!("checked-out-reference", shown(&env, &checked_out));
 }
 
 // spec: project/instrukt/spec/feature/repository/project-initialization UC-IN1
@@ -211,7 +196,11 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
         baseline,
         "the developer's local baseline is unchanged"
     );
-    insta::assert_snapshot!("completed-attributes", repo.read(".gitattributes"));
+    assert_eq!(
+        repo.read(".gitattributes"),
+        OWN_ATTRIBUTES,
+        "init writes no git attributes"
+    );
 
     let before = tree(repo.path());
     let again = env.run(repo.path(), ["init"]).success();
