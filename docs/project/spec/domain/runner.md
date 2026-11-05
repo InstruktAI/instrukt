@@ -49,7 +49,7 @@ recognises caller identity without runtime I/O,
 and reports optional capabilities. Configuration contains no runtime verbs.
 
 **Singleton key**
-: The standing procedure and project identity carried in its runtime thread
+: The standing procedure, exact home and optional subject identity carried in its runtime thread
  title; the database binding is a cache. A per-key database lock admits one
  starter or deliverer at a time.
 
@@ -147,12 +147,12 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
   completion requires its owning work record's evidence. Linked input is an
   optional adapter capability.
 - **Identifier:** Procedure and exact home, plus subject when declared; todo-role
-  bindings remain work-owned. A3's project-keyed adapter mapping is extended at
-  the S6 home/subject-delivery boundary.
+  bindings remain work-owned. The adapter key carries the exact home and optional subject;
+  confirmed successors retain separate generation keys.
 - **Lifecycle:** A3 owns serialized discovery/start-or-wake, pending fixed targets
   and ambiguous-start recovery. List/send failure leaves work pending and starts
-  no replacement. S6 realizes continuing home/subject responsibility and eligible
-  event delivery; routing itself resolves no session.
+  no replacement. The standing-agent and procedure-event-delivery contracts own continuing
+  home/subject responsibility and eligible event delivery; routing itself resolves no session.
 
 #### Event activation
 
@@ -290,6 +290,8 @@ record-backed completion.
 - **Signed project sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
 - **Single cluster intake** — `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`.
 - **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
+- **Continuing procedure responsibility** — `project/instrukt/spec/feature/runner/procedure-standing-agent`.
+- **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
 ### Governing designs and decisions (index)

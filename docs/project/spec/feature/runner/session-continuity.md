@@ -27,7 +27,7 @@ creates no replacement session identity.
 
 | Primitive | Input and result | Released consumer |
 | --- | --- | --- |
-| `start_or_wake` | Project, stable singleton key and opening/event brief; returns the existing or newly started session and delivery acknowledgement. | Event activation of a standing procedure. |
+| `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event-hook handoff. | Event activation of a standing procedure. |
 | `start` | Project, durable start key, opening brief and optional worktree request (base revision and branch); returns the session and, when requested, its worktree path. | Todo-role dispatch, setup-only worktree dispatch and scheduled task occurrences. |
 | `send` | Native session id and text; acknowledges acceptance by that runtime. | Follow-up work, event delivery and one-send recovery. |
 | `read_state` | Native session id; returns one of the five states below, session identity and available runtime metadata. | Reuse decisions, dispatch observation and task completion checks. |
@@ -49,6 +49,16 @@ optional task `occurrence: <RFC 3339>`, and supplied briefing text. The runner
 binds procedure parameters before dispatch. User text travels as separate
 process arguments or standard input, never as executable shell text.
 
+For subscribed procedures, the opening brief contains assignment facts only.
+The initial activation is retained before startup and its body enters through
+the actual procedure-entry hook. Later wakes are content-free. `send` remains a
+general text primitive; its acceptance is not an event-delivery acknowledgement.
+The adapter's event capability must realize the separate target contract in
+`project/instrukt/spec/feature/runner/procedure-event-delivery`, including
+eligible boundaries and untrusted provenance. Unsupported hook, attendance or
+continuation behavior is reported explicitly rather than implemented as ordinary
+conversational event text.
+
 ### Public sessions surface
 
 These commands remain because released workflows dispatch workers, inspect
@@ -63,7 +73,12 @@ execute in place of its operation.
 | `instrukt sessions alive <id>` | Call `read_state`; print its semantic state or report observation failure. |
 | `instrukt sessions conversation <id>` | Call `read_conversation` for an identified conversation; report that this is a bounded recent read. |
 | `instrukt sessions link [--remove] <a> <b>` | Call optional `link`, or report unsupported. |
-| `instrukt sessions resolve-start <key> --session <runtime:id> \| --none` | Resolve any ambiguous start under its key lock: verify and bind the named keyed thread, or record the operator's confirmation that no thread was created and no start remains in flight. The standing-agent shorthand `<procedure>@<project>` remains accepted. |
+| `instrukt sessions resolve-start <key> --session <runtime:id> \| --none` | Resolve any ambiguous start under its key lock: verify and bind the named keyed thread, or record the operator's confirmation that no thread was created and no start remains in flight. The standing-agent shorthand `<procedure>@<project>` resolves the home-identity project responsibility; subject or successor recovery uses its full key. |
+
+A subscribed home-identity procedure entered by `sessions run --procedure`
+uses the standing-agent guard and starts attended in its resolved home; it
+refuses naming an existing standing agent. Subject-bound manual entry is
+unsupported. Other `run` assignments retain the start behavior below.
 
 `--procedure` is required except for setup-only `run --worktree <name> --brief
 <file|->`. A setup run takes no `--args`, sends only the setup brief, and
@@ -87,7 +102,7 @@ validation findings; runtime entries and verb templates are not settings.
 
 | Feature | Needs |
 | --- | --- |
-| Standing agents (`modules.events`) | `start_or_wake`, `send`, `read_state`, `read_conversation`. |
+| Standing agents (`modules.events`) | `start_or_wake`, `send`, `read_state`, `read_conversation`, plus eligible procedure-event hook delivery and the assignment/continuation capabilities required by the subscription. |
 | Todo dispatch (`modules.todos`) | Keyed `start` with worktree creation, `send`, `read_state`, `read_conversation`. The shipped sdlc workflow uses per-role worktrees. A workflow declaring shared-worktree attachment additionally needs that capability. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state`, `read_conversation`. |
 | Linked-session input | Optional `link`. |
@@ -105,14 +120,25 @@ instrukt does not rebuild them.
 
 Every start instrukt makes has a durable key carried as the thread's exact
 `--title`, including setup-only and ad-hoc starts. Keys are scoped to the
-selected runtime and registered project:
+selected runtime and execution checkout. Todo/task/run keys retain registered project scope:
 
 | Assignment | Exact title |
 | --- | --- |
-| Standing procedure | `instrukt:standing:<encoded-procedure>@<encoded-project>` |
+| Standing procedure | `instrukt:standing:<encoded-procedure>@<encoded-home>[:subject:<encoded-subject>][:generation:<n>]` |
 | Todo role | `instrukt:todo:<encoded-project>/<encoded-slug>:<encoded-role>:<attempt>` |
 | Task occurrence | `instrukt:task:<encoded-project>/<encoded-slug>:<encoded-occurrence>` |
 | Other starts, including standalone setup | `instrukt:run:<encoded-project>:<request-id>` |
+
+For standing keys, the canonical home token is `project:<slug>` or `platform`;
+company/person tokens retain their kind but cannot execute in this release.
+A subject token is the complete typed reference from the event envelope. Encode
+each whole component with the rule below. Home identity omits the subject suffix;
+subject identity requires it. The first generation omits the generation suffix;
+a confirmed successor appends its positive generation number starting at 2.
+Only a separately established terminal/non-resumable disposition or closed
+unattended assignment permits succession. A failed send, failed observation or
+unresolved start never does. Prior generations remain evidence; one current
+generation is admitted under the procedure/home guard and key lock.
 
 Components are UTF-8 percent-encoded, leaving only ASCII letters, digits, `-`,
 `_`, `.`, `~` unescaped; hex digits are uppercase. Occurrences are the scheduled
@@ -149,13 +175,14 @@ The same discovery and start rules govern every key, for both `start` and
    recorded branch rooted at the captured base; recover any requested worktree
    path with `show`.
    Commit the binding before sending unconfirmed input. For standing events,
-   commit the target in `standing_deliveries` before `send`. A busy thread
-   receives the brief as its next turn.
+   commit the activation target in `standing_deliveries` before any runtime handoff. A busy thread receives ordinary follow-up text as its next turn. Procedure
+   events remain pending for the eligible hook boundary; only a content-free
+   wake can enter conversational input.
 3. Zero matches permits a new start only with no unresolved `runtime_starts`
    marker, bound session or recorded delivery target. Commit the marker,
    key, brief and worktree request before `t3 thread start --title <key>
    <checkout> -`, adding worktree creation flags where requested. Its initial
-   message delivers the opening brief; an acknowledged start needs no second
+   message delivers the opening assignment brief, with any initial event retained separately; an acknowledged start needs no second
    send. Commit the complete binding and acceptance before clearing the marker.
 4. Listing failure, malformed output, an unknown listing shape or multiple
    exact matches leaves the assignment pending and starts nothing. Multiple
@@ -176,7 +203,9 @@ A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
 
-Runtime acceptance commits with the delivery result and binding. Consumer
+Runtime acceptance commits with its dispatch result and binding. Event delivery
+commits only after successful eligible hook handoff; content-free wake acceptance
+does not consume the event. Consumer
 handled marks instead track durable activation acceptance under
 `project/instrukt/spec/feature/runner/procedure-subscription-routing`; they do not
 wait for a runtime send. Input delivery is at least once across a lost acknowledgement
@@ -323,7 +352,7 @@ And a second conversation is not started
 Given a standing agent has an existing keyed conversation
 When two runner invocations contend to deliver events to that agent
 Then only the key lock's owner dispatches at a time
-And the events reach the existing conversation, including as a next turn when busy
+And the events reach the existing conversation, at eligible delivery boundaries when busy
 And no additional conversation is started for that key
 ```
 
@@ -397,8 +426,10 @@ test bindings are removed by the builder.
 ## Known caveats
 
 - Runtime start/send acceptance supplies transport evidence only. Event-hook
-  provenance and eligible delivery remain the S6 feasibility gate under
-  `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
+  provenance, eligible boundaries, attendance and subject continuation remain
+  the build feasibility gate under
+  `project/instrukt/spec/feature/runner/procedure-event-delivery`. No published
+  T3 capability is assumed to provide those semantics.
 - UC-SS4 is to retire: history search and archive lookup are not released in A3.
 - UC-SS7 is to retire: session ending and agent-kind instructions belong to the runtime.
 - T3 has no atomic server-side keyed start. Request pingdotgg/t3code#31621
@@ -425,10 +456,12 @@ test bindings are removed by the builder.
 
 ## See Also
 
-- project/instrukt/spec/domain/runner
-- project/instrukt/spec/feature/work/state-database
-- project/instrukt/spec/feature/runner/event-activation
-- project/instrukt/spec/feature/runner/work-dispatch
-- project/instrukt/spec/feature/runner/anomaly-notification
-- project/instrukt/spec/feature/configuration/layered-configuration
-- project/instrukt/spec/feature/configuration/interpolation
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
+- [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
+- [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)
+- [project/instrukt/spec/feature/runner/procedure-event-delivery](procedure-event-delivery.md)
+- [project/instrukt/spec/feature/runner/work-dispatch](work-dispatch.md)
+- [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
+- [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)

@@ -111,7 +111,10 @@ watched ref's last observed revision.
 Delivery acceptance and runtime execution are separate completion boundaries.
 The target contract retains procedure-first briefing, untrusted event provenance,
 sequential/batched selection and eligible delivery boundaries, with settings fixed
-for a session including revival. Runtime realization is the S6/A3 feasibility gate;
+for a session including revival. The owning contracts are
+`project/instrukt/spec/feature/runner/procedure-standing-agent` and
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. Runtime realization
+remains an A3 integration feasibility gate;
 routing itself starts no session. `run` hosts independent readers; `tick` drains
 pending then new entries within a bounded invocation. Scheduled-only execution
 reacts at the next wake while retained entries remain available.
@@ -120,7 +123,7 @@ A3's adapter owns per-key runtime discovery and ambiguous-start recovery under
 `project/instrukt/spec/feature/runner/session-continuity`: a failed listing or
 send leaves work pending and starts no replacement, and an uncertain start is
 reconciled by key or explicit resolution. Those primitives do not establish
-hook provenance or eligible delivery while a session is busy. The S6 handoff
+hook provenance or eligible delivery while a session is busy. The procedure-event handoff
 preserves this target delivery contract rather than equating a plain send with it.
 
 ### Use cases
@@ -147,3 +150,6 @@ preserves this target delivery contract rather than equating a plain send with i
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-transport](event-transport.md)
+
+- [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)
+- [project/instrukt/spec/feature/runner/procedure-event-delivery](procedure-event-delivery.md)
