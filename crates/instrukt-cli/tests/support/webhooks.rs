@@ -5,12 +5,10 @@
     clippy::panic,
     reason = "shared test setup"
 )]
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Stdio};
-use std::sync::mpsc;
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hmac::{Hmac, Mac};
 use instrukt_runner::events::EventEnvelope;
@@ -26,7 +24,6 @@ pub const OLD: &str = "previous-project-key";
 pub struct Receiver {
     child: Child,
     port: u16,
-    logs: Option<JoinHandle<()>>,
 }
 
 impl Receiver {
@@ -57,7 +54,16 @@ impl Receiver {
     }
 
     fn spawn(computer: &Computer, port: u16) -> Result<Self, String> {
-        let mut child = computer
+        let log = computer
+            .env
+            .home()
+            .join(".local/state/instrukt-ai/instrukt/webhooks.log");
+        let offset = match std::fs::metadata(&log) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(error.to_string()),
+        };
+        let child = computer
             .env
             .instrukt_process(&computer.env.path(""))
             .args(["webhooks", "serve"])
@@ -65,33 +71,38 @@ impl Receiver {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let (ready, observed) = mpsc::channel();
-        let logs = std::thread::spawn(move || {
-            let mut startup = String::new();
-            for line in BufReader::new(stderr).lines() {
-                let line = line.unwrap();
-                // This diagnostic only synchronizes startup. Each test's proof
-                // is its real HTTP/Redis outcome, never a log assertion.
-                if line.contains("webhooks_listening") && ready.send(Ok(())).is_err() {
-                    return;
+        let mut receiver = Self { child, port };
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if receiver.child.try_wait().unwrap().is_some() {
+                let mut error = String::new();
+                receiver
+                    .child
+                    .stderr
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut error)
+                    .unwrap();
+                return Err(error);
+            }
+            match std::fs::File::open(&log) {
+                Ok(mut file) => {
+                    file.seek(SeekFrom::Start(offset)).unwrap();
+                    let mut startup = String::new();
+                    file.read_to_string(&mut startup).unwrap();
+                    // Only this spawn's new records synchronize readiness.
+                    // The tests assert real HTTP/Redis outcomes, never logs.
+                    if startup.contains("event=webhooks_listening") {
+                        return Ok(receiver);
+                    }
                 }
-                startup.push_str(&line);
-                startup.push('\n');
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
             }
-            if ready.send(Err(startup)).is_err() {
-                tracing::debug!("receiver readiness observer already closed");
+            if Instant::now() >= deadline {
+                return Err("receiver readiness was not observed in its log".into());
             }
-        });
-        let receiver = Self {
-            child,
-            port,
-            logs: Some(logs),
-        };
-        match observed.recv_timeout(Duration::from_secs(15)) {
-            Ok(Ok(())) => Ok(receiver),
-            Ok(Err(detail)) => Err(detail),
-            Err(error) => Err(format!("receiver readiness was not observed: {error}")),
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -150,9 +161,6 @@ impl Drop for Receiver {
             self.child.kill().unwrap();
         }
         self.child.wait().unwrap();
-        if let Some(logs) = self.logs.take() {
-            logs.join().unwrap();
-        }
     }
 }
 

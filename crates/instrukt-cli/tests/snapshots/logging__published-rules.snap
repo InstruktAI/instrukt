@@ -1,0 +1,36 @@
+---
+source: crates/instrukt-cli/tests/logging.rs
+assertion_line: 62
+expression: output
+---
+# instrukt docs get: acme/policy/rules
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
+---
+# Rules — Policy
+
+## Rules
+
+Follow the rules.
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.

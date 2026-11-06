@@ -20,6 +20,7 @@ instrukt-core = { path = "crates/instrukt-core" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint" }
 instrukt-runner = { path = "crates/instrukt-runner" }
 instrukt-todos = { path = "crates/instrukt-todos" }
+instrukt-ai-logging = "=0.9.0"
 
 anyhow = "1"
 clap = { version = "4", features = ["derive", "wrap_help"] }
@@ -40,7 +41,6 @@ sha2 = "=0.10.9"
 tempfile = "3"
 thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = "3"
 walkdir = "2"
 

@@ -212,6 +212,9 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         SyncOutcome::Unchanged { .. } => "unchanged",
         SyncOutcome::Refused { .. } => "refused",
     };
+    if matches!(outcome, SyncOutcome::Published { .. }) {
+        tracing::info!(event = "docs_published", project = %project.slug, commit = %commit);
+    }
     tracing::debug!(
         event = "sync_completed",
         project = %project.slug,

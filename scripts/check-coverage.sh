@@ -6,4 +6,5 @@ set -eu
 cargo build --locked --quiet --bin instrukt
 home="$(mktemp -d)"
 trap 'rm -rf "$home"' EXIT
+unset XDG_STATE_HOME
 HOME="$home" "${CARGO_TARGET_DIR:-target}/debug/instrukt" specs coverage --check

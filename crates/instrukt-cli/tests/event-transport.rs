@@ -41,15 +41,21 @@ fn absent_local_configuration_reports_cluster_fallback() {
     let computer = Computer::new();
     let cluster = RedisServer::new(&computer.env);
     computer.config(&cluster, None);
-    let run = computer.env.run(&computer.env.path(""), ["tick"]).success();
-    let stderr = String::from_utf8_lossy(&run.get_output().stderr);
-    let messages = stderr
+    computer.env.run(&computer.env.path(""), ["tick"]).success();
+    let log = std::fs::read_to_string(
+        computer
+            .env
+            .home()
+            .join(".local/state/instrukt-ai/instrukt/tick.log"),
+    )
+    .unwrap();
+    let messages = log
         .lines()
-        .map(|line| line.split_once(" WARN ").map_or(line, |(_, text)| text))
-        .filter(|line| line.starts_with("instrukt_runner::transport:"))
+        .filter(|line| line.contains(" logger=instrukt_runner::transport "))
+        .map(|line| line.split_once(' ').unwrap().1)
         .collect::<Vec<_>>()
         .join("\n");
-    insta::assert_snapshot!(messages, @"instrukt_runner::transport: local Redis is unconfigured; local events use cluster Redis event=\"local_redis_fallback\"");
+    insta::assert_snapshot!(messages, @r#"level=WARNING logger=instrukt_runner::transport msg="local Redis is unconfigured; local events use cluster Redis" event=local_redis_fallback"#);
     computer.change();
     computer.tick();
     let len: u64 = redis::cmd("XLEN")

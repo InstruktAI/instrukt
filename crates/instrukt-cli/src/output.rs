@@ -1,7 +1,7 @@
 //! The command output writer: the one place stdout is written.
 //!
 //! Commands write their contract output (text agents read, or JSON) here and
-//! never print directly; diagnostics go to stderr through `tracing`.
+//! never print directly; diagnostics go to the command's log through `tracing`.
 
 use std::io::{self, Write};
 

@@ -240,9 +240,6 @@ fn withdrawn_work_past_its_recovery_window_is_gone_and_cannot_be_restored() {
     let later =
         jiff::Timestamp::from_second(jiff::Timestamp::now().as_second() + 8 * 86_400).unwrap();
     project.env.set_env("INSTRUKT_NOW", &later.to_string());
-    // Diagnostics carry the real time; the snapshot reads what the
-    // developer is told.
-    project.env.set_env("INSTRUKT_LOG", "warn");
     let restore = project.todo(["reactivate", "nested-lists"]).failure();
     let withdrawn = project.todo(["list", "--removed"]).success();
 

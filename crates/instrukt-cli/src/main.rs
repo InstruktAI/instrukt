@@ -10,7 +10,6 @@ mod context;
 mod output;
 mod wiring;
 
-use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -67,8 +66,10 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    init_tracing();
     let cli = Cli::parse();
+    if let Err(err) = init_tracing(&cli.command) {
+        return report(&err);
+    }
     let mut ctx = match Ctx::from_process() {
         Ok(ctx) => ctx,
         Err(err) => return report(&err),
@@ -98,35 +99,41 @@ fn main() -> ExitCode {
     }
 }
 
-/// Prints an error to stderr and returns the generic failure status.
+/// Records an error, prints it to stderr and returns the generic failure status.
 fn report(err: &anyhow::Error) -> ExitCode {
+    tracing::error!(event = "command_failed", error = %format!("{err:#}"));
     eprintln!("instrukt: {err:#}");
     ExitCode::FAILURE
 }
 
-/// Diagnostics go to stderr at INFO, the production level
-/// (`sdlc/policy/observability`), or at the directives `INSTRUKT_LOG`
-/// supplies. Invalid directives are reported, never silently replaced.
-fn init_tracing() {
-    let filter = match std::env::var("INSTRUKT_LOG") {
-        Err(std::env::VarError::NotPresent) => tracing_subscriber::EnvFilter::new("info"),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            eprintln!("instrukt: INSTRUKT_LOG is not valid UTF-8; logging at info");
-            tracing_subscriber::EnvFilter::new("info")
-        }
-        Ok(directives) => match tracing_subscriber::EnvFilter::try_new(&directives) {
-            Ok(filter) => filter,
-            Err(err) => {
-                eprintln!(
-                    "instrukt: INSTRUKT_LOG={directives:?} is invalid ({err}); logging at info"
-                );
-                tracing_subscriber::EnvFilter::new("info")
-            }
-        },
+/// Initialise the contract writer before constructing the invocation context.
+fn init_tracing(command: &Command) -> anyhow::Result<()> {
+    let source = match command {
+        Command::Config(_) => "config",
+        Command::Docs(_) => "docs",
+        Command::Sync(_) => "sync",
+        Command::Init(_) => "init",
+        Command::Hooks(_) => "hooks",
+        Command::Repo(_) => "repo",
+        Command::Specs(_) => "specs",
+        Command::Blueprint(_) => "blueprint",
+        Command::Todo(_) => "todo",
+        Command::Eval(_) => "eval",
+        Command::Events(_) => "events",
+        Command::Webhooks(_) => "webhooks",
+        Command::Run(_) => "run",
+        Command::Tick(_) => "tick",
+        Command::Ticks(_) => "ticks",
+        Command::Sessions(_) => "sessions",
+        Command::Install(_) => "install",
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(std::io::stderr().is_terminal())
-        .with_writer(std::io::stderr)
-        .init();
+    instrukt_ai_logging::Builder::new("instrukt")
+        .source(source)
+        .app_prefix("instrukt_cli")
+        .app_prefix("instrukt_core")
+        .app_prefix("instrukt_blueprint")
+        .app_prefix("instrukt_runner")
+        .app_prefix("instrukt_todos")
+        .init()?;
+    Ok(())
 }
