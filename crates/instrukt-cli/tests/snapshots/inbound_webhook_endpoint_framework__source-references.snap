@@ -1,12 +1,14 @@
 ---
 source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+assertion_line: 451
 expression: "String::from_utf8_lossy(&result.get_output().stdout)"
 ---
 {
-  "native": {
+  "erp": {
     "secret": "${HOOK_KEY}"
   },
   "github": {
+    "verify": "github",
     "secret": "${HOOK_KEY}"
   }
 }

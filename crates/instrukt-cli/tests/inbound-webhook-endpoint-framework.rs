@@ -17,7 +17,7 @@ fn setup() -> (Computer, RedisServer, Receiver) {
     let redis = RedisServer::new(&computer.env);
     declare(
         &computer,
-        "{native: {secret: '${HOOK_KEY}'}, github: {secret: '${HOOK_KEY}'}}",
+        "{erp: {secret: '${HOOK_KEY}'}, github: {verify: github, secret: '${HOOK_KEY}'}}",
     );
     let receiver = Receiver::start(&computer, &redis);
     (computer, redis, receiver)
@@ -54,13 +54,13 @@ fn verified_nonobject_wrappers_are_client_errors() {
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF8
 #[test]
 fn native_wrappers_admit_no_extra_fields() {
-    rejects_native(br#"{"domain":"erp","name":"paid","payload":{},"extra":true}"#);
+    rejects_native(br#"{"name":"paid","payload":{},"extra":true}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF8
 #[test]
 fn native_wrapper_fields_cannot_be_duplicated() {
-    rejects_native(br#"{"domain":"erp","domain":"x","name":"paid","payload":{}}"#);
+    rejects_native(br#"{"name":"paid","name":"other","payload":{}}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF17
@@ -69,7 +69,7 @@ fn registration_and_the_source_are_both_required_for_a_route() {
     let (computer, redis, receiver) = setup();
     assert_eq!(
         receiver
-            .signed("/hooks/inbound/project/absent", BODY, SECRET, &[])
+            .signed("/hooks/inbound/project/absent/erp", BODY, SECRET, &[])
             .0,
         404
     );
@@ -78,7 +78,7 @@ fn registration_and_the_source_are_both_required_for_a_route() {
     assert_eq!(
         receiver
             .signed(
-                "/hooks/inbound/project/fork?secret=value",
+                "/hooks/inbound/project/fork/erp?secret=value",
                 BODY,
                 SECRET,
                 &[]
@@ -120,7 +120,7 @@ fn invalid_declaration(declaration: &str, snapshot: &str) {
 #[test]
 fn literal_signing_material_is_refused_without_echoing_it() {
     invalid_declaration(
-        "{native: {secret: literal-signing-material}}",
+        "{erp: {secret: literal-signing-material}}",
         "literal-secret",
     );
 }
@@ -128,31 +128,31 @@ fn literal_signing_material_is_refused_without_echoing_it() {
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
 #[test]
 fn a_missing_required_reference_is_refused() {
-    invalid_declaration("{native: {}}", "missing-reference");
+    invalid_declaration("{erp: {}}", "missing-reference");
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
 #[test]
 fn interpolated_literal_material_is_not_an_exact_reference() {
-    invalid_declaration(
-        "{native: {secret: 'prefix${HOOK_KEY}'}}",
-        "nonexact-reference",
-    );
+    invalid_declaration("{erp: {secret: 'prefix${HOOK_KEY}'}}", "nonexact-reference");
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
 #[test]
 fn sources_cannot_be_nested_under_a_direction_or_sources_key() {
     invalid_declaration(
-        "{sources: {native: {secret: '${HOOK_KEY}'}}}",
+        "{sources: {erp: {secret: '${HOOK_KEY}'}}}",
         "unsupported-source-nesting",
     );
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
 #[test]
-fn unsupported_home_declarations_are_capability_findings() {
-    invalid_declaration("{person: {secret: '${HOOK_KEY}'}}", "unsupported-home");
+fn source_home_overrides_are_refused() {
+    invalid_declaration(
+        "{erp: {home: person, secret: '${HOOK_KEY}'}}",
+        "unsupported-home",
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF20
@@ -161,9 +161,9 @@ fn declarations_are_added_changed_and_removed_without_a_restart() {
     let (computer, redis, receiver) = setup();
     declare(&computer, "{}");
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 404);
-    declare(&computer, "{native: {secret: '${HOOK_KEY}'}}");
+    declare(&computer, "{erp: {secret: '${HOOK_KEY}'}}");
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 202);
-    declare(&computer, "{native: {secret: '${OLD_KEY}'}}");
+    declare(&computer, "{erp: {secret: '${OLD_KEY}'}}");
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 401);
     assert_eq!(receiver.signed(NATIVE, BODY, OLD, &[]).0, 202);
     declare(&computer, "{}");
@@ -174,11 +174,17 @@ fn declarations_are_added_changed_and_removed_without_a_restart() {
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF21
 #[test]
 fn unknown_external_vocabulary_carries_opaque_payload_unchanged() {
-    let (_computer, redis, receiver) = setup();
-    let wrapper = serde_json::json!({"domain":"exotic", "name":"fact.observed", "payload":{"instructions":["opaque"],"null":null,"n":[1,2]}});
+    let (computer, redis, receiver) = setup();
+    declare(&computer, "{exotic: {secret: '${HOOK_KEY}'}}");
+    let wrapper = serde_json::json!({ "name":"fact.observed", "payload":{"instructions":["opaque"],"null":null,"n":[1,2]}});
     assert_eq!(
         receiver
-            .signed(NATIVE, &serde_json::to_vec(&wrapper).unwrap(), SECRET, &[])
+            .signed(
+                "/hooks/inbound/project/fork/exotic",
+                &serde_json::to_vec(&wrapper).unwrap(),
+                SECRET,
+                &[]
+            )
             .0,
         202
     );
@@ -186,36 +192,39 @@ fn unknown_external_vocabulary_carries_opaque_payload_unchanged() {
         events(&redis)[0].data,
         wrapper["payload"].as_object().unwrap().clone()
     );
+    computer.subscribe("exotic.fact.observed");
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
 }
 
-// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF22
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF8
 #[test]
-fn native_domains_must_be_single_segments() {
-    rejects_native(br#"{"domain":"er.p","name":"paid","payload":{}}"#);
+fn native_body_cannot_override_the_domain() {
+    rejects_native(br#"{"domain":"other","name":"paid","payload":{}}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF22
 #[test]
 fn native_names_cannot_contain_empty_segments() {
-    rejects_native(br#"{"domain":"erp","name":"invoice..paid","payload":{}}"#);
+    rejects_native(br#"{"name":"invoice..paid","payload":{}}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF22
 #[test]
 fn native_segments_must_start_with_a_lowercase_letter() {
-    rejects_native(br#"{"domain":"ERP","name":"paid","payload":{}}"#);
+    rejects_native(br#"{"name":"Paid","payload":{}}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF22
 #[test]
 fn native_segments_admit_only_lowercase_digits_and_underscore() {
-    rejects_native(br#"{"domain":"erp","name":"paid-1","payload":{}}"#);
+    rejects_native(br#"{"name":"paid-1","payload":{}}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF22
 #[test]
 fn native_names_cannot_be_empty() {
-    rejects_native(br#"{"domain":"erp","name":"","payload":{}}"#);
+    rejects_native(br#"{"name":"","payload":{}}"#);
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF23
@@ -263,7 +272,7 @@ fn unresolved_previous_secret_blocks_the_whole_declaration_safely() {
     let (computer, redis, receiver) = setup();
     declare(
         &computer,
-        "{native: {secret: '${HOOK_KEY}', previous_secret: '${MISSING}'}}",
+        "{erp: {secret: '${HOOK_KEY}', previous_secret: '${MISSING}'}}",
     );
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 500);
     let result = computer
@@ -387,13 +396,13 @@ fn current_and_previous_verify_until_previous_is_removed() {
     let (computer, redis, receiver) = setup();
     declare(
         &computer,
-        "{native: {secret: '${HOOK_KEY}', previous_secret: '${OLD_KEY}'}}",
+        "{erp: {secret: '${HOOK_KEY}', previous_secret: '${OLD_KEY}'}}",
     );
     let new = receiver.signed(NATIVE, BODY, SECRET, &[]);
     let old = receiver.signed(NATIVE, BODY, OLD, &[]);
     assert_eq!(new.0, 202);
     assert_eq!(old, new);
-    declare(&computer, "{native: {secret: '${HOOK_KEY}'}}");
+    declare(&computer, "{erp: {secret: '${HOOK_KEY}'}}");
     assert_eq!(receiver.signed(NATIVE, BODY, OLD, &[]).0, 401);
     assert_eq!(events(&redis).len(), 1);
 }
@@ -409,19 +418,19 @@ fn signing_values_are_project_scoped_and_config_reads_preserve_references() {
     documented::sync(&computer.env, &other);
     other.write(
         "instrukt.yaml",
-        "schema_version: 1\nproject: other\nwebhooks: {native: {secret: '${HOOK_KEY}'}}\n",
+        "schema_version: 1\nproject: other\nwebhooks: {erp: {secret: '${HOOK_KEY}'}}\n",
     );
     other.write(".env", "HOOK_KEY=other-project-key\n");
     assert_eq!(
         receiver
-            .signed("/hooks/inbound/project/other", BODY, SECRET, &[])
+            .signed("/hooks/inbound/project/other/erp", BODY, SECRET, &[])
             .0,
         401
     );
     assert_eq!(
         receiver
             .signed(
-                "/hooks/inbound/project/other",
+                "/hooks/inbound/project/other/erp",
                 BODY,
                 "other-project-key",
                 &[]
@@ -481,7 +490,7 @@ fn literal_dollar_signs_in_dotenv_material_never_expand_process_variables() {
 #[test]
 fn a_declared_previous_reference_cannot_be_null() {
     invalid_declaration(
-        "{native: {secret: '${HOOK_KEY}', previous_secret: null}}",
+        "{erp: {secret: '${HOOK_KEY}', previous_secret: null}}",
         "null-previous-reference",
     );
 }
@@ -490,7 +499,7 @@ fn a_declared_previous_reference_cannot_be_null() {
 #[test]
 fn source_declarations_with_events_off_are_a_finding_and_create_no_endpoint() {
     let (computer, redis, receiver) = setup();
-    computer.project.write("instrukt.yaml", "schema_version: 1\nproject: fork\nmodules: {events: false}\nwebhooks: {native: {secret: '${HOOK_KEY}'}}\n");
+    computer.project.write("instrukt.yaml", "schema_version: 1\nproject: fork\nmodules: {events: false}\nwebhooks: {erp: {secret: '${HOOK_KEY}'}}\n");
     let result = computer
         .env
         .run(computer.project.path(), ["config", "validate"])
@@ -526,7 +535,7 @@ fn an_invalid_source_patch_is_atomic() {
                 "--revision",
                 &revision,
                 "--yaml",
-                "webhooks: {native: {secret: literal-material}}\n",
+                "webhooks: {erp: {secret: literal-material}}\n",
             ],
         )
         .failure();
@@ -554,4 +563,378 @@ fn non_ingress_computers_validate_references_without_project_signing_values() {
         .env
         .run(computer.project.path(), ["config", "validate"])
         .success();
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF29
+#[test]
+fn payload_field_names_are_normalized_without_changing_the_payload() {
+    let (computer, redis, receiver) = setup();
+    declare(&computer, "{erp: {secret: '${HOOK_KEY}', name_from: type}}");
+    let payload =
+        serde_json::json!({"type":"Invoice.Payment-Succeeded", "domain":"ignored", "amount":42});
+    assert_eq!(
+        receiver
+            .signed(NATIVE, &serde_json::to_vec(&payload).unwrap(), SECRET, &[])
+            .0,
+        202
+    );
+    let event = events(&redis).remove(0);
+    computer.subscribe("erp.invoice.payment_succeeded");
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
+    assert_eq!(event.data, payload.as_object().unwrap().clone());
+}
+
+fn rejects_payload_name(payload: serde_json::Value) {
+    let (computer, redis, receiver) = setup();
+    declare(&computer, "{erp: {secret: '${HOOK_KEY}', name_from: type}}");
+    assert_eq!(
+        receiver
+            .signed(NATIVE, &serde_json::to_vec(&payload).unwrap(), SECRET, &[])
+            .0,
+        400
+    );
+    assert!(events(&redis).is_empty());
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF29
+#[test]
+fn missing_payload_name_is_refused() {
+    rejects_payload_name(serde_json::json!({}));
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF29
+#[test]
+fn nonstring_payload_name_is_refused() {
+    rejects_payload_name(serde_json::json!({"type":42}));
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF29
+#[test]
+fn an_invalid_normalized_payload_name_is_refused() {
+    rejects_payload_name(serde_json::json!({"type":"invoice..paid"}));
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF30
+#[test]
+fn a_fixed_name_preserves_the_whole_document() {
+    let (computer, redis, receiver) = setup();
+    declare(
+        &computer,
+        "{erp: {secret: '${HOOK_KEY}', name: issue_alert}}",
+    );
+    let payload = serde_json::json!({"name":"untrusted.other", "payload":{"id":42}});
+    assert_eq!(
+        receiver
+            .signed(NATIVE, &serde_json::to_vec(&payload).unwrap(), SECRET, &[])
+            .0,
+        202
+    );
+    let event = events(&redis).remove(0);
+    computer.subscribe("erp.issue_alert");
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
+    assert_eq!(event.data, payload.as_object().unwrap().clone());
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF30
+#[test]
+fn a_fixed_name_does_not_admit_a_nonobject_body() {
+    let (computer, redis, receiver) = setup();
+    declare(
+        &computer,
+        "{erp: {secret: '${HOOK_KEY}', name: issue_alert}}",
+    );
+    assert_eq!(receiver.signed(NATIVE, b"[]", SECRET, &[]).0, 400);
+    assert!(events(&redis).is_empty());
+}
+
+fn absent_route(route: &str) {
+    let (_computer, redis, receiver) = setup();
+    assert_eq!(receiver.signed(route, BODY, SECRET, &[]).0, 404);
+    assert!(events(&redis).is_empty());
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn an_undeclared_domain_has_no_endpoint() {
+    absent_route("/hooks/inbound/project/fork/undeclared");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn extra_path_segments_have_no_endpoint() {
+    absent_route("/hooks/inbound/project/fork/erp/extra");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn query_parameters_have_no_endpoint() {
+    absent_route("/hooks/inbound/project/fork/erp?secret=value");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn a_missing_domain_has_no_endpoint() {
+    absent_route("/hooks/inbound/project/fork");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn the_old_github_path_has_no_endpoint() {
+    absent_route("/hooks/inbound/github/project/fork");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn company_intake_is_unavailable() {
+    absent_route("/hooks/inbound/company/fork/erp");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn person_intake_is_unavailable() {
+    absent_route("/hooks/inbound/person/fork/erp");
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
+#[test]
+fn invalid_domain_segments_have_no_endpoint() {
+    absent_route("/hooks/inbound/project/fork/er.p");
+}
+
+fn generic_setup() -> (Computer, RedisServer, Receiver) {
+    let (computer, redis, receiver) = setup();
+    declare(
+        &computer,
+        "{sentry: {verify: hmac-sha256, header: Sentry-Hook-Signature, secret: '${HOOK_KEY}', previous_secret: '${OLD_KEY}', name: issue_alert}}",
+    );
+    (computer, redis, receiver)
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_accepts_bare_hex_in_its_case_insensitive_declared_header() {
+    let (computer, redis, receiver) = generic_setup();
+    let signature = hooks::signature(b"{}", SECRET);
+    assert_eq!(
+        receiver
+            .request(
+                "POST",
+                "/hooks/inbound/project/fork/sentry",
+                b"{}",
+                &[(
+                    "sentry-hook-signature",
+                    signature.strip_prefix("sha256=").unwrap()
+                )]
+            )
+            .0,
+        202
+    );
+    let event = events(&redis).remove(0);
+    assert_eq!(
+        event.subject,
+        instrukt_runner::events::EventRef::new(
+            instrukt_runner::events::ReferenceKind::InboundSource,
+            "sentry:project:fork"
+        )
+        .unwrap()
+    );
+    computer.subscribe("sentry.issue_alert");
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_accepts_a_prefixed_digest_and_suppresses_repeats() {
+    let (_computer, redis, receiver) = generic_setup();
+    let signature = hooks::signature(b"{}", SECRET);
+    assert_eq!(
+        receiver
+            .request(
+                "POST",
+                "/hooks/inbound/project/fork/sentry",
+                b"{}",
+                &[("Sentry-Hook-Signature", &signature)]
+            )
+            .0,
+        202
+    );
+    assert_eq!(
+        receiver
+            .request(
+                "POST",
+                "/hooks/inbound/project/fork/sentry",
+                b"{}",
+                &[("Sentry-Hook-Signature", &signature)]
+            )
+            .0,
+        202
+    );
+    assert_eq!(events(&redis).len(), 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_rotation_ends_previous_key_acceptance_on_the_next_request() {
+    let (computer, redis, receiver) = generic_setup();
+    let signature = hooks::signature(b"{}", OLD);
+    assert_eq!(
+        receiver
+            .request(
+                "POST",
+                "/hooks/inbound/project/fork/sentry",
+                b"{}",
+                &[("Sentry-Hook-Signature", &signature)]
+            )
+            .0,
+        202
+    );
+    declare(
+        &computer,
+        "{sentry: {verify: hmac-sha256, header: Sentry-Hook-Signature, secret: '${HOOK_KEY}', name: issue_alert}}",
+    );
+    assert_eq!(
+        receiver
+            .request(
+                "POST",
+                "/hooks/inbound/project/fork/sentry",
+                b"{}",
+                &[("Sentry-Hook-Signature", &signature)]
+            )
+            .0,
+        401
+    );
+    assert_eq!(events(&redis).len(), 1);
+}
+
+fn rejects_generic(headers: &[(&str, &str)]) {
+    let (_computer, redis, receiver) = generic_setup();
+    assert_eq!(
+        receiver
+            .request("POST", "/hooks/inbound/project/fork/sentry", b"{}", headers)
+            .0,
+        401
+    );
+    assert!(events(&redis).is_empty());
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_requires_a_signature() {
+    rejects_generic(&[]);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_rejects_a_wrong_key() {
+    rejects_generic(&[("Sentry-Hook-Signature", &hooks::signature(b"{}", "wrong"))]);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_rejects_nonhex_digests() {
+    rejects_generic(&[("Sentry-Hook-Signature", "zz")]);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_rejects_short_digests() {
+    rejects_generic(&[("Sentry-Hook-Signature", "abcd")]);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_rejects_duplicate_signature_headers() {
+    let signature = hooks::signature(b"{}", SECRET);
+    rejects_generic(&[
+        ("Sentry-Hook-Signature", &signature),
+        ("Sentry-Hook-Signature", &signature),
+    ]);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF32
+#[test]
+fn generic_hmac_uses_only_its_declared_header() {
+    rejects_generic(&[("X-Hook-Signature", &hooks::signature(b"{}", SECRET))]);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF33
+#[test]
+fn domains_select_independent_secrets_subjects_and_publication_claims() {
+    let (computer, redis, receiver) = setup();
+    declare(
+        &computer,
+        "{erp: {secret: '${HOOK_KEY}'}, billing: {secret: '${OLD_KEY}'}}",
+    );
+    assert_eq!(
+        receiver
+            .signed("/hooks/inbound/project/fork/billing", BODY, SECRET, &[])
+            .0,
+        401
+    );
+    assert_eq!(
+        receiver
+            .signed("/hooks/inbound/project/fork/billing", BODY, OLD, &[])
+            .0,
+        202
+    );
+    assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 202);
+    let events = events(&redis);
+    assert_eq!(events.len(), 2);
+    assert_ne!(events[0].event_type, events[1].event_type);
+    assert_ne!(events[0].subject, events[1].subject);
+    assert_ne!(events[0].id, events[1].id);
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
+#[test]
+fn unknown_verification_schemes_are_named_findings() {
+    invalid_declaration(
+        "{billing: {verify: stripe, secret: '${HOOK_KEY}', name_from: type}}",
+        "unknown-verification",
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
+#[test]
+fn conflicting_name_sources_are_findings() {
+    invalid_declaration(
+        "{erp: {secret: '${HOOK_KEY}', name: paid, name_from: type}}",
+        "conflicting-names",
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
+#[test]
+fn github_names_cannot_be_overridden() {
+    invalid_declaration(
+        "{github: {verify: github, secret: '${HOOK_KEY}', name: push}}",
+        "github-name-override",
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
+#[test]
+fn generic_hmac_requires_a_signature_header() {
+    invalid_declaration(
+        "{erp: {verify: hmac-sha256, secret: '${HOOK_KEY}'}}",
+        "missing-generic-header",
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
+#[test]
+fn fixed_names_must_match_the_name_grammar() {
+    invalid_declaration(
+        "{erp: {secret: '${HOOK_KEY}', name: invoice..paid}}",
+        "invalid-fixed-name",
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF19
+#[test]
+fn declared_domains_must_be_single_valid_segments() {
+    invalid_declaration("{er.p: {secret: '${HOOK_KEY}'}}", "invalid-domain");
 }

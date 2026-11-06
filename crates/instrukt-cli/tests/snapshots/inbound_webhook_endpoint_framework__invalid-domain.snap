@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+assertion_line: 116
+expression: stdout
+---
+[PROJECT]/instrukt.yaml: webhooks: `webhooks` source domains must match [a-z][a-z0-9_]*

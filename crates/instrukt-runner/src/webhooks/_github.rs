@@ -15,11 +15,16 @@ pub struct GithubView {
 
 pub fn github_view(event: &EventEnvelope) -> Option<GithubView> {
     if event.subject.kind() != "inbound_source"
-        || !event.subject.identity().starts_with("github:project:")
+        || event
+            .extensions
+            .get("inbound_verify")
+            .and_then(Value::as_str)
+            != Some("github")
     {
         return None;
     }
-    let name = event.event_type.strip_prefix("github.")?;
+    let (domain, _) = event.subject.identity().split_once(':')?;
+    let name = event.event_type.strip_prefix(&format!("{domain}."))?;
     let text = |value: Option<&Value>| {
         value
             .and_then(Value::as_str)

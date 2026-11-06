@@ -10,6 +10,7 @@ mod support;
 use common::redis::RedisServer;
 use hooks::{BODY, GITHUB, NATIVE, Receiver, SECRET, declare, events};
 use instrukt_runner::events::{EventHome, EventRef, ReferenceKind};
+use sha2::{Digest, Sha256};
 use support::Computer;
 
 fn setup() -> (Computer, RedisServer, Receiver) {
@@ -17,7 +18,7 @@ fn setup() -> (Computer, RedisServer, Receiver) {
     let redis = RedisServer::new(&computer.env);
     declare(
         &computer,
-        "{native: {secret: '${HOOK_KEY}'}, github: {secret: '${HOOK_KEY}'}}",
+        "{erp: {secret: '${HOOK_KEY}'}, github: {verify: github, secret: '${HOOK_KEY}'}}",
     );
     let receiver = Receiver::start(&computer, &redis);
     (computer, redis, receiver)
@@ -120,13 +121,13 @@ fn one_receiver_verifies_multiple_project_protocols_with_isolated_claims() {
     let (computer, redis, receiver) = setup();
     let other = documented::project(&computer.env, "other", &[]);
     documented::sync(&computer.env, &other);
-    other.write("instrukt.yaml", "schema_version: 1\nproject: other\nwebhooks: {native: {secret: '${HOOK_KEY}'}, github: {secret: '${HOOK_KEY}'}}\n");
+    other.write("instrukt.yaml", "schema_version: 1\nproject: other\nwebhooks: {erp: {secret: '${HOOK_KEY}'}, github: {verify: github, secret: '${HOOK_KEY}'}}\n");
     other.write(".env", &format!("HOOK_KEY={SECRET}\n"));
-    for route in [NATIVE, "/hooks/inbound/project/other"] {
+    for route in [NATIVE, "/hooks/inbound/project/other/erp"] {
         assert_eq!(receiver.signed(route, BODY, SECRET, &[]).0, 202);
         assert_eq!(receiver.signed(route, BODY, SECRET, &[]).0, 202);
     }
-    for route in [GITHUB, "/hooks/inbound/github/project/other"] {
+    for route in [GITHUB, "/hooks/inbound/project/other/github"] {
         assert_eq!(
             receiver
                 .signed(route, b"{}", SECRET, &[("X-GitHub-Delivery", "one-id")])
@@ -156,7 +157,7 @@ fn relayed_envelope_retains_ingress_origin_subject_time_and_data() {
     );
     assert_eq!(
         event.subject,
-        EventRef::new(ReferenceKind::InboundSource, "native:project:fork").unwrap()
+        EventRef::new(ReferenceKind::InboundSource, "erp:project:fork").unwrap()
     );
     assert!(!event.id.is_empty());
     assert!(event.time.timestamp() <= jiff::Timestamp::now());
@@ -198,39 +199,60 @@ fn session_headers_supply_no_attribution_to_an_external_fact() {
 // spec: project/instrukt/spec/feature/runner/single-ingress-webhook-termination UC-SIT-10
 #[test]
 fn provider_looking_native_names_never_get_github_treatment() {
-    let (_computer, redis, receiver) = setup();
+    let (computer, redis, receiver) = setup();
+    declare(&computer, "{github: {secret: '${HOOK_KEY}'}}");
     assert_eq!(
         receiver
-            .signed(
-                NATIVE,
-                br#"{"domain":"github","name":"push","payload":{}}"#,
-                SECRET,
-                &[]
+            .request(
+                "POST",
+                GITHUB,
+                br#"{"name":"push","payload":{}}"#,
+                &[(
+                    "X-Hook-Signature",
+                    &hooks::signature(br#"{"name":"push","payload":{}}"#, SECRET)
+                )]
             )
             .0,
         202
     );
-    assert!(instrukt_runner::webhooks::github_view(&events(&redis)[0]).is_none());
+    let event = events(&redis).remove(0);
+    computer.subscribe("github.push");
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
+    assert!(instrukt_runner::webhooks::github_view(&event).is_none());
 }
 
 // spec: project/instrukt/spec/feature/runner/single-ingress-webhook-termination UC-SIT-11
 #[test]
-fn protocols_keep_identical_facts_and_their_claims_distinct() {
-    let (_computer, redis, receiver) = setup();
+fn verification_schemes_keep_identical_facts_and_their_claims_distinct() {
+    let (computer, redis, receiver) = setup();
+    let body = br#"{"name":"push","payload":{}}"#;
+    declare(&computer, "{github: {secret: '${HOOK_KEY}'}}");
     assert_eq!(
         receiver
-            .signed(
-                NATIVE,
-                br#"{"domain":"github","name":"push","payload":{}}"#,
-                SECRET,
-                &[]
+            .request(
+                "POST",
+                GITHUB,
+                body,
+                &[("X-Hook-Signature", &hooks::signature(body, SECRET))]
             )
             .0,
         202
     );
+    declare(
+        &computer,
+        "{github: {verify: github, secret: '${HOOK_KEY}'}}",
+    );
+    // Match the native digest identity so only the scheme separates the claims.
+    let delivery = format!("{:x}", Sha256::digest(body));
     assert_eq!(
         receiver
-            .signed(GITHUB, b"{}", SECRET, &[("X-GitHub-Event", "push")])
+            .signed(
+                GITHUB,
+                b"{}",
+                SECRET,
+                &[("X-GitHub-Event", "push"), ("X-GitHub-Delivery", &delivery)]
+            )
             .0,
         202
     );
@@ -238,6 +260,7 @@ fn protocols_keep_identical_facts_and_their_claims_distinct() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].data, events[1].data);
     assert_eq!(events[0].event_type, events[1].event_type);
-    assert_ne!(events[0].subject, events[1].subject);
+    assert_eq!(events[0].subject, events[1].subject);
+    assert_ne!(events[0].extensions, events[1].extensions);
     assert_ne!(events[0].id, events[1].id);
 }

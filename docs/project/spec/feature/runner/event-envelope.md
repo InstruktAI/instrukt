@@ -58,7 +58,7 @@ readers retain unfamiliar kinds and identities unchanged.
 | `configuration` | Machine/global configuration or project slug |
 | `stream_entry` | Stream and entry identity; diagnostic reference, not occurrence ID |
 | `captured_item` | Inbox entry or content identity |
-| `inbound_source` | Protocol and declaring home, e.g. `native:project:demo` |
+| `inbound_source` | Domain and declaring home, e.g. `erp:project:demo` |
 | `signal_item`, `signal_cluster`, `signal_synthesis` | Opaque item, cluster or synthesis identity |
 | `deployment` | Deployed project across its deployments |
 | `schema_proposal` | Proposal identity |
@@ -71,7 +71,8 @@ readers retain unfamiliar kinds and identities unchanged.
 
 Vocabulary support creates no subsystem for signals, companies, people,
 operations, channels or memory. A relayed subject names its declaring source,
-including protocol, even when its type resembles another protocol's types.
+including domain. Ingress retains the verification scheme in the
+`inbound_verify` extension, even when its type resembles another protocol's types.
 
 ### Typed declarations and evolution
 

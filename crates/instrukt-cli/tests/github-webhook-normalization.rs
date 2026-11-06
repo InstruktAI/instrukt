@@ -15,7 +15,10 @@ use support::Computer;
 fn receive(name: Option<&str>, payload: serde_json::Value, pattern: &str) -> GithubView {
     let computer = Computer::new();
     let redis = RedisServer::new(&computer.env);
-    declare(&computer, "{github: {secret: '${HOOK_KEY}'}}");
+    declare(
+        &computer,
+        "{github: {verify: github, secret: '${HOOK_KEY}'}}",
+    );
     let receiver = Receiver::start(&computer, &redis);
     computer.subscribe(pattern);
     let headers = name
@@ -122,7 +125,10 @@ fn the_provider_view_keeps_the_original_relay_timestamp_and_document() {
     let mut computer = Computer::new();
     computer.env.set_env("INSTRUKT_NOW", "2026-11-05T03:04:05Z");
     let redis = RedisServer::new(&computer.env);
-    declare(&computer, "{github: {secret: '${HOOK_KEY}'}}");
+    declare(
+        &computer,
+        "{github: {verify: github, secret: '${HOOK_KEY}'}}",
+    );
     let receiver = Receiver::start(&computer, &redis);
     assert_eq!(
         receiver
@@ -144,4 +150,41 @@ fn the_provider_view_keeps_the_original_relay_timestamp_and_document() {
         instrukt_runner::events::EventHome::Project(_)
     ));
     assert_eq!(event.source, computer.computer());
+}
+
+// spec: project/instrukt/spec/feature/runner/github-webhook-normalization UC-GH8
+#[test]
+fn github_verification_uses_the_declared_domain_instead_of_a_protocol_path() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    declare(&computer, "{code: {verify: github, secret: '${HOOK_KEY}'}}");
+    let receiver = Receiver::start(&computer, &redis);
+    computer.subscribe("code.push");
+    let signature = hooks::signature(b"{}", SECRET);
+    assert_eq!(
+        receiver
+            .request(
+                "POST",
+                "/hooks/inbound/project/fork/code",
+                b"{}",
+                &[
+                    ("X-Hub-Signature-256", &signature),
+                    ("X-GitHub-Event", "push")
+                ]
+            )
+            .0,
+        202
+    );
+    let event = events(&redis).remove(0);
+    assert!(github_view(&event).is_some());
+    assert_eq!(
+        event.subject,
+        instrukt_runner::events::EventRef::new(
+            instrukt_runner::events::ReferenceKind::InboundSource,
+            "code:project:fork"
+        )
+        .unwrap()
+    );
+    computer.tick();
+    assert_eq!(computer.accepted(), 1);
 }

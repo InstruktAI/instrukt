@@ -1,5 +1,5 @@
 ---
-description: "Project-declared signed native and GitHub endpoints, scoped secret rotation and opaque event intake."
+description: "Domain-keyed signed project endpoints, scoped secret rotation and opaque event intake."
 delivered_by: [instrukt-first-build]
 ---
 # Inbound Webhook Endpoint Framework — Spec
@@ -17,28 +17,39 @@ of ours map their own domain vocabulary; GitHub uses the built-in normalizer.
 
 ```yaml
 webhooks:
-  native:
-    secret: ${NATIVE_HOOK_SECRET}
-    previous_secret: ${NATIVE_HOOK_PREVIOUS_SECRET}
-  github:
-    secret: ${GITHUB_HOOK_SECRET}
+  erp: {secret: ${ERP_HOOK_SECRET}, previous_secret: ${ERP_HOOK_PREVIOUS_SECRET}}
+  github: {verify: github, secret: ${GITHUB_HOOK_SECRET}}
+  billing: {verify: hmac-sha256, header: Billing-Signature, secret: ${BILLING_SECRET}, name_from: type}
+  sentry: {verify: hmac-sha256, header: Sentry-Hook-Signature, secret: ${SENTRY_SECRET}, name: issue_alert}
 ```
 
-Sources sit directly under `webhooks`, with no direction or `sources` subkey.
-Only `native` and `github` are admitted, at most one of each per registered
-project. Project source configuration and `.env` must exist on ingress.
+Sources sit directly under `webhooks`, keyed by the event domain, with no
+direction or `sources` subkey. Domain matches `[a-z][a-z0-9_]*`. Each registered
+project can declare several domains, each selecting its own verification scheme,
+secret references and event-name source. Project configuration and `.env` must
+exist on ingress.
 
-| Protocol | Derived POST path | Origin and subject |
+| Source | Derived POST path | Origin and subject |
 | --- | --- | --- |
-| Native | `/hooks/inbound/project/<slug>` | Project origin; `inbound_source:native:project:<slug>` subject |
-| GitHub | `/hooks/inbound/github/project/<slug>` | Project origin; `inbound_source:github:project:<slug>` subject |
+| Any declared domain | `/hooks/inbound/project/<slug>/<domain>` | Project origin; `inbound_source:<domain>:project:<slug>` subject |
+| GitHub example | `/hooks/inbound/project/<slug>/github` | Project origin; `inbound_source:github:project:<slug>` subject |
 
-Paths derive from registration and protocol, never configurable callback URLs.
-No event name, domain or secret is a URL parameter. Unsupported company/person
-home declarations are explicit capability findings; they create no endpoint.
-Unregistered projects and projects without that source have no endpoint.
-An empty map creates none. Effective events-off sources are a plain finding and
-are not served; source configuration never overrides module enablement.
+The general path is `/hooks/inbound/<kind>/<slug>/<domain>`: kind and slug
+identify the origin home; domain selects its declared source and event domain.
+Only project homes execute. Company/person homes are a stated capability limit
+and have no endpoint. No other path segment or query parameter is accepted;
+secrets never occur in URLs. An undeclared domain or unregistered project has
+no endpoint, even with valid signing material. An empty map creates none.
+Effective events-off sources are a plain finding and are not served; source
+configuration never overrides module enablement.
+
+`verify` defaults to `native`; supported values are `native`, `github` and
+`hmac-sha256`. An unknown scheme such as `stripe` is a validation finding naming
+the scheme, never an unsigned fallback. Generic HMAC requires a declared valid
+HTTP `header` name; native and GitHub use their built-in headers and reject a
+header override. Missing secrets, invalid domains, unknown source fields,
+conflicting name sources, invalid fixed names and empty `name_from` fields are
+validation findings. Optional fields cannot be null.
 
 ### Secrets and per-request resolution
 
@@ -58,15 +69,30 @@ during overlap, without reporting which matched; removing previous immediately
 ends its acceptance. The signature is verified before any structured body parse.
 No request header naming a session supplies caller attribution.
 
-### Native protocol
+### Verification and event names
 
-The JSON object has exactly `domain`, `name`, `payload`. Domain is one segment;
-name is one or more dot-separated segments. Each segment starts with `[a-z]`
-and continues only with `[a-z0-9_]`. Payload is an object whose contents remain
-opaque: instrukt interprets neither domain schema nor producer business meaning.
-The signature header is `X-Hook-Signature: sha256=<hex digest>`. The emitted
-type is `<domain>.<name>`; `payload` is its data. Unknown but well-formed external
-names require no catalog entry.
+Native verification requires `X-Hook-Signature: sha256=<hex digest>` over raw
+bytes. Generic `hmac-sha256` reads its declared header and accepts a hex digest
+with or without the `sha256=` prefix. Both use the same current/previous-secret
+overlap. All sources require verification before decoding.
+
+Exactly one name source applies:
+
+- Without `name`, `name_from` or `verify: github`, the JSON object has exactly
+  `name` and `payload`. Name is one or more dot-separated segments, each matching
+  `[a-z][a-z0-9_]*`. Payload is an opaque object; a body `domain` field is refused.
+- `name_from: <field>` reads that top-level JSON object's string field, lowercases
+  ASCII letters and replaces each character other than ASCII letters, digits,
+  underscore or dot with underscore. The result must match the name grammar;
+  absent/nonstring fields and invalid results are client errors. The whole
+  object, including the original name field, is data.
+- Fixed `name:` must already match the name grammar. The whole JSON object is data.
+- `verify: github` selects the built-in normalizer and admits neither name setting.
+
+Every event type is `<domain>.<name>`, with domain solely from the path and
+matching declaration. Unknown well-formed event names require no catalog entry.
+The envelope extension `inbound_verify` records the verification scheme so
+consumers retain protocol provenance independently of the domain-named subject.
 
 ### GitHub protocol
 
@@ -129,26 +155,26 @@ When a request has a missing or invalid raw-body signature
 Then it is unauthorized and no structured payload is parsed or relayed
 ```
 
-### UC-IF19: Configure signing material through a reference
+### UC-IF19: Configure a valid signed source
 
 ```gherkin
-Given a developer declares a webhook without a secret reference or with a literal secret
+Given a developer declares a webhook with missing or literal secret references, an unsupported verification scheme or invalid domain, signature-header or name-source settings
 When configuration is validated
-Then it is refused identifying the declaration without exposing signing material
+Then it is refused identifying the declaration or unsupported scheme without exposing signing material
 ```
 
 ### UC-IF20: Add or remove a project source without restarting ingress
 
 ```gherkin
 Given a developer has a running ingress
-When they add, edit or remove a project native source in valid configuration
+When they add, edit or remove a project domain source in valid configuration
 Then the next request uses that declaration without restart and a removed source has no endpoint
 ```
 
 ### UC-IF21: Publish a domain fact without teaching instrukt its business schema
 
 ```gherkin
-Given a developer sends a valid signed native wrapper with an undeclared domain event name and opaque payload
+Given a developer declares a domain source and sends a valid signed native wrapper with a new event name and opaque payload
 When ingress accepts it
 Then the relayed type is domain dot name and its data is exactly the supplied payload
 ```
@@ -156,7 +182,7 @@ Then the relayed type is domain dot name and its data is exactly the supplied pa
 ### UC-IF22: Correct an invalid native event name
 
 ```gherkin
-Given a developer sends a signed native wrapper whose domain has dots or whose name has an invalid or empty segment
+Given a developer sends a signed native wrapper whose name has an invalid or empty segment
 When ingress checks the wrapper
 Then it returns a client error and publishes no event
 ```
@@ -211,6 +237,51 @@ Given two projects reuse a secret reference name with different values in their 
 When a developer delivers to one source and inspects configuration or diagnostics
 Then only that project's value verifies and neither value is printed
 And a process environment value cannot supply or override the source secret
+```
+
+### UC-IF29: Receive a payload-only sender's event name
+
+```gherkin
+Given a developer declares a signed source with name_from naming a top-level payload field
+When its JSON object supplies a string that normalizes to a valid event name
+Then ingress publishes domain dot normalized name and preserves the whole body as data
+But when the field is absent, nonstring or normalizes to an invalid name
+Then ingress returns a client error and relays nothing
+```
+
+### UC-IF30: Receive a single-kind sender's payload
+
+```gherkin
+Given a developer declares a signed source with a fixed valid name
+When a verified JSON object arrives
+Then ingress publishes domain dot configured name and preserves the whole body as data
+```
+
+### UC-IF31: Keep undeclared domains closed
+
+```gherkin
+Given a developer declares one domain source for a project
+When a correctly signed request targets another undeclared domain
+Then ingress returns not found and relays nothing
+```
+
+### UC-IF32: Verify a generic HMAC sender
+
+```gherkin
+Given a developer declares hmac-sha256 with its signature header and current and previous secrets
+When either secret signs the original bytes with a hex digest optionally prefixed by sha256=
+Then ingress accepts the verified delivery
+But when the signature is absent, malformed, duplicated or incorrect
+Then ingress rejects it without relay
+```
+
+### UC-IF33: Isolate sources by their declared domains
+
+```gherkin
+Given a developer declares several domains with their own signing references in one project
+When identical body bytes arrive at each source
+Then each endpoint verifies only its domain's secret and publishes its own domain-qualified type and subject
+And source-scoped claims do not suppress another domain's delivery
 ```
 
 ## Known caveats

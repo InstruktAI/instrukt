@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+assertion_line: 116
 expression: stdout
 ---
-[PROJECT]/instrukt.yaml: webhooks: `webhooks.previous_secret` a declared previous_secret must be an exact ${NAME} reference
+[PROJECT]/instrukt.yaml: webhooks: `webhooks` declared optional source fields cannot be null

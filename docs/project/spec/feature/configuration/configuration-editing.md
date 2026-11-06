@@ -52,14 +52,17 @@ default and the global layer with `--global`.
 
 The same revision-checked patch validates raw source references before
 interpolation and checks the full effective event switch. Invalid source shapes,
-protocols, layer placement or a source with events off refuse atomically.
+domain keys, verification schemes, conflicting name sources, layer placement or a source with events off refuse atomically.
 Only ingress requires the declared project's nonblank `.env` values;
 non-ingress configuration may carry reference names without values. Secret
 resolution errors name project and reference, never value. `get`, `get --json`,
 revision reports and patch diagnostics retain or mask secret references;
 expanded signing/Redis credentials never enter their output. Reference text is
 stored unexpanded. No config read or patch installs services. The next received
-request observes a valid source change without receiver restart.
+request observes a valid source change without receiver restart. Patches address
+`webhooks.<domain>`; that domain selects `/hooks/inbound/project/<slug>/<domain>`
+and the event type prefix. Source fields are `secret`, `previous_secret`, `verify`,
+`header`, `name_from` and `name` under the inbound framework contract.
 
 ### Module infrastructure workflow
 

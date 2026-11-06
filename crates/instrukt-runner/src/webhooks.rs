@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
-use instrukt_core::config::{Configuration, Env, Module, WebhookProtocol};
+use instrukt_core::config::{Configuration, Env, Module, WebhookProtocol, webhook_domain};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
 use instrukt_core::machine::machine_id;
@@ -123,23 +123,21 @@ pub fn serve(
     }
 }
 
-fn route(url: &str) -> Option<(WebhookProtocol, ProjectSlug)> {
-    let (protocol, slug) = if let Some(slug) = url.strip_prefix("/hooks/inbound/project/") {
-        (WebhookProtocol::Native, slug)
-    } else {
-        (
-            WebhookProtocol::Github,
-            url.strip_prefix("/hooks/inbound/github/project/")?,
-        )
-    };
-    Some((protocol, ProjectSlug::parse(slug).ok()?))
+fn route(url: &str) -> Option<(ProjectSlug, String)> {
+    let (slug, domain) = url
+        .strip_prefix("/hooks/inbound/project/")?
+        .split_once('/')?;
+    if !webhook_domain(domain) {
+        return None;
+    }
+    Some((ProjectSlug::parse(slug).ok()?, domain.to_owned()))
 }
 
-fn header(request: &Request, name: &'static str) -> Option<String> {
+fn header(request: &Request, name: &str) -> Option<String> {
     let mut headers = request
         .headers()
         .iter()
-        .filter(|header| header.field.equiv(name));
+        .filter(|header| header.field.as_str().as_str().eq_ignore_ascii_case(name));
     let value = headers.next()?.value.as_str().to_owned();
     headers.next().is_none().then_some(value)
 }
@@ -151,7 +149,7 @@ fn receive(
     request: &mut Request,
     now: Timestamp,
 ) -> (u16, String) {
-    let Some((protocol, project)) = route(request.url()) else {
+    let Some((project, domain)) = route(request.url()) else {
         return (404, "endpoint absent\n".into());
     };
     let fail_config = || {
@@ -182,7 +180,7 @@ fn receive(
         Ok(sources) => sources,
         Err(_) => return fail_config(),
     };
-    let Some(source) = sources.get(&protocol) else {
+    let Some(source) = sources.get(&domain) else {
         return (404, "endpoint absent\n".into());
     };
     match config.module_enabled(Module::Events) {
@@ -197,20 +195,20 @@ fn receive(
         Ok(secrets) => secrets,
         Err(error) => return (500, format!("project {project}: {error}\n")),
     };
-    let signature_name = match protocol {
-        WebhookProtocol::Native => "X-Hook-Signature",
-        WebhookProtocol::Github => "X-Hub-Signature-256",
+    let Ok(protocol) = source.protocol() else {
+        return fail_config();
     };
-    let signature = header(request, signature_name);
+    let signature = header(request, source.signature_header());
     let mut bytes = Vec::new();
     if request.as_reader().read_to_end(&mut bytes).is_err() {
         return (400, "invalid body\n".into());
     }
-    if !_protocol::verify(&bytes, signature.as_deref(), &secrets) {
+    if !_protocol::verify(&bytes, signature.as_deref(), &secrets, protocol) {
         return (401, "signature required or invalid\n".into());
     }
     let parsed = _protocol::decode(
-        protocol,
+        source,
+        &domain,
         &bytes,
         header(request, "Content-Type").as_deref(),
         header(request, "X-GitHub-Event").as_deref(),
@@ -225,6 +223,7 @@ fn receive(
     };
     let identity = delivery.unwrap_or_else(|| format!("{:x}", Sha256::digest(&bytes)));
     let claim = occurrence_id(&[
+        &domain,
         protocol.as_str(),
         "project",
         project.as_str(),
@@ -238,7 +237,7 @@ fn receive(
             source: computer.into(),
             subject: EventRef::new(
                 ReferenceKind::InboundSource,
-                &format!("{}:project:{project}", protocol.as_str()),
+                &format!("{domain}:project:{project}"),
             )?,
             time: now.try_into()?,
             data,
@@ -246,7 +245,7 @@ fn receive(
             home_owner: EventHomeOwner::Unresolved,
             related: Vec::new(),
             causationid: None,
-            extensions: BTreeMap::new(),
+            extensions: BTreeMap::from([("inbound_verify".into(), protocol.as_str().into())]),
         })
     })();
     let result = (|| -> Result<(), crate::transport::TransportError> {

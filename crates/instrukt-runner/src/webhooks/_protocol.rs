@@ -1,14 +1,24 @@
 //! Verification precedes decoding, always over original bytes.
 use hmac::{Hmac, Mac};
-use instrukt_core::config::{SigningSecrets, WebhookProtocol};
+use instrukt_core::config::{
+    SigningSecrets, WebhookProtocol, WebhookSource, webhook_domain, webhook_name,
+};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::Sha256;
 
-pub(super) fn verify(body: &[u8], signature: Option<&str>, secrets: &SigningSecrets) -> bool {
+pub(super) fn verify(
+    body: &[u8],
+    signature: Option<&str>,
+    secrets: &SigningSecrets,
+    protocol: WebhookProtocol,
+) -> bool {
     let Some(signature) = signature
-        .and_then(|text| text.strip_prefix("sha256="))
+        .and_then(|text| {
+            text.strip_prefix("sha256=")
+                .or_else(|| (protocol == WebhookProtocol::HmacSha256).then_some(text))
+        })
         .and_then(|text| hex::decode(text).ok())
         .filter(|bytes| bytes.len() == 32)
     else {
@@ -30,27 +40,50 @@ pub(super) fn verify(body: &[u8], signature: Option<&str>, secrets: &SigningSecr
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Native {
-    domain: String,
     name: String,
     payload: Map<String, Value>,
 }
 
 pub(super) fn decode(
-    protocol: WebhookProtocol,
+    source: &WebhookSource,
+    domain: &str,
     body: &[u8],
     content_type: Option<&str>,
     github_type: Option<&str>,
 ) -> Result<(String, Map<String, Value>), ()> {
+    let protocol = source.protocol().map_err(|_| ())?;
+    if protocol != WebhookProtocol::Github
+        && (source.name().is_some() || source.name_from().is_some())
+    {
+        let data: Map<String, Value> = serde_json::from_slice(body).map_err(|_| ())?;
+        let name = if let Some(name) = source.name() {
+            name.to_owned()
+        } else {
+            let raw = source
+                .name_from()
+                .and_then(|field| data.get(field))
+                .and_then(Value::as_str)
+                .ok_or(())?;
+            raw.chars()
+                .map(|ch| match ch {
+                    'A'..='Z' => ch.to_ascii_lowercase(),
+                    'a'..='z' | '0'..='9' | '_' | '.' => ch,
+                    _ => '_',
+                })
+                .collect()
+        };
+        if !webhook_name(&name) {
+            return Err(());
+        }
+        return Ok((format!("{domain}.{name}"), data));
+    }
     match protocol {
-        WebhookProtocol::Native => {
+        WebhookProtocol::Native | WebhookProtocol::HmacSha256 => {
             let native: Native = serde_json::from_slice(body).map_err(|_| ())?;
-            if native.domain.contains('.')
-                || !segment(&native.domain)
-                || !native.name.split('.').all(segment)
-            {
+            if !webhook_name(&native.name) {
                 return Err(());
             }
-            Ok((format!("{}.{}", native.domain, native.name), native.payload))
+            Ok((format!("{domain}.{}", native.name), native.payload))
         }
         WebhookProtocol::Github => {
             let media = content_type
@@ -66,12 +99,12 @@ pub(super) fn decode(
                 serde_json::from_slice::<Map<String, Value>>(body).map_err(|_| ())?
             };
             let name = github_type.unwrap_or_default().to_ascii_lowercase();
-            let name = if segment(&name) {
+            let name = if webhook_domain(&name) {
                 name.as_str()
             } else {
                 "unknown"
             };
-            Ok((format!("github.{name}"), data))
+            Ok((format!("{domain}.{name}"), data))
         }
     }
 }
@@ -96,10 +129,4 @@ fn strict_form(body: &[u8]) -> Result<Map<String, Value>, ()> {
         return Err(());
     }
     serde_json::from_str(&fields[0].1).map_err(|_| ())
-}
-
-fn segment(text: &str) -> bool {
-    let mut bytes = text.bytes();
-    bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
-        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }

@@ -40,7 +40,7 @@ enable events. Installation and withdrawal are owned by
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
-| `webhooks.native`, `webhooks.github` | project only; each takes required `secret` and optional `previous_secret` references | runner intake |
+| `webhooks.<domain>` | project only; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
@@ -85,9 +85,13 @@ signing values. Source secret fields are exact raw `${NAME}` references;
 ingress validates their nonblank values solely in that project's `.env`, with
 no process-environment fallback. A declared previous secret follows the same
 rules as current. Configuration reads preserve references and never expand
-source signing material. Source edits apply at the next request.
+source signing material. Source edits apply at the next request. The domain key selects
+`/hooks/inbound/project/<slug>/<domain>` and the emitted type prefix; it is
+never taken from a body field. Sources use native `{name, payload}`, a payload
+field through `name_from`, fixed `name`, or GitHub normalization through
+`verify: github`, as defined by the inbound framework.
 
-Invalid protocols, misplaced keys, malformed references, unreadable ingress
+Invalid domains, unknown verification schemes, conflicting name sources, misplaced keys, malformed references, unreadable ingress
 values and configured sources with effective events off are findings. Unknown
 keys remain findings; no direction or `sources` subkey is accepted. The typed
 configuration also generates editor schemas. Schema validation itself starts

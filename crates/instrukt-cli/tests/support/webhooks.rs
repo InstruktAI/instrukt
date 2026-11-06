@@ -129,7 +129,7 @@ impl Receiver {
         extra: &[(&str, &str)],
     ) -> (u16, String) {
         let signature = signature(body, secret);
-        let header = if route.contains("/github/") {
+        let header = if route.ends_with("/github") {
             "X-Hub-Signature-256"
         } else {
             "X-Hook-Signature"
@@ -186,6 +186,6 @@ pub fn events(redis: &RedisServer) -> Vec<EventEnvelope> {
         .collect()
 }
 
-pub const NATIVE: &str = "/hooks/inbound/project/fork";
-pub const GITHUB: &str = "/hooks/inbound/github/project/fork";
-pub const BODY: &[u8] = br#"{"domain":"erp","name":"invoice.paid","payload":{"invoice":42}}"#;
+pub const NATIVE: &str = "/hooks/inbound/project/fork/erp";
+pub const GITHUB: &str = "/hooks/inbound/project/fork/github";
+pub const BODY: &[u8] = br#"{"name":"invoice.paid","payload":{"invoice":42}}"#;

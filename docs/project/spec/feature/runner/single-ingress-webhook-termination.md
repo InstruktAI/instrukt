@@ -36,28 +36,28 @@ Source declarations themselves refresh per request.
 
 ### Publication and source-scoped repeat claims
 
-Every verified, well-formed native/GitHub delivery is published to cluster Redis
+Every verified, well-formed domain-source delivery is published to cluster Redis
 regardless of matching subscribers or local reaction readiness. Its source is
 the ingress computer; origin is the declaring project; subject is its typed
-inbound source including protocol. It references no session, regardless of
+inbound source including domain. It references no session, regardless of
 request identity headers. Data is the producer document/native payload.
 Relayed names require no per-name registration.
 
 One cluster operation claims and appends a new authenticated delivery without
-interleaving. The claim key includes protocol, declaring home, provider delivery
-ID (GitHub's `X-GitHub-Delivery`, when present) or SHA-256 digest of verified raw
+interleaving. The claim key includes domain, verification scheme, declaring home,
+provider delivery ID (GitHub's `X-GitHub-Delivery`, when present) or SHA-256 digest of verified raw
 body, then emitted-event index. Claim lifetime is three days. A repeat claim is
 accepted without a second append only when that claim represents successful
 publication. Failed append leaves no false completed claim that swallows retry.
-Two source homes or protocols never share a claim. Native and GitHub each emit
-one event per verified document in this scope.
+Two source domains, homes or verification schemes never share a claim. All
+admitted sources emit one event per verified document in this scope.
 
 Ingress acceptance ends at append or recognized duplicate, never at a local
 SQLite-only buffer. Unavailable cluster Redis yields transient failure. The
 receiver does not invoke procedure matching or provider reactions inline.
 All reactions use independent stream consumers. Protocol interpretation follows
-the typed source reference, not the event type prefix: a native `github.push`
-stays native. GitHub normalization is shared wherever that provider document is
+the retained `inbound_verify` extension, not the event type prefix: a native
+`github.push` stays native. GitHub normalization is shared wherever that provider document is
 translated, retaining original timestamp and payload; this does not install a
 second generic handler registry or postponed conversation adapters.
 
@@ -140,15 +140,15 @@ Then no session reference is inferred from those headers
 ```gherkin
 Given a developer sends a signed native event named github.push
 When it reaches stream consumers
-Then its subject still identifies the native source and it receives no GitHub provider treatment
+Then its domain-qualified subject and verification metadata still identify the native source and it receives no GitHub provider treatment
 ```
 
 ### UC-SIT-11: Distinguish the same facts received through different protocols
 
 ```gherkin
-Given a developer receives the same type, project and payload through native and GitHub endpoints
+Given a developer receives the same type, project and payload before and after changing a domain source from native to GitHub verification
 When their consumer inspects the events
-Then protocol-qualified source subjects keep them distinguishable and their claims do not collide
+Then verification metadata keeps them distinguishable and their claims do not collide
 ```
 
 ## Known caveats

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/editor-schemas.rs
+assertion_line: 130
 expression: "String::from_utf8(bytes).unwrap()"
 ---
 {
@@ -144,42 +145,107 @@ expression: "String::from_utf8(bytes).unwrap()"
     },
     "webhooks": {
       "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "native": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "secret"
-          ],
-          "properties": {
-            "secret": {
-              "type": "string",
-              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
-            },
-            "previous_secret": {
-              "type": "string",
-              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
-            }
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "type": "string",
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+          },
+          "previous_secret": {
+            "type": "string",
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+          },
+          "verify": {
+            "enum": [
+              "native",
+              "github",
+              "hmac-sha256"
+            ],
+            "default": "native"
+          },
+          "header": {
+            "type": "string",
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          },
+          "name_from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
           }
         },
-        "github": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "secret"
-          ],
-          "properties": {
-            "secret": {
-              "type": "string",
-              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "name",
+                "name_from"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "verify"
+              ],
+              "properties": {
+                "verify": {
+                  "const": "github"
+                }
+              }
             },
-            "previous_secret": {
-              "type": "string",
-              "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "name"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "name_from"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "verify"
+              ],
+              "properties": {
+                "verify": {
+                  "const": "hmac-sha256"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "header"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "header"
+                ]
+              }
             }
           }
-        }
+        ]
       }
     },
     "blueprint": {

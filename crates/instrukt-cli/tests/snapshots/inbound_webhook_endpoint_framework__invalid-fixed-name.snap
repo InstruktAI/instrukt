@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+assertion_line: 116
+expression: stdout
+---
+[PROJECT]/instrukt.yaml: webhooks: `webhooks.erp` name must match the event-name grammar; name_from must be a nonempty top-level field

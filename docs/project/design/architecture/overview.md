@@ -255,7 +255,7 @@ gate; the adapter's send primitive alone does not establish that equivalence.
 
 ```mermaid
 flowchart LR
-  W[Signed native / GitHub request] --> I[One loopback ingress receiver]
+  W[Signed domain-source request] --> I[One loopback ingress receiver]
   I --> C[Cluster Redis: claimed append]
   P[Local source fact + SQLite event row] --> H[Retry publication with stable ID]
   H --> R[Redis selected by scope]
@@ -266,6 +266,14 @@ flowchart LR
   A --> D[SQLite keyed activation acceptance]
   D --> T[A3 runtime handoff: S6 feasibility gate]
 ```
+
+Ingress addresses `/hooks/inbound/project/<slug>/<domain>`. The project
+`webhooks.<domain>` declaration selects secret references, verification
+(native, GitHub or generic HMAC-SHA256) and exactly one event-name source:
+native `{name, payload}`, `name_from`, fixed `name` or GitHub normalization.
+The event type is `<domain>.<name>` and its subject identifies that domain and
+project; `inbound_verify` retains protocol provenance. Undeclared domains have
+no endpoint. Company/person intake remains unavailable.
 
 Local commit and stream acceptance are separate. Existing event rows supply a
 retryable publication handover; ingress accepts only after cluster append or a

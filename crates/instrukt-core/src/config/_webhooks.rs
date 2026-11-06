@@ -14,6 +14,8 @@ use crate::machine::MachineId;
 pub enum WebhookProtocol {
     Native,
     Github,
+    #[serde(rename = "hmac-sha256")]
+    HmacSha256,
 }
 
 impl WebhookProtocol {
@@ -21,6 +23,7 @@ impl WebhookProtocol {
         match self {
             Self::Native => "native",
             Self::Github => "github",
+            Self::HmacSha256 => "hmac-sha256",
         }
     }
 }
@@ -29,11 +32,39 @@ impl WebhookProtocol {
 #[serde(deny_unknown_fields)]
 pub struct WebhookSource {
     secret: String,
+    #[serde(default = "native", skip_serializing_if = "is_native")]
+    verify: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    header: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     previous_secret: Option<String>,
 }
 
-pub type WebhookSources = BTreeMap<WebhookProtocol, WebhookSource>;
+pub type WebhookSources = BTreeMap<String, WebhookSource>;
+
+fn native() -> String {
+    "native".into()
+}
+
+fn is_native(value: &str) -> bool {
+    value == "native"
+}
+
+/// One event-domain segment, shared by declarations and HTTP routing.
+pub fn webhook_domain(text: &str) -> bool {
+    let mut bytes = text.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// An event name consists of one or more nonempty domain-shaped segments.
+pub fn webhook_name(text: &str) -> bool {
+    text.split('.').all(webhook_domain)
+}
 
 /// Expanded values never implement Debug or Serialize.
 pub struct SigningSecrets {
@@ -73,25 +104,69 @@ pub(super) fn parse(raw: Option<&Value>) -> Result<WebhookSources, ConfigError> 
         return Ok(BTreeMap::new());
     };
     // Do not include serde's error: a malformed declaration may contain literal material.
-    let sources: WebhookSources = serde_yaml_ng::from_value(raw.clone()).map_err(|_| invalid("webhooks", "expected only native/github source maps with required secret and optional previous_secret"))?;
+    let sources: WebhookSources = serde_yaml_ng::from_value(raw.clone()).map_err(|_| invalid("webhooks", "expected domain-keyed source maps with required secret and optional previous_secret, verify, header, name_from or name"))?;
     if raw.as_mapping().is_some_and(|sources| {
-        sources
-            .values()
-            .any(|source| source.get("previous_secret").is_some_and(Value::is_null))
+        sources.values().any(|source| {
+            ["previous_secret", "header", "name", "name_from"]
+                .iter()
+                .any(|field| source.get(*field).is_some_and(Value::is_null))
+        })
     }) {
         return Err(invalid(
-            "webhooks.previous_secret",
-            "a declared previous_secret must be an exact ${NAME} reference",
+            "webhooks",
+            "declared optional source fields cannot be null",
         ));
     }
-    for (protocol, source) in &sources {
+    for (domain, source) in &sources {
+        let key = format!("webhooks.{domain}");
+        if !webhook_domain(domain) {
+            return Err(invalid(
+                "webhooks",
+                "source domains must match [a-z][a-z0-9_]*",
+            ));
+        }
+        let protocol = source.protocol()?;
+        if source.name.is_some() && source.name_from.is_some()
+            || protocol == WebhookProtocol::Github
+                && (source.name.is_some() || source.name_from.is_some())
+        {
+            return Err(invalid(
+                &key,
+                "choose exactly one name source: native body, name_from, name or verify: github",
+            ));
+        }
+        if source
+            .name
+            .as_deref()
+            .is_some_and(|name| !webhook_name(name))
+            || source.name_from.as_deref().is_some_and(str::is_empty)
+        {
+            return Err(invalid(
+                &key,
+                "name must match the event-name grammar; name_from must be a nonempty top-level field",
+            ));
+        }
+        let header_valid = source.header.as_deref().is_some_and(|header| {
+            !header.is_empty()
+                && header
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        });
+        if protocol == WebhookProtocol::HmacSha256 && !header_valid
+            || protocol != WebhookProtocol::HmacSha256 && source.header.is_some()
+        {
+            return Err(invalid(
+                &key,
+                "hmac-sha256 requires a valid HTTP header name; native and github use their built-in headers",
+            ));
+        }
         for (field, text) in [
             ("secret", Some(&source.secret)),
             ("previous_secret", source.previous_secret.as_ref()),
         ] {
             if text.is_some_and(|text| reference(text).is_none()) {
                 return Err(invalid(
-                    &format!("webhooks.{}.{field}", protocol.as_str()),
+                    &format!("webhooks.{domain}.{field}"),
                     "expected an exact ${NAME} reference; literal signing material is forbidden",
                 ));
             }
@@ -115,6 +190,45 @@ pub(super) fn ingress(raw: Option<&Value>) -> Result<Ingress, ConfigError> {
 }
 
 impl WebhookSource {
+    pub fn protocol(&self) -> Result<WebhookProtocol, ConfigError> {
+        match self.verify.as_str() {
+            "native" => Ok(WebhookProtocol::Native),
+            "github" => Ok(WebhookProtocol::Github),
+            "hmac-sha256" => Ok(WebhookProtocol::HmacSha256),
+            value
+                if !value.is_empty()
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') =>
+            {
+                Err(invalid(
+                    "webhooks.verify",
+                    &format!("unknown verification scheme {value}"),
+                ))
+            }
+            _ => Err(invalid(
+                "webhooks.verify",
+                "unknown verification scheme (expected native, github or hmac-sha256)",
+            )),
+        }
+    }
+
+    pub fn signature_header(&self) -> &str {
+        match self.verify.as_str() {
+            "github" => "X-Hub-Signature-256",
+            "hmac-sha256" => self.header.as_deref().unwrap_or_default(),
+            _ => "X-Hook-Signature",
+        }
+    }
+
+    pub fn name_from(&self) -> Option<&str> {
+        self.name_from.as_deref()
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     pub fn resolve(&self, project: &Path) -> Result<SigningSecrets, ConfigError> {
         let error = |reference: &str| {
             invalid(
@@ -156,14 +270,25 @@ impl WebhookSource {
 
 pub(super) fn editor_schema() -> serde_json::Value {
     use serde_json::json;
+    let reference = json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
     let source = json!({
         "type": "object", "additionalProperties": false, "required": ["secret"],
         "properties": {
-            "secret": {"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"},
-            "previous_secret": {"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"}
-        }
+            "secret": reference, "previous_secret": reference,
+            "verify": {"enum": ["native", "github", "hmac-sha256"], "default": "native"},
+            "header": {"type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
+            "name_from": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"}
+        },
+        "allOf": [
+            {"not": {"required": ["name", "name_from"]}},
+            {"if": {"required": ["verify"], "properties": {"verify": {"const": "github"}}},
+             "then": {"not": {"anyOf": [{"required": ["name"]}, {"required": ["name_from"]}]}}},
+            {"if": {"required": ["verify"], "properties": {"verify": {"const": "hmac-sha256"}}},
+             "then": {"required": ["header"]}, "else": {"not": {"required": ["header"]}}}
+        ]
     });
-    json!({"type": "object", "additionalProperties": false, "properties": {"native": source, "github": source}})
+    json!({"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": source})
 }
 
 /// Quote only unescaped interpolation markers; no variable lookup can occur in

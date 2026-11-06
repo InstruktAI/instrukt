@@ -36,10 +36,11 @@ names a home path.
   `instrukt docs validate` or `instrukt config validate` never disagree about
   which keys a file may hold. A key the schema does not declare is reported by
   the editor as it is by the validator.
-- The configuration type includes direct project `webhooks.native|github`
-  declarations with required current and optional previous secret references.
+- The configuration type includes direct project `webhooks.<domain>`
+  declarations with required current and optional previous secret references,
+  native/GitHub/generic HMAC verification and exclusive event-name sources.
   Project editor schemas reject global-only Redis and ingress keys; source
-  protocols and reference shapes match configuration validation. Runtime ingress
+  domains, verification/name-source constraints and reference shapes match configuration validation. Runtime ingress
   secret resolution remains a validation operation, not secret data in a schema.
 - The schemas are a pure function of the installed binary: the same instrukt
   version writes the same bytes on every computer.

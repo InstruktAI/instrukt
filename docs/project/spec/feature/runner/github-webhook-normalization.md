@@ -8,7 +8,8 @@ delivered_by: [instrukt-first-build]
 
 The built-in GitHub normalizer translates verified GitHub input through one
 shared mapping. Projects declare their own GitHub source; procedures consume
-ordinary `github.<event>` platform facts. Producers of ours use native mapping.
+ordinary `<domain>.<event>` platform facts (`github.<event>` for the `github`
+source). Producers of ours use native mapping.
 
 ## Canonical fields
 
@@ -33,10 +34,12 @@ summary for a receiving reaction, not additional envelope routing criteria.
 For `ping` only, string `zen` and integer/string `hook_id`, when present, are
 passed as metadata. No built-in ping handler or installation updater is created.
 
-JSON and the sole form `payload` encoding produce the same `github.<event>`
+The source declares `verify: github` at `/hooks/inbound/project/<slug>/<domain>`.
+JSON and the sole form `payload` encoding produce the same `<domain>.<event>`
 fact after raw-body verification. Its origin is the declaring project, subject
-is `inbound_source:github:project:<slug>` and source is ingress. A derived provider
-view names the repository and retains source provenance; it does not replace the
+is `inbound_source:<domain>:project:<slug>` and source is ingress.
+The `inbound_verify: github` extension selects provider interpretation even when
+the domain is not `github`. A derived provider view names the repository and retains source provenance; it does not replace the
 platform origin with the repository or enable property-based procedure routing.
 
 ## Use cases
@@ -94,7 +97,7 @@ Then all four property slots exist and unavailable string facts are explicit nul
 ```gherkin
 Given a developer has declared a project GitHub source
 When its verified delivery is relayed
-Then the ordinary platform event has github dot header type, that project origin, its typed GitHub-source subject and the parsed document as data
+Then the ordinary platform event has declared domain dot header type, that project origin, its typed GitHub-source subject and the parsed document as data
 ```
 
 ## Known caveats
