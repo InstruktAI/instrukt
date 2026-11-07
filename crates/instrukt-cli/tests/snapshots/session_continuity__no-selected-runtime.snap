@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+expression: "shown(&env, refusal.get_output())"
+---
+instrukt: no runtime is chosen; set global `runner.runtime: t3`

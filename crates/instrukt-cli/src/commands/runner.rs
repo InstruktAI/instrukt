@@ -4,22 +4,20 @@
 //! machine's time zone and the process environment, and hands them to
 //! `instrukt_runner`.
 
-use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use instrukt_core::config::{Configuration, Env, Module};
-use instrukt_core::ids::{SessionRef, SnippetId, TodoSlug};
-use instrukt_runner::agents::{agent_order, global_order};
+use instrukt_core::config::{Configuration, Module};
+use instrukt_core::ids::SessionRef;
 use instrukt_runner::install::{self, Scheduler, WakeUp};
-use instrukt_runner::interfaces::{ProjectRef, SessionBinding};
+use instrukt_runner::keyed;
 use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
-use instrukt_runner::sessions::{Answer, Ending, Instruction, Observation, Sessions, StartRequest};
-use instrukt_runner::standing::{self, StartResolution};
+use instrukt_runner::sessions::Sessions;
+
 use instrukt_runner::state::RunnerState;
-use instrukt_runner::{launch, ticks};
+use instrukt_runner::ticks;
 use jiff::tz::TimeZone;
 use serde_json::json;
 
@@ -37,7 +35,7 @@ pub struct RunArgs {}
 /// runner lock.
 pub fn run_run(_args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     require_runner_modules(ctx, "run")?;
-    let env = Env::from_process();
+    let env = crate::wiring::environment(ctx)?;
     let tz = TimeZone::system();
     let wiring = wiring::runner_wiring(ctx)?;
     let cx = RunnerContext {
@@ -58,7 +56,7 @@ pub struct TickArgs {}
 /// while `instrukt run` holds the runner lock.
 pub fn run_tick(_args: TickArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     require_runner_modules(ctx, "tick")?;
-    let env = Env::from_process();
+    let env = crate::wiring::environment(ctx)?;
     let tz = TimeZone::system();
     let wiring = wiring::runner_wiring(ctx)?;
     let cx = RunnerContext {
@@ -120,17 +118,7 @@ pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
 }
 
-/// The exit status of a call whose verb the runtime fills as an `agent`
-/// instruction (`session-continuity`, "Verb kinds").
-const YOURS_TO_DO: u8 = 3;
-
 #[derive(Debug, clap::Args)]
-#[command(
-    after_help = "Exit status 3, \"yours to do\": the runtime fills this call as an \
-instruction for you. instrukt ran nothing; it printed the instruction (with the call's inputs \
-after it, one per line). Carry it out with your own runtime's tools; that completes the call. \
-It is neither success nor failure."
-)]
 pub struct SessionsArgs {
     #[command(subcommand)]
     command: SessionsCommand,
@@ -138,22 +126,8 @@ pub struct SessionsArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum SessionsCommand {
-    /// Start a session through the runtime mapping; prints its id.
-    Run(SessionsRunArgs),
-    /// Send text to a session; prints its id.
-    Send(SendArgs),
-    /// Print a session's status: running, needs-input, ended ok, ended
-    /// failed or gone.
-    Alive(IdArgs),
-    /// Print a session's conversation.
-    Conversation(IdArgs),
-    /// Link two sessions of one runtime, or remove their link.
-    Link(LinkArgs),
-    /// End a session, your own (`self`), or a todo's bound sessions
-    /// (`--todo`); says so when the runtime needs no ending.
-    End(EndArgs),
-    /// Look up earlier conversations in the runtime you are running in.
-    History(HistoryArgs),
+    /// List this project's active and settled runtime threads, newest activity first.
+    List(ListArgs),
     /// Resolve a standing agent's start whose result never arrived: bind
     /// the session the runtime did create, or declare that none was.
     ResolveStart(ResolveStartArgs),
@@ -162,12 +136,12 @@ enum SessionsCommand {
 #[derive(Debug, clap::Args)]
 #[command(group(clap::ArgGroup::new("resolution").required(true).args(["session", "none"])))]
 struct ResolveStartArgs {
-    /// The standing agent, `<procedure>@<project>`, as its anomaly names it.
-    agent: String,
+    /// Durable start key, or the home-standing shorthand `<procedure>@<project>`.
+    key: String,
     /// The session the runtime created, `<runtime>:<id>`.
     #[arg(long)]
     session: Option<SessionRef>,
-    /// No session was created; the next wake-up starts one afresh.
+    /// Confirm no thread was created and no creation remains in flight; retry the same key.
     #[arg(long)]
     none: bool,
     #[arg(long)]
@@ -175,452 +149,107 @@ struct ResolveStartArgs {
 }
 
 #[derive(Debug, clap::Args)]
-struct SessionsRunArgs {
-    /// The procedure the session starts into.
+struct ListArgs {
+    /// Settled-thread window (default 3d), e.g. 24h or 30m. Active threads always show.
+    #[arg(long,value_parser=parse_since,conflicts_with="all")]
+    since: Option<Duration>,
+    /// Include all settled threads as well as all active threads.
     #[arg(long)]
-    procedure: Option<SnippetId>,
-    /// The procedure's arguments, as one text.
-    #[arg(long, allow_hyphen_values = true)]
-    args: Option<String>,
-    /// Additional briefing, from a file or `-` for standard input.
-    #[arg(long)]
-    brief: Option<String>,
-    /// A worktree the runtime creates or reattaches.
-    #[arg(long)]
-    worktree: Option<String>,
-    /// Record the session as this todo's binding for the procedure's role.
-    #[arg(long)]
-    todo: Option<TodoSlug>,
-    /// Render as JSON.
+    all: bool,
     #[arg(long)]
     json: bool,
 }
 
-#[derive(Debug, clap::Args)]
-struct SendArgs {
-    /// The session, `<runtime>:<id>`.
-    session: SessionRef,
-    /// The text, as one argument.
-    #[arg(allow_hyphen_values = true)]
-    text: String,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, clap::Args)]
-struct IdArgs {
-    /// The session, `<runtime>:<id>`.
-    session: SessionRef,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, clap::Args)]
-#[command(group(clap::ArgGroup::new("target").required(true).args(["session", "todo"])))]
-struct EndArgs {
-    /// The session, `<runtime>:<id>`, or `self` for the caller's own
-    /// session; ending yourself is always your last step.
-    session: Option<EndTarget>,
-    /// End each session bound to this todo except the caller's own.
-    /// Release the todo first; this checks no claim.
-    #[arg(long)]
-    todo: Option<TodoSlug>,
-    #[arg(long)]
-    json: bool,
-}
-
-/// What `sessions end` addresses.
-#[derive(Debug, Clone)]
-enum EndTarget {
-    /// The caller's own session.
-    Caller,
-    Session(SessionRef),
-}
-
-impl std::str::FromStr for EndTarget {
-    type Err = instrukt_core::ids::IdError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "self" {
-            Ok(EndTarget::Caller)
-        } else {
-            SessionRef::parse(s).map(EndTarget::Session)
-        }
-    }
-}
-
-#[derive(Debug, clap::Args)]
-struct HistoryArgs {
-    #[command(subcommand)]
-    command: HistoryCommand,
-}
-
-#[derive(Debug, clap::Subcommand)]
-enum HistoryCommand {
-    /// Find earlier conversations by text; names their session ids.
-    Search(HistorySearchArgs),
-    /// Show one conversation's messages.
-    Show(HistoryShowArgs),
-}
-
-#[derive(Debug, clap::Args)]
-struct HistorySearchArgs {
-    /// The text to search for, as one argument.
-    #[arg(allow_hyphen_values = true)]
-    text: String,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, clap::Args)]
-struct HistoryShowArgs {
-    /// The session id, as a search named it or a record carries it.
-    id: String,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, clap::Args)]
-struct LinkArgs {
-    a: SessionRef,
-    b: SessionRef,
-    /// Remove the link instead.
-    #[arg(long)]
-    remove: bool,
-    #[arg(long)]
-    json: bool,
+fn parse_since(text: &str) -> Result<Duration, String> {
+    let at = text
+        .find(|c: char| !c.is_ascii_digit())
+        .ok_or_else(|| "duration needs a unit: s, m, h, d or w".to_owned())?;
+    let (number, unit) = text.split_at(at);
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| "duration needs a nonnegative integer".to_owned())?;
+    let scale = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        "w" => 604800,
+        _ => return Err("duration unit must be s, m, h, d or w".into()),
+    };
+    number
+        .checked_mul(scale)
+        .map(Duration::from_secs)
+        .ok_or_else(|| "duration is too large".into())
 }
 
 pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     require_runner_modules(ctx, "sessions")?;
-    let env = Env::from_process();
+    let env = crate::wiring::environment(ctx)?;
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
-    let sessions = Sessions::new(&config, &env);
+    let home = ctx.home.clone();
+    let sessions = Sessions::new(&home, &config, &env);
     match args.command {
-        SessionsCommand::Run(args) => sessions_run(args, ctx, &config, &sessions),
-        SessionsCommand::Send(args) => {
-            sessions.send(&args.session, &args.text)?;
-            print_session(ctx, &args.session, args.json)?;
-            Ok(ExitCode::SUCCESS)
-        }
-        SessionsCommand::Alive(args) => match sessions.alive(&args.session)? {
-            Observation::State(state) => {
-                if args.json {
-                    ctx.out
-                        .json(&json!({"session": args.session.to_string(), "status": state}))?;
-                } else {
-                    ctx.out.line(state.as_str())?;
-                }
-                Ok(ExitCode::SUCCESS)
-            }
-            Observation::Unobservable(reason) => {
-                if args.json {
-                    ctx.out.json(&json!({"session": args.session.to_string(), "status": "unobservable", "reason": reason}))?;
-                } else {
-                    ctx.out.line("unobservable")?;
-                    tracing::warn!(event = "session_unobservable", session = %args.session, reason);
-                }
-                Ok(ExitCode::FAILURE)
-            }
-        },
-        SessionsCommand::Conversation(args) => {
-            let conversation = sessions.conversation(&args.session)?;
-            if args.json {
-                ctx.out.json(
-                    &json!({"session": args.session.to_string(), "conversation": conversation}),
-                )?;
+        SessionsCommand::List(args) => {
+            let since = if args.all {
+                None
             } else {
-                ctx.out.text(&conversation)?;
+                Some(args.since.unwrap_or(Duration::from_secs(3 * 86400)))
+            };
+            let threads = sessions.list(&ctx.cwd, since, ctx.clock.now())?;
+            if args.json {
+                ctx.out.json(&threads)?;
+            } else {
+                for thread in threads {
+                    ctx.out.line(&format!(
+                        "{} | {} | {} | {}",
+                        thread.session,
+                        thread.title.as_deref().unwrap_or("untitled"),
+                        thread.state,
+                        thread
+                            .last_activity
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "unknown".into())
+                    ))?;
+                }
             }
             Ok(ExitCode::SUCCESS)
-        }
-        SessionsCommand::Link(args) => match sessions.link(&args.a, &args.b, args.remove)? {
-            Answer::YoursToDo(instruction) => yours_to_do(ctx, &instruction, args.json),
-            Answer::Ran(()) => {
-                if args.json {
-                    ctx.out.json(&json!({"kind": "command", "a": args.a.to_string(), "b": args.b.to_string(), "linked": !args.remove}))?;
-                } else if args.remove {
-                    ctx.out
-                        .line(&format!("unlinked {} and {}", args.a, args.b))?;
-                } else {
-                    ctx.out.line(&format!("linked {} and {}", args.a, args.b))?;
-                }
-                Ok(ExitCode::SUCCESS)
-            }
-        },
-        SessionsCommand::History(args) => {
-            let (answer, json) = match args.command {
-                HistoryCommand::Search(args) => (sessions.history_search(&args.text)?, args.json),
-                HistoryCommand::Show(args) => (sessions.history_show(&args.id)?, args.json),
-            };
-            match answer {
-                Answer::YoursToDo(instruction) => yours_to_do(ctx, &instruction, json),
-                Answer::Ran(output) => {
-                    if json {
-                        ctx.out
-                            .json(&json!({"kind": "command", "output": output}))?;
-                    } else {
-                        ctx.out.text(&output)?;
-                    }
-                    Ok(ExitCode::SUCCESS)
-                }
-            }
         }
         SessionsCommand::ResolveStart(args) => {
-            let resolution = match &args.session {
-                Some(session) => StartResolution::Session(session.clone()),
-                None => StartResolution::None,
+            sessions.runner_runtime()?;
+            let key = match args.key.rsplit_once('@') {
+                Some((procedure, project)) if !args.key.starts_with("instrukt:") => {
+                    keyed::standing_key(procedure, project)
+                }
+                _ => args.key.clone(),
             };
-            standing::resolve_start(
-                &RunnerState::new(&ctx.home),
-                &config,
-                &args.agent,
-                &resolution,
+            let invocation =
+                keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
+            keyed::resolve(
+                &invocation,
+                sessions.adapter()?.as_ref(),
+                &key,
+                args.session.as_ref(),
                 ctx.clock.now(),
             )?;
             if args.json {
                 ctx.out.json(&json!({
-                    "agent": args.agent,
+                    "key": key,
                     "session": args.session.as_ref().map(ToString::to_string),
                 }))?;
             } else {
                 match &args.session {
                     Some(session) => ctx
                         .out
-                        .line(&format!("{} is bound to {session}", args.agent))?,
+                        .line(&format!("{} is bound to {session}", args.key))?,
                     None => ctx.out.line(&format!(
                         "{} has no session; the next wake-up starts one",
-                        args.agent
+                        args.key
                     ))?,
                 }
             }
             Ok(ExitCode::SUCCESS)
         }
-        SessionsCommand::End(args) => sessions_end(args, ctx, &config, &sessions),
     }
-}
-
-fn sessions_run(
-    args: SessionsRunArgs,
-    ctx: &mut Ctx,
-    config: &Configuration,
-    sessions: &Sessions<'_>,
-) -> anyhow::Result<ExitCode> {
-    let brief = args.brief.as_deref().map(read_brief).transpose()?;
-    let (message, dispatch, role) = match &args.procedure {
-        Some(id) => {
-            let entry = launch::procedure(&ctx.home, id)?;
-            let prepared = launch::prepare(&entry, args.args.as_deref(), brief.as_deref())?;
-            (prepared.message, prepared.dispatch, prepared.role)
-        }
-        None => {
-            if args.args.is_some() {
-                bail!("--args needs --procedure; a setup-only run takes no arguments");
-            }
-            if args.todo.is_some() {
-                bail!("--todo needs --procedure; a setup-only run binds nothing");
-            }
-            let (Some(_), Some(brief)) = (&args.worktree, brief) else {
-                bail!(
-                    "--procedure is required, except for a setup-only run with --worktree and --brief"
-                );
-            };
-            (brief, None, None)
-        }
-    };
-    let binding = match &args.todo {
-        None => None,
-        Some(todo) => {
-            let Some(role) = role else {
-                bail!(
-                    "the procedure declares no `role`, so --todo has no role to bind the session under"
-                );
-            };
-            let project = project_ref(config)?;
-            let Some(work) = wiring::work_ports(ctx)? else {
-                bail!("--todo records a work binding, which needs `modules.todos` on");
-            };
-            Some((todo.clone(), role, project, work))
-        }
-    };
-    let (global, thinking) = global_order(config);
-    let order = agent_order(None, dispatch.as_ref(), &global, thinking);
-    let started = sessions.start(
-        &order,
-        &StartRequest {
-            message: &message,
-            worktree: args.worktree.as_deref(),
-            cwd: Some(&ctx.cwd),
-        },
-    )?;
-    if let Some((todo, role, project, work)) = binding {
-        work.bindings
-            .bind_session(
-                &project,
-                &todo,
-                &role,
-                &SessionBinding {
-                    session: started.session.clone(),
-                    worktree: started.worktree.clone(),
-                },
-            )
-            .with_context(|| {
-                format!(
-                    "session {} started but its binding to `{todo}` was not recorded",
-                    started.session
-                )
-            })?;
-    }
-    if args.json {
-        ctx.out.json(&json!({
-            "session": started.session.to_string(),
-            "worktree": started.worktree.as_ref().map(|p| p.display().to_string()),
-        }))?;
-    } else {
-        ctx.out.line(&started.session.to_string())?;
-        if let Some(path) = &started.worktree {
-            ctx.out.line(&path.display().to_string())?;
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// `sessions end`: one session, the caller's own, or a todo's bound
-/// sessions, each through its runtime's ending.
-fn sessions_end(
-    args: EndArgs,
-    ctx: &mut Ctx,
-    config: &Configuration,
-    sessions: &Sessions<'_>,
-) -> anyhow::Result<ExitCode> {
-    let endings = match (&args.session, &args.todo) {
-        (Some(EndTarget::Caller), _) => vec![sessions.end_self()?],
-        (Some(EndTarget::Session(session)), _) => vec![sessions.end(session)?],
-        (None, Some(todo)) => {
-            let caller = sessions.caller().ok();
-            let mut endings = Vec::new();
-            for session in bound_sessions(ctx, config, todo)? {
-                if Some(&session) != caller.as_ref() {
-                    endings.push(sessions.end(&session)?);
-                }
-            }
-            if endings.is_empty() {
-                if args.json {
-                    ctx.out.json(&json!({"endings": []}))?;
-                } else {
-                    ctx.out.line(&format!(
-                        "`{todo}` has no bound session other than yours; there is nothing to end"
-                    ))?;
-                }
-                return Ok(ExitCode::SUCCESS);
-            }
-            endings
-        }
-        (None, None) => bail!("name a session, `self`, or --todo <slug>"),
-    };
-    let yours = endings
-        .iter()
-        .any(|ending| matches!(ending, Ending::YoursToDo { .. }));
-    if args.json {
-        let rendered: Vec<serde_json::Value> = endings.iter().map(ending_json).collect();
-        match (&args.todo, rendered.as_slice()) {
-            (None, [one]) => ctx.out.json(one)?,
-            _ => ctx.out.json(&json!({"endings": rendered}))?,
-        }
-    } else {
-        for ending in &endings {
-            match ending {
-                Ending::NotNeeded { runtime } => ctx.out.line(&format!(
-                    "runtime `{runtime}` needs no ending; nothing was done"
-                ))?,
-                Ending::Ended(session) => ctx.out.line(&format!("ended {session}"))?,
-                Ending::YoursToDo { instruction, .. } => ctx.out.line(&instruction.0)?,
-            }
-        }
-    }
-    Ok(if yours {
-        ExitCode::from(YOURS_TO_DO)
-    } else {
-        ExitCode::SUCCESS
-    })
-}
-
-fn ending_json(ending: &Ending) -> serde_json::Value {
-    match ending {
-        Ending::NotNeeded { runtime } => json!({"kind": "none", "runtime": runtime}),
-        Ending::Ended(session) => json!({"kind": "command", "session": session.to_string()}),
-        Ending::YoursToDo {
-            session,
-            instruction,
-        } => json!({"kind": "agent", "session": session.to_string(), "instruction": instruction.0}),
-    }
-}
-
-/// The sessions bound to `todo` in instrukt's own session bindings
-/// (`sessions.bound`), each once, in binding order.
-fn bound_sessions(
-    ctx: &Ctx,
-    config: &Configuration,
-    todo: &TodoSlug,
-) -> anyhow::Result<Vec<SessionRef>> {
-    let project = project_ref(config)?;
-    let Some(evidence) = wiring::work_evidence(ctx)? else {
-        bail!("--todo reads the todo's session bindings, which needs `modules.todos` on");
-    };
-    let Some(record) = evidence.evidence(&project, todo)? else {
-        bail!("no todo `{todo}` in project `{}`", project.slug);
-    };
-    let mut sessions: Vec<SessionRef> = Vec::new();
-    for bound in record.bindings {
-        if !sessions.contains(&bound.binding.session) {
-            sessions.push(bound.binding.session);
-        }
-    }
-    Ok(sessions)
-}
-
-/// An `agent` verb's answer: the instruction, and the "yours to do" status.
-fn yours_to_do(ctx: &mut Ctx, instruction: &Instruction, json: bool) -> anyhow::Result<ExitCode> {
-    if json {
-        ctx.out
-            .json(&json!({"kind": "agent", "instruction": instruction.0}))?;
-    } else {
-        ctx.out.line(&instruction.0)?;
-    }
-    Ok(ExitCode::from(YOURS_TO_DO))
-}
-
-fn print_session(ctx: &mut Ctx, session: &SessionRef, json: bool) -> anyhow::Result<()> {
-    if json {
-        ctx.out.json(&json!({"session": session.to_string()}))
-    } else {
-        ctx.out.line(&session.to_string())
-    }
-}
-
-/// The briefing from `source`: a file, or standard input for `-`.
-fn read_brief(source: &str) -> anyhow::Result<String> {
-    if source == "-" {
-        let mut text = String::new();
-        std::io::stdin()
-            .read_to_string(&mut text)
-            .context("cannot read the brief from standard input")?;
-        Ok(text)
-    } else {
-        std::fs::read_to_string(source).with_context(|| format!("cannot read the brief {source}"))
-    }
-}
-
-/// The project the caller stands in.
-fn project_ref(config: &Configuration) -> anyhow::Result<ProjectRef> {
-    let (Some(root), Some(slug)) = (config.project_root(), config.project()?) else {
-        bail!(
-            "--todo needs a project: run it inside a repository whose instrukt.yaml declares `project`"
-        );
-    };
-    Ok(ProjectRef {
-        slug,
-        root: root.to_path_buf(),
-    })
 }
 
 #[derive(Debug, clap::Args)]
@@ -669,6 +298,10 @@ pub fn run_install(_args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode
 fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
     if config.module_enabled(Module::Todos)? || config.module_enabled(Module::Events)? {
+        return Ok(());
+    }
+    let global = Configuration::load_global(&ctx.home)?;
+    if global.module_enabled(Module::Todos)? || global.module_enabled(Module::Events)? {
         return Ok(());
     }
     if !runner::considered_projects(&ctx.home)?.is_empty() {

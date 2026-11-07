@@ -34,9 +34,8 @@ Candidate verification belongs to the integration gate.
   sharpens the reported symptom without replacing `input` as intent.
 - `architecture` (thin doc-edit log) is readable when present and not skipped; consult the domain/design snippets it points to for technical context.
 - Before implementation, `instrukt todo artifacts read {slug} quality-checklist`
-  exists and includes `## Build Gates (Builder)`. An explicit failed-attempt
-  recovery assignment may begin synchronization first; the orchestrator records
-  missing build-start and checklist evidence before implementation starts.
+  exists and includes `## Build Gates (Builder)`. Setup synchronization may precede implementation; the bound setup child
+  records build-start and checklist evidence before implementation starts.
 - The todo scope is implementable in one build phase.
 
 ## Steps
@@ -199,24 +198,19 @@ Ready for review.
 - If a task fails, analyze the error and retry.
 - If stuck after two attempts, stop and report the blocker.
 - **Orchestrator-surfaced process failures are yours to recover.**
-  - **Upstream merge conflict:** resolve the conflict within your outstanding
-    builder attempt. For an explicit failed-attempt recovery assignment, work in
-    your new worktree at the recorded failed role head; recover applicable
-    unfinished work from the retained source path and synchronize the current
-    todo head for normal fast-forward handoff. Finish upstream synchronization and
-    any missing setup obligations, then report to the orchestrator for missing
-    build-start and checklist evidence before implementing the approved plan.
-    Fetch accepted upstream main,
-    reapply the prepared intent in your worktree, resolve the conflicts and
-    rerun only the tests bound to the affected use cases and commit the resolution. Preserve both
-    sides' intended behavior. Record the
-    changed evidence and re-stamp build completion so review binds the result.
+  - **Upstream merge conflict:** resolve within your outstanding attempt in the
+    shared todo worktree. Fetch accepted upstream, preserve its behavior and
+    reapply approved intent. Run checks bound to affected use cases, commit the
+    resolution and re-stamp completion. A successor after confirmed failed
+    release continues at this same tree's current head, with the original build
+    base preserved; missing setup and admission evidence precedes implementation.
   - **Failed project checks, a dirty worktree, a missing stamp, or stale branch
     publication:** recover within the worktree and record the result; the
     orchestrator never edits code or tests. Candidate verification remains
     with integration.
-  - If synchronization cannot be completed, report the reason, committed role
-    head and preserved workspace to the orchestrator for failed release and a
-    successor recovery attempt. Your completion stamp records a completed build.
+  - If synchronization cannot be completed, report the reason, current shared
+    head, native status and preserved work to your parent. Dirty or conflicted
+    work remains outstanding for in-place recovery; a stopped child and clean
+    tree permit the record-only failed release before a shared successor. Your completion stamp records a completed build.
   - If the facts plus this procedure are not enough to proceed, report that
     explicitly — it is a defect in this brief, and saying so is the correct outcome.

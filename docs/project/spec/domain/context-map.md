@@ -85,7 +85,7 @@ not permission for an upstream module to depend on its consumer.
 | publication → workflow | Customer / Supplier | Published flavor definitions, roles, actions and templates from the selected domain's `docs/domain/<x>/workflow/` |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
-| runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits |
+| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads |
 | repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |

@@ -126,8 +126,8 @@ pub fn crontab_with_wakeup(current: &str, wake: &WakeUp<'_>) -> String {
         .collect();
     lines.push(format!(
         "* * * * * PATH={} {} tick {CRON_MARKER}",
-        crate::sessions::shell_quote(wake.path_env),
-        crate::sessions::shell_quote(&wake.executable.display().to_string())
+        crate::process::shell_quote(wake.path_env),
+        crate::process::shell_quote(&wake.executable.display().to_string())
     ));
     let mut text = lines.join("\n");
     text.push('\n');

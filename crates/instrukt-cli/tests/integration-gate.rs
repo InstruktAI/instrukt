@@ -2,8 +2,8 @@
 //! instrukt contributes to integration. The standing integrator — here the
 //! fake runtime's session — is woken with finalized work, with its exact
 //! candidate's verification result read from GitHub, with the decision that
-//! the project has no CI taken from the canonical branch's head, and with
-//! direct commits waiting on local main. The test plays the integrator's
+//! the project has no CI taken from the canonical branch's head. Preparation
+//! head approval is covered by preparation.rs. The test plays the integrator's
 //! git steps between wake-ups, as the integrate procedure prescribes.
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
@@ -19,9 +19,14 @@ mod work;
 
 use common::github::{CheckRun, Conclusion, StatusState};
 use flavor::{REPOSITORY, Tracked};
+macro_rules! log_snapshot {
+    ($name:literal,$value:expr $(,)?) => {
+        insta::assert_snapshot!($name, work::redact(&$value));
+    };
+}
 
 /// The integrator's session, started for the first event.
-const INTEGRATOR: &str = "s1";
+const INTEGRATOR: &str = "s3";
 
 /// A project with CI on its canonical head (when `ci`), whose developer
 /// finalized `tidy-imports` on its work branch; the first wake-up started
@@ -41,15 +46,107 @@ fn finalized(ci: bool) -> Tracked {
         "change",
         "--approved",
     ]);
+    project.todo([
+        "artifacts",
+        "write",
+        "tidy-imports",
+        "implementation-plan",
+        "Sort imports and preserve behavior.",
+    ]);
+    project.todo([
+        "artifacts",
+        "write",
+        "tidy-imports",
+        "plan-review-findings",
+        "Approved plan.",
+    ]);
     project
-        .repo
-        .git(["checkout", "--quiet", "-b", "tidy-imports/work"]);
-    project.repo.write("src/lib.rs", "// sorted\n");
-    project.repo.commit("refactor: sort the imports");
-    project.todo(["stamp", "tidy-imports", "--finalize-ready"]);
-    project.repo.git(["checkout", "--quiet", "main"]);
+        .env
+        .instrukt(project.repo.path())
+        .env("T3CODE_THREAD_ID", "plan-reviewer")
+        .args([
+            "todo",
+            "stamp",
+            "tidy-imports",
+            "--verdict",
+            "approve",
+            "--phase",
+            "plan_review",
+        ])
+        .assert()
+        .success();
+    project
+        .env
+        .instrukt(project.repo.path())
+        .env("T3CODE_THREAD_ID", "lead")
+        .args(["todo", "work", "tidy-imports"])
+        .assert()
+        .success();
+    let start = |procedure: &str| {
+        let (role, id) = if procedure.ends_with("finalize") {
+            ("finalizer", "s1")
+        } else {
+            ("build-reviewer", "s2")
+        };
+        project.native_worker("tidy-imports", role, procedure, "lead", id)
+    };
+    let finalizer = start("acme/procedure/finalize");
+    let path = std::path::Path::new(finalizer["worktree"].as_str().unwrap());
+    std::fs::create_dir_all(path.join("src")).unwrap();
+    std::fs::write(path.join("src/lib.rs"), "// sorted\n").unwrap();
+    project.env.git(path, ["add", "src/lib.rs"]);
+    project.env.git(
+        path,
+        ["commit", "--quiet", "-m", "refactor: sort the imports"],
+    );
+    project.env.git(
+        path,
+        ["push", "--quiet", "origin", "HEAD:tidy-imports/work"],
+    );
+    project.repo.git(["fetch", "--quiet", "origin"]);
+    project
+        .env
+        .instrukt(path)
+        .env("T3CODE_THREAD_ID", "s1")
+        .args(["todo", "stamp", "tidy-imports", "--role-complete"])
+        .assert()
+        .success();
+    let reviewer = start("acme/procedure/review-build");
+    project.todo([
+        "artifacts",
+        "write",
+        "tidy-imports",
+        "review-findings",
+        "Approve the finalized imports.",
+    ]);
+    project
+        .env
+        .instrukt(std::path::Path::new(reviewer["worktree"].as_str().unwrap()))
+        .env("T3CODE_THREAD_ID", "s2")
+        .args([
+            "todo",
+            "stamp",
+            "tidy-imports",
+            "--verdict",
+            "approve",
+            "--phase",
+            "build_review",
+        ])
+        .assert()
+        .success();
+    project
+        .env
+        .instrukt(path)
+        .env("T3CODE_THREAD_ID", "s1")
+        .args(["todo", "stamp", "tidy-imports", "--finalize-ready"])
+        .assert()
+        .success();
     project.tick();
-    assert_eq!(project.rt.started_count(), 1, "the integrator started");
+    assert_eq!(
+        project.rt.started_count(),
+        3,
+        "the finalizer, reviewer and integrator started"
+    );
     project.rt.set_status(INTEGRATOR, "ended ok");
     project
 }
@@ -74,7 +171,7 @@ fn work_head(project: &Tracked) -> String {
 #[test]
 fn finalized_work_starts_the_standing_integrator_with_its_handoff() {
     let project = finalized(true);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "integrator-started-for-finalized-work",
         work::redact(&project.rt.opening(INTEGRATOR))
     );
@@ -96,7 +193,7 @@ fn a_green_candidate_wakes_the_integrator_naming_that_exact_commit() {
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 1);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "green-candidate",
         project
             .rt
@@ -142,12 +239,14 @@ fn a_repaired_candidate_is_reported_by_its_own_result_never_the_earlier_ones() {
 
     // The integrator makes a trivial fix and pushes the repaired candidate;
     // the failed one keeps its red result.
-    project
-        .repo
-        .git(["checkout", "--quiet", "tidy-imports/work"]);
-    project.repo.write("src/lib.rs", "// sorted, fixed\n");
-    let repaired = project.repo.commit("fix: keep the module compiling");
-    project.repo.git(["checkout", "--quiet", "main"]);
+    let path = project.env.path("native-tidy-imports");
+    std::fs::write(path.join("src/lib.rs"), "// sorted, fixed\n").unwrap();
+    project.env.git(&path, ["add", "src/lib.rs"]);
+    project.env.git(
+        &path,
+        ["commit", "--quiet", "-m", "fix: keep the module compiling"],
+    );
+    let repaired = project.env.git(&path, ["rev-parse", "HEAD"]);
     push_candidate(&project, &repaired);
     project.tick();
     assert_eq!(
@@ -165,7 +264,7 @@ fn a_repaired_candidate_is_reported_by_its_own_result_never_the_earlier_ones() {
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 2);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "red-then-repaired",
         format!(
             "{}\n---\n{}",
@@ -187,7 +286,7 @@ fn without_ci_on_the_canonical_head_the_integrator_is_told_to_verify_locally() {
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 1);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "no-ci",
         project
             .rt
@@ -229,7 +328,7 @@ fn a_failing_canonical_head_wakes_the_integrator_with_that_commit_once() {
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 1, "reported once");
-    insta::assert_snapshot!(
+    log_snapshot!(
         "main-failing",
         project
             .rt
@@ -268,7 +367,7 @@ fn a_revert_is_woken_with_its_own_result_never_the_reverted_deliverys() {
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 2);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "revert-candidate",
         project
             .rt
@@ -313,7 +412,7 @@ fn each_new_failing_head_is_reported_afresh() {
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 2);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "new-failing-head",
         project
             .rt
@@ -345,7 +444,7 @@ fn the_remotes_current_head_is_judged_even_when_this_checkout_never_fetched_it()
     project.tick();
 
     assert_eq!(project.rt.sent_count(INTEGRATOR), 1);
-    insta::assert_snapshot!(
+    log_snapshot!(
         "remote-current-head-failing",
         project
             .rt
@@ -355,74 +454,138 @@ fn the_remotes_current_head_is_judged_even_when_this_checkout_never_fetched_it()
     );
 }
 
-/// A reviewed direct commit on local main, its exemption stamped by
-/// `instrukt repo stamp` and pushed with the review notes; the project has
-/// no candidate pending.
-fn reviewed_direct_commit(project: &mut Tracked) -> String {
-    project.repo.write("NOTES.md", "a direct change\n");
-    let direct = project.repo.commit("docs: a direct note");
-    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
-    let stamped = project.env.run(
-        project.repo.path(),
-        [
-            "repo",
-            "stamp",
-            &direct,
-            "--verdict",
-            "exempt",
-            "--reason",
-            "a typo fix",
-        ],
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG4
+#[test]
+fn a_tick_publishes_contracts_integrated_on_another_computer() {
+    use instrukt_core::{home::Home, ids::ProjectSlug, publication::PublishedRecord};
+    use std::time::{Duration, Instant};
+    let p = Tracked::new(false); // todos on, events off: maintenance still runs.
+    std::os::unix::fs::symlink(
+        env!("CARGO_BIN_EXE_instrukt"),
+        p.env.path("runtime-bin/instrukt"),
+    )
+    .unwrap();
+    p.env.run(p.repo.path(), ["hooks", "install"]).success();
+    let other = p
+        .env
+        .clone_repo(&p.env.path("demo-origin.git"), "integrator");
+    other.write(
+        "docs/project/concept/remote-contract.md",
+        &documented::snippet(
+            "concept",
+            "Remote contract",
+            "A reviewed integrated contract.",
+            "",
+            &[],
+            "The new contract is available before build.\n",
+        ),
     );
-    assert!(
-        stamped.get_output().status.success(),
-        "{}",
-        String::from_utf8_lossy(&stamped.get_output().stderr)
+    let delivered = other.commit("integrator: publish reviewed contract");
+    other.git(["push", "--quiet", "origin", "main"]);
+    assert_ne!(p.repo.head(), delivered);
+    p.tick();
+    assert_eq!(p.repo.head(), delivered);
+    let home = Home::at_user_home(p.env.home().to_path_buf());
+    let slug = ProjectSlug::parse("demo").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while PublishedRecord::load(&home, &slug)
+        .unwrap()
+        .is_none_or(|r| r.commit.as_str() != delivered)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "post-merge publication did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = p
+        .env
+        .run(
+            p.repo.path(),
+            ["docs", "get", "project/demo/concept/remote-contract"],
+        )
+        .success();
+    let text = String::from_utf8_lossy(&out.get_output().stdout).replace(
+        p.env.path("").to_str().unwrap().trim_end_matches('/'),
+        "[TMP]",
     );
-    project.env.remove_env("INSTRUKT_NOW");
-    direct
+    insta::assert_snapshot!("contracts-from-other-computer", text);
+    assert_eq!(p.rt.started_count(), 0);
 }
 
-// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG3
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG4
 #[test]
-fn a_direct_commits_review_verdict_is_readable_from_the_fetched_notes_ref() {
-    let mut project = Tracked::integrating();
-    let direct = reviewed_direct_commit(&mut project);
-
-    // The integrator reads verdicts from the notes ref it fetches; nothing
-    // local stands in for it.
-    project
-        .repo
-        .git(["update-ref", "-d", "refs/notes/instrukt-review"]);
-    project.repo.git([
-        "fetch",
-        "--quiet",
-        "origin",
-        "refs/notes/instrukt-review:refs/notes/instrukt-review",
-    ]);
-    let note = project
-        .repo
-        .git(["notes", "--ref", "instrukt-review", "show", &direct]);
-
-    insta::assert_snapshot!("direct-commit-verdict", note);
+fn a_tick_preserves_a_dirty_canonical_checkout_and_retries_after_clearance() {
+    let p = Tracked::new(false);
+    let old = p.repo.head();
+    let other = p
+        .env
+        .clone_repo(&p.env.path("demo-origin.git"), "integrator");
+    other.write("integrated.txt", "green");
+    let delivered = other.commit("integrator: promote candidate");
+    other.git(["push", "--quiet", "origin", "main"]);
+    p.repo.write("uncommitted.txt", "owned by another session");
+    p.tick();
+    assert_eq!(p.repo.head(), old);
+    assert_eq!(
+        std::fs::read(p.repo.path().join("uncommitted.txt")).unwrap(),
+        b"owned by another session"
+    );
+    let log = std::fs::read_to_string(
+        p.env
+            .home()
+            .join(".local/state/instrukt-ai/instrukt/tick.log"),
+    )
+    .unwrap();
+    let lines = log
+        .lines()
+        .filter(|l| l.contains("event=canonical_checkout_sync_failed"))
+        .map(|l| {
+            l.split_once(' ')
+                .unwrap()
+                .1
+                .replace(p.repo.path().to_str().unwrap(), "[PROJECT]")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!("dirty-main-sync-refused", lines);
+    std::fs::remove_file(p.repo.path().join("uncommitted.txt")).unwrap();
+    p.tick();
+    assert_eq!(p.repo.head(), delivered);
 }
 
-// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG3
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG4
 #[test]
-fn direct_commits_on_local_main_wake_the_integrator_to_take_them_through_verification() {
-    let mut project = Tracked::integrating();
-    let pushed = project.repo.head();
-    let direct = reviewed_direct_commit(&mut project);
-
-    project.tick();
-
-    assert_eq!(project.rt.started_count(), 1);
-    insta::assert_snapshot!(
-        "main-ahead",
-        project
-            .rt
-            .opening(INTEGRATOR)
-            .replace(&direct, "<local main>")
-            .replace(&pushed, "<remote main>")
-    );
+fn a_tick_preserves_diverged_local_history_instead_of_forcing_main() {
+    let p = Tracked::new(false);
+    let other = p
+        .env
+        .clone_repo(&p.env.path("demo-origin.git"), "integrator");
+    other.write("remote.txt", "green");
+    let delivered = other.commit("integrator: promote candidate");
+    other.git(["push", "--quiet", "origin", "main"]);
+    p.repo.write("local.txt", "unexpected history");
+    let local = p.repo.commit("fixture: unexpected local commit");
+    p.tick();
+    assert_eq!(p.repo.head(), local);
+    assert_ne!(local, delivered);
+    assert_eq!(p.repo.git(["rev-parse", "origin/main"]), delivered);
+    let log = std::fs::read_to_string(
+        p.env
+            .home()
+            .join(".local/state/instrukt-ai/instrukt/tick.log"),
+    )
+    .unwrap();
+    let lines = log
+        .lines()
+        .filter(|l| l.contains("event=canonical_checkout_sync_failed"))
+        .map(|l| {
+            l.split_once(' ')
+                .unwrap()
+                .1
+                .replace(p.repo.path().to_str().unwrap(), "[PROJECT]")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!("diverged-main-sync-refused", lines);
 }

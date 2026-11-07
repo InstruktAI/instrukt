@@ -74,6 +74,10 @@ project-file reads.
   `instrukt docs get` with the ids of interest, and a note explaining the
   pending suffixes and the `--target` view.
 
+### Pending documentation source
+
+`docs index --target <slug>` and `docs get <id> --target <slug>` read the recorded preparation worktree, including unpublished new snippets and pending companions. They never substitute the main checkout for an unresolved preparation workspace. After preparation integration, folded documentation is simply the current contract on main; pending docs do not wait for build delivery.
+
 ### Get
 
 - An id resolves to its file directly: a published id to the file in the home,

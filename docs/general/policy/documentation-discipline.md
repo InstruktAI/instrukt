@@ -51,7 +51,7 @@ restart, then check the logs` is directive. One string reaching a human and an
 - **Doc changes to what the human governs are written where the human is.** When
   the human, with the agent they address, decides something that changes a
   process whose outcome is theirs (the closed list in
-  `general/policy/human-contract`), that agent writes the doc change itself,
+  `general/policy/human-contract`), that agent writes the doc change itself in the worktree of the session the human is working in,
   before any todo or delegated work that depends on it, and does not hand it to
   another agent. Any other doc change can be written up front, where the
   authoring session holds context a handoff would lose, or delegated, where
@@ -72,7 +72,7 @@ restart, then check the logs` is directive. One string reaching a human and an
 
 - **Governed documentation is never self-reviewed.** A doc-only commit that
   changes what a snippet establishes or directs gets an independent review via
-  `sdlc/procedure/lifecycle/work/review-commits` on its SHA. Its author
+  `sdlc/procedure/lifecycle/work/review-commits` on its worktree head before integration. Its author
   classifies the change when dispatching that review:
   - **A change to what agents are directed to do** — directive text, the
     process layer (`sdlc/policy/process-change-authority`) included — is
@@ -138,9 +138,9 @@ All agents, all sessions, every documentation change, every domain.
 ## Enforcement
 
 Plan-review applies the documentation lane as a hard gate; build-review and
-commit-review apply it as the backstop
+worktree-head review apply it as the backstop
 (`sdlc/policy/definition-of-done-lanes`). The independent
-doc-hygiene commit-review catches self-reviewed and stale snippets.
+doc-hygiene worktree-head review catches self-reviewed and stale snippets.
 
 ## Exceptions
 

@@ -79,6 +79,7 @@ which are lost if the home is deleted.
 | `state/writer.lock` | the per-computer writer lock, held only for each local state-database write transaction (the database's write-isolation unit); network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and local readers take neither lock | taken again by the next reflection |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
+| `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
 | `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
@@ -118,7 +119,7 @@ commands. Docs name `-h`.
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
 | Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
-| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`; explicit `runner.runtime`, no template mapping |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
@@ -196,9 +197,10 @@ domain; `instrukt docs get <id>` reads a snippet naming its required reads,
 `--closure` adds them transitively, each once, and `--domain <x>` renders that
 domain's `index.yaml`. Every reference is a snippet id (or a bare domain name in
 a required read) that the CLI resolves; `get` resolves `@config` directives
-in-process at read time for configured values. Runtime operations go through the
-sessions facade and its compiled adapter; no snippet interpolates a runtime
-command. No snippet runs a command. Authoring reads and edits the source file;
+in-process at read time for configured values. Agent operations render native
+instructions from the selected runtime entry; the agent carries them out in its
+own conversation. The compiled adapter acts for instrukt without an agent, or
+for an explicitly missing native capability. No snippet runs a command. Authoring reads and edits the source file;
 `docs get` is for knowledge.
 
 ### Push and map
@@ -237,19 +239,36 @@ passing candidate is fast-forwarded onto main.
 The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
 the switched-on modules need: it dispatches todos (when `runner.autostart`), and
 starts or wakes standing agents on events. It reaches a runtime only through its
-Rust adapter; the retained agent-facing facade is `instrukt sessions
-run|send|alive|conversation|link|resolve-start`. Standing start-or-wake takes a
-database lock per key and discovers its exact title in T3 before considering a
+Rust adapter for unattended operations. Its operational sessions surface is
+`instrukt sessions list|resolve-start`; agents discover and operate conversations
+through configured native instructions, recording attempts and native child ids
+through work commands. Standing start-or-wake takes a
+database lock per semantic key and discovers it through the selected adapter before considering a
 start; the local binding is a cache. Unknown list or send results leave work
 pending, and lost start replies require key recovery or explicit resolution.
+instrukt derives `<slug>/prepare` or `<slug>/work`; T3 creates the corresponding
+worktree from main and refuses an existing local phase branch. Work on another
+computer creates its local `<slug>/work` branch from `origin/<slug>/work`. Native shared children use that recorded
+workspace serially and commit directly on the todo branch; completion stamps
+release attempts atomically. Preparation uses `<slug>/prepare`, reviewed and integrated immediately before a
+separate `<slug>/work` starts from updated main. The integrator removes the
+preparation worktree and deletes its branch locally and on origin. Ad hoc work
+uses its own reviewed one-off worktree; main is integrator-only.
+Before dispatch each tick, the runner fetches canonical remote main and
+fast-forwards a clean canonical checkout when it lags. Post-merge publication
+and blueprint maintenance run on each computer; dirty or diverged checkouts
+are reported and preserved. No integrator-owned local sync or main-ahead event
+is needed. New phase branches use freshly fetched origin/main.
 Session ending remains the runtime's responsibility. A step is done when the
 record carries its artifact and stamp, never when a session's reply says so.
 Whatever needs the human is a session asking in its thread; only anomalies are
 sent through `runner.notify`.
 
-Procedure activation is durably accepted before runtime execution. Its full
-procedure-first, untrusted hook-delivery contract remains the S6 feasibility
-gate; the adapter's send primitive alone does not establish that equivalence.
+Procedure activation is durably accepted before runtime execution. The adapter
+supplies procedure-first assignment and untrusted event data through bounded
+logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
+only-at-entry delivery waits for observed idleness. Attendance-aware visibility
+and closed subject continuation remain separately reported runtime limits.
 
 ### Event platform
 
@@ -264,7 +283,7 @@ flowchart LR
   Q --> A[One procedure matcher per emitting computer]
   X[Published index: declarations and reach] --> A
   A --> D[SQLite keyed activation acceptance]
-  D --> T[A3 runtime handoff: S6 feasibility gate]
+  D --> T[A3 runtime handoff: bounded queued input]
 ```
 
 Ingress addresses `/hooks/inbound/project/<slug>/<domain>`. The project
@@ -287,7 +306,7 @@ Subscription validation belongs to docs, registration/index replacement to
 publication, selection and acceptance to runner. Only the emitting computer
 activates; external procedures run on ingress and unavailable homes fail there.
 Runtime delivery retains procedure-first briefing, untrusted event provenance and
-session-fixed eligibility/cardinality; realizing it through A3 is S6's gate.
+session-fixed timing through A3's bounded batch log.
 
 ## Failure modes
 
@@ -318,5 +337,7 @@ session-fixed eligibility/cardinality; realizing it through A3 is S6's gate.
 - **Runtime identity or delivery is uncertain:** preserve the event, key and
   any start marker; recover through listing or explicit resolution. A failed
   observation or send never requests a replacement session.
-- **A role needs an existing worktree on T3:** its host CLI has no attachment
-  flag. Report the capability gap; creating another worktree is not recovery.
+- **A deleted orchestrator left its todo branch checked out:** T3's host CLI
+  cannot bind an existing worktree. Safely remove the retained worktree first,
+  or use the runtime's existing-worktree start where available (T3 MCP). A
+  settled retained orchestrator wakes in its existing shared workspace.

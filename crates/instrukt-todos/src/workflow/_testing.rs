@@ -72,6 +72,7 @@ pub(crate) struct EvidenceBuilder {
 pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuilder {
     EvidenceBuilder {
         evidence: crate::evidence::TodoEvidence {
+            branch: None,
             id: crate::work::TodoId::parse(&"ab".repeat(16)).unwrap(),
             project: ProjectSlug::parse("demo").unwrap(),
             slug: TodoSlug::parse("add-login").unwrap(),
@@ -183,6 +184,7 @@ impl EvidenceBuilder {
     pub(crate) fn stamp(mut self, fact: crate::evidence::StampFact) -> Self {
         let at = self.next();
         self.evidence.stamps.push(crate::evidence::StampRecord {
+            source_comment: None,
             fact,
             at,
             actor: crate::evidence::Actor::Session(session("stamper")),
@@ -208,7 +210,13 @@ impl EvidenceBuilder {
     pub(crate) fn bound(mut self, role: &str, id: &str, worktree: Option<&str>) -> Self {
         self.evidence.bindings.push(crate::evidence::RoleBinding {
             role: instrukt_core::ids::RoleName::parse(role).unwrap(),
+            attempt: crate::work::Attempt {
+                assignment: instrukt_runner::interfaces::AssignmentKind::Driver,
+                lane: Some(instrukt_runner::interfaces::Lane::Work),
+                ..Default::default()
+            },
             binding: instrukt_runner::interfaces::SessionBinding {
+                key: format!("test:{role}"),
                 session: session(id),
                 worktree: worktree.map(PathBuf::from),
             },

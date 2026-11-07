@@ -10,6 +10,8 @@ mod common;
 mod documented;
 #[path = "support/runtime.rs"]
 mod runtime;
+#[path = "support/work.rs"]
+mod work;
 
 use common::{Repo, TestEnv};
 use documented::{project, snippet, sync};
@@ -80,30 +82,46 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
 
     let first = push_upstream_change(&upstream_work, "one.md");
     tick(&env, &cwd);
-    assert_eq!(rt.calls().len(), 1, "{:?}", rt.calls());
+    assert_eq!(
+        rt.started_count() + rt.sent_count("s1"),
+        1,
+        "{:?}",
+        rt.calls()
+    );
     insta::assert_snapshot!(
         "standing-agent-started",
-        rt.opening("s1").replace(&first, "<revision>")
+        work::redact(&rt.opening("s1").replace(&first, "<revision>"))
     );
 
     // Nothing new upstream: the agent is not started or woken again.
     tick(&env, &cwd);
-    assert_eq!(rt.calls().len(), 1, "{:?}", rt.calls());
+    assert_eq!(
+        rt.started_count() + rt.sent_count("s1"),
+        1,
+        "{:?}",
+        rt.calls()
+    );
 
     // The agent's run ended; the next change wakes that same session.
     rt.set_status("s1", "ended ok");
     let second = push_upstream_change(&upstream_work, "two.md");
     tick(&env, &cwd);
-    assert_eq!(rt.calls().len(), 2, "{:?}", rt.calls());
+    assert_eq!(
+        rt.started_count() + rt.sent_count("s1"),
+        2,
+        "{:?}",
+        rt.calls()
+    );
     insta::assert_snapshot!(
         "standing-agent-woken",
-        rt.sent("s1", 1).replace(&second, "<revision>")
+        work::redact(&rt.sent("s1", 1).replace(&second, "<revision>"))
     );
 }
 
 // spec: project/instrukt/spec/feature/runner/event-activation UC-EA1
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS11
 #[test]
-fn a_runner_killed_while_starting_the_standing_agent_waits_for_the_developer_to_resolve_it() {
+fn a_runner_killed_after_creation_recovers_the_same_standing_agent() {
     let env = TestEnv::new();
     let rt = FakeRuntime::new(&env, "rt", false);
     global_layer(&env, "events: true", &[&rt]);
@@ -137,42 +155,20 @@ fn a_runner_killed_while_starting_the_standing_agent_waits_for_the_developer_to_
     rt.kill_runner_on_next_start();
     let killed = env.run(&cwd, ["tick"]);
     assert!(!killed.get_output().status.success());
-    assert_eq!(rt.calls().len(), 1, "{:?}", rt.calls());
-
-    // The next wake-ups do not repeat the start; the uncertain start is
-    // reported once.
-    tick(&env, &cwd);
-    tick(&env, &cwd);
-    assert_eq!(rt.calls().len(), 1, "{:?}", rt.calls());
-    insta::assert_snapshot!(
-        rt.notifications().join("\n"),
-        @"instrukt sessions resolve-start fork/procedure/upstream-watch@fork --session <runtime:id> | --none"
+    assert_eq!(
+        rt.started_count() + rt.sent_count("s1"),
+        1,
+        "{:?}",
+        rt.calls()
     );
 
-    // The developer finds the session the runtime did create and binds it;
-    // once its run ended, the next wake-up hands it the waiting change.
-    let resolved = env
-        .run(
-            &cwd,
-            [
-                "sessions",
-                "resolve-start",
-                "fork/procedure/upstream-watch@fork",
-                "--session",
-                "rt:s1",
-            ],
-        )
-        .success();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&resolved.get_output().stdout),
-        @"fork/procedure/upstream-watch@fork is bound to rt:s1"
-    );
+    // Key discovery recovers the created thread and retries the retained assignment.
+    tick(&env, &cwd);
+    tick(&env, &cwd);
+    assert_eq!(rt.started_count(), 1);
+    assert_eq!(rt.sent_count("s1"), 0);
     rt.set_status("s1", "ended ok");
     tick(&env, &cwd);
-    assert_eq!(rt.calls().len(), 2, "{:?}", rt.calls());
-    assert_eq!(
-        rt.sent_count("s1"),
-        1,
-        "the waiting change reached the bound session"
-    );
+    assert_eq!(rt.started_count(), 1);
+    assert_eq!(rt.sent_count("s1"), 0);
 }

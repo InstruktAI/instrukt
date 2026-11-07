@@ -34,11 +34,13 @@ roles:
   - task-preparer
   - task-runner
   - integrator
+  - finalizer
+  - build-reviewer
 draft-plan:
-  command: instrukt sessions run --procedure acme/procedure/plan --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role planner --procedure acme/procedure/plan --args {slug} --brief -
   template: templates/draft-plan.md
 prepare-task:
-  command: instrukt sessions run --procedure acme/procedure/prepare-task --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role task-preparer --procedure acme/procedure/prepare-task --args {slug} --brief -
   template: templates/prepare-task.md
 release-prepared:
   command: instrukt todo update {slug} --unclaim
@@ -54,6 +56,7 @@ await-task-runner:
 const PREPARE: &str = "\
 flow: prepare
 orchestrator: prepare-orchestrator
+requires: []
 initial: start
 states: [start, task_preparation, task_released, planning]
 transitions:
@@ -79,6 +82,7 @@ transitions:
 const WORK: &str = "\
 flow: work
 orchestrator: work-orchestrator
+requires: []
 initial: start
 states: [start, task_runner_route, building]
 transitions:
@@ -134,23 +138,15 @@ impl Tracked {
     /// A project integrating through the standing integrator: work and
     /// events on, pickup deliberate, the flavor publishing an `integrator`
     /// procedure subscribed to `workflow.finalized`, `runner.ci_completed`,
-    /// `runner.main_ahead` and `runner.main_failing`, and `main` pushed to
+    /// `workflow.preparation_reviewed` and `runner.main_failing`, and `main` pushed to
     /// a bare `origin`.
     pub fn integrating() -> Self {
-        let project = Self::build(
+        Self::build(
             false,
             "todos: true, events: true",
             "todos: true, events: true",
             true,
-        );
-        let origin = project.env.bare_remote("demo-origin");
-        project
-            .repo
-            .git(["remote", "add", "origin", origin.to_str().unwrap()]);
-        project
-            .repo
-            .git(["push", "--quiet", "-u", "origin", "main"]);
-        project
+        )
     }
 
     fn build(autostart: bool, modules: &str, project_modules: &str, integrator: bool) -> Self {
@@ -191,6 +187,8 @@ impl Tracked {
             ("plan", "planner", true),
             ("prepare-task", "task-preparer", true),
             ("run-task", "task-runner", true),
+            ("finalize", "finalizer", true),
+            ("review-build", "build-reviewer", true),
         ] {
             let (path, text) = procedure(name, role, parameters);
             repo.write(&path, &text);
@@ -202,7 +200,7 @@ impl Tracked {
                     "procedure",
                     "Integrate",
                     "Integrate exact verified candidates.",
-                    "role: integrator\nparameters:\n  - name: slug\nsubscription_home: project\nsubscriptions:\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_ahead\n  - runner.main_failing\n",
+                    "role: integrator\nparameters:\n  - name: slug\nsubscription_home: project\ninterruptible: false\nsubscriptions:\n  - workflow.preparation_reviewed\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_failing\n",
                     &[],
                     "Integrate.\n",
                 ),
@@ -210,12 +208,104 @@ impl Tracked {
         }
         repo.commit("docs: the acme flavor");
         sync(&env, &repo);
+        if !repo.git(["status", "--porcelain"]).is_empty() {
+            repo.commit("fixture: include generated publication files");
+        }
+        let origin = env.bare_remote("demo-origin");
+        repo.git(["remote", "add", "origin", origin.to_str().unwrap()]);
+        repo.git(["push", "--quiet", "-u", "origin", "main"]);
+
         Self {
             env,
             github,
             repo,
             rt,
         }
+    }
+
+    pub fn native_worker(
+        &self,
+        slug: &str,
+        role: &str,
+        procedure: &str,
+        caller: &str,
+        id: &str,
+    ) -> serde_json::Value {
+        let folder = self.env.path(&format!("native-{slug}"));
+        if !folder.exists() {
+            self.repo.git([
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                &format!("{slug}/work"),
+                folder.to_str().unwrap(),
+                "main",
+            ]);
+        }
+        let proof = crate::runtime::placement_evidence(
+            &self.env,
+            &crate::runtime::NativePlacement {
+                cwd: &folder,
+                slug,
+                role: "work-orchestrator",
+                session: caller,
+            },
+        );
+        self.env
+            .instrukt(&folder)
+            .env("T3CODE_THREAD_ID", caller)
+            .args(["todo", "work", slug, "--placement-evidence", "-"])
+            .write_stdin(proof)
+            .assert()
+            .success();
+        let out = self
+            .env
+            .instrukt(&folder)
+            .env("T3CODE_THREAD_ID", caller)
+            .args([
+                "todo",
+                "attempt",
+                slug,
+                "--role",
+                role,
+                "--procedure",
+                procedure,
+                "--args",
+                slug,
+                "--brief",
+                "-",
+            ])
+            .write_stdin("Do the assigned role.")
+            .assert()
+            .success();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&out.get_output().stdout).unwrap();
+        self.rt.open_session(id);
+        self.env
+            .instrukt(&folder)
+            .env("T3CODE_THREAD_ID", caller)
+            .args([
+                "todo",
+                "bind",
+                slug,
+                "--role",
+                role,
+                "--attempt",
+                &value["attempt"].to_string(),
+                "--session",
+                &format!("t3:{id}"),
+                "--worktree",
+                folder.to_str().unwrap(),
+                "--branch",
+                value["branch"].as_str().unwrap(),
+                "--base",
+                value["base"].as_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        value["session"] = format!("t3:{id}").into();
+        value
     }
 
     /// Runs `instrukt todo <args>` in the project; it must succeed.
@@ -236,7 +326,10 @@ impl Tracked {
             "todo failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8(output.stdout.clone()).unwrap()
+        String::from_utf8(output.stdout.clone()).unwrap().replace(
+            self.env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]",
+        )
     }
 
     /// Runs `instrukt todo <args>` inside the fake runtime's session `id`,
@@ -246,9 +339,9 @@ impl Tracked {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.env.set_env("RT_SESSION", id);
+        self.env.set_env("T3CODE_THREAD_ID", id);
         let out = self.todo(args);
-        self.env.remove_env("RT_SESSION");
+        self.env.remove_env("T3CODE_THREAD_ID");
         out
     }
 

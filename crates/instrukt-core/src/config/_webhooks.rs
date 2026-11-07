@@ -32,6 +32,10 @@ impl WebhookProtocol {
 #[serde(deny_unknown_fields)]
 pub struct WebhookSource {
     secret: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    state: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subject_from: Option<String>,
     #[serde(default = "native", skip_serializing_if = "is_native")]
     verify: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,9 +111,15 @@ pub(super) fn parse(raw: Option<&Value>) -> Result<WebhookSources, ConfigError> 
     let sources: WebhookSources = serde_yaml_ng::from_value(raw.clone()).map_err(|_| invalid("webhooks", "expected domain-keyed source maps with required secret and optional previous_secret, verify, header, name_from or name"))?;
     if raw.as_mapping().is_some_and(|sources| {
         sources.values().any(|source| {
-            ["previous_secret", "header", "name", "name_from"]
-                .iter()
-                .any(|field| source.get(*field).is_some_and(Value::is_null))
+            [
+                "previous_secret",
+                "header",
+                "name",
+                "name_from",
+                "subject_from",
+            ]
+            .iter()
+            .any(|field| source.get(*field).is_some_and(Value::is_null))
         })
     }) {
         return Err(invalid(
@@ -123,6 +133,22 @@ pub(super) fn parse(raw: Option<&Value>) -> Result<WebhookSources, ConfigError> 
             return Err(invalid(
                 "webhooks",
                 "source domains must match [a-z][a-z0-9_]*",
+            ));
+        }
+        if source
+            .subject_from
+            .as_deref()
+            .is_some_and(|field| field.is_empty() || field.split('.').any(str::is_empty))
+            || source.state.iter().any(|name| !webhook_name(name))
+            || (!source.state.is_empty()
+                && source
+                    .subject_from
+                    .as_deref()
+                    .is_none_or(|field| field.is_empty() || field.split('.').any(str::is_empty)))
+        {
+            return Err(invalid(
+                &key,
+                "state names require a nonempty dotted subject_from payload field",
             ));
         }
         let protocol = source.protocol()?;
@@ -277,10 +303,13 @@ pub(super) fn editor_schema() -> serde_json::Value {
             "secret": reference, "previous_secret": reference,
             "verify": {"enum": ["native", "github", "hmac-sha256"], "default": "native"},
             "header": {"type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
+            "state": {"type":"array","items":{"type":"string","pattern":"^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"}},
+            "subject_from": {"type":"string","minLength":1},
             "name_from": {"type": "string", "minLength": 1},
             "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"}
         },
         "allOf": [
+            {"if":{"required":["state"],"properties":{"state":{"minItems":1}}},"then":{"required":["subject_from"]}},
             {"not": {"required": ["name", "name_from"]}},
             {"if": {"required": ["verify"], "properties": {"verify": {"const": "github"}}},
              "then": {"not": {"anyOf": [{"required": ["name"]}, {"required": ["name_from"]}]}}},
@@ -345,5 +374,18 @@ pub(super) fn redact(value: &mut Value) {
                 }
             }
         }
+    }
+}
+
+impl WebhookSource {
+    pub fn delivery_kind(&self, name: &str) -> crate::event_type::DeliveryKind {
+        if self.state.iter().any(|n| n == name) {
+            crate::event_type::DeliveryKind::State
+        } else {
+            crate::event_type::DeliveryKind::Occurrence
+        }
+    }
+    pub fn subject_from(&self) -> Option<&str> {
+        self.subject_from.as_deref()
     }
 }

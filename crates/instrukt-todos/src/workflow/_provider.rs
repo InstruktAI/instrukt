@@ -20,6 +20,87 @@ use crate::evidence::{
 
 use super::_facts::{FactError, FactValue, Facts, member};
 
+/// Select only the workspace the current obligation can still address.
+pub(crate) fn selected_workspace(evidence: &TodoEvidence) -> Option<&crate::evidence::RoleBinding> {
+    if evidence.status == crate::evidence::TodoStatus::Delivered {
+        return None;
+    }
+    if let Some(active) = evidence.bindings.iter().rev().find(|b| {
+        b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Work)
+            && b.attempt.branch.is_some()
+            && b.attempt.released_at.is_none()
+    }) {
+        return Some(active);
+    }
+    if let Some(finalizer) = evidence
+        .bindings
+        .iter()
+        .rev()
+        .find(|b| b.role.as_str() == "finalizer" && b.attempt.completion_sequence.is_some())
+    {
+        return Some(finalizer);
+    }
+    evidence.bindings.iter().find(|b| {
+        b.attempt.assignment == instrukt_runner::interfaces::AssignmentKind::Driver
+            && b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Work)
+            && b.worktree().is_some()
+    })
+}
+fn role_attempt_facts(
+    evidence: &TodoEvidence,
+    observed: &Observations,
+    facts: &mut Facts,
+) -> Result<(), FactError> {
+    let mut retained: Vec<crate::work::Binding> = evidence
+        .bindings
+        .iter()
+        .map(|b| crate::work::Binding {
+            role: b.role.clone(),
+            session: Some(b.binding.session.clone()),
+            worktree: b.binding.worktree.clone(),
+            attempt: b.attempt.clone(),
+        })
+        .collect();
+    let setup = evidence
+        .bindings
+        .iter()
+        .rev()
+        .find(|b| b.role.as_str() == "setup");
+    if let Some(setup) = setup {
+        if let Some(path) = setup.worktree() {
+            facts.insert("setup.worktree.path", text(&path.display().to_string()))?;
+        }
+        let completed =
+            setup.attempt.completion_sequence.is_some() && setup.attempt.failed_at.is_none();
+        facts.insert("setup.complete", FactValue::Bool(completed))?;
+    }
+    if let Some(finalizer) = evidence
+        .bindings
+        .iter()
+        .rev()
+        .find(|b| b.role.as_str() == "finalizer")
+    {
+        let current = finalizer.attempt.completion_sequence.is_some()
+            && finalizer.attempt.completed_head.as_ref() == observed.branch_head.as_ref();
+        facts.insert("finalizer.completion_current", FactValue::Bool(current))?;
+        facts.insert(
+            "finalizer.session",
+            text(&finalizer.binding.session.to_string()),
+        )?;
+        let review_pending = current
+            && current_build_verdict(evidence).is_none_or(|(_, _, report)| {
+                matches!(
+                    binding(&Ledger { evidence }, report, observed.reviewed_change),
+                    member::TODO_CHANGED | member::REPORT_CHANGED | member::UNBOUND
+                )
+            });
+        facts.insert("finalizer.review_pending", FactValue::Bool(review_pending))?;
+    }
+    retained.sort_by(|a, b| (&a.role, a.attempt.number).cmp(&(&b.role, b.attempt.number)));
+    facts.insert("attempts.retained", FactValue::Attempts(retained))?;
+    Ok(())
+}
+
 /// The artifact a build review's complete report is written to.
 #[cfg(test)]
 pub(crate) const BUILD_REVIEW_FINDINGS: &str = artifact_names::REVIEW_FINDINGS;
@@ -114,13 +195,13 @@ pub(crate) struct WorktreeObservation {
 pub(crate) struct Observations {
     /// `None` when the worktree does not exist.
     pub worktree: Option<WorktreeObservation>,
+    pub worktree_path: Option<std::path::PathBuf>,
+    pub preparation_head: Option<CommitSha>,
+    pub preparation_integrated: Option<bool>,
     /// The local todo branch.
     pub branch_head: Option<CommitSha>,
     /// The todo branch on the remote, as last fetched.
     pub remote_head: Option<CommitSha>,
-    /// Canonical-branch commits of the todo whose commit-review settlement
-    /// is neither `approve` nor `exempt`.
-    pub unreviewed_claim_commits: Vec<CommitSha>,
     /// For the current build verdict's reviewed commit; `None` when there
     /// is no current verdict or no head to compare with.
     pub reviewed_change: Option<ChangeSinceReview>,
@@ -222,10 +303,7 @@ pub(crate) fn derive_facts(input: &ProviderInput<'_>) -> Result<Facts, FactError
     }) {
         facts.insert("diagnosis_settled.digest", text(diagnosis.as_str()))?;
     }
-    facts.insert(
-        "claim_commits.unreviewed",
-        FactValue::ShaList(input.observed.unreviewed_claim_commits.clone()),
-    )?;
+
     drift(&ledger, input.observed, &mut facts)?;
     build(&ledger, input.observed, &mut facts)?;
     lane_resources(input.evidence, input.observed, &mut facts)?;
@@ -759,7 +837,39 @@ fn lane_resources(
         }
     }
     facts.insert("sessions.bound", FactValue::Sessions(sessions))?;
-    if let Some(path) = evidence.bindings.iter().rev().find_map(|b| b.worktree()) {
+    role_attempt_facts(evidence, observed, facts)?;
+    facts.insert(
+        "preparation.integrated",
+        FactValue::Bool(observed.preparation_integrated.unwrap_or(true)),
+    )?;
+    if let Some(head) = &observed.preparation_head {
+        facts.insert("preparation.head", FactValue::Sha(head.clone()))?;
+        let approved = evidence
+            .stamps
+            .iter()
+            .rev()
+            .find_map(|stamp| match &stamp.fact {
+                StampFact::PreparationHeadReviewed {
+                    head: reviewed,
+                    report,
+                    verdict,
+                } => Some(
+                    reviewed == head
+                        && *verdict == ReviewVerdict::Approve
+                        && Ledger { evidence }.current("preparation-review-findings")
+                            == Some(report),
+                ),
+                _ => None,
+            })
+            .unwrap_or(false);
+        facts.insert("preparation.review_current", FactValue::Bool(approved))?;
+    }
+
+    if let Some(path) = observed
+        .worktree_path
+        .as_ref()
+        .or_else(|| selected_workspace(evidence).and_then(|b| b.worktree()))
+    {
         facts.insert("worktree.path", text(&path.display().to_string()))?;
     }
     if let Some(worktree) = &observed.worktree {
@@ -768,6 +878,9 @@ fn lane_resources(
         if let Some(head) = &worktree.head {
             facts.insert("worktree.head", FactValue::Sha(head.clone()))?;
         }
+    }
+    if let Some(branch) = &evidence.branch {
+        facts.insert("branch.name", text(branch))?;
     }
     if let Some(head) = &observed.branch_head {
         facts.insert("branch.head", FactValue::Sha(head.clone()))?;
@@ -997,7 +1110,7 @@ mod tests {
         let facts = facts_of(&todo(TodoKind::Bug).build(), &Observations::default());
         assert_eq!(get(&facts, "prd.digest"), None);
         assert_eq!(get(&facts, "prd_review.verdict"), None);
-        assert_eq!(get(&facts, "claim_commits.unreviewed"), None);
+        assert_eq!(get(&facts, "build_review.baseline_commit"), None);
         assert_eq!(get(&facts, "worktree.exists"), None);
         assert_eq!(get(&facts, "claim.held").cloned(), no());
         assert_eq!(get(&facts, "build.complete").cloned(), no());
@@ -1389,7 +1502,7 @@ mod tests {
         let evidence = todo(TodoKind::Change)
             .claimed()
             .bound("work-orchestrator", "lead", None)
-            .bound("builder", "build-1", Some("/work/add-login"))
+            .bound("setup", "build-1", Some("/work/add-login"))
             .build();
         let facts = facts_of(&evidence, &Observations::default());
         assert_eq!(
@@ -1410,13 +1523,15 @@ mod tests {
     #[test]
     fn an_existing_worktree_reports_its_head_and_cleanliness() {
         let observed = Observations {
+            worktree_path: None,
+            preparation_head: None,
+            preparation_integrated: None,
             worktree: Some(WorktreeObservation {
                 clean: false,
                 head: Some(sha('a')),
             }),
             branch_head: Some(sha('a')),
             remote_head: Some(sha('b')),
-            unreviewed_claim_commits: vec![sha('c')],
             reviewed_change: None,
             grounding: Default::default(),
             judged_grounding: Default::default(),
@@ -1429,10 +1544,7 @@ mod tests {
             Some(&FactValue::Sha(sha('a')))
         );
         assert_eq!(get(&facts, "remote.head"), Some(&FactValue::Sha(sha('b'))));
-        assert_eq!(
-            get(&facts, "claim_commits.unreviewed"),
-            Some(&FactValue::ShaList(vec![sha('c')]))
-        );
+        assert_eq!(get(&facts, "build_review.baseline_commit"), None);
     }
 
     #[test]

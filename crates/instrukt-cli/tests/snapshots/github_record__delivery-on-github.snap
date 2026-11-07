@@ -1,6 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/github-record.rs
-expression: redact(&github_view(&project))
+assertion_line: 236
+expression: redact(&github_view(project))
 ---
 issue #1 nested-lists [closed completed]
 labels: instrukt, kind:feature, status:delivered
@@ -19,8 +20,20 @@ comment: [instrukt record · nested-lists · rev 4 on rev 3]
 comment: [instrukt record · nested-lists · rev 5 on rev 4]
 comment: [instrukt record · nested-lists · rev 6 on rev 5]
 comment: [instrukt record · nested-lists · rev 7 on rev 6]
-decision - <time> build_started by Test Developer
-decision - <time> build_verdict by Test Developer
+comment: [instrukt record · nested-lists · rev 8 on rev 7]
+comment: [instrukt record · nested-lists · rev 9 on rev 8]
+comment: [instrukt record · nested-lists · rev 10 on rev 9]
+comment: [instrukt record · nested-lists · rev 11 on rev 10]
+comment: [instrukt record · nested-lists · rev 12 on rev 11]
+comment: [instrukt record · nested-lists · rev 13 on rev 12]
+comment: [instrukt record · nested-lists · rev 14 on rev 13]
+comment: [instrukt record · nested-lists · rev 15 on rev 14]
+comment: [instrukt record · nested-lists · rev 16 on rev 15]
+decision - <time> preparation_verdict by session t3:lead-1
+decision - <time> approval by session t3:lead-1
+decision - <time> preparation_verdict by session t3:lead-1
+decision - <time> build_started by session t3:lead-1
+decision - <time> build_verdict by session t3:build-reviewer-1
 artifact input (generic)
   v1: Keep the depth of nested lists when parsing Markdown.
 artifact prd (generic)
@@ -29,6 +42,10 @@ artifact implementation-plan (plan)
   v1: 1. Track depth in the parser. / 2. Render it.
 artifact review-findings (generic)
   v1: No findings.
+artifact prd-review-findings (generic)
+  v1: The product requirement is approved.
+artifact plan-review-findings (generic)
+  v1: The implementation plan is approved.
 pull request #2 nested-lists [closed -]
 labels: 
 Implements #1.

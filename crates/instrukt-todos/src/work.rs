@@ -16,6 +16,7 @@
 //! ([`crate::evidence::WorkEvidence`]) and core ([`WorkExistence`] for
 //! `TodoExistence`).
 
+mod _attempts;
 mod _board;
 mod _diff;
 mod _envelope;
@@ -25,7 +26,7 @@ mod _grounding;
 mod _inbound;
 mod _model;
 mod _ops;
-mod _ports;
+pub(crate) mod _ports;
 mod _reflect;
 mod _session;
 mod _stamps;
@@ -38,12 +39,16 @@ use instrukt_core::home::Home;
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::Timestamp;
 
+pub use _attempts::{
+    AttemptRequest, AttemptResolution, DriverPlacement, NativeAssignment, NativeBinding,
+    StoppedChild, WorkspaceEntry, WorkspaceRequest,
+};
 pub use _diff::DiffLine;
 pub use _error::WorkError;
 pub use _github::GitHubError;
 pub use _model::{
-    AddressError, Artifact, Binding, Claim, Delivery, ReleasedHold, Removal, TodoAddress, TodoId,
-    TodoRecord, TodoRef, Version,
+    AddressError, Artifact, Attempt, Binding, Claim, Delivery, ReleasedHold, Removal, TodoAddress,
+    TodoId, TodoRecord, TodoRef, Version,
 };
 pub use _ops::{
     CreateRequest, LastKnown, ListEntry, Listing, Outcome, PrerequisiteView, RecordedWork,

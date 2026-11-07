@@ -48,7 +48,9 @@ Sequential artifact production with review gates:
 
 Outputs: the selected kind's reviewed derivations and applicable approval,
 complete digest-bound review reports, and confirmed preparation-claim release.
-Prepare authors pending documentation on canonical main; work executes it.
+Preparation's native shared doc writers author pending documentation in the
+`<slug>/prepare` worktree. The integrator folds, publishes and cleans it after
+independent head review, before work begins separately in `<slug>/work`.
 
 ### 2. Work (`instrukt todo work`)
 
@@ -57,8 +59,11 @@ dependencies:
 
 - **Entry** — obtain current record/repository evidence and execute the
   configured runtime-worktree, upstream-merge, branch-publication and build-start
-  obligations. The runtime creates worktrees; the worktree request uses the
-  derived name `<slug>/work`, and preparation remains on canonical main.
+  obligations. The runtime places the work orchestrator in the todo's one
+  work worktree on `<slug>/work` from updated main. Its native shared children
+  use that same workspace serially; the orchestrator coordinates only. Preparation
+  has already integrated from its separate `<slug>/prepare` worktree. Ad hoc work
+  uses a reviewed one-off worktree and the integrator's gate.
 - **Build** — bind the feature-spec scenarios in scope under the project's
   testing contract and implement the code that satisfies them; execute the
   implementation plan task-by-task, commit per task and stamp build completion.
@@ -88,11 +93,11 @@ the integrator reconciles delivery documentation before candidate verification.
 
 Merge candidates to canonical main:
 
-- **Candidate composition** — merge finalized branches and settled direct
-  local-main commits in the persistent integration worktree. The runtime owns
+- **Candidate composition** — merge reviewed preparation heads, finalized work
+  branches and reviewed one-off branches in the persistent integration worktree. The runtime owns
   worktree creation; the integration procedure owns its established location.
 - **Conflict resolution** — resolve in the integration worktree, preserving
-  both sides' meaningful intent. Run `instrukt docs fold <slug>` to fold the delivery's pending documentation
+  both sides' meaningful intent. Run `instrukt docs fold <slug>` to fold preparation's pending documentation
   before freezing the candidate.
 - **Verification** — push the exact candidate to `origin/integrate`. Required
   green checks admit that commit; `runner.ci_completed` wakes the integrator
@@ -107,9 +112,7 @@ Merge candidates to canonical main:
 - **Recovery** — if canonical main becomes red, put a revert through the same
   gate first; repair its cause in separate work.
 
-The runner also emits `runner.main_ahead` when local main is ahead of remote
-main with no pending candidate, so direct commits enter the same gate. The
-standing integrator's subscription and activation routes carry that wake-up.
+Approved preparation emits `workflow.preparation_reviewed` for immediate integration before build. Preparation uses `<slug>/prepare`; after integration and cleanup, work starts separately in `<slug>/work` from updated main. Only the integrator writes main.
 
 ### Principles
 
@@ -132,13 +135,22 @@ standing integrator's subscription and activation routes carry that wake-up.
 
 ## Steps
 
+### Phase worktrees
+
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree.
+
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+
+After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
+
+
 1. Run `instrukt todo prepare {slug}` to derive preparation obligations. Read
    the selected action, rendered template and owed effects; execute their
    established commands and re-derive after material outcomes.
 2. After preparation release and runner admission, run
    `instrukt todo work {slug}` to build, review, fix and finalize. Reuse recorded
-   sessions through `alive` and `send`; start only a required new session through
-   `instrukt sessions run` and its runtime adapter.
+   active attempts through configured runtime inspection and child messaging;
+   reserve, natively delegate and bind a new role attempt when required.
 3. Execute the configured finalize-ready handoff. The standing integrator
    composes, verifies and promotes the exact candidate; no work-role command
    performs integration.

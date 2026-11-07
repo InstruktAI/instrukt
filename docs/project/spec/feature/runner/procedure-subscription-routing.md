@@ -25,8 +25,7 @@ changes no session. Event enablement gates activation, not document publication.
 | `subscription_home` | Required with subscriptions; exactly `project`, `platform`, `company` or `person`. |
 | `subscription_identity` | `home` (default) or `subject`; selects one agent per home or per subject in that home. |
 | `subscription_attendance` | `attended` (default) or `unattended`; runtime audience statement, not event reach or trust. |
-| `event_delivery` | `sequential` (default) or `batched`. |
-| `interruptible` | Boolean, default false. Independent of cardinality. |
+| `interruptible` | Boolean, default true (ASAP); false requests only-at-entry. Missing steering is no finding. |
 
 Home/identity/attendance/delivery fields without subscriptions are findings.
 Unknown values, malformed patterns and incompatible publication reach are
@@ -78,7 +77,7 @@ identity.
 An activation key derives from `(event ID, canonical procedure ID, exact home)`.
 The exact home includes kind and slug, or platform; same-slug homes of different
 kinds are distinct. The record retains the immutable event, procedure, selected
-home and accepted identity, attendance and delivery declaration. One event has
+home and accepted identity, attendance and delivery intent. One event has
 one subject, so subject need not be added to the activation key; subject-bound
 resolution still receives the original subject.
 
@@ -91,19 +90,16 @@ settled local cursor and Redis ACK. Accepted records exist before the successful
 inside that write section. Successful acceptance does not claim a started agent,
 delivered event or completed domain mutation.
 
-### Runtime handoff contract retained for S6
+### Runtime delivery boundary
 
-Acceptance precedes runtime start/wake and event delivery. A canonical initial
-brief establishes the procedure and effective Required reads before event
-processing. Event bodies remain untrusted activation data through eligible hook
-delivery; they never become ordinary conversational prompts or instructions.
-Sequential delivery selects the oldest pending event; batched selects the ordered
-snapshot pending at the eligible boundary. Unselected and later events remain
-pending. Non-interruptible sessions admit initial and explicit wake entry only;
-interruptible sessions also admit supported in-turn boundaries. Session settings
-are fixed at initialization, including revival; a new successor uses the current
-declaration. The acceptance record keeps its original declaration as evidence.
-Runtime execution and continuation belong to A3/S6, not this routing layer.
+Acceptance precedes runtime input. Assignment-first briefing, untrusted data,
+bounded batch selection and fixed session settings are owned by
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. Routing carries
+the resolved intent unchanged; the adapter realizes ASAP with steering, queued
+input or idle entry according to capability. Only-at-entry work waits for idle
+entry. Missing steering creates no validation finding. The acceptance record
+retains its declaration; the continuing session uses its initialized settings.
+Runtime execution and continuation remain separate from subscription routing.
 
 ## Use cases
 
@@ -229,7 +225,7 @@ And attendance changes neither selection reach nor event trust
 ### UC-PSR19: Carry delivery policy without reinterpreting it in routing
 
 ```gherkin
-Given a developer publishes sequential or batched delivery and an interruptibility setting
+Given a developer publishes an interruptibility setting for bounded batch delivery
 When an activation is accepted
 Then its record carries the resolved settings and effective procedure-read references
 And runtime delivery remains a separate boundary using the continuing session's fixed settings
@@ -246,7 +242,7 @@ And events for another project or none origin cannot activate it
 
 ## Known caveats
 
-- A3/S6 must demonstrate durable event delivery with procedure-first briefing, eligible boundaries, sequential/batched selection and untrusted provenance through the published runtime boundary. T3 start/send/state alone is not evidence of hook equivalence. This feasibility gate does not narrow the target contract or authorize an instrukt runtime lifecycle.
+- Runtime acceptance is not entry consumption or domain completion. Delivery uses the adapter's supported input boundary under procedure-event-delivery, including queue-only T3; subject revival and attendance have separate capability limits.
 - Company/person homes are representable but not executable in this release; resolution fails visibly.
 - Scheduled-only readers react at their next wake within stream retention. No other computer substitutes after missed retention.
 - Replay protection is bounded by consumer marks and retained activation/delivery records, not exactly-once business effects.

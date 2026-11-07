@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/session-continuity.rs
-expression: "stderr(&env, &run)"
----
-instrukt: runtime `rt` leaves `history.search` empty, so this call is not available

@@ -33,9 +33,13 @@ verdict applies.
 - The todo is `kind=task` and the current prepare action calls for task-plan
   drafting, with an `input` artifact and no `task-plan` yet (or a refinement
   pass on an existing one).
-- The session runs in the project on `main`, with no worktree.
+- The session uses its assigned preparation worktree; any committed preparation is independently reviewed and integrated by the integrator. It authors nothing on main.
 - The `input` is the versioned intent record. Its current position-based
   intent check is required; a new version invalidates the earlier check.
+
+### Native conversation evidence
+
+<!-- @config: runtime.read_thread -->
 
 ## Steps
 
@@ -44,7 +48,7 @@ Use `instrukt <command> -h` for individual commands.
 0. **Audit the handoff.** Read `instrukt todo show {slug}` and the `input`.
    Apply the entry audit in `sdlc/policy/todo-creation-discipline`. Take a
    current intent check as given; the first non-author recipient of unchecked
-   input reads its originating conversation through the sessions facade and
+   input reads its originating conversation through the configured runtime read and
    records `instrukt todo stamp {slug} --intent-checked`.
    If the originating conversation is permanently unavailable, return the intent to the
    human in the responsible thread; a new `input` version from that conversation becomes

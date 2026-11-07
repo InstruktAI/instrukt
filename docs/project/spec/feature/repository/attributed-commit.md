@@ -57,42 +57,9 @@ configuration entry. The adapter's metadata carries the observation.
   commit leaves nothing committed.
 - Works in any git repository; the project layer is not required.
 
-### Commit-review notes
+### Worktree commits and review
 
-`instrukt repo stamp <sha…> --verdict approve|needs_work --report <file>`
-writes the verdict and the complete report's digest as a git note on each
-named commit. The notes need no separate work record or enabled todos module.
-The integrator reads these notes when assessing settled direct commits for
-integration.
-
-Each stamp is one line of a commit's note and carries its time,
-`at: <RFC 3339 UTC>`, beside the verdict and its report digest or reason. A new
-stamp is added beside the commit's earlier stamps, never replacing them, so a
-merge never loses another machine's verdict. The latest stamp of a commit
-decides its verdict. Stamps tied at the latest time settle the commit as
-`approve` or `exempt` only when every one of them agrees; otherwise the commit
-is unsettled.
-
-The notes live under `refs/notes/instrukt-review`, and instrukt moves that ref
-explicitly; no remote refspec is changed:
-
-- **Push.** After writing the notes locally, `repo stamp` pushes the notes ref
-  to the remote the default branch tracks, when there is one (the default
-  branch is the remote's `HEAD`, then `init.defaultBranch`, then `main`).
-- **Rejected push.** When another machine stamped first, the stamp fetches the
-  remote notes ref, merges it into the local one (`git notes merge -s
-  cat_sort_uniq`) and pushes again, a bounded number of times.
-- **Unreachable remote.** The stamp still succeeds locally and reports the push
-  as pending. Pushing the ref carries every local note, so the next stamp whose
-  push succeeds delivers it; there is no queue and no flag.
-- **Reading.** Every verdict reader — the integrator and the `repo` commands
-  that read verdicts — fetches the notes ref first. When that fetch fails, it
-  says so and reads the local notes.
-
-`instrukt repo stamp <sha…> --verdict exempt --reason <text>` records
-the author's own-stamp exemption and reason for a commit requiring no review.
-The integrator takes commits whose latest stamp is `approve` or `exempt`,
-stopping at the first commit that is not.
+Only the integrator writes main. `repo commit` refuses the canonical branch and directs authoring to a todo or short-lived ad hoc worktree. Review binds the committed worktree head before merge; the complete report and verdict accompany that candidate. The per-SHA direct-main `repo stamp` surface and review notes are removed.
 
 ## Use cases
 
@@ -119,19 +86,14 @@ And the commit records no session
 And the commit records whether a human was involved as the developer declared
 ```
 
-### UC-RC3: A developer makes settled direct work available for integration
+### UC-RC3: Direct-main review notes (retired)
 
-```gherkin
-Given a developer has direct commits ready to join the shared baseline
-When an agent acting for the developer records their review outcomes or justified exemptions
-Then settled commits become available for integration in order
-And integration stops at the first commit without an accepting outcome
-```
+Retired: no agent authors direct commits on main. Worktree-head review precedes integration.
 
 ## Known caveats
 
+- T3's caller lookup resolves a native session but supplies no verified agent identity. The unresolved-agent author rule above applies even when an agent author is configured; selecting an agent author from configuration order is not identity evidence.
 - An agent with no configured git author is refused with the door `agents.<name>.git_author`.
-- An entry with `agent: <name>` is an agent CLI.
 - Without `--only`, commit includes what the caller staged, as plain git; `--only` commits exactly the given paths.
 
 ## See Also

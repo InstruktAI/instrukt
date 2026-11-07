@@ -617,16 +617,7 @@ fn an_agent_finds_the_file_behind_a_snippet_it_read() {
     insta::assert_snapshot!("snippet-source", stdout(&env, &read));
 }
 
-const RUNTIMES: &str = "schema_version: 1
-runtimes:
-  - name: agent-cli
-    agent: agent-cli
-    session_id_env: AGENT_CLI_SESSION_ID
-    start: agent-cli
-    send: agent-cli send {runtime.session_id}
-    alive: agent-cli alive {runtime.session_id}
-    conversation: agent-cli history {runtime.session_id}
-";
+const RUNTIMES: &str = "schema_version: 1\nrunner: {runtime: t3}\n";
 
 /// A machine whose runtime mapping knows one agent CLI.
 fn machine(env: &TestEnv) {
@@ -656,12 +647,12 @@ fn each_agent_reads_the_value_of_its_own_session_when_it_reads() {
     );
     sync(&env, &demo);
 
-    env.set_env("AGENT_CLI_SESSION_ID", "session-one");
+    env.set_env("T3CODE_THREAD_ID", "session-one");
     let first = env
         .run(demo.path(), ["docs", "get", "acme/procedure/report"])
         .success();
     insta::assert_snapshot!("first-session", stdout(&env, &first));
-    env.set_env("AGENT_CLI_SESSION_ID", "session-two");
+    env.set_env("T3CODE_THREAD_ID", "session-two");
     let second = env
         .run(demo.path(), ["docs", "get", "acme/procedure/report"])
         .success();

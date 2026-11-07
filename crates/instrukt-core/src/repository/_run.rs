@@ -120,6 +120,12 @@ pub fn run_hook(
         tracing::debug!(event = "hook_run_outside_worktree", hook = %hook, cwd = %cwd.display());
         return Ok(());
     };
+    if invocation.hook.starts_sync()
+        && git::run(&root, ["branch", "--show-current"])? != crate::github::default_branch(&root)?
+    {
+        tracing::debug!(event="hook_unintegrated_worktree",root=%root.display());
+        return Ok(());
+    }
     let project = config::project_slug(&root)?;
     // A handoff that cannot be decided or made is reported and never keeps
     // the sync from starting.
@@ -337,8 +343,8 @@ fn last_line(text: &str) -> Option<String> {
     Some(line.chars().take(MESSAGE_LIMIT).collect())
 }
 
-/// The revision of main a push or a pull brought, and how; `None` when
-/// this run is neither.
+/// The upstream revision of main brought by a push, pull or runner fast-forward.
+/// An ordinary merge that differs from the fetched upstream is not a trigger.
 fn main_advance(
     root: &Path,
     invocation: &HookInvocation<'_>,
@@ -353,7 +359,9 @@ fn main_advance(
         }
         Hook::PostMerge | Hook::PostRewrite => {
             let reflog_action = invocation.env.get("GIT_REFLOG_ACTION");
-            if !is_pull(invocation.hook, invocation.args, reflog_action) {
+            if invocation.hook == Hook::PostRewrite
+                && !is_pull(invocation.hook, invocation.args, reflog_action)
+            {
                 return Ok(None);
             }
             let Some(branch) = _git::current_branch(root)? else {
@@ -366,6 +374,11 @@ fn main_advance(
                 return Ok(None);
             }
             let sha = CommitSha::parse(&_git::resolve_commit(root, &tracking)?)?;
+            if !is_pull(invocation.hook, invocation.args, reflog_action)
+                && _git::resolve_commit(root, "HEAD")? != sha.as_str()
+            {
+                return Ok(None);
+            }
             Ok(Some((sha, MainAdvance::Pull)))
         }
         Hook::PostCommit | Hook::PostCheckout => Ok(None),

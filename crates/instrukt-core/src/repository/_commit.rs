@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::config::{ConfigError, Configuration, Env};
+use crate::config::{Configuration, Env};
 use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, TodoSlug};
@@ -61,6 +61,9 @@ pub fn commit(
     let started = Instant::now();
     refuse_owned_trailers(&request.message)?;
     let root = _git::root(cwd)?;
+    if git::run(&root, ["branch", "--show-current"])? == crate::github::default_branch(&root)? {
+        return Err(RepositoryError::CanonicalAuthoring);
+    }
     let configuration = Configuration::load(home, Some(&root))?;
     let author = agent_author(&configuration, env)?;
     let session = session(&configuration, env)?;
@@ -176,24 +179,21 @@ fn refuse_owned_trailers(message: &str) -> Result<(), RepositoryError> {
     Ok(())
 }
 
-/// The active agent's configured git author; `None` outside an agent
-/// session. An agent without one, or with one git would not take as given,
-/// is refused.
+/// The verified agent's configured git author; `None` when agent identity
+/// is unresolved. A known agent without a usable author is refused.
 fn agent_author(
     configuration: &Configuration,
     env: &Env,
 ) -> Result<Option<String>, RepositoryError> {
-    let Some(agent) = configuration
-        .active_agent(env)
-        .and_then(|entry| entry.agent.clone())
-    else {
+    let Some(caller) = configuration.caller_identity(env)? else {
+        return Ok(None);
+    };
+    let Some(agent) = caller.agent else {
         return Ok(None);
     };
     if configuration.agent_git_author(&agent)?.is_none() {
         return Err(RepositoryError::AgentAuthorMissing { agent });
     }
-    // Interpolation is configuration's: the author is read resolved in the
-    // invocation's environment, never as the raw stored text.
     let author = configuration.get_str(&format!("agents.{agent}.git_author"), env)?;
     if !is_name_and_email(&author) {
         return Err(RepositoryError::AgentAuthorMalformed {
@@ -219,13 +219,9 @@ fn is_name_and_email(author: &str) -> bool {
 /// `<runtime>:<id>` of the active runtime; `None` when no runtime's session
 /// variable is set.
 fn session(configuration: &Configuration, env: &Env) -> Result<Option<String>, RepositoryError> {
-    match configuration.active_runtime(env) {
-        Ok(entry) => Ok(env
-            .get(&entry.session_id_env)
-            .map(|id| format!("{}:{id}", entry.name))),
-        Err(ConfigError::NoActiveRuntime) => Ok(None),
-        Err(err) => Err(err.into()),
-    }
+    Ok(configuration
+        .caller(env)?
+        .map(|session| session.to_string()))
 }
 
 /// The association to write for `slug`: as given while todos is off (or the

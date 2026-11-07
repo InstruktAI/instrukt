@@ -62,16 +62,27 @@ the pair.
 
 ## Primary flows
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.dispatch -->
+
+<!-- @config: runtime.message_peer -->
+
+<!-- @config: runtime.discuss -->
+
 ### Standard paired analysis
 
 1. Read the topic or artifact set and split it along a natural boundary.
 2. Open the shared workspace and record both participants and the segment
    assignments in its index.
-3. Start a peer when needed with `instrukt sessions run --procedure <id>
-   --args <text> --brief <file>`, then establish the peer link with
-   `instrukt sessions link <session-id> <peer-session-id>`. Send the segment,
-   workspace path and protocol line with `instrukt sessions send
-   <peer-session-id> <intro>`, passing the intro as one quoted argument.
+3. Start a peer when needed through the configured runtime delegation instruction
+   in `general/procedure/ai-to-ai-operations`. Supply its procedure closure,
+   segment, workspace path and protocol line as the brief; retain the returned
+   native identity. Use the configured runtime message and discussion instructions
+   for exchanges, preserving the attribution of human input.
+
 4. Both agents work their assigned segments in parallel and write findings into
    the workspace.
 5. When an agent finishes its segment, it signals the other side with a hold

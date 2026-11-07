@@ -1,7 +1,7 @@
 //! Authored frontmatter: the typed fields every consumer reads, and the
 //! checks that decide where each field is allowed.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_finding::FindingCode;
@@ -44,15 +44,6 @@ pub struct Dispatch {
     pub thinking_mode: ThinkingMode,
 }
 
-/// How pending events reach a subscribed procedure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EventDelivery {
-    #[default]
-    Sequential,
-    Batched,
-}
-
 /// What a procedure declares about how a session is started into it. Empty
 /// for every other snippet. Fields hold only well-formed values; a
 /// malformed one is absent here and reported by validation.
@@ -66,7 +57,6 @@ pub struct ProcedureEntry {
     pub subscription_attendance: SubscriptionAttendance,
     pub parameters: Vec<Parameter>,
     pub dispatch: Option<Dispatch>,
-    pub event_delivery: EventDelivery,
     pub interruptible: bool,
 }
 
@@ -96,7 +86,7 @@ pub struct Frontmatter {
     pub raw: Mapping,
 }
 
-const PROCEDURE_FIELDS: [&str; 10] = [
+const PROCEDURE_FIELDS: [&str; 9] = [
     "activation_trigger",
     "subscriptions",
     "subscription_home",
@@ -105,7 +95,6 @@ const PROCEDURE_FIELDS: [&str; 10] = [
     "role",
     "parameters",
     "dispatch",
-    "event_delivery",
     "interruptible",
 ];
 const CLASSIFICATION_FIELDS: [&str; 4] = ["id", "type", "scope", "domain"];
@@ -193,13 +182,9 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
     let dispatch = get(raw, "dispatch")
         .filter(|_| role.is_some())
         .and_then(|v| parse_dispatch(v).ok());
-    let event_delivery = match get(raw, "event_delivery").and_then(Value::as_str) {
-        Some("batched") => EventDelivery::Batched,
-        _ => EventDelivery::Sequential,
-    };
     let interruptible = get(raw, "interruptible")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(true);
     ProcedureEntry {
         role,
         activation_trigger,
@@ -214,7 +199,6 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
             .unwrap_or_default(),
         parameters,
         dispatch,
-        event_delivery,
         interruptible,
     }
 }
@@ -425,7 +409,6 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
         "subscription_home",
         "subscription_identity",
         "subscription_attendance",
-        "event_delivery",
         "interruptible",
     ] {
         let Some(value) = get(raw, field) else {
@@ -445,7 +428,6 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
             ),
             "subscription_identity" => matches!(value.as_str(), Some("home" | "subject")),
             "subscription_attendance" => matches!(value.as_str(), Some("attended" | "unattended")),
-            "event_delivery" => matches!(value.as_str(), Some("sequential" | "batched")),
             _ => value.is_bool(),
         };
         if !valid {

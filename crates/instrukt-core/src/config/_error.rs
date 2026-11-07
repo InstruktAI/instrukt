@@ -12,7 +12,7 @@ use crate::ids::IdError;
 pub struct Finding {
     /// The document the finding concerns.
     pub document: PathBuf,
-    /// The dotted key the finding concerns (`runtimes`, `runtimes.0.start`).
+    /// The dotted key the finding concerns (for example, `runner.runtime`).
     pub key: String,
     /// Which rule the key breaks.
     pub kind: FindingKind,
@@ -55,7 +55,7 @@ pub enum FindingKind {
     NoRuntimeChosen,
     /// A module switch turns on features whose verbs the chosen runtime
     /// leaves empty.
-    RuntimeVerbMissing,
+    RuntimeCapabilityMissing,
     /// A reference to a key that does not exist.
     UnresolvedReference,
     /// A reference that leads back to itself.
@@ -132,7 +132,9 @@ pub enum ConfigError {
     UnsetVariable { name: String },
     #[error("reference cycle: {}", chain.join(" -> "))]
     Cycle { chain: Vec<String> },
-    #[error("no configured runtime's session variable is set; `runtime.*` has no value here")]
+    #[error(
+        "no selected runtime caller context is available; choose runner.runtime and run inside its caller session"
+    )]
     NoActiveRuntime,
     #[error("`runtime.{field}`: the active runtime `{runtime}` has no `{field}`")]
     MissingRuntimeField { runtime: String, field: String },

@@ -66,6 +66,7 @@ pub fn position_dir(domain: &str) -> String {
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::time::SystemTime;
@@ -111,8 +112,26 @@ impl TestEnv {
             ),
         )
         .unwrap();
+        // Every isolated test shadows the live runtime, including tests that
+        // only request model provenance for an otherwise unknown caller.
+        let runtime_bin = base.join("runtime-bin");
+        std::fs::create_dir_all(&runtime_bin).unwrap();
+        let t3 = runtime_bin.join("t3");
+        std::fs::write(
+            &t3,
+            "#!/bin/sh\necho 'test runtime is not configured' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&t3, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut vars = BTreeMap::new();
-        vars.insert("PATH".into(), std::env::var("PATH").unwrap_or_default());
+        vars.insert(
+            "PATH".into(),
+            format!(
+                "{}:{}",
+                base.join("runtime-bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        );
         vars.insert("HOME".into(), home.display().to_string());
         vars.insert("TMPDIR".into(), tmp.display().to_string());
         vars.insert(
@@ -154,6 +173,10 @@ impl TestEnv {
     }
 
     /// A path inside the test's directory, outside `HOME`.
+    pub fn injected(&self, name: &str) -> Option<&str> {
+        self.vars.get(name).map(String::as_str)
+    }
+
     pub fn path(&self, relative: &str) -> PathBuf {
         self.base().join(relative)
     }
@@ -161,7 +184,12 @@ impl TestEnv {
     /// Sets an environment variable for every later subprocess, e.g. a
     /// runtime's session variable.
     pub fn set_env(&mut self, key: &str, value: &str) -> &mut Self {
-        self.vars.insert(key.to_owned(), value.to_owned());
+        let value = if key == "PATH" {
+            format!("{}:{value}", self.path("runtime-bin").display())
+        } else {
+            value.to_owned()
+        };
+        self.vars.insert(key.to_owned(), value);
         self
     }
 

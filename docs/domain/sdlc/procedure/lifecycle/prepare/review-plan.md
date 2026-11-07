@@ -45,6 +45,12 @@ it without guessing and a reviewer finds no surprises.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.read_thread -->
+
 Use `instrukt <command> -h` for individual commands.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
@@ -205,7 +211,7 @@ and intent-checked stamp. A current check is taken as given, regardless of
 which role performed it; rewriting the plan does not invalidate that check.
 If you are the first recipient other than the current input's author and no
 current check exists, read its originating conversation through
-`instrukt sessions conversation <session-id>` before weighing the plan against
+the configured runtime conversation read instruction before weighing the plan against
 it. Confirm fidelity and record `instrukt todo stamp {slug} --intent-checked`
 against the checked input version and conversation. If expression needs
 clarifying, return it to its author for a new input version; reviewer
@@ -237,8 +243,9 @@ policy:
   role cannot legally or physically perform is Critical.
 - No work-phase task takes the doc layer's state as its subject. Authoring or
   editing under `docs/**`, folding pending markers, and confirming or verifying
-  whether they are folded are the same violation: the doc layer is authored on
-  `main` during prepare and folded by the integrator at delivery -> Critical.
+  whether they are folded are the same violation: the doc layer is authored in
+  `<slug>/prepare`, then reviewed, folded and integrated by the integrator before
+  build -> Critical.
   Judge the task's subject, not its verb — a documentation task phrased as a
   confirmation of marker state passes an executability check and is still
   invalid. Reading doc snippets as implementation input is not this violation;
@@ -376,7 +383,7 @@ to pre-satisfy:
   context decides is an Important finding whose closure is removal or a
   one-sentence pointer to the owner. A third disposition is
   `doc_deferred: <holding-slug> — <inline-snippet-reference>#<section>`. Accept
-  it only when the named region on `main` is enclosed by that slug's pending
+  it only when the named region in the target preparation worktree is enclosed by that slug's pending
   marker, that slug is already in this todo's `after` set, the inline reference
   points to the held snippet using the form required by
   `general/policy/referencing-doc-snippets`, and replacement text is drafted
@@ -387,12 +394,12 @@ to pre-satisfy:
   collision, a nested marker, or an untracked wait as deferral.
   When the delivery removes a capability that a whole live snippet describes,
   or the last dispatcher of a command artifact, the plan names each retiring
-  file and verifies its empty companion was authored on `main` under this slug
+  file and verifies its empty companion was authored in the preparation worktree under this slug
   (`general/procedure/doc-snippet-authoring` step 13). A retiring file with no
   companion, a task that deletes it, or a removal left to an act after
   delivery is a Requirement-Violation.
 - **ADR discipline (hard gate)**: any ADR the plan schedules, or that prepare
-  authored on `main`, is held to `general/policy/adr-discipline` and
+  authored in the preparation worktree, is held to `general/policy/adr-discipline` and
   `general/procedure/adr-authoring`. It must record one real, contestable
   architectural fork — reject design or current-state cast as an ADR, a
   non-decision (cleanup or alignment that carries no fork — the default is none),
@@ -400,7 +407,7 @@ to pre-satisfy:
   scheduled or authored ADR that fails this bar is a Requirement-Violation
   (blocking); the reviewer does not approve until it is dropped or corrected.
   This bar is the plan reviewer's: the build reviewer never assesses ADRs, because
-  the doc layer is authored on `main` during prepare, never in the worktree.
+  the doc layer is authored in the preparation worktree, reviewed and integrated to main before build, never in the work-phase worktree.
 - **Process-change governance (hard gate)**: per
   `sdlc/policy/process-change-authority`, when any plan task
   implies a behavioral delta to a process-layer contract (lifecycle state

@@ -34,7 +34,7 @@ fn with_automatic_pickup_eligible_work_is_dispatched_to_an_agent() {
 
     project.tick();
 
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!("dispatched-opening", project.rt.opening("s1"));
     insta::assert_snapshot!(
         "dispatched-record",
@@ -63,7 +63,7 @@ fn a_project_choosing_automatic_pickup_in_its_own_layer_is_dispatched_by_the_mac
 
     project.tick();
 
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
@@ -78,7 +78,7 @@ fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() 
 
     project.github.resume();
     project.tick();
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!(
         "dispatched-after-pending-claim",
         work::redact(&project.todo(["show", "tidy-imports"]))
@@ -116,7 +116,7 @@ fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command
 
     project.tick();
 
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
@@ -146,11 +146,7 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
     let repo = env.git_repo("demo");
     repo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
     repo.commit("the developer's project");
-    for args in [
-        vec!["tick"],
-        vec!["run"],
-        vec!["sessions", "send", "rt:s1", "hello"],
-    ] {
+    for args in [vec!["tick"], vec!["run"], vec!["sessions", "list"]] {
         let refused = env.run(repo.path(), &args).failure();
         insta::assert_snapshot!(
             format!("refused-{}", args[0]),

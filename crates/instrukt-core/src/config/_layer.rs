@@ -243,7 +243,7 @@ pub fn patch(
     // switches them on is refused for it.
     if layer.kind() == LayerKind::Project {
         let global = read_usable(home, &Layer::Global)?;
-        if todos_on(&before, global.as_ref()) {
+        if todos_on(&before, global.as_ref())? {
             findings.retain(|f| f.kind != FindingKind::TodosNeedGitHub);
         }
     }

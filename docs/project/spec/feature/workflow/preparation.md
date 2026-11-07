@@ -49,9 +49,14 @@ than a generic blocked state on the first review result.
 Planning distinguishes fresh derivation, seeded derivation and substantive
 re-derivation. A revision answering review findings uses the same owning
 planning procedure and its findings; it introduces no additional dispatch
-reason or synthetic digest-diff header. The orchestrator loads its own
-derivation procedures inline and dispatches independent reviews through the
-configured runtime capability.
+reason or synthetic digest-diff header. The orchestrator delegates doc writers and independent reviewers as shared
+native children through the configured instruction rendered by `@config`,
+with one writer at a time in `<slug>/prepare`. The workflow
+supplies the brief, role, attempt and captured shared placement; work commands reserve
+the attempt and bind the returned native child id. The runtime supplies parent
+linkage and ending delivery. Agent follow-ups, conversation reads and inspection
+likewise use configured native instructions; a verdict is record evidence, not
+a wake event.
 
 Drift routes and binding rules are owned by
 `project/instrukt/spec/feature/workflow/artifact-currency`. A doctrine
@@ -85,12 +90,30 @@ what the human owns: money, public statements in their name, granting access,
 or legal commitments. Approval recording follows
 `project/instrukt/spec/feature/work/approvals`.
 
+### Continue after an approval decision
+
+Applying an approval or request-changes decision records its attribution and
+current gate evidence, then directs as-soon-as-possible attention to the todo's
+current orchestrator when it holds the claim and is alive. That orchestrator
+re-derives preparation from the updated record. With no live orchestrator,
+only the state changes; next pickup or a deliberate start continues from it.
+This is direct attention under session-continuity, not an approval event or
+an automatic worker dispatch. GitHub intake is specified by github-record.
+
+### Preparation workspace and immediate integration
+
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+
+After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
+
 ### Readiness and release
 
 Prepared means every requirement of the selected kind's flow is satisfied,
 required review and approval bindings are current, drift obligations are
-settled, and commits authored on the canonical branch under the preparation
-claim have their required approving commit-review stamps.
+settled, required independent review binds the current preparation head, and
+that reviewed documentation has integrated and published before build.
 
 The orchestrator releases the claim with `instrukt todo update <slug>
 --unclaim`, confirms `claim.held` is false and records the handoff. The
@@ -100,26 +123,46 @@ subsequent execution dispatch. Manual preparation does not itself require
 dependency delivery; work admission does. Entry claims and holds are work-record
 and runner concerns, distinct from the derived preparation state.
 
+### Fresh canonical base
+
+Before creating either `<slug>/prepare` or `<slug>/work`, fetch origin and use
+`t3 thread start <project> - --worktree origin/main --branch <slug>/<phase> --title <key>`.
+Only the integrator writes and pushes gate-green exact commits to main; local
+main can lag and supplies no new-phase base. A fetch failure leaves startup
+unperformed, with its cause visible. A retained published `<slug>/work` on
+another computer is continuation of the existing phase, using freshly fetched
+`origin/<slug>/work` with the same local branch name; it is never reset to main.
+For repositories whose canonical branch has another name, use that remote ref.
+
 ## Use cases
 
 ### UC-PR1: Prepare an intended feature for implementation
 
 ```gherkin
-Given a developer has recorded the feature they want in their project
-And the project's workflow requires review and approval of that intent
-When the developer has the feature prepared for implementation
-Then the todo is released for implementation only after its required derivations, reviews and approval are current
-And review findings return to the responsible author for revision
+Given a developer has recorded and checked an intended feature
+When preparation runs in its derived prepare worktree
+Then its orchestrator delegates doc writers and independent reviewers as native shared children
+And the feature receives its reviewed derivations and applicable approval
+And independent review binds the preparation head for immediate integration before build
+And remote main changes only through the integrator's gate
+And findings return to the responsible author for revision
+```
+
+### UC-PR2: Resume preparation after giving an approval decision
+
+```gherkin
+Given a developer's todo is waiting at its configured approval gate
+When an admissible approval or request-changes decision is applied
+Then its live claim-holding orchestrator receives that decision as soon as possible
+And re-derives the next preparation obligation from the record
+But when no live orchestrator exists
+Then the decision remains recorded for the next pickup or deliberate start
+And no orchestrator is started solely to deliver the decision
 ```
 
 ## Known caveats
 
-- Preparation handoff retains its branch and worktree evidence; it does not
-  assign one shared worktree to subsequent roles. On T3, execution roles use
-  separate worktrees at the todo branch's current head under
-  `project/instrukt/spec/feature/workflow/delivery-cycle`. Attachment-dependent
-  workflows are refused at enablement; the shipped sdlc workflow needs creation
-  only.
+- Preparation integration does not deliver the build. Review and integration of the work candidate remain owed independently.
 
 ## See Also
 

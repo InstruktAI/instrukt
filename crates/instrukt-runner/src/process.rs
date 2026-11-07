@@ -1,7 +1,8 @@
 //! Running a configured command: the boundary to the runtime, the
 //! notification command and the OS scheduler's registrar.
 //!
-//! A command line from the runtime mapping runs through `sh -c`. Operands
+//! An explicit notification or scheduler command can use `sh -c`. Runtime
+//! primitives use direct program arguments and stdin. Operands
 //! (a message text, a session id, a prompt) are never interpolated into
 //! that text: they are appended as positional parameters (`sh -c '<command>
 //! "$@"' instrukt <operands…>`), the argument-vector form
@@ -268,4 +269,7 @@ fn receive<T>(receiver: &Receiver<T>, deadline: Instant) -> Option<T> {
     receiver
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .ok()
+}
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }

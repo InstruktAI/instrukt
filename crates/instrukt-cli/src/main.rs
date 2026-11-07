@@ -39,7 +39,7 @@ enum Command {
     Init(repository::InitArgs),
     /// Install, remove, inspect and run instrukt's git hook sections.
     Hooks(repository::HooksArgs),
-    /// Attributed commits and commit-review stamps.
+    /// Attributed commits in an authoring worktree.
     Repo(repository::RepoArgs),
     /// Use-case coverage, reservation and trace.
     Specs(specs::SpecsArgs),
@@ -59,7 +59,7 @@ enum Command {
     Tick(runner::TickArgs),
     /// Scheduled tick status.
     Ticks(runner::TicksArgs),
-    /// The sessions facade over the configured runtime.
+    /// Inspect keyed runtime threads and resolve uncertain unattended starts.
     Sessions(runner::SessionsArgs),
     /// Register the machine's runner wake-up with the OS scheduler.
     Install(runner::InstallArgs),

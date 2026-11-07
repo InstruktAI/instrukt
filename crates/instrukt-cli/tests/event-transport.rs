@@ -3,16 +3,18 @@
 mod common;
 #[path = "support/documented.rs"]
 mod documented;
-#[path = "support/flavor.rs"]
-mod flavor;
 #[path = "support/runtime.rs"]
 mod runtime;
-#[path = "support/event_transport.rs"]
+#[path = "support/work.rs"]
 mod support;
+#[path = "support/event_transport.rs"]
+mod transport_support;
+#[path = "support/workflow.rs"]
+mod workflow;
 
 use common::redis::RedisServer;
 use instrukt_runner::transport::EVENT_STREAM;
-use support::Computer;
+use transport_support::Computer;
 
 // spec: project/instrukt/spec/feature/runner/event-transport UC-ET1
 #[test]
@@ -258,51 +260,106 @@ fn independent_source_positions_are_never_compared_across_scopes() {
 // spec: project/instrukt/spec/feature/runner/event-transport UC-ET5
 #[test]
 fn finalize_ready_keeps_its_stamp_and_occurrence_through_a_publication_failure() {
-    let project = flavor::Tracked::integrating();
-    let client = redis::Client::open(project.env.redis_url()).unwrap();
-    let mut redis = client.get_connection().unwrap();
-    project.tick().success();
-    project.todo([
-        "create",
+    let crew = workflow::Crew::new();
+    let project = &crew.project;
+    let redis_server = RedisServer::new(&project.env);
+    let global_path = project.env.instrukt_home().join("instrukt.yaml");
+    let mut global = std::fs::read_to_string(&global_path).unwrap();
+    global.push_str(&format!(
+        "modules: {{events: true}}\nredis:\n  cluster:\n    url: '{}'\n",
+        redis_server.url
+    ));
+    std::fs::write(global_path, global).unwrap();
+    project.env.run(crew.root(), ["sync"]).success();
+    let mut redis = redis_server.connection();
+    project.env.run(crew.root(), ["tick"]).success();
+    project.create("handoff", "change", "Hand committed work to integration.");
+    crew.write(
         "handoff",
-        "Hand committed work to integration.",
-        "--kind",
-        "change",
-        "--approved",
-    ]);
+        "implementation-plan",
+        "Prepare the final candidate.",
+    );
+    crew.write("handoff", "plan-review-findings", "Approved plan.");
+    crew.stamp(
+        "handoff",
+        &["--verdict", "approve", "--phase", "plan_review"],
+    );
+    crew.next("work", "handoff");
+    let start = |procedure: Option<&str>| {
+        let role = match procedure {
+            None => "setup",
+            Some("crew/procedure/finalize") => "finalizer",
+            _ => "build-reviewer",
+        };
+        crew.worker("handoff", role, procedure)
+    };
+    let stamp = |worker: &serde_json::Value, flags: &[&str]| {
+        project
+            .env
+            .instrukt(std::path::Path::new(worker["worktree"].as_str().unwrap()))
+            .env(
+                "T3CODE_THREAD_ID",
+                worker["session"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("t3:")
+                    .unwrap(),
+            )
+            .args(["todo", "stamp", "handoff"])
+            .args(flags)
+            .assert()
+            .success();
+    };
+    let setup = start(None);
+    stamp(&setup, &["--role-complete"]);
+    let finalizer = start(Some("crew/procedure/finalize"));
+    let path = std::path::Path::new(finalizer["worktree"].as_str().unwrap());
+    std::fs::write(path.join("handoff.rs"), "// ready for integration\n").unwrap();
+    project.env.git(path, ["add", "handoff.rs"]);
+    project.env.git(
+        path,
+        ["commit", "--quiet", "-m", "feat: prepare the handoff"],
+    );
     project
-        .repo
-        .git(["checkout", "--quiet", "-b", "handoff/work"]);
-    project
-        .repo
-        .write("handoff.rs", "// ready for integration\n");
-    project.repo.commit("feat: prepare the handoff");
-    project.todo(["stamp", "handoff", "--finalize-ready"]);
-    project.repo.git(["checkout", "--quiet", "main"]);
+        .env
+        .git(path, ["push", "--quiet", "origin", "HEAD:handoff/work"]);
+    project.repo.git(["fetch", "--quiet", "origin"]);
+    stamp(&finalizer, &["--role-complete"]);
+    let reviewer = start(Some("crew/procedure/review-build"));
+    crew.write(
+        "handoff",
+        "review-findings",
+        "Approve the finalized candidate.",
+    );
+    stamp(
+        &reviewer,
+        &["--verdict", "approve", "--phase", "build_review"],
+    );
+    stamp(&finalizer, &["--finalize-ready"]);
     redis::cmd("ACL")
         .arg("SETUSER")
         .arg("default")
         .arg("-xadd")
         .query::<()>(&mut redis)
         .unwrap();
-    project.tick().success();
+    project.env.run(crew.root(), ["tick"]).success();
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         project.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
     let (id, pending, stamp_count): (String, bool, u64) = db.query_row("SELECT id, publication_state = 'pending', (SELECT count(*) FROM stamps WHERE fact = 'finalize_ready') FROM events WHERE name = 'workflow.finalized'", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
     assert!(pending);
-    assert_eq!((stamp_count, project.rt.started_count()), (1, 0));
+    assert_eq!((stamp_count, crew.runtime.started_count()), (1, 3));
     redis::cmd("ACL")
         .arg("SETUSER")
         .arg("default")
         .arg("+xadd")
         .query::<()>(&mut redis)
         .unwrap();
-    project.tick().success();
+    project.env.run(crew.root(), ["tick"]).success();
     let (confirmed, stamp_count): (bool, u64) = db.query_row("SELECT publication_state = 'confirmed', (SELECT count(*) FROM stamps WHERE fact = 'finalize_ready') FROM events WHERE id = ?1", [&id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
     assert!(confirmed);
-    assert_eq!((stamp_count, project.rt.started_count()), (1, 1));
+    assert_eq!((stamp_count, crew.runtime.started_count()), (1, 3));
     let stream: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
         .arg(EVENT_STREAM)
         .arg("-")

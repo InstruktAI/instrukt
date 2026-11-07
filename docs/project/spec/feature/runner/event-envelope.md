@@ -91,6 +91,22 @@ local records migrate forward under instrukt's versioned migrations. Different
 instrukt versions preserve occurrence identity and unknown facts at the codec
 boundary. No TeleClaude-specific legacy fields enter the canonical envelope.
 
+### Delivery classification and pending state
+
+Every catalog declaration supplies `delivery_kind: occurrence|state`. An absent
+or unknown classification is a declaration-validation finding. Occurrences all
+count; a newer undelivered state of one type for the same exact subject replaces
+older pending state before message selection, never after handover. Identity
+deduplication remains independent. Polling producers emit only when the observed
+state changes. Upstream and canonical-main state subjects name their stable ref;
+revision evidence remains in data. Candidate CI state names the candidate commit.
+
+The shipped `runner.upstream_changed`, `runner.ci_completed`,
+`runner.main_failing` is state. `workflow.preparation_reviewed` is an occurrence bound to the exact approved preparation head.
+`workflow.finalized` and `instrukt.system.event.dead_lettered` are occurrence.
+External names default to occurrence. A webhook source may explicitly declare
+state names and a payload field supplying the subject under inbound-webhook-endpoint-framework.
+
 ### Platform lifecycle states
 
 For `instrukt` types that report lifecycle state, the last segment is one of
@@ -223,6 +239,15 @@ Given a developer declares an instrukt family with a failing state
 When its catalog is generated
 Then the family also declares an ok state for the same subject kind
 And events for one failure and recovery preserve that thing and origin
+```
+
+### UC-EE16: Distinguish state from occurrences
+
+```gherkin
+Given a developer inspects an event type in the generated catalog
+When its declaration is read
+Then it explicitly declares occurrence or state delivery semantics
+And a declaration without a recognized classification is invalid
 ```
 
 ## Known caveats

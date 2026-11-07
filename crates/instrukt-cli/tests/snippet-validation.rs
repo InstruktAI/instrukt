@@ -51,16 +51,8 @@ fn snippet(taxonomy: &str, extra: &str, body: &str) -> String {
 
 /// The machine's runtime mapping: one agent CLI, `claude`, that dispatch
 /// defaults may name.
-const MACHINE: &str = r#"schema_version: 1
-runtimes:
-  - name: claude-cli
-    agent: claude
-    session_id_env: CLAUDE_SESSION
-    start: claude
-    send: claude send
-    alive: claude alive
-    conversation: claude history
-"#;
+const MACHINE: &str =
+    "schema_version: 1\nrunner: {runtime: t3}\nagents: {order: [claude], thinking_mode: med}\n";
 
 /// A repository declaring project `demo` that publishes the `acme` domain,
 /// on a machine whose runtime mapping can start `claude`.
@@ -114,7 +106,7 @@ fn valid_tree(repo: &Repo) {
         "docs/domain/acme/procedure/listen.md",
         &snippet(
             "procedure",
-            "role: listener\nsubscription_home: project\nsubscriptions: ['acme.events.*']\nevent_delivery: batched\n",
+            "role: listener\nsubscription_home: project\nsubscriptions: ['acme.events.*']\n",
             "",
         ),
     )
@@ -379,7 +371,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         .write(
             "AGENTS.master.md",
             "## Required reads\n\n@~/.instrukt/docs/acme/principle/session.md\n\n## Purpose\n\n\
-             <!-- @config: runtime.conversation -->\n\n<!-- @exec: touch ran -->\n",
+             <!-- @config: runtime.session_id -->\n\n<!-- @exec: touch ran -->\n",
         );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
@@ -516,7 +508,7 @@ fn publish_crew_flavor(env: &TestEnv) {
         .write("docs/domain/crew/workflow/templates/review.md", "Review {slug}.\n")
         .write(
             "docs/domain/crew/workflow/work.yaml",
-            "flow: work\norchestrator: lead\ninitial: start\nstates: [start, reviewing]\n\
+            "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, reviewing]\n\
              transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
         )
         .write(

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+assertion_line: 464
+expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
+---
+instrukt: Git cwd alone does not bind an orchestrator; supply --placement-evidence with native session, key, recorded worktree, branch, head and source

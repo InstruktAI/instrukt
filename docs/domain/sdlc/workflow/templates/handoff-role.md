@@ -1,5 +1,0 @@
-# Completed role handoff — {slug}
-
-Work orchestrator: run `instrukt todo handoff {slug}` for the outstanding completed setup, builder/fixer or finalizer attempt. Read its reported attempt, source, expected head and confirmed head. Status 0 confirms release; re-enter `instrukt todo work {slug}` before dispatch. Status 1 leaves recovery owed against the recorded intent. Status 2 names the refused condition; a non-fast-forward holds the todo and retains the role branch and worktree for reconciliation.
-
-Retry the same command after an interruption; it finishes or reports the recorded handoff. Use the existing revision route to reconcile divergence. An attempt unable to finish synchronization instead uses `instrukt todo handoff {slug} --failed --reason <text>`: status 0 confirms failed release and an unchanged todo branch; status 1 leaves that outcome unconfirmed, and status 2 names the refused condition. Preserve the failed role head and workspace, confirm release, then re-enter work for the explicit recovery-builder dispatch. Review verdicts and deferral-processing evidence release their own attempts directly.

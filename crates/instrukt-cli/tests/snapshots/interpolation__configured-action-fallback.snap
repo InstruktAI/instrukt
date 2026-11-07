@@ -1,0 +1,42 @@
+---
+source: crates/instrukt-cli/tests/interpolation.rs
+assertion_line: 85
+expression: "common::mask_published_commits(&String::from_utf8_lossy(&fallback.get_output().stdout).replace(env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
+---
+# instrukt docs get: acme/procedure/delegate
+
+---
+id: acme/procedure/delegate
+type: procedure
+domain: acme
+scope: global
+description: Delegate through the selected native action.
+source: [TMP]/demo/docs/domain/acme/procedure/delegate.md
+---
+# Delegate — Procedure
+
+## Goal
+
+```
+Use the explicitly configured instrukt fallback for the missing native capability.
+```
+
+```
+Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation.
+```
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

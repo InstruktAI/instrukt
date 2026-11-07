@@ -2,6 +2,6 @@
 source: crates/instrukt-cli/tests/layered-configuration.rs
 expression: "stdout(&env, &validated)"
 ---
-[TMP]/clone/instrukt.yaml: runtimes: not permitted in the project layer (global layer only)
+[TMP]/clone/instrukt.yaml: runner.runtime: not permitted in the project layer (global layer only)
 [TMP]/clone/instrukt.yaml: agents.order: not permitted in the project layer (global layer only)
 [TMP]/clone/instrukt.yaml: agents.thinking_mode: not permitted in the project layer (global layer only)

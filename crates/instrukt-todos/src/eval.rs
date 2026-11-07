@@ -583,6 +583,7 @@ mod tests {
 
     fn stamp(seconds: i64, fact: StampFact, fingerprint: &str, model: Option<&str>) -> StampRecord {
         StampRecord {
+            source_comment: None,
             fact,
             at: at(seconds),
             actor: Actor::Session(SessionRef::parse("agent-cli:s1").unwrap()),

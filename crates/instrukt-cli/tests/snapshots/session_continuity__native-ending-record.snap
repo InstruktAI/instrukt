@@ -1,0 +1,34 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+assertion_line: 219
+expression: "support::redact(&result.replace(crew.project.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
+---
+parser · change · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 8
+intent:
+  Improve parser.
+reflection: pending: the pull request waits for branch `parser/work` on GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  work-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:work-lead:1
+    branch: parser/work; base: <commit 1>
+    worktree: [TMP]/team-parser-work
+  setup/1: t3:setup-1
+    key: instrukt:todo:demo/<id 1>:setup:1
+    branch: parser/work; base: <commit 1>
+    worktree: [TMP]/team-parser-work
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+  implementation-plan (1 version)
+    <digest 2> by session t3:lead-1 at <time>
+  plan-review-findings (1 version)
+    <digest 3> by session t3:lead-1 at <time>
+stamps:
+  #4 <time> plan_review verdict approve — target <digest 2>, report <digest 3> — by session t3:lead-1, model unknown, eval <digest 4>

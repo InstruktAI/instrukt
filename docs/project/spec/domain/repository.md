@@ -82,8 +82,8 @@ commands.
   idempotence and removal; the hook status report, including each section's
   last run outcome and refused syncs; which hooks instrukt uses
   and what each hook run starts; composition of attributed commits: author,
-  trailers, refusal of caller-written trailers, the paths committed;
-  commit-review verdicts and report digests recorded as git notes.
+  trailers, refusal of caller-written trailers, canonical-branch commit refusal
+  and the paths committed.
 - **Does not own** — what a sync publishes and the ownership it records
   (publication, `project/instrukt/spec/domain/publication`); the
   editor schemas and modelines init asks publication to write (publication,
@@ -97,8 +97,6 @@ commands.
 - **Published contracts** — `instrukt init`;
   `instrukt hooks install|remove|status`; `instrukt hooks run <hook>`;
   `instrukt repo commit`;
-  `instrukt repo stamp <sha…> --verdict approve|needs_work --report <file>`;
-  `instrukt repo stamp <sha…> --verdict exempt --reason <text>`;
   `instrukt init --slug <slug>`; the claims report; the section markers;
   the trailer keys.
 - **Allowed dependencies** — configuration (project slug, runtime choice,
@@ -158,10 +156,10 @@ commands.
 - **Identifier:** the commit SHA.
 - **Lifecycle:** created once; git owns it from then on.
 
-Commit-review notes bind a verdict and complete report digest to each named
-commit. instrukt pushes and fetches the notes ref explicitly, so they reach
-every machine without a separate work record. The integrator reads them; their command contract is owned by
-`project/instrukt/spec/feature/repository/attributed-commit`.
+Independent review binds the complete worktree head before integration. Work
+records preparation and build review evidence; repository owns no per-commit
+notes ref or direct-main review exemption. Only the integrator advances main
+through the verified candidate gate.
 
 ### Domain events emitted
 

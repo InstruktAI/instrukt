@@ -29,6 +29,12 @@ contributors; the index is a map to the work, not a session diary
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.read_thread -->
+
 0. **Establish the shared purpose before every write.** Identify the human or
    session that needs the proposed material and the collaboration or handoff it
    serves. Apply the exclusive-use contract in
@@ -55,7 +61,7 @@ contributors; the index is a map to the work, not a session diary
      thinking mode, role (author, peer, reviewer, dispatcher). Session ids are
      the attribution evidence (`general/concept/lineage-vs-authorship`); the
      reasoning behind a participant's files is in that session's conversation,
-     read with `instrukt sessions conversation <session-id>`. That read supplies
+     read with the configured runtime conversation read instruction. That read supplies
      recent runtime messages; report a gap when the required evidence is older.
    - **Files** — every file and subdirectory, a one-line purpose, and a status:
      `forming`, `converged`, `superseded by <file>`, or `promoted to <target>`.

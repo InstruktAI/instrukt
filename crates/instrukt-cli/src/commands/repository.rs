@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
-use instrukt_core::config::Env;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
 use instrukt_core::publication::{
     ClaimStatus, ClaimsPreview, EditorChange, EditorChangeKind, GlobalFiles, SCHEMAS_DIR,
@@ -16,8 +15,7 @@ use instrukt_core::publication::{
 use instrukt_core::repository::{
     self, CommitRequest, GENERATED_FILE, GenerationOutcome, Hook, HookChange, HookInvocation,
     HookRunRecord, HooksDir, HooksReport, InitPart, KEPT_INSTRUCTIONS, KeptInstructions,
-    MASTER_FILE, NotWritten, NotesPush, PROJECT_DOCS, PartOutcome, PendingReason, SectionChange,
-    SectionStatus, Stamp, StampTime, SyncOutcome,
+    MASTER_FILE, NotWritten, PROJECT_DOCS, PartOutcome, SectionChange, SectionStatus, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -267,7 +265,7 @@ fn start_hook_run(hook: Hook, args: &RunArgs, ctx: &Ctx) -> anyhow::Result<()> {
             .context("cannot read the pushed refs from standard input")?;
     }
     let exe = std::env::current_exe().context("cannot locate the instrukt executable")?;
-    let env = Env::from_process();
+    let env = crate::wiring::environment(ctx)?;
     let invocation = HookInvocation {
         hook,
         args: &args.args,
@@ -403,10 +401,6 @@ enum RepoCommand {
     /// always, and `Todo:` or `Planned-Todo:` with --todo. Outside an agent
     /// session the commit is the git user's own. Prints the commit's id.
     Commit(CommitArgs),
-    /// Record a commit-review verdict with the report's digest, or an
-    /// exemption with its reason, as a git note on each named commit, and
-    /// push the notes to the remote the default branch tracks.
-    Stamp(StampArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -436,33 +430,9 @@ struct CommitArgs {
     only: Vec<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Verdict {
-    Approve,
-    #[value(name = "needs_work")]
-    NeedsWork,
-    Exempt,
-}
-
-#[derive(Debug, clap::Args)]
-struct StampArgs {
-    /// The commits to stamp.
-    #[arg(required = true, value_name = "SHA")]
-    commits: Vec<String>,
-    #[arg(long, value_enum)]
-    verdict: Verdict,
-    /// The complete review report (approve, needs_work).
-    #[arg(long)]
-    report: Option<PathBuf>,
-    /// Why the commit needs no review (exempt).
-    #[arg(long)]
-    reason: Option<String>,
-}
-
 pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         RepoCommand::Commit(args) => commit(args, ctx),
-        RepoCommand::Stamp(args) => stamp(args, ctx),
     }
 }
 
@@ -481,53 +451,11 @@ fn commit(args: CommitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let sha = repository::commit(
         &ctx.home,
         &ctx.cwd,
-        &Env::from_process(),
+        &crate::wiring::environment(ctx)?,
         &core_wiring(ctx)?,
         &request,
     )?;
     ctx.out.line(sha.as_str())?;
-    Ok(ExitCode::SUCCESS)
-}
-
-fn stamp(args: StampArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let stamp = match (args.verdict, &args.report, &args.reason) {
-        (Verdict::Exempt, None, Some(reason)) => Stamp::exempt(reason)?,
-        (Verdict::Exempt, _, _) => {
-            anyhow::bail!("--verdict exempt takes --reason <text> and no --report")
-        }
-        (verdict, Some(report), None) => {
-            let path = ctx.cwd.join(report);
-            let bytes = std::fs::read(&path)
-                .with_context(|| format!("cannot read the report {}", path.display()))?;
-            Stamp::review(verdict == Verdict::Approve, &bytes)
-        }
-        (_, _, _) => {
-            anyhow::bail!("--verdict approve|needs_work takes --report <file> and no --reason")
-        }
-    };
-    // The clock is read here, at the composition root, and handed down.
-    let at = StampTime::from_system(std::time::SystemTime::from(ctx.clock.now()))?;
-    let outcome = repository::stamp(&ctx.cwd, &args.commits, &stamp, at)?;
-    for commit in &outcome.commits {
-        ctx.out
-            .line(&format!("{commit}: {}", stamp.verdict().name()))?;
-    }
-    let push = match &outcome.push {
-        NotesPush::Pushed { remote } => format!("review notes pushed to {remote}"),
-        NotesPush::Pending { remote, reason } => {
-            let why = match reason {
-                PendingReason::Unreachable => "the remote could not be reached",
-                PendingReason::StillRejected => "the remote kept rejecting it after merging",
-            };
-            format!(
-                "review notes push to {remote} pending: {why}; the stamp is recorded locally and the next stamp that reaches {remote} delivers every note"
-            )
-        }
-        NotesPush::NoRemote { branch } => {
-            format!("review notes kept locally: {branch} tracks no remote")
-        }
-    };
-    ctx.out.line(&push)?;
     Ok(ExitCode::SUCCESS)
 }
 

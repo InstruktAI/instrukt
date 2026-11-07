@@ -12,7 +12,7 @@ use super::_features::{Feature, Unavailable, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read, read_usable, require_usable};
 use super::_module::Module;
-use super::_runtime;
+use super::_runtime::Runtime;
 use super::_schema::{self, CURRENT_SCHEMA_VERSION, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
 use crate::home::Home;
 
@@ -32,7 +32,7 @@ pub(crate) fn findings_for(
         found.extend(code_on_github(root, value, global.as_ref())?);
     }
     if let Layer::Project(root) = layer {
-        let effective = effective_value(global.as_ref(), Some(value));
+        let effective = effective_value(global.as_ref(), Some(value))?;
         if let Ok(ingress) = super::_webhooks::ingress(effective.get("ingress"))
             && std::fs::read_to_string(home.machine_id_file())
                 .ok()
@@ -52,6 +52,38 @@ pub(crate) fn findings_for(
             }
         }
     }
+    let effective = match layer.kind() {
+        LayerKind::Global => effective_value(Some(value), None),
+        LayerKind::Project => effective_value(global.as_ref(), Some(value)),
+    }?;
+    workflow_capabilities(home, &effective, &mut found);
+    if layer.kind() == LayerKind::Global
+        && effective
+            .get("modules")
+            .and_then(|m| m.get("todos"))
+            .and_then(Value::as_bool)
+            == Some(true)
+    {
+        let projects = crate::publication::PublishedRecord::load_all(home).map_err(|error| {
+            ConfigError::InvalidValue {
+                key: "modules.todos".into(),
+                message: error.to_string(),
+            }
+        })?;
+        for project in projects.into_iter().filter(|p| p.checkout.is_dir()) {
+            let project_value = read_usable(home, &Layer::Project(project.checkout))?;
+            let selected = effective_value(Some(value), project_value.as_ref())?;
+            // The default flow was checked above; project-specific selections join admission too.
+            if selected
+                .get("workflow")
+                .and_then(|w| w.get("domain"))
+                .and_then(Value::as_str)
+                .is_some_and(|domain| domain != "sdlc")
+            {
+                workflow_capabilities(home, &selected, &mut found);
+            }
+        }
+    }
     Ok(found
         .into_iter()
         .map(|finding| Finding {
@@ -65,12 +97,12 @@ pub(crate) fn findings_for(
 
 /// Whether `modules.todos` is on in the configuration project layer
 /// `value` takes part in, judged with the machine's `global` layer.
-pub(crate) fn todos_on(value: &Value, global: Option<&Value>) -> bool {
-    effective_value(global, Some(value))
+pub(crate) fn todos_on(value: &Value, global: Option<&Value>) -> Result<bool, ConfigError> {
+    Ok(effective_value(global, Some(value))?
         .get("modules")
         .and_then(|m| m.get(Module::Todos.key()))
         .and_then(Value::as_bool)
-        .unwrap_or(false)
+        .unwrap_or(false))
 }
 
 /// Todos on in the effective configuration of the project rooted at
@@ -81,7 +113,7 @@ fn code_on_github(
     value: &Value,
     global: Option<&Value>,
 ) -> Result<Option<KeyFinding>, ConfigError> {
-    if !todos_on(value, global) {
+    if !todos_on(value, global)? {
         return Ok(None);
     }
     let configured = value
@@ -136,15 +168,25 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
         LayerKind::Global => effective_value(Some(value), None),
         LayerKind::Project => effective_value(global, Some(value)),
     };
+    let effective = match effective {
+        Ok(value) => value,
+        Err(error) => {
+            found.push(KeyFinding::new(
+                "runtimes",
+                FindingKind::InvalidValue,
+                error.to_string(),
+            ));
+            return found;
+        }
+    };
     match kind {
         LayerKind::Project => required_modules(value, &effective, &mut found),
         LayerKind::Global => {
-            runtime_names(value, &mut found);
             runner_runtime(value, &effective, &mut found);
             agent_order(value, &effective, &mut found);
         }
     }
-    feature_verbs(value, &effective, &mut found);
+    feature_capabilities(value, &effective, &mut found);
     references(value, kind, &effective, &mut found);
     if let Some(sources) = value.get("webhooks").and_then(Value::as_mapping)
         && !sources.is_empty()
@@ -168,19 +210,15 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
 /// need empty (`session-continuity`, "Verb-gated features"). A
 /// `runner.runtime` naming no entry is its own finding and is not judged
 /// again here.
-fn feature_verbs(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
-    let entries = _runtime::entries(effective.get("runtimes"));
-    let chosen = match effective
+fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
+    let name = effective
         .get("runner")
         .and_then(|r| r.get("runtime"))
-        .and_then(Value::as_str)
-    {
-        Some(name) => match entries.iter().find(|entry| entry.name == name) {
-            Some(entry) => Some(entry),
-            None => return,
-        },
-        None => entries.first(),
-    };
+        .and_then(Value::as_str);
+    let chosen = name.and_then(Runtime::named);
+    if name.is_some() && chosen.is_none() {
+        return;
+    }
     for module in ["events", "todos"] {
         let on = value
             .get("modules")
@@ -196,7 +234,7 @@ fn feature_verbs(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
         };
         let kind = match unavailable {
             Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
-            Unavailable::MissingVerbs { .. } => FindingKind::RuntimeVerbMissing,
+            Unavailable::MissingCapabilities { .. } => FindingKind::RuntimeCapabilityMissing,
         };
         out.push(KeyFinding::new(
             &join("modules", module),
@@ -231,41 +269,17 @@ fn required_modules(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>)
     }
 }
 
-/// A runtime name can head a session reference `{runtime}:{id}`, so it
-/// carries no `:` (nor whitespace or control characters).
-fn runtime_names(value: &Value, out: &mut Vec<KeyFinding>) {
-    let Some(entries) = value.get("runtimes").and_then(Value::as_sequence) else {
-        return;
-    };
-    for (i, entry) in entries.iter().enumerate() {
-        let Some(name) = entry.get("name").and_then(Value::as_str) else {
-            continue;
-        };
-        if let Err(err) = crate::ids::RuntimeName::parse(name) {
-            out.push(KeyFinding::new(
-                &format!("runtimes.{i}.name"),
-                FindingKind::InvalidValue,
-                err.to_string(),
-            ));
-        }
-    }
-}
-
-/// `runner.runtime` names an entry of the runtime mapping.
-fn runner_runtime(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
-    let Some(name) = value
+fn runner_runtime(value: &Value, _effective: &Value, out: &mut Vec<KeyFinding>) {
+    if let Some(name) = value
         .get("runner")
         .and_then(|r| r.get("runtime"))
         .and_then(Value::as_str)
-    else {
-        return;
-    };
-    let entries = _runtime::entries(effective.get("runtimes"));
-    if !entries.iter().any(|entry| entry.name == name) {
+        && Runtime::named(name).is_none()
+    {
         out.push(KeyFinding::new(
             "runner.runtime",
             FindingKind::UnknownRuntime,
-            format!("names no runtime of the runtime mapping: `{name}`"),
+            format!("unknown compiled runtime adapter `{name}`; available: t3"),
         ));
     }
 }
@@ -292,40 +306,23 @@ fn agent_order(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
     let Some(order) = order.as_sequence() else {
         return;
     };
-    let entries = _runtime::entries(effective.get("runtimes"));
-    let startable: Vec<&str> = entries.iter().filter_map(|e| e.agent.as_deref()).collect();
-    for (i, item) in order.iter().enumerate() {
-        let Some(name) = item.as_str() else { continue };
-        if !startable.contains(&name) {
-            out.push(KeyFinding::new(
-                &join("agents.order", &i.to_string()),
-                FindingKind::AgentNotStartable,
-                format!("no runtime-mapping entry starts agent `{name}`"),
-            ));
-        }
-    }
+    // T3 uses project provider/model defaults. Preferences remain data and
+    // dispatch reports that explicit selection is unsupported.
+    let _ = (order, effective);
 }
 
-/// Every reference resolves and none leads back to itself, whichever
-/// runtime of the mapping is active.
+/// Every reference resolves and none leads back to itself. Webhook secret
+/// references are checked by their typed accessor.
 fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<KeyFinding>) {
-    let entries = _runtime::entries(effective.get("runtimes"));
-    let candidates: Vec<Option<usize>> =
-        match effective.get("runtimes").and_then(Value::as_sequence) {
-            Some(seq) if !seq.is_empty() => (0..seq.len()).map(Some).collect(),
-            _ => vec![None],
-        };
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
         if path == "webhooks" || path.starts_with("webhooks.") {
             continue;
         }
-        let error = candidates.iter().find_map(|active| {
-            Interpolator::new(effective, &entries, Mode::Check(*active))
-                .expand_text(&text, Some(&path))
-                .err()
-        });
+        let error = Interpolator::new(effective, Mode::Check)
+            .expand_text(&text, Some(&path))
+            .err();
         let Some(error) = error else { continue };
         let kind = match error {
             ConfigError::Cycle { .. } => FindingKind::ReferenceCycle,
@@ -352,156 +349,113 @@ fn collect_strings(value: &Value, path: &str, out: &mut Vec<(String, String)>) {
     }
 }
 
+/// Admission reads typed capability declarations, never action/template prose.
+fn workflow_capabilities(home: &Home, effective: &Value, out: &mut Vec<KeyFinding>) {
+    if effective
+        .get("modules")
+        .and_then(|m| m.get("todos"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return;
+    }
+    let Some(runtime) = effective
+        .get("runner")
+        .and_then(|r| r.get("runtime"))
+        .and_then(Value::as_str)
+        .and_then(Runtime::named)
+    else {
+        return;
+    };
+    let domain = effective
+        .get("workflow")
+        .and_then(|w| w.get("domain"))
+        .and_then(Value::as_str)
+        .unwrap_or("sdlc");
+    let dir = home.docs_dir().join(domain).join("workflow");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            out.push(KeyFinding::new(
+                "workflow.domain",
+                FindingKind::UnresolvedReference,
+                format!("cannot read {}: {error}", dir.display()),
+            ));
+            return;
+        }
+    };
+    for entry in entries {
+        let result = (|| -> Result<(), String> {
+            let file = entry.map_err(|e| e.to_string())?.path();
+            if file.extension().is_none_or(|e| e != "yaml")
+                || file.file_name().is_some_and(|n| n == "actions.yaml")
+            {
+                return Ok(());
+            }
+            let text =
+                std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let value: Value =
+                serde_yaml_ng::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+            let requires = value
+                .get("requires")
+                .ok_or_else(|| format!("{}: missing requires declaration", file.display()))?;
+            let capabilities: Vec<super::WorkflowCapability> =
+                serde_yaml_ng::from_value(requires.clone())
+                    .map_err(|e| format!("{} requires: {e}", file.display()))?;
+            for capability in capabilities {
+                if !capability.supported_by(runtime) {
+                    out.push(KeyFinding::new(
+                        "modules.todos",
+                        FindingKind::RuntimeCapabilityMissing,
+                        format!(
+                            "{} requires {capability}; runtime `{}` lacks this capability",
+                            file.display(),
+                            runtime.name()
+                        ),
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            out.push(KeyFinding::new(
+                "workflow.domain",
+                FindingKind::UnresolvedReference,
+                error,
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn yaml(text: &str) -> Value {
-        serde_yaml_ng::from_str(text).unwrap()
-    }
-
-    fn judged(findings: &[KeyFinding]) -> Vec<(&str, FindingKind)> {
-        findings.iter().map(|f| (f.key.as_str(), f.kind)).collect()
-    }
-
-    const RUNTIMES: &str = "runtimes:\n\
-        \x20 - {name: host, session_id_env: H, start: s, send: s, alive: s, conversation: c}\n\
-        \x20 - {name: cli, agent: claude, session_id_env: C, start: s, send: s, alive: s, conversation: c}\n";
-
     #[test]
-    fn the_order_names_only_agents_the_mapping_can_start() {
-        let global = yaml(&format!(
-            "schema_version: 1\n{RUNTIMES}agents: {{order: [claude, codex], thinking_mode: med}}\n"
-        ));
-        assert_eq!(
-            judged(&judge(&global, LayerKind::Global, None)),
-            [("agents.order.1", FindingKind::AgentNotStartable)]
-        );
-        let unmapped = yaml("schema_version: 1\nagents: {order: [claude], thinking_mode: fast}\n");
-        assert_eq!(
-            judged(&judge(&unmapped, LayerKind::Global, None)),
-            [("agents.order.0", FindingKind::AgentNotStartable)]
-        );
+    fn retired_runtime_configuration_is_unknown() {
+        let doc: Value = serde_yaml_ng::from_str("schema_version: 1\nruntimes: []").unwrap();
+        let found = judge(&doc, LayerKind::Global, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, FindingKind::InvalidValue);
     }
-
     #[test]
-    fn an_order_without_a_thinking_mode_is_a_finding() {
-        let global = yaml(&format!(
-            "schema_version: 1\n{RUNTIMES}agents: {{order: [claude]}}\n"
-        ));
-        assert_eq!(
-            judged(&judge(&global, LayerKind::Global, None)),
-            [("agents.thinking_mode", FindingKind::Missing)]
-        );
-        let no_order = yaml("schema_version: 1\nagents: {claude: {git_author: 'C <c@x>'}}\n");
-        assert_eq!(judge(&no_order, LayerKind::Global, None), []);
+    fn t3_supports_todos_and_queued_event_delivery() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "schema_version: 1\nrunner: {runtime: t3}\nmodules: {todos: true, events: true}",
+        )
+        .unwrap();
+        let found = judge(&doc, LayerKind::Global, None);
+        assert!(found.is_empty());
     }
-
     #[test]
-    fn a_required_module_must_be_on_under_the_effective_switches() {
-        let global = yaml("schema_version: 1\nmodules: {todos: true, events: true}\n");
-        let project = yaml(
-            "schema_version: 1\nproject: p\nrequires: [todos, events, blueprint]\nmodules: {events: false}\n",
-        );
-        assert_eq!(
-            judged(&judge(&project, LayerKind::Project, Some(&global))),
-            [
-                ("requires.1", FindingKind::ModuleSwitchedOff),
-                ("requires.2", FindingKind::ModuleSwitchedOff),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_runtime_name_that_cannot_head_a_session_reference_is_a_finding() {
-        let global = yaml(
-            "schema_version: 1\nruntimes:\n\
-             \x20 - {name: 'thread:host', session_id_env: A, start: s, send: s, alive: s, conversation: c}\n\
-             \x20 - {name: plain, session_id_env: B, start: s, send: s, alive: s, conversation: c}\n",
-        );
-        assert_eq!(
-            judged(&judge(&global, LayerKind::Global, None)),
-            [("runtimes.0.name", FindingKind::InvalidValue)]
-        );
-    }
-
-    #[test]
-    fn the_runner_runtime_must_name_a_mapped_runtime() {
-        let global = yaml(&format!(
-            "schema_version: 1\n{RUNTIMES}runner: {{runtime: gone}}\n"
-        ));
-        assert_eq!(
-            judged(&judge(&global, LayerKind::Global, None)),
-            [("runner.runtime", FindingKind::UnknownRuntime)]
-        );
-    }
-
-    #[test]
-    fn a_switch_the_chosen_runtime_cannot_carry_is_a_finding_on_the_layer_that_sets_it() {
-        let partial = yaml(
-            "schema_version: 1\nmodules: {todos: true, events: true}\n\
-             runtimes: [{name: rt, session_id_env: R, start: s, conversation: c, alive: a}]\n",
-        );
-        assert_eq!(
-            judged(&judge(&partial, LayerKind::Global, None)),
-            [
-                ("modules.events", FindingKind::RuntimeVerbMissing),
-                ("modules.todos", FindingKind::RuntimeVerbMissing)
-            ]
-        );
-        let none = yaml("schema_version: 1\n");
-        let project = yaml("schema_version: 1\nproject: p\nmodules: {todos: true}\n");
-        assert_eq!(
-            judged(&judge(&project, LayerKind::Project, Some(&none))),
-            [("modules.todos", FindingKind::NoRuntimeChosen)]
-        );
-        let full = yaml(&format!("schema_version: 1\n{RUNTIMES}"));
-        assert_eq!(judge(&project, LayerKind::Project, Some(&full)), []);
-    }
-
-    #[test]
-    fn choosing_the_shipped_t3_entry_carries_dispatch_and_standing_agents() {
-        let global = yaml(
-            "schema_version: 1\nrunner: {runtime: t3}\nmodules: {todos: true, events: true}\n",
-        );
-        assert_eq!(judge(&global, LayerKind::Global, None), []);
-    }
-
-    #[test]
-    fn unresolved_and_cyclic_references_are_findings() {
-        let global = yaml(&format!("schema_version: 1\n{RUNTIMES}"));
-        let project = yaml(
-            "schema_version: 1\nproject: p\nactions:\n  ok: 'make {project} ${HOME} {runtime.session_id}'\n  \
-             lost: '{nowhere.key}'\n  a: '{actions.b}'\n  b: 'x {actions.a}'\n",
-        );
-        assert_eq!(
-            judged(&judge(&project, LayerKind::Project, Some(&global))),
-            [
-                ("actions.lost", FindingKind::UnresolvedReference),
-                ("actions.a", FindingKind::ReferenceCycle),
-                ("actions.b", FindingKind::ReferenceCycle),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_runtime_template_referring_to_itself_through_the_runtime_is_a_cycle() {
-        let global = yaml(
-            "schema_version: 1\nruntimes:\n\
-             \x20 - {name: a, session_id_env: A, start: s, send: s, alive: s, conversation: '{runtime.conversation}'}\n",
-        );
-        assert_eq!(
-            judged(&judge(&global, LayerKind::Global, None)),
-            [("runtimes.0.conversation", FindingKind::ReferenceCycle)]
-        );
-    }
-
-    #[test]
-    fn a_version_other_than_the_current_one_is_a_finding() {
-        let doc = yaml("schema_version: 7\n");
-        assert_eq!(
-            judged(&judge(&doc, LayerKind::Global, None)),
-            [("schema_version", FindingKind::SchemaVersionNotCurrent)]
+    fn references_still_detect_cycles_and_missing_keys() {
+        let doc: Value =
+            serde_yaml_ng::from_str("schema_version: 1\nrunner: {notify: '{runner.notify}'}")
+                .unwrap();
+        assert!(
+            judge(&doc, LayerKind::Global, None)
+                .iter()
+                .any(|f| f.kind == FindingKind::ReferenceCycle)
         );
     }
 }

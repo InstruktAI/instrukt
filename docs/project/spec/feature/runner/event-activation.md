@@ -43,9 +43,10 @@ origin and typed subject; external source payloads remain open domain facts.
 
 | Origin | Source | Runner-facing meaning |
 | --- | --- | --- |
+| Workflow | `workflow.preparation_reviewed` (occurrence) | Approved exact preparation head wakes the integrator for immediate documentation integration before build. |
+| Repository maintenance | Observe remote main with Git on each tick, fetch and fast-forward a clean canonical checkout | Post-merge publishes docs and hands the revision to blueprint; dirty/diverged checkouts are reported and preserved, with no main-ahead event. |
 | Workflow | `workflow.finalized` | Finalize-ready work wakes the subscribed standing integrator. |
 | Repositories | `git ls-remote` for configured watched upstream refs on each tick | A changed upstream produces `runner.upstream_changed`. |
-| Local repository | Compare local main with remote main using local git on each tick; no API call | When local main is ahead and no candidate is pending, emit `runner.main_ahead` to wake the integrator. |
 | Candidate CI | Conditional requests for the active integrate candidate's CI status per SHA, respecting the source poll interval | A completed result produces `runner.ci_completed` and wakes the integrator. When nothing has reported for the candidate and the canonical head carries no status and no check run, the result is `no_ci`. |
 | Canonical CI | Conditional requests for the CI status of remote canonical main's head commit, respecting the source poll interval | When that commit's CI completes red, produce `runner.main_failing` once for that commit and wake the integrator. |
 
@@ -110,11 +111,11 @@ watched ref's last observed revision.
 
 Delivery acceptance and runtime execution are separate completion boundaries.
 The target contract retains procedure-first briefing, untrusted event provenance,
-sequential/batched selection and eligible delivery boundaries, with settings fixed
+bounded batch selection and eligible delivery boundaries, with settings fixed
 for a session including revival. The owning contracts are
 `project/instrukt/spec/feature/runner/procedure-standing-agent` and
 `project/instrukt/spec/feature/runner/procedure-event-delivery`. Runtime realization
-remains an A3 integration feasibility gate;
+uses the selected adapter's capabilities;
 routing itself starts no session. `run` hosts independent readers; `tick` drains
 pending then new entries within a bounded invocation. Scheduled-only execution
 reacts at the next wake while retained entries remain available.
@@ -122,9 +123,10 @@ reacts at the next wake while retained entries remain available.
 A3's adapter owns per-key runtime discovery and ambiguous-start recovery under
 `project/instrukt/spec/feature/runner/session-continuity`: a failed listing or
 send leaves work pending and starts no replacement, and an uncertain start is
-reconciled by key or explicit resolution. Those primitives do not establish
-hook provenance or eligible delivery while a session is busy. The procedure-event handoff
-preserves this target delivery contract rather than equating a plain send with it.
+reconciled by key or explicit resolution. The delivery contract distinguishes runtime acceptance from entry consumption
+and domain completion. ASAP uses steering when available and otherwise queued
+input or idle entry; only-at-entry waits for idle. Missing steering is no finding.
+Procedure-event-delivery owns selection, combining and untrusted data framing.
 
 ## Use cases
 

@@ -501,7 +501,7 @@ fn receiving_an_offset_timestamp_preserves_its_offset_and_precision() {
 }
 
 #[test]
-fn upstream_subjects_qualify_the_observed_repository_revision() {
+fn upstream_state_subjects_name_the_watched_ref() {
     let project = ProjectSlug::parse("demo").unwrap();
     let revision = CommitSha::parse(&"c".repeat(40)).unwrap();
     let event = Event::UpstreamChanged {
@@ -514,8 +514,8 @@ fn upstream_subjects_qualify_the_observed_repository_revision() {
     assert_eq!(
         envelope.subject,
         EventRef::new(
-            ReferenceKind::Commit,
-            &format!("{project}/upstream/{revision}")
+            ReferenceKind::InboundSource,
+            &format!("{project}/upstream/refs/heads/main")
         )
         .unwrap()
     );
@@ -523,23 +523,7 @@ fn upstream_subjects_qualify_the_observed_repository_revision() {
 }
 
 #[test]
-fn main_ahead_subjects_name_local_main() {
-    let project = ProjectSlug::parse("demo").unwrap();
-    let local_main = CommitSha::parse(&"c".repeat(40)).unwrap();
-    let remote_main = CommitSha::parse(&"d".repeat(40)).unwrap();
-    let event = Event::MainAhead {
-        project: project.clone(),
-        local_main: local_main.clone(),
-        remote_main,
-    };
-    assert_eq!(
-        event.envelope(&context()).unwrap().subject,
-        EventRef::new(ReferenceKind::Commit, &format!("{project}/{local_main}")).unwrap()
-    );
-}
-
-#[test]
-fn main_failing_subjects_name_the_failing_head() {
+fn main_failing_state_subjects_name_the_canonical_ref() {
     let project = ProjectSlug::parse("demo").unwrap();
     let head = CommitSha::parse(&"c".repeat(40)).unwrap();
     let event = Event::MainFailing {
@@ -548,7 +532,7 @@ fn main_failing_subjects_name_the_failing_head() {
     };
     assert_eq!(
         event.envelope(&context()).unwrap().subject,
-        EventRef::new(ReferenceKind::Commit, &format!("{project}/{head}")).unwrap()
+        EventRef::new(ReferenceKind::InboundSource, &format!("{project}/main")).unwrap()
     );
 }
 

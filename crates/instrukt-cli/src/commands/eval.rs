@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
-use instrukt_core::config::{self, Env, Module};
+use instrukt_core::config::{self, Module};
 use instrukt_core::git;
 use instrukt_core::ids::ProjectSlug;
 use instrukt_core::publication::{EvalFingerprint, PublishedRecord};
@@ -64,7 +64,11 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             "an evaluation report reads a project's work record; run this inside its git repository"
         );
     };
-    let work = Work::new(ctx.home.clone(), Env::from_process(), ctx.clock.shared());
+    let work = Work::new(
+        ctx.home.clone(),
+        crate::wiring::environment(ctx)?,
+        ctx.clock.shared(),
+    );
     let project = work.project_at(&root)?;
     // Every project publication knows, the current one first.
     let mut checkouts = vec![(project.slug.clone(), root.clone())];

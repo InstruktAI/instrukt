@@ -1,13 +1,6 @@
-//! Repository observations the fact provider needs and the record cannot
-//! supply: the assignment worktree, the todo branch here and on the
-//! remote, the commit-review settlement of the todo's canonical-branch
-//! commits, whether the todo's work changed since its reviewed commit, and
-//! what each tracked artifact's recorded grounding shows against current
-//! code, snippets and prerequisite artifacts.
-//!
-//! Every observation reads git; none writes, except that reading
-//! review notes first fetches the remote's notes, as the integrator's
-//! reading does (`instrukt_core::repository::read_review_notes`).
+//! Read repository/worktree evidence for pure workflow derivation. Git
+//! observations establish current heads, cleanliness and artifact grounding;
+//! review outcomes come from the work record, without fetching git notes.
 
 use std::path::{Path, PathBuf};
 
@@ -16,8 +9,8 @@ use std::collections::BTreeMap;
 use instrukt_core::docs::{Corpus, DocsError};
 use instrukt_core::git::{self, GitError};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
-use instrukt_core::repository::{self, RepositoryError};
+use instrukt_core::ids::{CommitSha, SnippetId};
+use instrukt_core::repository::RepositoryError;
 
 use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
 
@@ -27,12 +20,8 @@ use super::_provider::{
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
-/// `branch.publish` effect pushes `HEAD:{slug}` to `origin`).
+/// `branch.publish` effect pushes `HEAD` to `origin`).
 const REMOTE: &str = "origin";
-
-/// The commit trailer naming the todo a commit belongs to
-/// (`instrukt repo commit --todo`).
-const TODO_TRAILER: &str = "Todo";
 
 /// A repository observation failed.
 #[derive(Debug, thiserror::Error)]
@@ -69,13 +58,21 @@ pub(crate) fn observe(
         }),
         None => None,
     };
-    let branch_head = resolve(project_root, &format!("refs/heads/{slug}"))?;
-    let remote_head = resolve(project_root, &format!("refs/remotes/{REMOTE}/{slug}"))?;
-    let unreviewed_claim_commits = unreviewed_claim_commits(project_root, slug)?;
-    let current_head = worktree
-        .as_ref()
-        .and_then(|worktree| worktree.head.clone())
-        .or_else(|| branch_head.clone());
+    let branch_head = resolve(
+        project_root,
+        &format!(
+            "refs/heads/{}",
+            evidence.branch.as_deref().unwrap_or(slug.as_str())
+        ),
+    )?;
+    let remote_head = resolve(
+        project_root,
+        &format!(
+            "refs/remotes/{REMOTE}/{}",
+            evidence.branch.as_deref().unwrap_or(slug.as_str())
+        ),
+    )?;
+    let current_head = branch_head.clone();
     let reviewed_change = match (current_build_verdict(evidence), &current_head) {
         (Some((_, reviewed, _)), Some(head)) => {
             let dir = worktree_dir.as_deref().unwrap_or(project_root);
@@ -84,11 +81,46 @@ pub(crate) fn observe(
         _ => None,
     };
     let (grounding, judged_grounding) = grounding(home, project_root, evidence, prerequisites)?;
+    let preparation_branch = evidence
+        .bindings
+        .iter()
+        .rev()
+        .find(|b| b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Prepare))
+        .and_then(|b| b.attempt.branch.as_deref());
+    let preparation_head = preparation_branch
+        .map(|branch| resolve(project_root, branch))
+        .transpose()?
+        .flatten()
+        .or_else(|| {
+            evidence.stamps.iter().rev().find_map(|s| match &s.fact {
+                StampFact::PreparationHeadReviewed { head, .. } => Some(head.clone()),
+                _ => None,
+            })
+        });
+    let preparation_integrated = preparation_head
+        .as_ref()
+        .map(|head| {
+            let main = instrukt_core::github::default_branch(project_root)?;
+            let remote = format!("refs/remotes/origin/{main}");
+            let reference =
+                if git::succeeds(project_root, ["show-ref", "--verify", "--quiet", &remote])? {
+                    remote
+                } else {
+                    main
+                };
+            git::succeeds(
+                project_root,
+                ["merge-base", "--is-ancestor", head.as_str(), &reference],
+            )
+        })
+        .transpose()?;
     Ok(Observations {
+        preparation_head,
+        preparation_integrated,
+        worktree_path: worktree_dir,
         worktree,
         branch_head,
         remote_head,
-        unreviewed_claim_commits,
         reviewed_change,
         grounding,
         judged_grounding,
@@ -101,7 +133,25 @@ fn worktree_dir(
     project_root: &Path,
     evidence: &TodoEvidence,
 ) -> Result<Option<PathBuf>, ObservationError> {
-    let Some(path) = evidence.bindings.iter().rev().find_map(|b| b.worktree()) else {
+    let path = if evidence.status == crate::evidence::TodoStatus::Delivered {
+        let listing = git::run(project_root, ["worktree", "list", "--porcelain"])?;
+        evidence
+            .bindings
+            .iter()
+            .filter(|b| b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Work))
+            .filter_map(|b| b.worktree())
+            .find(|p| {
+                listing
+                    .lines()
+                    .any(|line| line == format!("worktree {}", p.display()))
+            })
+            .cloned()
+    } else {
+        super::_provider::selected_workspace(evidence)
+            .and_then(|b| b.worktree())
+            .cloned()
+    };
+    let Some(path) = path else {
         return Ok(None);
     };
     // A directory left where the worktree was is not the worktree: only a
@@ -136,41 +186,6 @@ fn resolve(dir: &Path, revision: &str) -> Result<Option<CommitSha>, ObservationE
             value: text,
             context: format!("rev-parse {revision}"),
         })
-}
-
-/// The canonical-branch commits carrying `Todo: <slug>` whose
-/// commit-review settlement does not release them, oldest first.
-fn unreviewed_claim_commits(
-    root: &Path,
-    slug: &TodoSlug,
-) -> Result<Vec<CommitSha>, ObservationError> {
-    let main = git::default_branch(root, REMOTE)?;
-    let main_ref = format!("refs/heads/{main}");
-    if resolve(root, &main_ref)?.is_none() {
-        return Ok(Vec::new());
-    }
-    let format = format!("--format=%H%x09%(trailers:key={TODO_TRAILER},valueonly,separator=%x2C)");
-    let log = git::run(
-        root,
-        ["log", "--reverse", format.as_str(), main_ref.as_str()],
-    )?;
-    let mut commits = Vec::new();
-    for line in log.lines() {
-        let (sha, todos) = line.split_once('\t').unwrap_or((line, ""));
-        if todos.split(',').any(|todo| todo.trim() == slug.as_str()) {
-            commits.push(sha.to_owned());
-        }
-    }
-    if commits.is_empty() {
-        return Ok(Vec::new());
-    }
-    let notes = repository::read_review_notes(root, &commits)?;
-    Ok(notes
-        .commits
-        .into_iter()
-        .filter(|review| !review.settlement.releases())
-        .map(|review| review.commit)
-        .collect())
 }
 
 /// Whether the todo's work changed between `reviewed` and `head`, read in
@@ -449,4 +464,33 @@ fn snippet_digest(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(source) => Err(ObservationError::Io { path, source }),
     }
+}
+
+/// Readiness consumes the same review currency interpretation as derivation.
+pub(crate) fn readiness_approved(
+    record: &crate::work::TodoRecord,
+    root: &Path,
+    candidate: &CommitSha,
+    caller: &instrukt_core::ids::SessionRef,
+) -> bool {
+    let evidence = crate::work::_ports::to_evidence(record.clone(), Vec::new());
+    let Some((verdict, target, report)) = current_build_verdict(&evidence) else {
+        return false;
+    };
+    if verdict != crate::evidence::BuildVerdict::Approve
+        || record.current_digest(crate::evidence::artifact_names::REVIEW_FINDINGS) != Some(report)
+    {
+        return false;
+    }
+    let independent = record
+        .stamps
+        .iter()
+        .rev()
+        .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
+        .is_some_and(|s| s.actor != crate::evidence::Actor::Session(caller.clone()));
+    independent
+        && matches!(
+            change_since(root, root, target, candidate),
+            ChangeSinceReview::Unchanged | ChangeSinceReview::CleanUpstreamMerges
+        )
 }

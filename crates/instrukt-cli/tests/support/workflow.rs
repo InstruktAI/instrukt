@@ -3,7 +3,7 @@
 //! procedures declaring its roles) with a real `instrukt sync`; the
 //! developer's project selects it with `workflow.domain`, records its work
 //! on the fake GitHub, and runs agent sessions through a fake runtime
-//! whose session variable is `AGENT_SESSION`.
+//! whose caller session variable is `T3CODE_THREAD_ID`.
 #![allow(
     clippy::unwrap_used,
     dead_code,
@@ -21,8 +21,9 @@ use crate::support::{Project, REPOSITORY, stdout};
 
 /// The flavor's procedures: path below `procedure/`, and the role each
 /// declares.
-const PROCEDURES: [(&str, &str); 11] = [
+const PROCEDURES: [(&str, &str); 12] = [
     ("prepare-lead", "prepare-lead"),
+    ("review-commits", "commit-reviewer"),
     ("work-lead", "work-lead"),
     ("intake", "intaker"),
     ("review-prd", "prd-reviewer"),
@@ -36,12 +37,12 @@ const PROCEDURES: [(&str, &str); 11] = [
 ];
 
 const ACTIONS: &str = "\
-roles: [prepare-lead, work-lead, intaker, prd-reviewer, planner, plan-reviewer, builder, build-reviewer, deferrer, finalizer, drift-analyzer]
+roles: [commit-reviewer, integrator, prepare-lead, work-lead, intaker, prd-reviewer, planner, plan-reviewer, builder, build-reviewer, deferrer, finalizer, drift-analyzer]
 draft-prd:
   command: instrukt docs get crew/procedure/intake
   template: templates/draft-prd.md
 review-prd:
-  command: instrukt sessions run --procedure crew/procedure/review-prd --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role prd-reviewer --procedure crew/procedure/review-prd --args {slug} --brief -
   template: templates/review-prd.md
 revise-prd:
   command: instrukt docs get crew/procedure/intake
@@ -53,13 +54,13 @@ draft-plan:
   command: instrukt docs get crew/procedure/plan
   template: templates/draft-plan.md
 review-plan:
-  command: instrukt sessions run --procedure crew/procedure/review-plan --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role plan-reviewer --procedure crew/procedure/review-plan --args {slug} --brief -
   template: templates/review-plan.md
 revise-plan:
   command: instrukt docs get crew/procedure/plan
   template: templates/revise-plan.md
 analyze-drift:
-  command: instrukt sessions run --procedure crew/procedure/drift-analyze --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role drift-analyzer --procedure crew/procedure/drift-analyze --args {slug} --brief -
   template: templates/analyze-drift.md
 release-prepared:
   command: instrukt todo update {slug} --unclaim
@@ -68,22 +69,22 @@ await-prepare:
   command: instrukt docs get crew/procedure/prepare-lead
   template: templates/await-prepare.md
 dispatch-build:
-  command: instrukt sessions run --procedure crew/procedure/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role builder --procedure crew/procedure/build --args {slug} --brief -
   template: templates/dispatch-build.md
 review-build:
-  command: instrukt sessions run --procedure crew/procedure/review-build --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role build-reviewer --procedure crew/procedure/review-build --args {slug} --brief -
   template: templates/review-build.md
 relay-findings:
   command: instrukt todo show {slug}
   template: templates/relay-findings.md
 process-deferrals:
-  command: instrukt sessions run --procedure crew/procedure/deferrals --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role deferrer --procedure crew/procedure/deferrals --args {slug} --brief -
   template: templates/process-deferrals.md
 dispatch-finalize:
-  command: instrukt sessions run --procedure crew/procedure/finalize --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role finalizer --procedure crew/procedure/finalize --args {slug} --brief -
   template: templates/dispatch-finalize.md
 restamp-finalize:
-  command: instrukt sessions run --procedure crew/procedure/finalize --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role finalizer --procedure crew/procedure/finalize --args {slug} --brief -
   template: templates/restamp-finalize.md
 review-evidence-undetermined:
   command: instrukt todo show {slug}
@@ -91,9 +92,21 @@ review-evidence-undetermined:
 hand-off-integration:
   command: instrukt todo show {slug}
   template: templates/hand-off-integration.md
+cleanup-delivered:
+  command: instrukt todo show {slug}
+  template: templates/cleanup-delivered.md
 effects:
+  worktree.remove:
+    command: git worktree remove {worktree.path}
+    done_when: {not: {exists: worktree.exists}}
+  branch.remove:
+    command: git branch -d {branch.name}
+    done_when: {not: {exists: branch.head}}
+  remote_branch.remove:
+    command: git push origin --delete {branch.name}
+    done_when: {not: {exists: remote.head}}
   branch.publish:
-    command: git -C {worktree.path} push origin HEAD:{slug}
+    command: git -C {worktree.path} push origin HEAD
     done_when:
       same: [worktree.head, remote.head]
 ";
@@ -125,6 +138,7 @@ fn prepare_flow() -> String {
     format!(
         "flow: prepare
 orchestrator: prepare-lead
+requires: []
 initial: start
 states: [start, prd_drafting, prd_review, prd_revision, prd_approval, plan_drafting, plan_review, plan_revision, drift_analysis, prepared]
 transitions:
@@ -196,9 +210,15 @@ fn work_flow() -> String {
     format!(
         "flow: work
 orchestrator: work-lead
+requires: []
 initial: start
-states: [start, not_prepared, building, review, review_undetermined, fixing, approved, deferrals_owed, handoff_pending, finalize_mismatch]
+states: [start, not_prepared, building, review, review_undetermined, fixing, approved, deferrals_owed, handoff_pending, finalize_mismatch, delivered_cleanup]
 transitions:
+- from: start
+  to: delivered_cleanup
+  when: {{exists: delivery.commit}}
+  action: cleanup-delivered
+  effects: [worktree.remove, branch.remove, remote_branch.remove]
 - from: start
   to: not_prepared
   when:
@@ -261,7 +281,11 @@ transitions:
 }
 
 /// Each action's instructions: what is owed, naming the evidence it binds.
-const TEMPLATES: [(&str, &str); 18] = [
+const TEMPLATES: [(&str, &str); 19] = [
+    (
+        "cleanup-delivered",
+        "Remove the delivered worktree and captured local/origin branch of {slug}.",
+    ),
     (
         "review-evidence-undetermined",
         "The review of {slug} on {build_review.target_digest} is {build_review.binding}: establish what changed before relying on it.",
@@ -389,9 +413,8 @@ impl Crew {
         let mut project = Project::new();
         let runtime = FakeRuntime::new(&project.env, "agent", false);
         let global = format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{notify: 'off'}}\nruntimes:\n{}",
-            project.github.url(),
-            runtime.entry()
+            "schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off'}}\n",
+            project.github.url()
         );
         std::fs::write(project.env.instrukt_home().join("instrukt.yaml"), global).unwrap();
         let flavor = Flavor::publish(&project.env);
@@ -409,7 +432,7 @@ impl Crew {
         project
             .repo
             .git(["push", "--quiet", "-u", "origin", "main"]);
-        project.env.set_env("AGENT_SESSION", "lead-1");
+        project.env.set_env("T3CODE_THREAD_ID", "lead-1");
         Self {
             project,
             runtime,
@@ -425,13 +448,37 @@ impl Crew {
     /// Runs `instrukt todo <flow> <slug>` from `cwd`: its output,
     /// and whether everything owed rendered.
     pub fn next_in(&self, cwd: &Path, flow: &str, slug: &str) -> (String, bool) {
-        let output = self
-            .project
-            .env
-            .instrukt(cwd)
-            .args(["todo", flow, slug])
-            .output()
-            .unwrap();
+        let branch = self.project.env.git(cwd, ["branch", "--show-current"]);
+        let in_phase = branch
+            == format!(
+                "{slug}/{}",
+                if flow == "prepare" { "prepare" } else { "work" }
+            );
+        let mut command = self.project.env.instrukt(cwd);
+        command.args(["todo", flow, slug]);
+        if in_phase {
+            let proof = crate::runtime::placement_evidence(
+                &self.project.env,
+                &crate::runtime::NativePlacement {
+                    cwd,
+                    slug,
+                    role: if flow == "prepare" {
+                        "prepare-lead"
+                    } else {
+                        "work-lead"
+                    },
+                    session: self
+                        .project
+                        .env
+                        .injected("T3CODE_THREAD_ID")
+                        .unwrap_or("outside-context"),
+                },
+            );
+            command
+                .args(["--placement-evidence", "-"])
+                .write_stdin(proof);
+        }
+        let output = command.output().unwrap();
         assert!(
             output.status.code().is_some(),
             "{}",
@@ -445,10 +492,105 @@ impl Crew {
 
     /// `instrukt todo <flow> <slug>` from the project, which must render
     /// everything it owes; its output.
+    pub fn phase_workspace(&self, slug: &str, prepare: bool) -> PathBuf {
+        let phase = if prepare { "prepare" } else { "work" };
+        let folder = self.project.env.path(&format!("team-{slug}-{phase}"));
+        if !folder.exists() {
+            self.project.repo.git([
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                &format!("{slug}/{phase}"),
+                folder.to_str().unwrap(),
+                "main",
+            ]);
+        }
+        folder
+    }
+    pub fn workspace(&self, slug: &str) -> PathBuf {
+        self.phase_workspace(slug, false)
+    }
     pub fn next(&self, flow: &str, slug: &str) -> String {
-        let (out, ok) = self.next_in(self.root(), flow, slug);
+        if flow == "work" {
+            let prepare = self.project.env.path(&format!("team-{slug}-prepare"));
+            if prepare.exists() {
+                let branch = format!("{slug}/prepare");
+                let difference = self.project.repo.git([
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    &format!("{branch}...main"),
+                ]);
+                let count = difference
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
+                if count == 0 {
+                    self.project
+                        .repo
+                        .git(["worktree", "remove", prepare.to_str().unwrap()]);
+                    self.project.repo.git(["branch", "-d", &branch]);
+                }
+            }
+        }
+        let path = self.phase_workspace(slug, flow == "prepare");
+        let (out, ok) = self.next_in(&path, flow, slug);
         assert!(ok, "{out}");
         out
+    }
+    /// Supply a native child result to record-only attempt/bind commands.
+    pub fn worker(&self, slug: &str, role: &str, procedure: Option<&str>) -> serde_json::Value {
+        self.next(
+            if matches!(
+                role,
+                "setup" | "builder" | "fixer" | "build-reviewer" | "deferrer" | "finalizer"
+            ) {
+                "work"
+            } else {
+                "prepare"
+            },
+            slug,
+        );
+        let mut cmd = self.project.env.instrukt(self.root());
+        cmd.args([
+            "todo", "attempt", slug, "--role", role, "--brief", "-", "--json",
+        ]);
+        if let Some(procedure) = procedure {
+            cmd.args(["--procedure", procedure, "--args", slug]);
+        }
+        let out = cmd.write_stdin("Do the assigned role.").assert().success();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&out.get_output().stdout).unwrap();
+        let id = format!("{}-{}", role, value["attempt"].as_u64().unwrap());
+        self.runtime.open_session(&id);
+        let path = std::path::Path::new(value["worktree"].as_str().unwrap());
+        self.project
+            .env
+            .instrukt(self.root())
+            .args([
+                "todo",
+                "bind",
+                slug,
+                "--role",
+                role,
+                "--attempt",
+                &value["attempt"].to_string(),
+                "--session",
+                &format!("t3:{id}"),
+                "--worktree",
+                path.to_str().unwrap(),
+                "--branch",
+                value["branch"].as_str().unwrap(),
+                "--base",
+                value["base"].as_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        value["session"] = format!("t3:{id}").into();
+        value
     }
 
     /// Runs `instrukt todo <args>` in `cwd`, which must succeed.
@@ -466,6 +608,15 @@ impl Crew {
                 .args(args)
                 .assert()
                 .success(),
+        )
+        .replace(
+            self.project
+                .env
+                .path("")
+                .to_str()
+                .unwrap()
+                .trim_end_matches('/'),
+            "[TMP]",
         )
     }
 

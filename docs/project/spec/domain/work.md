@@ -95,8 +95,7 @@ runner owns dispatch, and the configured runtime owns conversations.
   is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
 
-Direct-commit review verdicts belong to repository git notes through
-`instrukt repo stamp`, not a todo or a separate work record.
+Preparation head reviews belong to the todo record: exact clean head, complete findings digest, independent reviewer and immediate integration event. One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
 ## Canonical fields
 
@@ -108,8 +107,9 @@ Direct-commit review verdicts belong to repository git notes through
   project-local address.
 - **Contains:** recorded intent and version, kind, retained artifact versions,
   evidence-bound stamps, approval and intent-check attribution, hold audit,
-  completion evidence, per-role session bindings (runtime, id and returned worktree path retained
-  after session end for delivered cleanup), task
+  completion evidence, per-role attempt bindings (runtime, native id, semantic key, captured and completed
+  heads) and separate preparation/work orchestrator workspace paths retained
+  through their corresponding integration and cleanup, task
   schedule (`at`/`cron`, `catch_up`), optional agent/model preference consulted
   before procedure dispatch defaults and global `agents.order`, and reflected revision.
 - **Invariants:** every change, creation included, commits in one
@@ -140,9 +140,10 @@ Direct-commit review verdicts belong to repository git notes through
 
 Stamp history is durable work evidence, not an event bus. Workflow derives
 state from the record and owns lifecycle signals such as finalize readiness.
-The work finalize-ready stamp appends workflow’s `workflow.finalized` through
-the runner’s event-log interface;
-the runner owns its event vocabulary.
+The work finalize-ready stamp appends workflow’s `workflow.finalized`, and
+independent preparation-head approval appends `workflow.preparation_reviewed`,
+through the runner’s event-log interface. These atomic work mutations retain
+the corresponding reviewed head; workflow owns the lifecycle vocabulary.
 
 ### Domain events consumed
 
@@ -151,8 +152,9 @@ local records and workflow results enter as evidence-bound mutations.
 
 ## Event subjects and origins
 
-Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
-`workflow.finalized`, concerning the todo in its project origin
+Work owns no event vocabulary. Its readiness and preparation-head review stamps
+append workflow's `workflow.finalized` and `workflow.preparation_reviewed`,
+concerning the todo in its project origin
 (`project/instrukt/spec/domain/workflow`).
 
 ## Use cases

@@ -121,6 +121,19 @@ source-scoped delivery. It is independent of subscription matches or runtime
 availability. Signature validity authenticates a source; event content remains
 untrusted data, not authorization to mutate work.
 
+### External state declarations
+
+External names default to occurrence. A project `webhooks.<domain>` source may
+set `state: [<name>, …]` and `subject_from: <dotted-payload-field>`. Names omit
+the domain prefix and follow the ordinary event-name grammar. State names
+require a nonempty subject field declaration. After signature verification,
+the field is read from the normalized payload and must be a nonempty string
+or number. Its UTF-8 percent-encoded value qualifies the source's ordinary
+`inbound_source:<domain>:project:<slug>` subject. Missing or invalid values
+produce a client error with no relay. Other names remain occurrences. Ingress
+records `inbound_delivery: state` as producer metadata independently of payload
+text. Pending-state replacement is owned by procedure-event-delivery.
+
 ## Use cases
 
 ### UC-IF5: Use native and GitHub sources without a provider handshake
@@ -282,6 +295,16 @@ Given a developer declares several domains with their own signing references in 
 When identical body bytes arrive at each source
 Then each endpoint verifies only its domain's secret and publishes its own domain-qualified type and subject
 And source-scoped claims do not suppress another domain's delivery
+```
+
+### UC-IF34: Declare external state and its subject
+
+```gherkin
+Given a developer declares state names and a payload subject field on a signed webhook source
+When verified requests concern different subjects
+Then their state classification and distinct typed subjects reach the event stream
+And other names remain occurrences
+But a missing subject value is refused without relay
 ```
 
 ## Known caveats

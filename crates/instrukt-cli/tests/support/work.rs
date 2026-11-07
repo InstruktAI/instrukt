@@ -63,7 +63,10 @@ impl Project {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        stdout(&self.todo(args).success())
+        stdout(&self.todo(args).success()).replace(
+            self.env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]",
+        )
     }
 
     /// Files `slug` of `kind` with `intent`.
@@ -118,18 +121,8 @@ fn machine(api_url: &str, session_env: Option<&str>) -> (TestEnv, Repo) {
     let mut env = TestEnv::new();
     let mut global =
         format!("schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {api_url}\n");
-    if let Some(variable) = session_env {
-        global.push_str(&format!(
-            "runtimes:
-  - name: agent-cli
-    agent: claude
-    session_id_env: {variable}
-    start: agent-cli start
-    send: agent-cli send {{runtime.session_id}}
-    alive: agent-cli alive {{runtime.session_id}}
-    conversation: agent-cli show {{runtime.session_id}}
-"
-        ));
+    if session_env.is_some() {
+        global.push_str("runner: {runtime: t3}\n");
     }
     let path = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -178,6 +171,7 @@ pub fn redact(text: &str) -> String {
             .unwrap_or(rest.len());
         let kind = match run {
             64 if out.ends_with("sha256:") => Some("digest"),
+            64 => Some("event"),
             40 => Some("commit"),
             32 => Some("id"),
             _ => None,
@@ -217,19 +211,20 @@ pub fn redact(text: &str) -> String {
 /// The `YYYY-MM-DDTHH:MM:SSZ` times in `text`.
 fn timestamps(text: &str) -> Vec<String> {
     let bytes = text.as_bytes();
-    let shape = b"dddd-dd-ddTdd:dd:ddZ";
     let mut found = Vec::new();
-    let mut at = 0;
-    while at + shape.len() <= bytes.len() {
-        let matches = shape.iter().zip(&bytes[at..]).all(|(s, b)| match s {
-            b'd' => b.is_ascii_digit(),
-            other => other == b,
-        });
-        if matches {
-            found.push(text[at..at + shape.len()].to_owned());
-            at += shape.len();
-        } else {
-            at += 1;
+    for at in 0..bytes.len().saturating_sub(19) {
+        if !bytes[at].is_ascii_digit()
+            || !text.is_char_boundary(at)
+            || bytes.get(at + 4) != Some(&b'-')
+            || bytes.get(at + 10) != Some(&b'T')
+        {
+            continue;
+        }
+        if let Some(end) = text[at..].find('Z').filter(|n| *n < 40) {
+            let candidate = &text[at..=at + end];
+            if candidate.parse::<jiff::Timestamp>().is_ok() {
+                found.push(candidate.into());
+            }
         }
     }
     found

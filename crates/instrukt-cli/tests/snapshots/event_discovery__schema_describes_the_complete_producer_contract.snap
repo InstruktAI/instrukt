@@ -1,10 +1,11 @@
 ---
 source: crates/instrukt-cli/tests/event-discovery.rs
-assertion_line: 19
+assertion_line: 21
 expression: "String::from_utf8_lossy(&run.get_output().stdout)"
 ---
 {
   "name": "runner.ci_completed",
+  "delivery_kind": "state",
   "version": 1,
   "description": "The integrate candidate CI completed, including a no-CI observation.",
   "subject_kind": "commit",

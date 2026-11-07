@@ -19,7 +19,6 @@ mod _redis;
 mod _render;
 mod _runtime;
 mod _schema;
-mod _shipped;
 mod _validate;
 mod _webhooks;
 
@@ -37,9 +36,9 @@ pub use _layer::{
 pub use _module::Module;
 pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
 pub use _render::render_yaml;
-pub use _runtime::{Env, RuntimeEntry, Verb, VerbKind, VerbName};
+pub use _runtime::WorkflowCapability;
+pub use _runtime::{Env, NativeCapabilities, Runtime};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};
-pub use _shipped::names as shipped_runtimes;
 pub use _validate::validate;
 pub use _webhooks::{
     Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources, webhook_domain,

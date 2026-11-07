@@ -149,8 +149,30 @@ pub(crate) fn render(text: &str, bindings: &Bindings<'_>) -> Rendering {
             },
         }
     }
+    let mut expanded = String::new();
+    for line in out.split_inclusive('\n') {
+        if let Some(path) = line
+            .trim()
+            .strip_prefix("<!-- @config: ")
+            .and_then(|s| s.strip_suffix(" -->"))
+        {
+            match bindings.config.lookup(path) {
+                Ok(Some(value)) => {
+                    expanded.push_str(&value);
+                    expanded.push('\n');
+                }
+                Ok(None) => findings.push(RenderFinding::Unknown(path.into())),
+                Err(error) => findings.push(RenderFinding::Config {
+                    name: path.into(),
+                    message: error.to_string(),
+                }),
+            }
+        } else {
+            expanded.push_str(line);
+        }
+    }
     if findings.is_empty() {
-        Ok(out)
+        Ok(expanded)
     } else {
         Err(RenderFailure { findings })
     }
@@ -194,14 +216,9 @@ mod tests {
     use super::super::_facts::FactValue;
     use super::*;
 
-    fn no_config(_: &str) -> Result<Option<String>, ConfigLookupError> {
-        Ok(None)
-    }
-
     fn slug() -> TodoSlug {
         TodoSlug::parse("first-build").unwrap()
     }
-
     fn project() -> ProjectSlug {
         ProjectSlug::parse("instrukt").unwrap()
     }
@@ -294,33 +311,6 @@ mod tests {
                     RenderFinding::BriefUnavailable,
                 ]
             })
-        );
-    }
-
-    #[test]
-    fn lists_render_space_separated() {
-        let a = "a".repeat(40);
-        let b = "b".repeat(40);
-        let facts = Facts::new()
-            .with(
-                "claim_commits.unreviewed",
-                FactValue::ShaList(vec![
-                    instrukt_core::ids::CommitSha::parse(&a).unwrap(),
-                    instrukt_core::ids::CommitSha::parse(&b).unwrap(),
-                ]),
-            )
-            .unwrap();
-        let (slug, project) = (slug(), project());
-        let bindings = Bindings {
-            slug: &slug,
-            project: &project,
-            facts: &facts,
-            brief: None,
-            config: &no_config,
-        };
-        assert_eq!(
-            render("{claim_commits.unreviewed}", &bindings),
-            Ok(format!("{a} {b}"))
         );
     }
 

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/configuration-editing.rs
+assertion_line: 177
 expression: "stderr(&env, &refused)"
 ---
 instrukt: refused; nothing was written:

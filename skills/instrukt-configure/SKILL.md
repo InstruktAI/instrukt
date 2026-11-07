@@ -41,7 +41,7 @@ from available instrukt reports and local project metadata; report a missing
 identity discovery surface as a prerequisite instead of inventing an ID.
 
 - `ingress.computer` is the same existing stable instrukt machine ID everywhere.
-  T3 environment identity and hostname are separate facts.
+  Runtime environment identity and hostname are separate facts.
 - `redis.cluster.url` reaches the same logical database and stream namespace on
   every event participant. Equivalent URLs and machine-local credential
   references may differ; verify their common destination and required access.
@@ -60,16 +60,18 @@ declaring computer.
 
 ## Route the work
 
-Read the coordinating computer's configured `runner.runtime`. For a runtime
-with a packaged `runtime/<runtime>.md`, read that route and use it to arrange
-the local work below. The packaged route is [runtime/t3.md](runtime/t3.md).
-Targets keep their own runtime selections.
+Read the coordinating computer's configured `runner.runtime`. Retrieve
+`instrukt docs get general/procedure/ai-to-ai-operations --closure` for its
+read-time configured environment discovery, connection and remote-task
+instructions. Use those rendered operations to arrange the local work below;
+each target retains its own runtime choice. Runtime execution wording lives in
+that runtime's configuration entry.
 
-When the runtime is unset, has no packaged route or cannot reach a target,
-give the developer that computer's brief and the complete skill directory's
-location to run locally there. Continue independent reachable work and leave
-that computer pending until its report arrives. Core configuration can be
-completed without choosing a runtime.
+When the runtime is unset, its configured route is unavailable, the procedure
+cannot be retrieved or a target cannot be reached, give the developer that
+computer's brief and this skill directory's location to run locally there.
+Continue independent reachable work and leave that computer pending until its
+report arrives. Core configuration can be completed without choosing a runtime.
 
 ## Converge and verify locally
 

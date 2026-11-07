@@ -140,7 +140,7 @@ Frontmatter (optional, authored):
 
 - `dispatch` — procedures only, beside `role`. The procedure's launch defaults: `agent`, a non-empty ordered agent preference list, and `thinking_mode`, one of `fast`, `med`, `slow`. Agent names are those the configured runtime adapter can start, not a fixed set or the set receiving deployed instructions. The global `agents.order` supplies the defaults; a procedure declares `dispatch` only where it overrides them. Validation rejects an empty list, an agent name the configured runtime adapter cannot start, an unknown mode, and the field on a snippet that declares no `role`.
 
-- `delivered_by` — list of todo slugs that materialize a **brand-new** snippet's intended state. Optional and non-empty when present; absence means the snippet describes the current platform contract. A snippet carrying `delivered_by` is **pending** and `instrukt docs index` flags it inline with a `(delivered by: <slugs>)` suffix (never hidden; the slug name is coordination metadata, not content). `instrukt docs index --target <slug>` narrows the listing to one todo's new snippets. The pending **body** stays invisible until active, except in the `instrukt docs get <id> --target <slug>` view of a slug that delivers the snippet or carries its own companion or planned material for it. Lifecycle code owns roadmap relationship checks and clears `delivered_by` on delivery (see `sdlc/principle/documentation-first-development` §10); source validation checks frontmatter shape and a todo slug's form (its existence only when the `todos` module is on), and publication records the source state it receives. `delivered_by` is the **only** pending-state frontmatter field. A change to an already-live snippet is **never** marked in frontmatter: its pending material lives in a companion filename (`<stem>.<slug>.md`), an in-body `&lt;!-- planned:slug --&gt;` block, or an in-body `&lt;!-- planned-change:slug --&gt;` block. The index derives the parallel `(superseded by: <slugs>)` suffix on the parent's line from companions, planned blocks, and planned-change blocks, not from any field.
+- `delivered_by` — list of todo slugs that materialize a **brand-new** snippet's intended state. Optional and non-empty when present; absence means the snippet describes the current platform contract. A snippet carrying `delivered_by` is **pending** and `instrukt docs index` flags it inline with a `(delivered by: <slugs>)` suffix (never hidden; the slug name is coordination metadata, not content). `instrukt docs index --target <slug>` narrows the listing to one todo's new snippets. The pending **body** stays invisible until active, except in the `instrukt docs get <id> --target <slug>` view of a slug that delivers the snippet or carries its own companion or planned material for it. Lifecycle code owns roadmap relationship checks; the integrator clears `delivered_by` when reviewed preparation integrates, before build (see `sdlc/principle/documentation-first-development`); source validation checks frontmatter shape and a todo slug's form (its existence only when the `todos` module is on), and publication records the source state it receives. `delivered_by` is the **only** pending-state frontmatter field. A change to an already-live snippet is **never** marked in frontmatter: its pending material lives in a companion filename (`<stem>.<slug>.md`), an in-body `&lt;!-- planned:slug --&gt;` block, or an in-body `&lt;!-- planned-change:slug --&gt;` block. The index derives the parallel `(superseded by: <slugs>)` suffix on the parent's line from companions, planned blocks, and planned-change blocks, not from any field.
 
 - `date` — `adr` snippets ONLY (required). ISO-8601 date the decision was recorded.
 - `number` — `adr` snippets ONLY (required). Integer matching the filename prefix (e.g., `0007` for `0007-provenance-via-mirror-id.md`).
@@ -163,16 +163,19 @@ unchanged. Reading a procedure as supporting knowledge reconfigures no session.
 
 A procedure declaring `subscriptions` may also declare:
 
-- `event_delivery`: `sequential` (default) or `batched`. This selects one oldest
-  pending event or the ordered pending set at each eligible delivery boundary.
-- `interruptible`: a boolean, default `false`. False admits activation events
-  only at initial activation and wake entry; true also admits them at supported
-  in-turn hook boundaries.
+- `interruptible`: a boolean, default `true`. True requests as-soon-as-possible
+  delivery: steer at the next safe point where supported, otherwise hand over
+  queued input now or use the earliest idle entry. False requests only-at-entry
+  delivery, allowing the current run to finish undisturbed. The shipped
+  integrator and upstream-watch explicitly declare false.
 
-These fields are valid only on subscribed procedures. Their values are
-independent: cardinality changes how many events are supplied, while
-interruptibility changes when they may arrive. The runtime enforces the declared
-delivery timing and cardinality.
+This field is valid only on subscribed procedures. Delivery is always a bounded
+batch; the intent determines when its entries may arrive. Missing steering is a supported
+runtime degradation, never a declaration finding. The adapter realizes the
+intent with the runtime's capabilities; pending wakes and messages combine,
+while distinct event identities and bounded batch selection remain.
+On a queue-only runtime at most one instrukt message waits per session; later
+input remains pending for the next combined message.
 
 Delivery settings configure a procedure session at initialization and remain
 fixed for that session, including revival. Newly initialized successor sessions

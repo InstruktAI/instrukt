@@ -103,7 +103,7 @@ pub use _corpus::{
 pub use _finding::{Finding, FindingCode, Notice, NoticeCode};
 pub use _fold::{FoldOutcome, fold};
 pub use _frontmatter::{
-    Dispatch, EventDelivery, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
+    Dispatch, Frontmatter, Parameter, ProcedureEntry, ThinkingMode, Visibility,
 };
 pub use _identity::{
     BaselineOwner, DocDomain, Scope, Taxonomy, published_destination, published_origin,
@@ -163,6 +163,8 @@ use crate::publication::PublicationStateError;
 /// these are.
 #[derive(Debug, thiserror::Error)]
 pub enum DocsError {
+    #[error(transparent)]
+    StateDb(#[from] crate::state_db::StateDbError),
     #[error(transparent)]
     Config(#[from] ConfigError),
     /// A project needs a domain no adopted docs repository publishes on

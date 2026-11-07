@@ -133,3 +133,32 @@ fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_
         "list-depth is as the last completed change left it"
     );
 }
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD2
+#[test]
+fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_introduced() {
+    let project = support::Project::new();
+    let file = project.env.instrukt_home().join("state/instrukt.db");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let db = Connection::open(&file).unwrap();
+    db.execute_batch(include_str!("fixtures/state-v1.sql"))
+        .unwrap();
+    let id = "11111111111111111111111111111111";
+    db.execute("INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence) VALUES (?1,'demo','legacy','change','active','2026-01-01T00:00:00Z','{\"person\":\"Test Developer\"}',1,'once',1)",[id]).unwrap();
+    db.execute(
+        "INSERT INTO artifacts(todo_id,name) VALUES (?1,'input')",
+        [id],
+    )
+    .unwrap();
+    let content = "Preserve the existing work record.";
+    db.execute("INSERT INTO artifact_versions(todo_id,name,sequence,digest,writer,created_at,content,derived_from,grounding) VALUES (?1,'input',1,?2,'{\"person\":\"Test Developer\"}','2026-01-01T00:00:00Z',?3,'[]',?4)",instrukt_core::state_db::rusqlite::params![id,instrukt_todos::evidence::ContentDigest::of(content).to_string(),content,serde_json::to_string(&instrukt_todos::evidence::Grounding::default()).unwrap()]).unwrap();
+    db.execute("INSERT INTO session_bindings(todo_id,role,session) VALUES (?1,'prepare-orchestrator','t3:legacy-driver')",[id]).unwrap();
+    drop(db);
+    let shown = project.ok(["show", "legacy"]);
+    insta::assert_snapshot!("migrated-v1-binding", support::redact(&shown));
+    let db = Connection::open(&file).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+}

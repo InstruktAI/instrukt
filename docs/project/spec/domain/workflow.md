@@ -136,7 +136,9 @@ Absent or empty evidence is absent; false and zero remain typed values.
 | `prd_approval.by_human` | bool |
 | `architecture_skipped.reason` | string |
 | `diagnosis_settled.digest` | string |
-| `claim_commits.unreviewed` | list of SHA |
+| `preparation.head` | SHA |
+| `preparation.review_current` | bool |
+| `preparation.integrated` | bool |
 | `drift.prd`, `drift.architecture`, `drift.implementation_plan` | fresh\|pending\|cosmetic\|substantive |
 | `build.start_base_sha` | string |
 | `build.plan_digest` | string |
@@ -149,64 +151,43 @@ Absent or empty evidence is absent; false and zero remain typed values.
 | `deferrals.pending` | bool |
 | `finalize.status` | pending\|ready |
 | `finalize.sha` | SHA |
-| `setup.worktree.path` | string, returned path of this todo's setup attempt, retained after release; used to leave `workspace_request` |
-| `setup.handoff_confirmed` | bool, setup's normal handoff is confirmed, or its recovery chain completed the remaining setup obligations and has a confirmed successful handoff |
-| `handoff.pending` | bool, an outstanding writing attempt has completion evidence or persisted unconfirmed advance intent |
-| `recovery.attempt` | string `<role>/<attempt>`, latest confirmed failed writing binding whose linked recovery builder has not completed a confirmed normal handoff; absent when settled |
-| `finalizer.review_pending` | bool, the latest confirmed finalizer handoff is the current todo head and its review binding is `todo_changed`, `report_changed` or `unbound` |
-| `finalizer.handoff_current` | bool, the latest finalizer attempt has a confirmed handoff at the current todo head |
-| `finalizer.session` | string, runtime id retained with that finalizer attempt for a record-only readiness follow-up |
-| `attempts.retained` | list of every todo-role attempt with role, attempt, returned path and role branch, including released attempts |
-| `worktree.exists` | bool, present only while the selected attempt's worktree exists; absence satisfies removal of that path |
-| `worktree.path` | string, runtime-returned path of the selected attempt, including retained bindings after release |
-| `role_branch.name` | string, next retained role branch selected for delivered cleanup after every retained worktree is absent |
-| `role_branch.exists` | bool, present only while that selected branch exists; absence satisfies removal of that branch |
+| `setup.complete` | bool, successful setup role completion at its clean shared head after all setup/admission obligations; failure alone never satisfies it |
+| `finalizer.review_pending` | bool, latest successful finalizer completion is at the current todo head and review is `todo_changed`, `report_changed` or `unbound` |
+| `finalizer.completion_current` | bool, latest successful finalizer completion is at the current todo head |
+| `finalizer.session` | retained native id for the record-only readiness follow-up |
+| `attempts.retained` | all role-attempt records, native ids and captured/completed heads, with the same todo workspace and branch for work children |
+| `worktree.exists` | bool, present while the todo's one recorded worktree exists; absence satisfies delivered cleanup |
+| `worktree.path` | string, the work orchestrator's runtime-recorded todo worktree, shared by its team and retained through delivery cleanup |
 | `claim.held` | bool, execution claim currently held |
 | `sessions.bound` | list of runtime/id session bindings for this assignment |
 | `task_plan.digest` | string, current task-plan digest |
 | `task_approved.target_digest` | string, approved task-plan digest |
 | `task_approved.by` | human\|peer |
-| `worktree.clean` | bool, selected attempt's worktree |
-| `worktree.head` | SHA, selected attempt's worktree |
-| `branch.head` | SHA, durable todo branch, independently of the selected role branch |
+| `worktree.clean` | bool, todo's shared worktree |
+| `worktree.head` | SHA, todo's shared worktree |
+| `branch.name` | string, captured work-phase branch name for publication and cleanup |
+| `branch.head` | SHA, the todo branch checked out in its shared worktree |
 | `remote.head` | SHA, published todo branch |
 | `quality_checklist.digest` | string, current quality-checklist artifact digest |
 | `delivery.commit` | SHA, the confirmed delivered commit |
 
-Workspace observation selects the attempt the obligation concerns, never a
-single builder workspace. Setup detection uses `setup.worktree.path`; build
-admission and setup effects use that setup attempt. A pending handoff uses the
-outstanding completed attempt. Worker dispatch uses the active attempt of the
-role being dispatched, including the builder linked to `recovery.attempt`;
-before admission its workspace facts are absent and the runtime's returned path
-establishes them. Finalization readiness and mismatch
-checks use the latest retained finalizer attempt after confirmed handoff,
-including while an intervening independent review has its own worktree.
-An active finalizer's reconciliation uses its own attempt. No fallback to a
-builder or another role supplies missing workspace evidence.
+Workspace observation reads the todo's one runtime-recorded worktree and todo
+branch for setup, build, review, fixing, deferrals and finalization. Each role
+reservation captures its current clean head and binds the child's shared placement.
+Missing or mismatched placement is a visible gap, not another role's checkout.
+Finalizer completion remains the source for record-only readiness after its
+release and any subsequent independent review at the same shared head.
 
-The provider resolves these selectors from record evidence and the obligation's
-role. Setup and readiness selectors remain explicit even before dispatch.
-`branch.head` and `remote.head` always concern the todo branch. Git effects run
-in the selected attempt's returned path; `done_when` reads the same attempt.
-Setup synchronization effects are satisfied by confirmed setup handoff as well
-as an existing build-start record, so a released setup is not edited again.
-During failed-setup recovery,
-synchronization and remaining setup effects select the active linked recovery
-builder's returned path. Its brief owns that recovery sequence before build
-admission evidence and implementation. `recovery.attempt` remains present while
-that builder works or awaits handoff; completion's `handoff.pending` takes
-precedence, and confirmation clears recovery. Another failed release replaces
-the recovery source with the latest failed binding, retaining the chain.
+Setup performs synchronization and records admission evidence before successful
+`--role-complete`; setup failure remains unsatisfied. Completion/release, review
+verdict/release and deferral disposition/release are single record transactions.
+There are no role-branch advancement or failed-branch recovery facts. A clean,
+confirmed failed release permits continuation at the same tree's current head.
 
-Delivered cleanup enumerates `attempts.retained` in role/attempt order, selecting
-the next still-existing path for `worktree.path` and `worktree.exists`. Remove
-one path, refresh and re-derive until all are absent. Then select each remaining
-role branch as `role_branch.name` and `role_branch.exists`, remove it safely,
-and re-derive until all are absent. Exhaustion leaves the corresponding facts
-absent. Cleanup runs from the project checkout and retains failures, dirty or
-in-use worktrees and unmerged branches as explicit obligations. The retained
-bindings remain evidence after resource removal.
+Delivered cleanup selects only that recorded todo path, executes removal from
+the project folder and re-observes until absent. Dirty/in-use worktrees and failed
+removal remain explicit obligations. All role-attempt evidence and the runtime
+thread record remain after removal.
 
 The provider also keeps these facts honest when the record changes: a new
 build-relevant artifact version clears `build.complete`. Any work-branch commit
@@ -214,8 +195,7 @@ after a build-completion stamp also clears it when the branch head differs
 from the stamped head, including fix commits after `changes_requested`; it
 stays false until the next completion stamp. A kickback clears the build and
 review facts it invalidates and sets `<r>.cleared_by_substantive_drift` for
-each preparation review it invalidates; `claim_commits.unreviewed` counts only
-commits whose verdict is neither `approve` nor `exempt`; an approval counts only
+each preparation review it invalidates; preparation head review binds the current clean phase head and report; an approval counts only
 from an approver eligible under the gate's configuration; an intent check counts
 only for the current `input` version.
 
@@ -276,9 +256,19 @@ derived value, not another durable aggregate.
 - **Idempotency key:** the logical handoff is identified by project, todo and
   finalized commit. Re-evaluating unchanged readiness is the same handoff.
 
-This is the workflow's sole emitted event. Review approval is conveyed by the
-configured action to its responsible role. Event delivery does not determine
-the engine's derived state.
+#### Reviewed preparation
+
+- **Name:** `workflow.preparation_reviewed`.
+- **Emitted when:** an independent preparation-head review approves the exact
+  clean head with its complete findings digest. Work records the verdict,
+  releases the reviewer and appends this event atomically.
+- **Payload:** project, todo and reviewed preparation commit.
+- **Consumer:** the standing integrator, for immediate documentation integration
+  and publication before build, then preparation worktree and branch cleanup.
+- **Idempotency key:** project, todo and reviewed preparation commit.
+
+Other worker endings remain native parent attention. Event delivery does not
+determine the engine's derived state.
 
 ### Domain events consumed
 
@@ -295,16 +285,7 @@ the engine's derived state.
   admit a candidate. Failed candidates remain with the integrator for
   remediation; transport recovery is the event capability's responsibility.
 
-#### Settled direct commits
-
-- **Name:** `runner.main_ahead`.
-- **Producer:** the runner compares local and remote main on each tick when no
-  integration candidate is pending.
-- **Reaction:** wake the standing integrator to assess direct commits through
-  the integration gate. The event does not authorize promotion.
-- **Failure handling:** unsettled or unverified commits remain unpromoted.
-
-#### Failing canonical branch
+#### Failing canonical main
 
 - **Name:** `runner.main_failing`.
 - **Producer:** the runner, observing the CI result of remote canonical main's
@@ -352,14 +333,11 @@ The context map indexes the cross-cutting architecture design.
 
 - **Repository → workflow — Customer / Supplier:** repository supplies the
   candidate integration branch and exact-commit main advancement.
-- **Runner → workflow — Published language:** `runner.ci_completed` and `runner.main_ahead` wake the
-  integrator to assess candidates and direct commits; `runner.main_failing`
+- **Runner → workflow — Published language:** `runner.ci_completed` and `workflow.preparation_reviewed` wake the
+  integrator to assess candidates and reviewed preparation heads; `runner.main_failing`
   wakes it to restore a failing canonical branch.
 
-`runner.main_ahead` is consumed by the subscribed integrator to assess direct
-commits through the integration gate. The `--finalize-ready` work stamp owns
-the append of `workflow.finalized` through the runner event-log interface;
-derivation alone appends nothing.
+
 
 Placeholder paths may also name configuration values (for example
 `{runtime.session_id}`), resolved by the same rules as `config get`.

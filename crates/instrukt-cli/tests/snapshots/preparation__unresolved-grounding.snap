@@ -1,15 +1,18 @@
 ---
 source: crates/instrukt-cli/tests/preparation.rs
+assertion_line: 195
 expression: "redact(&steps.join(\"=====\\n\"))"
 ---
 todo: quoted-lists (demo)
 flow: prepare
-claim: held by this session
+claim: claimed by this session
 state: drift_analysis
 transition: plan_review -> drift_analysis (#8)
 action: analyze-drift
 responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt sessions run --procedure crew/procedure/drift-analyze --args quoted-lists --todo quoted-lists --brief -
+command: instrukt todo attempt quoted-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args quoted-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Judge the drift of quoted-lists: PRD pending, plan pending.

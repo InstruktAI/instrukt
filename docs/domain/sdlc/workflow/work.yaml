@@ -1,11 +1,12 @@
 # Runtime workspace setup precedes sync, opening commit, build-start, checklist and implementation dispatch.
-# Workspace facts select the concerned attempt; cleanup enumerates all retained paths, then role branches.
+# Workspace facts identify the todo's single shared worktree; cleanup removes it after delivery.
 # build.complete holds only for completion of the current build/fix target; changed todo
 # commits after changes_requested invalidate it until the builder stamps completion.
 # quality_checklist.digest is the current quality-checklist artifact digest.
 # delivery.commit is the confirmed commit supplied to todo deliver.
 # Kickback invalidation exposes the same cleared review markers used by the return route.
 flow: work
+requires: [worktree_create, shared_delegation]
 orchestrator: work-orchestrator
 initial: start
 states:
@@ -17,8 +18,6 @@ states:
 - not_prepared
 - build_admission_pending
 - workspace_request
-- recovery_builder
-- role_handoff_pending
 - finalize_readiness_pending
 - building
 - build_reconcile
@@ -32,13 +31,18 @@ states:
 - delivered_cleanup
 transitions:
 - from: start
+  to: not_prepared
+  when: {equals: [preparation.integrated, false]}
+  action: await-prepare
+- from: start
   to: delivered_cleanup
   when:
     exists: delivery.commit
   action: cleanup-delivered
   effects:
   - worktree.remove
-  - role-branch.remove
+  - branch.remove
+  - remote_branch.remove
 - from: start
   to: task_runner_route
   when:
@@ -46,13 +50,6 @@ transitions:
     - kind
     - task
   action: await-task-runner
-- from: start
-  to: role_handoff_pending
-  when:
-    equals:
-    - handoff.pending
-    - true
-  action: handoff-role
 - from: start
   to: dependencies_open
   when:
@@ -169,15 +166,12 @@ transitions:
             - true
   action: await-prepare
 - from: start
-  to: recovery_builder
-  when:
-    exists: recovery.attempt
-  action: recover-build
-- from: start
   to: workspace_request
   when:
     not:
-      exists: setup.worktree.path
+      equals:
+      - setup.complete
+      - true
   action: setup-workspace
 - from: start
   to: build_admission_pending
@@ -190,10 +184,6 @@ transitions:
     - not:
         exists: quality_checklist.digest
   action: await-build-start
-  effects:
-  - record.refresh
-  - git.fetch-main
-  - git.merge-main
 - from: start
   to: building
   when:
@@ -372,7 +362,7 @@ transitions:
   when:
     all:
     - equals:
-      - finalizer.handoff_current
+      - finalizer.completion_current
       - true
     - equals:
       - worktree.clean

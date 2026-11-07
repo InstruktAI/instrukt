@@ -1,10 +1,11 @@
 ---
 source: crates/instrukt-cli/tests/event-discovery.rs
-assertion_line: 51
+assertion_line: 64
 expression: "String::from_utf8_lossy(&run.get_output().stdout)"
 ---
 {
   "name": "instrukt.system.event.dead_lettered",
+  "delivery_kind": "occurrence",
   "version": 1,
   "description": "A persistently failing stream entry was parked in a dead letter destination.",
   "subject_kind": "stream_entry",

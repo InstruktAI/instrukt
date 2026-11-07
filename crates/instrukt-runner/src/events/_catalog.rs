@@ -140,6 +140,7 @@ impl StateDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventDeclaration {
     pub name: String,
+    pub delivery_kind: instrukt_core::event_type::DeliveryKind,
     pub version: u32,
     pub description: String,
     /// None permits any received reference kind.

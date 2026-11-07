@@ -44,6 +44,7 @@ pub struct DispatchContext<'a> {
     pub tz: &'a TimeZone,
     pub previous_wake: Option<Timestamp>,
     pub state: &'a RunnerState,
+    pub invocation: &'a crate::keyed::RuntimeInvocation,
 }
 
 /// What dispatch did with one todo.
@@ -132,8 +133,7 @@ fn pickup(
             return Vec::new();
         }
     };
-    if let Err(err) = Executions::new(cx.state).observe(config, cx.env, workflow, project, &offered)
-    {
+    if let Err(err) = Executions::new(cx.state).observe(cx, config, workflow, project, &offered) {
         tracing::warn!(event = "executions_unobservable", project = %project.slug, error = %err);
     }
     for candidate in &offered {
@@ -181,15 +181,31 @@ fn dispatch_one(
     let (role, occurrence) = match assignment.lane {
         Lane::TaskRun => {
             let timing = candidate.timing.as_ref()?;
-            match timing::decide(timing, cx.previous_wake, cx.now, cx.tz) {
-                Decision::Fire {
-                    occurrence,
-                    catch_up,
-                } => {
-                    tracing::info!(event = "task_due", project = %project.slug, todo = %todo, occurrence = %occurrence, catch_up);
-                    (RoleName::parse(TASK_RUNNER_ROLE).ok()?, Some(occurrence))
+            let pending = match crate::keyed::pending_task(
+                cx.home,
+                project.slug.as_str(),
+                todo.as_str(),
+                timing.last_fired.as_ref().map(|f| f.occurrence),
+            ) {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::warn!(event="task_start_unreadable",error=%error);
+                    return None;
                 }
-                Decision::NotDue | Decision::InFlight => return None,
+            };
+            if let Some(occurrence) = pending {
+                (RoleName::parse(TASK_RUNNER_ROLE).ok()?, Some(occurrence))
+            } else {
+                match timing::decide(timing, cx.previous_wake, cx.now, cx.tz) {
+                    Decision::Fire {
+                        occurrence,
+                        catch_up,
+                    } => {
+                        tracing::info!(event = "task_due", project = %project.slug, todo = %todo, occurrence = %occurrence, catch_up);
+                        (RoleName::parse(TASK_RUNNER_ROLE).ok()?, Some(occurrence))
+                    }
+                    Decision::NotDue | Decision::InFlight => return None,
+                }
             }
         }
         Lane::Prepare | Lane::Work => (assignment.orchestrator?, None),
@@ -230,15 +246,56 @@ fn dispatch_one(
         &global,
         thinking,
     );
-    let sessions = Sessions::new(config, cx.env);
-    let started = sessions.start(
-        &order,
-        &StartRequest {
-            message: &prepared.message,
-            worktree: None,
-            cwd: Some(&project.root),
-        },
-    );
+    let sessions = Sessions::new(cx.home, config, cx.env);
+    let runtime = match sessions.runner_runtime() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::warn!(event="runtime_not_chosen",error=%error);
+            return None;
+        }
+    };
+    let bind_role = prepared.role.clone().unwrap_or(role);
+    let reservation = match work.bindings.reserve_dispatch(
+        project,
+        todo,
+        &bind_role,
+        occurrence,
+        &assignment.lane,
+    ) {
+        Ok(reservation) => reservation,
+        Err(error) => {
+            tracing::warn!(event="dispatch_reservation_pending",todo=%todo,error=%error);
+            return Some(Dispatched::StartUncertain { todo: todo.clone() });
+        }
+    };
+    let (dispatch_key, creation, existing, placement) = match reservation {
+        crate::interfaces::DispatchReservation::Existing(binding) => (
+            binding.key.clone(),
+            crate::runtime::CreationPermit::Reconcile,
+            Some(binding),
+            None,
+        ),
+        crate::interfaces::DispatchReservation::Start {
+            key,
+            creation,
+            worktree,
+        } => (key, creation, None, worktree),
+    };
+    let request = StartRequest {
+        now: cx.now,
+        invocation: cx.invocation,
+        creation,
+        message: &prepared.message,
+        worktree: placement.as_ref().map(|p| p.branch.as_str()),
+        cwd: Some(&project.root),
+        key: Some(&dispatch_key),
+        base: placement.as_ref().map(|p| p.base.as_str()),
+        from: placement.as_ref().map(|p| p.from.as_str()),
+    };
+    let started = match existing {
+        Some(binding) => sessions.followup(&binding.session, binding.worktree.as_deref(), &request),
+        None => sessions.start(&order, &request),
+    };
     let started = match started {
         Ok(started) => started,
         Err(SessionsError::OrderExhausted { tried }) => {
@@ -259,44 +316,44 @@ fn dispatch_one(
             return None;
         }
         Err(err) => {
-            // The runtime may have created a session the runner cannot
-            // name: hold the todo so no second session starts, and report
-            // it; the developer releases the hold once settled.
-            tracing::warn!(event = "dispatch_start_uncertain", project = %project.slug, todo = %todo, error = %err);
-            let cause = HoldCause::Anomaly {
-                reason: format!("a session start's result is unknown: {err}"),
-            };
-            if let Err(err) = work.holds.set_automatic_hold(project, todo, &cause) {
-                tracing::warn!(event = "dispatch_uncertain_hold_failed", project = %project.slug, todo = %todo, error = %err);
+            if crate::keyed::report_start_finding(cx.state, Some(runtime), &err) {
+                tracing::warn!(event="dispatch_pending",project=%project.slug,todo=%todo,error=%err);
             }
-            anomaly::notify(config, cx.env, &format!("{}/{todo}", project.slug), None);
             return Some(Dispatched::StartUncertain { todo: todo.clone() });
         }
     };
     let binding = SessionBinding {
+        key: started.key.clone(),
         session: started.session.clone(),
         worktree: started.worktree,
     };
-    let bind_role = prepared.role.clone().unwrap_or(role);
-    if let Err(err) = work
-        .bindings
-        .bind_session(project, todo, &bind_role, &binding)
-    {
-        tracing::warn!(event = "session_binding_failed", project = %project.slug, todo = %todo, session = %started.session, error = %err);
+    if let Err(err) = work.bindings.record_dispatch(
+        project,
+        todo,
+        &crate::interfaces::AcceptedDispatch {
+            role: bind_role.clone(),
+            key: started.key,
+            binding,
+            occurrence,
+        },
+    ) {
+        tracing::warn!(event="dispatch_result_pending",todo=%todo,error=%err);
+        return Some(Dispatched::StartUncertain { todo: todo.clone() });
     }
-    if let Some(occurrence) = occurrence
-        && let Err(err) =
-            work.firings
-                .record_firing_started(project, todo, occurrence, &started.session)
-    {
-        tracing::warn!(event = "task_firing_unrecorded", project = %project.slug, todo = %todo, error = %err);
-    }
+    let observed_state = match workflow.assignment(project, todo) {
+        Ok(Some(current)) => current.state,
+        Ok(None) => return Some(Dispatched::Started { todo: todo.clone() }),
+        Err(error) => {
+            tracing::warn!(event="accepted_dispatch_state_unreadable",todo=%todo,error=%error);
+            assignment.state.clone()
+        }
+    };
     if let Err(err) = Executions::new(cx.state).record(Execution {
         project: project.slug.clone(),
         todo: todo.clone(),
         role: bind_role,
         session: started.session.clone(),
-        state: assignment.state.clone(),
+        state: observed_state,
         recovery_sent: false,
         anomaly_raised: false,
     }) {
@@ -504,7 +561,7 @@ fn notify_task_failures(cx: &DispatchContext<'_>, config: &Configuration, projec
             return;
         }
     };
-    let sessions = Sessions::new(config, cx.env);
+    let sessions = Sessions::new(cx.home, config, cx.env);
     for failure in &mut failures {
         if failure.notified || failure.project != project.slug {
             continue;

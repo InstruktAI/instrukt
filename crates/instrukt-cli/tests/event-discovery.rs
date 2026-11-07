@@ -12,6 +12,7 @@ fn declared_events_are_discoverable_without_configuration_or_transport() {
 }
 
 // spec: project/instrukt/spec/feature/runner/event-discovery UC-ED2
+// spec: project/instrukt/spec/feature/runner/event-envelope UC-EE16
 #[test]
 fn schema_describes_the_complete_producer_contract() {
     let env = TestEnv::new();

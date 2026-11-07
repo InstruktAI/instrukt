@@ -938,3 +938,72 @@ fn fixed_names_must_match_the_name_grammar() {
 fn declared_domains_must_be_single_valid_segments() {
     invalid_declaration("{er.p: {secret: '${HOOK_KEY}'}}", "invalid-domain");
 }
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF34
+#[test]
+fn declared_external_state_extracts_a_stable_payload_subject_and_keeps_other_names_occurrences() {
+    let (computer, redis, receiver) = setup();
+    declare(
+        &computer,
+        "{erp: {secret: '${HOOK_KEY}', state: [updated], subject_from: customer.id}}",
+    );
+    for subject in ["first", "second"] {
+        let body = serde_json::json!({"name":"updated","payload":{"customer":{"id":subject}}});
+        assert_eq!(
+            receiver
+                .signed(NATIVE, &serde_json::to_vec(&body).unwrap(), SECRET, &[])
+                .0,
+            202
+        );
+    }
+    let received = events(&redis);
+    assert_eq!(received.len(), 2);
+    assert_ne!(received[0].subject, received[1].subject);
+    let kind: instrukt_core::event_type::DeliveryKind =
+        serde_json::from_value(received[0].extensions["inbound_delivery"].clone()).unwrap();
+    assert_eq!(kind, instrukt_core::event_type::DeliveryKind::State);
+    let missing = serde_json::json!({"name":"updated","payload":{}});
+    assert_eq!(
+        receiver
+            .signed(NATIVE, &serde_json::to_vec(&missing).unwrap(), SECRET, &[])
+            .0,
+        400
+    );
+    assert_eq!(events(&redis).len(), 2);
+    let other = serde_json::json!({"name":"created","payload":{"customer":{"id":"third"}}});
+    assert_eq!(
+        receiver
+            .signed(NATIVE, &serde_json::to_vec(&other).unwrap(), SECRET, &[])
+            .0,
+        202
+    );
+    assert!(
+        !events(&redis)[2]
+            .extensions
+            .contains_key("inbound_delivery")
+    );
+}
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL5
+#[test]
+fn external_state_configuration_requires_the_payload_subject_declaration() {
+    invalid_declaration(
+        "{erp: {secret: '${HOOK_KEY}', state: [updated]}}",
+        "state-subject-required",
+    );
+    let (computer, _redis, _receiver) = setup();
+    declare(
+        &computer,
+        "{erp: {secret: '${HOOK_KEY}', state: [updated], subject_from: customer.id}}",
+    );
+    let shown = computer
+        .env
+        .run(
+            computer.project.path(),
+            ["config", "get", "webhooks", "--json"],
+        )
+        .success();
+    insta::assert_snapshot!(
+        "external-state-source-config",
+        String::from_utf8_lossy(&shown.get_output().stdout)
+    );
+}

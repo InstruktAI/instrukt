@@ -25,23 +25,23 @@ dispatch:
 
 Drive `instrukt todo work {slug}` through the build-review-fix-finalize cycle
 until the todo is handed to integration or returned to preparation. The
-orchestrator executes the selected action and owed effects and supervises
-the workers' progress.
+orchestrator routes workspace actions and effects to the admitted shared child,
+records its coordination outcomes and supervises the workers' progress.
 
 ### The doc layer is frozen — prepare authors, work executes
 
-Prepare is the only lifecycle phase that authors doc snippets, on `main`. From PREPARED onward the doc layer is frozen for the
-
-slug: no work-phase session — builder, reviewer, fixer, or finalizer — changes
+Prepare authors doc snippets in `<slug>/prepare` for immediate integration after
+review. Work starts after that integration and preparation cleanup. The doc layer
+is frozen for the work phase: no work-phase session — builder, reviewer, fixer, or finalizer — changes
 the doc layer or takes its state as work. Writing under `docs/**`, folding
 pending markers, and confirming or verifying whether they are folded are the same
 violation whatever verb the task uses. Reading doc snippets as input is untouched
 and required: the work phase binds in-scope feature-spec scenarios and implements
-against published contracts. The slug's doc reflection already exists as pending
-markers authored at prepare; the integrator folds them at delivery.
+against published contracts. The slug's doc reflection was authored during preparation and folded by the
+integrator at preparation integration, before build.
 A doc need discovered mid-build (a missing scenario, a wrong planned contract)
 is a plan defect: surface it and route through the kickback path (Step 9) so
-prepare re-derives on `main` — never edit `docs/**` in the worktree.
+prepare re-derives in its preparation worktree — never edit `docs/**` in the work-phase worktree.
 
 ### Work ends in delivery or kickback
 
@@ -67,6 +67,15 @@ a routing instruction.
 
 ## Steps
 
+### Phase worktrees
+
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree.
+
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+
+After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
+
+
 On entry, inspect artifact provenance for pending or substantive drift and follow
 `analyze-drift` or `return-to-prepare-drift` before dispatch. A kickback invalidates
 the affected review bindings for the return-to-prepare route; release and cleanup
@@ -88,147 +97,107 @@ children through recorded group membership. Read a child's own checked intent,
 plan and relevant specs before executing its action; holder artifacts are not
 executable work input.
 
-Worktree preparation, first branch publication, build-start evidence, stale
-checks and admission synchronization are explicit orchestrator
-commands. Finalization synchronizes again before handoff; after the readiness
-stamp, work derives confirmation and cleanup without merging or republishing.
-Record their outcomes. The outstanding setup, builder or finalizer attempt
-resolves its own synchronization conflict when it can. When it cannot, preserve
-its committed role head and retained worktree, then run
-`instrukt todo handoff {slug} --failed --reason <text>`. Confirm failed release
-before dispatching a recovery builder with `--recover-attempt <role/attempt>`;
-its new worktree starts at that failed role head. The failed release records
-failure evidence and leaves the todo branch unchanged. The recovery builder
-resolves synchronization, completes the approved build and stamps
-`--build-complete`; its normal handoff fast-forwards onto the todo branch before
-independent review. A missing binding is a dispatch gap. A failed fetch or
-skipped merge is not successful synchronization.
+The work orchestrator is already bound to the todo's one runtime-managed
+worktree with the todo branch checked out. Runner pickup uses the selected
+adapter; deliberate entry uses `runtime.start_thread` with that same placement.
+Preparation uses `<slug>/prepare`, reviewed and integrated immediately before a separate `<slug>/work` starts from updated main. Waking the retained work
+orchestrator preserves its workspace. A deleted orchestrator whose branch is
+still checked out needs safe worktree removal first or the runtime's own
+existing-worktree start where available.
 
-Select workers using the procedure's `dispatch` or global `agents.order`,
-availability first. Use the adapter's supported selection against that order;
-when selection is unsupported, report the runtime's project defaults. Use `med`
-for builders and fixers, `slow` for build
-reviewers and `fast` for finalizers. Retain bindings per todo, role and attempt.
-Before reuse, confirm that the attempt is active and unreleased, then observe it
-with `instrukt sessions alive` and deliver follow-ups through `send`. After
-release, start a new attempt through `run --todo {slug}` in its own
-runtime-created worktree at the current todo head, or at the recorded failed
-role head for an explicit `--recover-attempt <role/attempt>` builder. One
-outstanding workspace-role attempt blocks another dispatch, including while its start or branch handoff is
-pending. Runtime availability alone never reopens a released attempt. An
-unavailable active session follows recovery for that same attempt.
+Coordinate this assignment and route workspace actions to its admitted child.
+Keep the shared tree clean between roles. Native children use shared isolation
+through `runtime.dispatch`; each commits directly on the todo branch. One
+outstanding workspace-role attempt is the workflow's single admission, including
+an unresolved dispatch. Completion stamps release writing attempts atomically;
+verdicts and dispositions release read-only attempts. Reuse only active,
+unreleased attempts. A released session retains evidence, not workspace admission.
 
-Request `{slug}/work` as the logical worktree name through the configured
-workspace-role action. The runtime creates each new role attempt at the current
-todo head, with the explicit recovery-builder exception above; use its returned
-path. Bind every Git effect and workspace observation
-to the attempt it concerns: setup during build admission, the active dispatched
-role during workspace work, and the retained finalizer for readiness. Read each
-worker template as that worker's brief; carry selection, reuse and attempt
-creation here rather than delivering dispatcher instructions to the worker.
+Select workers from procedure dispatch preferences or `agents.order`, availability
+first, and report runtime project defaults when selection is unsupported. Use
+`med` for builder/fixer, `slow` for independent review and `fast` for finalizer.
+Inspect native task evidence and current bindings before follow-up. A stopped
+worker follows the todo-attempt failure contract: clean shared tree and native
+stop evidence precede failed release; dirty or conflicted work remains outstanding
+for recovery in place. A successor uses that same tree's current head.
 
-After any setup/finalizer `--role-complete` or builder/fixer `--build-complete`,
-re-enter work and execute the emitted `instrukt todo handoff {slug}` action.
-It owns the persisted advancement intent, expected-head ref update, confirmation
-and release. Retry that command after interruption; status 0 confirms handoff,
-status 1 retains a recoverable failure and status 2 names a refused condition.
-A non-fast-forward holds the todo with the role branch and worktree retained.
-Resolve the recorded finding through the revision route before another role.
-Read-only verdicts and deferral-processing stamps release directly.
+### Child attention and re-entry
+
+Reserve each worker with the selected `instrukt todo attempt` action. Delegate
+its rendered brief, role, attempt, semantic key, display title and captured shared head through the
+configured runtime instruction; record `todo bind` with the native child id and
+matching shared workspace evidence. Follow the native operation instructions in
+`general/procedure/ai-to-ai-operations`. The runtime supplies parent linkage and
+reports the child's result. Yield while valid work continues.
+
+Use the configured dispatch value with shared isolation. Verify the native child
+inherits the recorded todo worktree, todo branch and captured current head before
+binding. A mismatch remains an unresolved assignment gap. Read its native result,
+artifacts, completion stamp and release before re-entering work. Resolve input
+waits within the approved plan or route a plan defect through Step 9.
 
 ### 2. Build
 
-Start a todo-bound setup attempt with
-`instrukt sessions run --worktree {slug}/work --todo {slug} --brief -` and its
-setup-only brief. Use the returned worktree to synchronize upstream, make the
-opening commit, run configured project preparation and publish the branch. Have
-the setup session record `instrukt todo stamp {slug} --role-complete`;
-re-enter work and execute `instrukt todo handoff {slug}` to confirm the setup
-handoff and attempt release. Record
-the base commit and approved plan digest with `instrukt todo stamp {slug} --build-started`,
-then write the quality checklist. Only then dispatch
-`sdlc/procedure/lifecycle/work/build` with the approved plan. The builder
-executes tasks, commits per task and stamps
-`instrukt todo stamp {slug} --build-complete`. That stamp clears the prior
-build verdict and finalize readiness. Execute the emitted
-`instrukt todo handoff {slug}` action and confirm builder-attempt release before
-review admission. Re-enter `instrukt todo work {slug}`;
-commits or a completion reply alone do not advance the work.
+Reserve a setup child with `instrukt todo attempt {slug} --role setup --brief -`,
+delegate its setup-only brief through the configured shared dispatch value, and
+record `todo bind`. That child synchronizes upstream, makes the opening commit,
+runs configured preparation and first publication, records original-base and
+approved-plan evidence with `--build-started`, and writes the quality checklist.
+Its `--role-complete` stamp releases setup at the clean shared head. Confirm all
+outcomes and release before builder admission.
 
-When a revised plan meets an existing build, direct the builder to reconcile
-against the approved plan delta: retain what serves it, undo what it invalidates
-and re-record `--build-started` against the current plan while preserving the
-original base before continuing. No stored lifecycle phase supplies this decision.
+Dispatch `sdlc/procedure/lifecycle/work/build` in that same worktree. The builder
+commits per task and records `--build-complete`, which clears prior verdict and
+readiness and releases the attempt atomically. Re-enter work from that evidence;
+commits or a native completion reply alone establish no release.
+
+For an updated approved plan, direct the builder to reconcile its delta and
+re-record `--build-started` while preserving the original base before continuing.
 
 ### 3. Review
 
-Dispatch `review-build`, counting rounds from verdict stamps and recording the exact
-commit under review. Each new review attempt uses its own worktree at the current
-todo head; follow-ups reuse only an active, unreleased review attempt. A
-successful upstream merge does not itself admit another review.
-The reviewer executes the shared lanes, writes `review-findings` and stamps
-its verdict bound to the report and captured todo head. That evidence releases
-the read-only attempt without a branch advance. Read both and verify substantive
-review under `general/procedure/orchestration` before deriving the next action.
+Dispatch a shared independent reviewer after the writing attempt is released.
+Bind the current clean todo head as the target. The reviewer reads that head in
+the same worktree, writes complete `review-findings` and stamps the digest-bound
+verdict; that transaction releases its attempt. Verify substantive review under
+`general/procedure/orchestration` before choosing the next action. Review rounds
+count verdict stamps; a successful upstream merge alone admits no review.
 
 ### 4. Fix (if needed)
 
-A current changes-requested verdict sends the findings to an active builder
-attempt, or starts a new builder-role attempt as fixer at the current todo head
-after release. The fixer applies `sdlc/procedure/lifecycle/fix-review-findings`,
-records dispositions, commits fixes and stamps `--build-complete`. Execute
-`instrukt todo handoff {slug}` and confirm attempt release, then dispatch the next independent
-review as a new attempt at the advanced todo head.
+A current changes-requested verdict routes findings to a new shared builder-role
+attempt as fixer after reviewer release. The fixer applies
+`sdlc/procedure/lifecycle/fix-review-findings`, records dispositions, commits on
+the todo branch and stamps `--build-complete`. Confirm its atomic release before
+independent review resumes at that current shared head.
 
-Recoverable process failures belong to the worker: upstream conflicts, failed
-project checks, dirty worktrees, missing stamps and stale branch publication.
-The orchestrator classifies and routes recovery, without editing code or tests.
-A technical or architectural blocker does not itself require the human.
-Candidate suite execution belongs to integration.
-
-Review counts are informational. At the configured threshold, continuation
-follows `sdlc/procedure/lifecycle/review`; the count refuses nothing and does
-not transfer ownership or weaken an unresolved finding.
+Route upstream conflicts, failed project checks, dirty workspace, missing stamps
+and stale publication to the admitted worker. Candidate suite execution belongs
+to integration. Review counts are informational; continuation follows
+`sdlc/procedure/lifecycle/review` and preserves unresolved findings.
 
 ### 5. Finalize
 
-Current approval permits finalization only after deferrals are settled.
-Dispatch `finalize` with the approval evidence. The finalizer merges latest
-upstream main, resolves conflicts, publishes the branch and stamps
-`--role-complete`. Re-enter work and execute `instrukt todo handoff {slug}` to
-confirm the finalizer handoff and attempt release. Before `--role-complete`,
-the finalizer checks only its clean worktree, role branch and published head
-for equality; approval of a changed head follows handoff. If todo content or
-review evidence changed, dispatch a new independent review at that advanced todo head in its own
-worktree. Resolve an undetermined binding through the evidence route. The
-review verdict releases its attempt; changes requested route through a new
-fixer attempt, completion and handoff before another review.
+After current approval and deferral processing, dispatch a shared finalizer.
+It synchronizes upstream and publishes the todo branch, verifies clean worktree,
+local todo branch and remote head equality, then records `--role-complete`.
+That transaction releases its attempt. Changed content or review evidence then
+receives independent review at the current head in the same worktree; its verdict
+releases that reviewer. Changes requested require a shared fixer, completion and
+another review. Undetermined currency returns to the evidence route.
 
-After current approval and reviewer release, the flow returns
-`record-finalize-readiness` when the retained finalizer candidate still matches
-clean worktree, todo branch and remote evidence. Send that retained finalizer
-its record-only `--finalize-ready` step. If only this write was interrupted,
-verify and retry it against the same retained binding. Workspace changes instead
-require a new finalizer attempt at the current todo head, followed by completion,
-`todo handoff` and any review owed before readiness. The worker's restamp brief
-is delivered only for workspace reconciliation; selection and review routing
-remain the orchestrator's work.
-Re-enter `instrukt todo work {slug}`. Compare the clean worktree head, local
-branch head, remote branch head and stamped commit. A mismatch requires
-reconciliation and a new stamp before handoff.
+When current approval, finalizer completion and matching candidate evidence hold
+with no outstanding workspace role, send the retained finalizer the record-only
+`--finalize-ready` follow-up. Retry only that write after interruption; further
+workspace work needs a new attempt and completion. Readiness and
+`workflow.finalized` append commit together for the exact project/todo/SHA.
+Confirm the handoff, run `instrukt todo update <slug> --unclaim`, confirm release
+and record remaining obligations. Integration belongs to the standing integrator.
 
-The `--finalize-ready` stamp records the handoff and appends `workflow.finalized`
-idempotently by project/todo/SHA, making the exact finalized commit available
-to the standing integrator. Run
-`instrukt todo update <slug> --unclaim` and confirm lane release
-and execute the configured terminal obligations. After confirmed delivery,
-resource cleanup enumerates every retained attempt path and role branch from
-the project checkout, refreshing and re-deriving between removals. Preserve
-dirty or in-use paths, unmerged branches and failed removals as owed obligations.
-The work orchestrator ends this assignment here; integration remains the standing integrator's work.
-A finalizer that cannot resolve synchronization follows the same failed-release
-and recovery-builder route as setup. After the builder's completion and normal
-handoff, obtain current independent review and dispatch a new finalizer.
+After confirmed delivery, the integrator removes this todo's one worktree from
+the project folder. A dirty/in-use tree or failed removal remains owed. The
+runtime thread record and retained attempt evidence stay. A blocked finalizer
+preserves shared work and follows the same in-place failure contract as setup.
 
 ### 6. Deferrals
 
@@ -250,10 +219,11 @@ prepared scenarios where permitted and stamps build completion as above.
 The orchestrator never stamps an outcome on a worker's behalf.
 Read the record before acting. A step requires its artifact and stamp, bound
 to current evidence; neither elapsed time nor a successful reply establishes it.
-The runner sends once to the same session when a run ended without required
-evidence or the session is gone; continued absence is an anomaly. Do not duplicate
-work or overwrite a worker mid-write. Recovery follows the owning contract,
-with the established outcome and acting session retained in the record.
+Read the native child result, inspect current record evidence, and return
+a missing obligation to its retained worker through a bounded follow-up when it
+can continue. Preserve an unavailable attempt's failure evidence and route its
+recovery under the owning contract. Keep the established outcome and acting
+session in the record.
 
 ### 9. Kickback to prepare (orchestrator-owned)
 

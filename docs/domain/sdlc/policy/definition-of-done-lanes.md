@@ -342,7 +342,7 @@ Before crediting any test as meaningful coverage, name the concrete production-c
      A test paying per-cycle cost for a static property — or a custom lint guard duplicating what a type would enforce — is the anti-pattern, not the fix.
 - Reject **placeholder or xfail "spec" tests** that document intended-but-not-yet-implemented behavior. The spec-anchored model has no waiting-to-flip tests: an unbound scenario is tracked as coverage backlog by the coverage tool, not as a test sitting in `tests/`. A test exists only to bind a scenario it currently satisfies. Also verify each binding is honest — it drives the real system for its scenario without mocking the thing under test — and that no in-scope spec has orphan or duplicate bindings (`instrukt specs coverage` can be run on demand to surface these).
 
-- Reject **an unreserved scenario binding** at plan-review anticipation. Every scenario a plan declares it will bind is reserved on `main` at prepare — enclosed by this todo's pending `planned` or `planned-change` marker. A plan that declares a binding for a scenario enclosed by a different in-flight todo's pending marker is a **Requirement-Violation**: the scenario is already reserved, and a second binding is the cross-worktree duplicate the integration gate would otherwise catch. The check is structural — scenario id to owning slug — and `instrukt specs reserve` surfaces the collisions on demand.
+- Reject **an unreserved scenario binding** at plan-review anticipation. Every scenario a plan declares it will bind is reserved in the preparation worktree and integrated to main before build — enclosed by this todo's pending `planned` or `planned-change` marker. A plan that declares a binding for a scenario enclosed by a different in-flight todo's pending marker is a **Requirement-Violation**: the scenario is already reserved, and a second binding is the cross-worktree duplicate the integration gate would otherwise catch. The check is structural — scenario id to owning slug — and `instrukt specs reserve` surfaces the collisions on demand.
 
 - Reject **refactor-leftover existence checks** that assert a removed source path remains absent. Git history records what was removed; the test adds nothing.
 - Reject **filesystem-inventory snapshots** whose captured value is a collection of paths produced by walking a directory tree. The snapshot pins the implementation's output layout, not behavior. If the behavior is "no files written to this root," assert that condition directly without snapshotting an inventory.
@@ -505,7 +505,7 @@ whoever wrote it and whatever the delivery's subject: a fork or another
 installation inherits it as if it were its own.
 
 **Work-phase doc freeze (build reviews only):** the doc layer is authored at
-prepare on `main` and folded at integration; the work phase executes a frozen
+preparation worktrees and folded at immediate preparation integration; the work phase executes a frozen
 contract. A lifecycle work-phase diff (slug worktree) that touches `docs/**` is
 **Critical** — out of jurisdiction regardless of the edit's quality or size. The
 correct route for a doc need discovered mid-build is the kickback path back to

@@ -18,8 +18,9 @@ layers carry `schema_version`, and older documents are migrated.
 ## Canonical fields
 
 `runner.runtime` chooses a compiled adapter. Dispatch preferences are checked
-against the selected adapter's declared capabilities, never executable
-configuration.
+against the selected runtime's native and adapter capabilities, never executable
+configuration. Agent-native instructions are configuration prose rendered at read time;
+they are not adapter command templates.
 
 ### Event enablement
 
@@ -47,6 +48,7 @@ enable events. Installation and withdrawal are owned by
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
 | `runner.runtime` (compiled adapter name, no default; initially `t3`) | global only | runner |
+| `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
 | `requires` (modules the flavor needs) | project only | publication |
@@ -124,14 +126,75 @@ selects the shipped T3 implementation; an unknown name is a validation finding.
 An unset value selects no runtime, even when T3 is installed or a caller is
 inside a T3 session. There is no first-entry default or detection.
 
-There is no `runtimes` list, shipped YAML entry, verb kind, command template,
-agent instruction or configurable `session_id_env`. These pre-release keys are
-unknown and not migrated. T3 uses the installed host CLI, the registered project
-checkout and the project's own model and permission defaults; this adapter
-requires no additional configuration keys. Its caller-identity recognition
-belongs to code, not configuration.
+`runtimes` is a map keyed by runtime name. Each entry holds the named nonempty
+agent-action instruction values below. `runner.runtime` selects that entry;
+`runtime.<name>` resolves its value at read time. Names and inputs are
+runtime-neutral. The entry supplies either its native instruction or an instrukt
+route for a capability with no native counterpart. The consuming doc, action,
+template or skill references only `@config: runtime.<name>`; it embeds neither
+native tool calls nor fallback commands. Instrukt executes none of this prose.
+No command/agent verb kind or agent-action exit-status router exists.
 
-Feature enablement is checked against the selected adapter's capabilities
+### Agent-action values
+
+| Value under `runtimes.<runtime>` | What its instruction conveys |
+| --- | --- |
+| `dispatch` | Delegate this agent's worker using the supplied brief, role, attempt, semantic key, display title and preferences with shared isolation in the parent's recorded workspace. Return native child identity and matching workspace/branch/head evidence; retain native parent linkage. |
+| `message_child` | Send a bounded follow-up, findings, review continuation or recovery to this parent's identified child, retaining its role/attempt and using the native continuation behavior when idle. |
+| `message_peer` | Send the supplied substantive text to an addressed peer/coordinator conversation, preserving the target and source attribution. |
+| `read_thread` | Read an identified conversation's relevant messages and attribution; state extent, pagination and unavailable evidence. This is not history search. |
+| `inspect_thread` | Inspect an identified thread or own child/task's state/result, distinguishing unavailable observation, input wait, failure and confirmed absence. |
+| `look_around` | Discover current conversations in the supplied project/scope, including native current-thread metadata search and settled threads where supported. It releases no archive/history search service. |
+| `steer` | Deliver current direction at the target's supported safe input boundary while its turn and children continue; state queued/entry degradation when native interjection is absent. |
+| `discuss` | Establish, conduct and conclude peer discussion, identifying live shared-input capability or its explicit gap and preserving each contribution's attribution. |
+| `start_thread` | Start a separately addressed conversation with its supplied project, semantic key, display title, initialized brief and placement. A work orchestrator uses `<slug>/work` after preparation integration; preparation uses its separate `<slug>/prepare` worktree. A worker uses `dispatch`. |
+| `cancel_child` | Stop this parent's identified child under its existing mandate, retaining its work/evidence and distinguishing accepted cancellation from completion. |
+| `finish_thread` | Settle an addressed conversation or this agent's own conversation where the runtime supports it; retain open obligations and apply self-settling at its supported turn boundary. |
+| `discover_environments` | Discover connected computers/environments, their project locations, access and task capabilities; keep runtime addresses distinct from instrukt machine IDs. |
+| `connect_environment` | Request the runtime's native connection/authentication flow for a named missing computer; report unresolved access as a prerequisite without inventing an address. |
+| `dispatch_remote` | Assign a local brief and report destination to an explicitly addressed connected environment, under its project and permissions; follow native completion evidence and retain partial results. |
+
+Each entry supplies the complete set, including a clear unsupported/prerequisite
+instruction where neither a native counterpart nor an implemented instrukt route
+exists. An unsupported instruction grants no capability. Unknown names, empty
+values and project-layer entries are findings. A missing selected entry or value
+fails `@config` lookup visibly. Native-capability availability and unattended
+adapter availability remain distinct typed facts; no code infers them from prose.
+All agent-action instructions, including fallback routes and runtime-specific
+worktree constraints, are configuration data. The shipped entry is a data
+resource parsed by configuration, not Rust string constants or tool-selection
+branches. Changing one of these values changes what a future read renders;
+it never reconfigures an existing initialized standing assignment.
+
+### Shipped T3 entry values
+
+The following table specifies the instruction text carried by the `t3` entry.
+Only the configuration entry carries the runtime-specific execution wording;
+agent-facing consumers retrieve the value through its alias.
+
+| Value | T3 entry instruction |
+| --- | --- |
+| `dispatch` | Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery. |
+| `message_child` | Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation. |
+| `message_peer` | Use native thread messaging for the supplied peer/coordinator thread id and text. Preserve its identity and the message's attribution. |
+| `read_thread` | Read the identified thread with native thread-read operations, including the relevant message range and attribution. Report pagination or unavailable evidence; read no archive/history service. |
+| `inspect_thread` | Read the identified native thread or own delegated task through its native status/result operation. Follow native completion/wake instructions; inspect a running task only when those instructions permit it. |
+| `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
+| `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
+| `discuss` | Use a supported native discussion capability for the requested collaboration, preserving each participant's attribution. Report an unavailable capability; the linked-conversation mechanism remains unsettled and no instrukt forwarding route is supplied. |
+| `start_thread` | For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
+| `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
+| `finish_thread` | Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling. |
+| `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
+| `connect_environment` | Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite. |
+| `dispatch_remote` | Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success. |
+
+Selection and entry values stay global; a project cannot replace either. A
+shipped entry never chooses the runtime on the developer's behalf. T3's host CLI
+continues serving unattended adapter starts independently of these agent values;
+caller-identity recognition remains an environment-only code operation.
+
+Feature enablement is checked against the selected runtime's native/adapter capabilities
 (`project/instrukt/spec/feature/runner/session-continuity`). Without a selected
 runtime, enabling runtime-dependent features is refused with that reason. A
 missing capability refuses and names the runtime and capability. Configuration
@@ -213,6 +276,19 @@ clock. It is never silent: while it is set, every command prints
 `instrukt: clock overridden to <value>` to stderr. A value that is not RFC 3339
 refuses the command; it never falls back to the system clock.
 
+### External state declarations
+
+External names default to occurrence. A project `webhooks.<domain>` source may
+set `state: [<name>, …]` and `subject_from: <dotted-payload-field>`. Names omit
+the domain prefix and follow the ordinary event-name grammar. State names
+require a nonempty subject field declaration. After signature verification,
+the field is read from the normalized payload and must be a nonempty string
+or number. Its UTF-8 percent-encoded value qualifies the source's ordinary
+`inbound_source:<domain>:project:<slug>` subject. Missing or invalid values
+produce a client error with no relay. Other names remain occurrences. Ingress
+records `inbound_delivery: state` as producer metadata independently of payload
+text. Pending-state replacement is owned by procedure-event-delivery.
+
 ## Use cases
 
 ### UC-CL1: A developer overrides a machine default for one project
@@ -273,6 +349,25 @@ command read with `config get actions.<name>`; no action-runner command is
 introduced.
 
 
+### UC-CL5: Configure external state in its owning source
+
+```gherkin
+Given a developer configures external state names for one project source
+When their declaration supplies the subject field and valid names
+Then configuration retains that source declaration
+But a state declaration without its subject field is refused with a finding
+```
+
+### UC-CL6: Obtain agent actions from the chosen runtime's configuration
+
+```gherkin
+Given a developer chose T3 and customized its agent-action values globally
+When an agent retrieves a procedure using those instructions
+Then its dispatch, child follow-up, peer message, conversation read, status inspection, listing and steering instructions come from that entry
+And instrukt executes none of that prose
+But a cloned project cannot replace the machine's agent-action values
+```
+
 ## Known caveats
 
 - An unknown key is a validation finding. There is no `publishes` key: what a
@@ -284,7 +379,9 @@ introduced.
 - `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
-- Runtime capabilities are compiled adapter behavior. Future adapters require code; arbitrary runtime command templates are not supported.
+- Runtime capability metadata belongs to the shipped integration; adapter
+  behavior requires code. Agent instruction prose remains configuration.
+  Arbitrary executable runtime command templates are not supported.
 
 ## See Also
 

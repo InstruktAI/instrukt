@@ -188,7 +188,7 @@ impl Workflow {
                 .obligation
                 .as_ref()
                 .and_then(|obligation| match &obligation.responsible {
-                    Responsible::Orchestrator(role) => Some(role.clone()),
+                    Responsible::Orchestrator(role) | Responsible::Role(role) => Some(role.clone()),
                     Responsible::Procedure(procedure) => role_in(index.as_ref(), procedure),
                 });
         tracing::debug!(
@@ -263,22 +263,9 @@ impl Workflow {
         config: &Configuration,
         todo: &TodoSlug,
     ) -> Result<SessionRef, WorkflowError> {
-        let runtime = match config.active_runtime(&self.env) {
-            Ok(runtime) => runtime,
-            Err(ConfigError::NoActiveRuntime) => {
-                return Err(WorkflowError::NoSession { todo: todo.clone() });
-            }
-            Err(err) => return Err(err.into()),
-        };
-        let id = self
-            .env
-            .get(&runtime.session_id_env)
-            .ok_or_else(|| WorkflowError::NoSession { todo: todo.clone() })?;
-        let value = format!("{}:{id}", runtime.name);
-        SessionRef::parse(&value).map_err(|err| WorkflowError::Session {
-            message: err.to_string(),
-            value,
-        })
+        config
+            .caller(&self.env)?
+            .ok_or_else(|| WorkflowError::NoSession { todo: todo.clone() })
     }
 
     /// The facts for `evidence` from the record and the repository.
@@ -626,11 +613,17 @@ fn assigned(
                 .map_err(|failure| unrendered("effect command", failure))?,
         });
     }
+    let dispatch_instruction = obligation
+        .dispatch_instruction
+        .map(|value| value.map_err(|failure| unrendered("native dispatch", failure)))
+        .transpose()?;
     Ok(AssignedObligation {
+        dispatch_instruction,
         action: obligation.action.to_string(),
         responsible: match obligation.responsible {
             Responsible::Procedure(procedure) => Responsibility::Procedure(procedure),
             Responsible::Orchestrator(role) => Responsibility::Orchestrator(role),
+            Responsible::Role(role) => Responsibility::Role(role),
         },
         command,
         brief,

@@ -341,7 +341,7 @@ fn publish(
     // Rendering reads the committed tree and the home as it stands; it
     // writes nothing, so a failure here leaves everything as it was.
     let owned: BTreeSet<DomainName> = held.iter().cloned().collect();
-    let values = Values::publish(&config);
+    let values = Values::publish(&config, wiring.caller_identity.as_deref());
     let indexes = position_indexes(home, &committed, &held, &owners, &project.slug)?;
     let project_index = committed_index(&committed, &Position::Project)?;
     let renderer = Renderer {

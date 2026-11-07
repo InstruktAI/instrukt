@@ -5,7 +5,7 @@
 
 use instrukt_core::config::Configuration;
 use instrukt_core::git;
-use instrukt_core::ids::{RuntimeName, SessionId, SessionRef, TodoSlug};
+use instrukt_core::ids::{SessionRef, TodoSlug};
 use instrukt_core::machine::{self, MachineId};
 use instrukt_core::state_db::rusqlite::Transaction;
 use instrukt_runner::interfaces::ProjectRef;
@@ -182,13 +182,8 @@ impl<'w> Session<'w> {
 
     /// The session the caller runs in: the active runtime's, when one is
     /// active.
-    pub fn caller_session(&self) -> Option<SessionRef> {
-        let entry = self.config.active_runtime(self.work.env()).ok()?;
-        let id = self.work.env().get(&entry.session_id_env)?;
-        Some(SessionRef {
-            runtime: RuntimeName::parse(&entry.name).ok()?,
-            id: SessionId::parse(id).ok()?,
-        })
+    pub fn caller_session(&self) -> Result<Option<SessionRef>, WorkError> {
+        Ok(self.config.caller(self.work.env())?)
     }
 
     /// The model a stamp by `actor` records: for a session, what its
@@ -198,7 +193,7 @@ impl<'w> Session<'w> {
         let Actor::Session(session) = actor else {
             return (None, ModelProvenance::OutsideSession);
         };
-        match Sessions::new(&self.config, self.work.env()).model(session) {
+        match Sessions::new(self.work.home(), &self.config, self.work.env()).model(session) {
             Some((model, version)) => (
                 Some(ModelIdentity { model, version }),
                 ModelProvenance::Reported,
@@ -210,7 +205,7 @@ impl<'w> Session<'w> {
     /// Who acts: the caller's session, or outside one the person git names.
     /// No identity is guessed.
     pub fn actor(&self) -> Result<Actor, WorkError> {
-        if let Some(session) = self.caller_session() {
+        if let Some(session) = self.caller_session()? {
             return Ok(Actor::Session(session));
         }
         match git::run(&self.project.root, ["config", "user.name"]) {
@@ -316,6 +311,9 @@ impl<'w> Session<'w> {
             Remote::Client { gh, down: None } => Some(_reflect::pull(gh, &mut self.items[index])),
             _ => None,
         };
+        if matches!(&result, Some(Ok(_))) && self.items[index].reflection.issue.is_some() {
+            self.items[index].reflection.refreshed_at = Some(self.now);
+        }
         match result {
             Some(Ok(Pulled::Adopted)) => tracing::info!(
                 event = "work_pulled",
@@ -331,7 +329,9 @@ impl<'w> Session<'w> {
             self.store.save(&self.items[index])?;
         }
         if !self.items[index].reflection.conflicted {
+            self.answer_label_actions(index)?;
             self.answer_commands(index)?;
+            self.restore_output_labels(index)?;
         }
         if self.items[index].reflection.conflicted {
             return Err(WorkError::Conflicted {
@@ -355,15 +355,15 @@ impl<'w> Session<'w> {
     /// command is answered on the issue, once.
     fn answer_commands(&mut self, index: usize) -> Result<(), WorkError> {
         let commands = std::mem::take(&mut self.items[index].reflection.inbound);
-        let Some(issue) = self.items[index].reflection.issue else {
+        if self.items[index].reflection.issue.is_none() {
             return Ok(());
-        };
-        let approvers: Vec<String> = self
+        }
+        let approvers = self
             .config
             .github_approvers()?
             .into_iter()
             .map(str::to_owned)
-            .collect();
+            .collect::<Vec<_>>();
         for comment in commands {
             let Some(id) = comment["id"].as_u64() else {
                 continue;
@@ -372,25 +372,214 @@ impl<'w> Session<'w> {
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
-            let answer = if !(approvers.contains(&login) && _reflect::has_write_access(&comment)) {
+            if let Some(prior) = self.items[index]
+                .record
+                .stamps
+                .iter()
+                .find(|stamp| stamp.source_comment == Some(id))
+                .cloned()
+            {
+                let original_login = match &prior.actor {
+                    Actor::GitHub { login } => login.as_str(),
+                    _ => login.as_str(),
+                };
+                let (gate, target) = match &prior.fact {
+                    StampFact::Approval { gate, target, .. } => (*gate, Some(target)),
+                    StampFact::ChangesRequested { gate, .. } => (*gate, None),
+                    _ => {
+                        return Err(WorkError::refused(
+                            "a decision source identifies an incompatible stamp; inspect the work record",
+                        ));
+                    }
+                };
+                let gate = match gate {
+                    ApprovalGate::Prd => "prd",
+                    ApprovalGate::Task => "task",
+                };
+                let answer = match target {
+                    Some(target) => format!(
+                        "@{original_login}: recorded your approval of {gate} `{}`.",
+                        _inbound::shown(target)
+                    ),
+                    None => format!("@{original_login}: recorded your change request on {gate}."),
+                };
+                if !self.items[index].reflection.commands_seen.contains(&id) {
+                    self.items[index].reflection.commands_seen.push(id);
+                }
+                self.store
+                    .save_with_reply(&self.items[index], id, &answer)?;
+                continue;
+            }
+            let write_access = if approvers.contains(&login) {
+                let result = match &self.remote {
+                    Remote::Client { gh, down: None } => gh.can_write(&login),
+                    _ => break,
+                };
+                match result {
+                    Ok(allowed) => allowed,
+                    Err(error) => {
+                        tracing::warn!(event="approval_actor_unverified",login,error=%error);
+                        self.items[index].reflection.etag = None;
+                        self.store.save(&self.items[index])?;
+                        self.note(error);
+                        break;
+                    }
+                }
+            } else {
+                false
+            };
+            let answer = if !write_access {
                 format!(
                     "@{login}: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed."
                 )
             } else {
                 match _inbound::parse(comment["body"].as_str().unwrap_or_default()) {
                     Err(why) => format!("@{login}: {why}; nothing changed."),
-                    Ok(command) => self.apply_command(index, &login, command)?,
+                    Ok(command) => self.apply_command(
+                        index,
+                        id,
+                        comment["created_at"].as_str(),
+                        &login,
+                        command,
+                    )?,
                 }
             };
-            self.items[index].reflection.commands_seen.push(id);
-            self.store.save(&self.items[index])?;
-            let result = match &self.remote {
-                Remote::Client { gh, down: None } => Some(_reflect::reply(gh, issue, &answer)),
-                _ => None,
-            };
-            if let Some(Err(err)) = result {
-                self.note(err);
+            if !self.items[index].reflection.commands_seen.contains(&id) {
+                self.items[index].reflection.commands_seen.push(id);
             }
+            self.store
+                .save_with_reply(&self.items[index], id, &answer)?;
+        }
+        self.flush_command_replies(index)
+    }
+
+    fn flush_command_replies(&mut self, index: usize) -> Result<(), WorkError> {
+        let Some(issue) = self.items[index].reflection.issue else {
+            return Ok(());
+        };
+        let todo = self.items[index].record.id.to_string();
+        for (source, text) in self.store.pending_replies(&todo)? {
+            let result = match &self.remote {
+                Remote::Client { gh, down: None } => _reflect::reply(gh, issue, source, &text),
+                _ => break,
+            };
+            match result {
+                Ok(()) => self.store.reply_sent(&todo, source)?,
+                Err(error) => {
+                    tracing::warn!(event="github_command_reply_pending",source,error=%error);
+                    self.note(error);
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn restore_output_labels(&mut self, index: usize) -> Result<(), WorkError> {
+        let Some(issue) = self.items[index].reflection.issue else {
+            return Ok(());
+        };
+        let snapshot = match &self.remote {
+            Remote::Client { gh, down: None } => gh.read(&format!("/issues/{}", issue.number)),
+            _ => return Ok(()),
+        };
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.note(error);
+                return Ok(());
+            }
+        };
+        let expected = super::_envelope::issue(&self.items[index].record).labels;
+        let actual = snapshot["labels"]
+            .as_array()
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|l| l["name"].as_str())
+                    .filter(|l| super::_reflect::output_label(l))
+                    .collect::<std::collections::BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        if actual != expected.iter().map(String::as_str).collect() {
+            self.items[index].reflection.pending = true;
+            self.store.save(&self.items[index])?;
+        }
+        Ok(())
+    }
+
+    /// Apply attributable label actions once, preserving their source ordering.
+    fn answer_label_actions(&mut self, index: usize) -> Result<(), WorkError> {
+        let Some(issue) = self.items[index].reflection.issue else {
+            return Ok(());
+        };
+        let result = match &self.remote {
+            Remote::Client { gh, down: None } => {
+                gh.list(&format!("/issues/{}/events", issue.number))
+            }
+            _ => return Ok(()),
+        };
+        let mut actions = match result {
+            Ok(actions) => actions,
+            Err(error) => {
+                tracing::warn!(event="github_label_actions_unreadable",issue=issue.number,error=%error);
+                return Ok(());
+            }
+        };
+        actions.sort_by_key(|a| a["id"].as_u64().unwrap_or(0));
+        for action in actions {
+            if action["label"]["name"].as_str() != Some("hold") {
+                continue;
+            }
+            let (Some(id), Some(login), Some(kind), Some(at)) = (
+                action["id"].as_u64(),
+                action["actor"]["login"].as_str(),
+                action["event"].as_str(),
+                action["created_at"].as_str(),
+            ) else {
+                tracing::warn!(event = "github_hold_unattributed", issue = issue.number);
+                continue;
+            };
+            if !matches!(kind, "labeled" | "unlabeled")
+                || self.store.label_seen(issue.number, id)?
+            {
+                continue;
+            }
+            let source_at = match at.parse::<Timestamp>() {
+                Ok(at) => at,
+                Err(error) => {
+                    tracing::warn!(event="github_hold_invalid_time",error=%error);
+                    continue;
+                }
+            };
+            let permission = match &self.remote {
+                Remote::Client { gh, down: None } => gh.can_write(login),
+                _ => return Ok(()),
+            };
+            let allowed = match permission {
+                Ok(allowed) => allowed,
+                Err(error) => {
+                    tracing::warn!(event="github_hold_actor_unverified",login,error=%error);
+                    break;
+                }
+            };
+            let admitted =
+                allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
+            let todo = self.items[index].record.id.to_string();
+            let project = self.project.slug.to_string();
+            let actor = Actor::GitHub {
+                login: login.to_owned(),
+            };
+            self.commit_with("github hold label",|s|{
+                if admitted {
+                    let record=&mut s.items[index].record;
+                    if let Some(previous)=record.hold.take(){record.hold_history.push(super::_model::ReleasedHold{hold:previous,released:source_at,by:actor.clone()});}
+                    if kind=="labeled"{record.hold=Some(crate::evidence::HoldRecord{source:crate::evidence::HoldSource::GitHub,reason:format!("held from GitHub by {login}"),by:actor,at:source_at});}
+                }
+                Ok(())
+            },|tx|{
+                tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",instrukt_core::state_db::rusqlite::params![project,issue.number,id,todo,kind,login,at,if admitted{"accepted"}else{"ignored"}]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;Ok(())
+            })?;
         }
         Ok(())
     }
@@ -399,6 +588,8 @@ impl<'w> Session<'w> {
     fn apply_command(
         &mut self,
         index: usize,
+        comment_id: u64,
+        source_at: Option<&str>,
         login: &str,
         command: _inbound::Command,
     ) -> Result<String, WorkError> {
@@ -462,10 +653,15 @@ impl<'w> Session<'w> {
             login: login.to_owned(),
         };
         let fingerprint = EvalFingerprint::current(self.work.home())?.map(|f| f.fingerprint);
-        self.commit("inbound command", |s| {
+        let todo_id = record.id.to_string();
+        let sequence = record.sequence + 1;
+        let notice=serde_json::json!({"decision":fact,"gate":gate_name,"actor":actor,"evidence":fact,"at":now.to_string(),"source_at":source_at,"arrived_at":now.to_string(),"source_comment":comment_id}).to_string();
+        self.commit_with("inbound command", |s| {
+            s.items[index].reflection.commands_seen.push(comment_id);
             let record = &mut s.items[index].record;
             let sequence = record.next_sequence();
             record.stamps.push(StampRecord {
+                source_comment:Some(comment_id),
                 fact,
                 at: now,
                 actor,
@@ -476,6 +672,10 @@ impl<'w> Session<'w> {
                 sequence,
                 model_provenance: ModelProvenance::OutsideSession,
             });
+            Ok(())
+        },|tx| {
+            tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT DO NOTHING",instrukt_core::state_db::rusqlite::params![todo_id,sequence,notice]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;
+            _store::retain_reply(tx,std::path::Path::new(tx.path().unwrap_or("")),&todo_id,comment_id,&answer)?;
             Ok(())
         })?;
         tracing::info!(
@@ -656,6 +856,7 @@ impl<'w> Session<'w> {
             }
         };
         for index in 0..self.items.len() {
+            self.flush_command_replies(index)?;
             let owed = self.items[index].reflection.pending
                 || _reflect::pull_request_owed(&self.items[index])
                 || board.as_ref().is_some_and(|board| {
@@ -766,6 +967,17 @@ impl<'w> Session<'w> {
                 return Vec::new();
             }
         };
+        for (record, issue) in &records {
+            if let Some(index) = self.find_id(&record.id) {
+                let before = self.items[index].clone();
+                if _reflect::accept_listing(&mut self.items[index], record, *issue, self.now)
+                    && let Err(error) = self.store.save(&self.items[index])
+                {
+                    self.items[index] = before;
+                    tracing::warn!(event="local_pickup_copy_unsaved",todo=%record.slug,error=%error);
+                }
+            }
+        }
         let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
         let copies: Vec<ListingCopy> = records
             .iter()

@@ -1,9 +1,11 @@
 ---
 source: crates/instrukt-cli/tests/pending-documentation.rs
+assertion_line: 173
 expression: "stdout(&env, &listed)"
 ---
 # instrukt docs index: snippet ids with their descriptions
 # Filter with --domain <acme> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Pending source: preparation worktree [TMP]/build-it-prepare
 # Source of project demo: [TMP]/demo/docs/project/ — published commit [SHA] — remote none
 
 acme/concept/old: A concept build-it retires. (superseded by: build-it)

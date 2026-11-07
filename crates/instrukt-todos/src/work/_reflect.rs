@@ -25,6 +25,49 @@ use super::_model::{TodoId, TodoRecord, digest_of};
 use super::_store::{IssueRef, LocalItem, ReflectionState};
 use crate::evidence::{StampFact, TodoStatus};
 
+/// Keep a later pickup observation for a local item without fetching artifact
+/// bodies. A point refresh loads missing bodies when that item is acted on.
+pub(crate) fn accept_listing(
+    item: &mut LocalItem,
+    remote: &TodoRecord,
+    issue: IssueRef,
+    now: jiff::Timestamp,
+) -> bool {
+    if same_record(&item.record, remote) {
+        item.reflection.refreshed_at = Some(now);
+        return true;
+    }
+    if item.reflection.pending
+        || item.reflection.conflicted
+        || remote.revision <= item.record.revision
+    {
+        return false;
+    }
+    let mut snapshot = remote.without_contents();
+    let known: BTreeMap<_, _> = item
+        .record
+        .artifacts
+        .iter()
+        .flat_map(|a| &a.versions)
+        .filter_map(|v| {
+            v.content
+                .as_ref()
+                .filter(|content| digest_of(content) == v.digest)
+                .map(|content| (v.digest.clone(), content.clone()))
+        })
+        .collect();
+    for version in snapshot.artifacts.iter_mut().flat_map(|a| &mut a.versions) {
+        version.content = known.get(&version.digest).cloned();
+    }
+    item.record = snapshot;
+    item.reflection.issue = Some(issue);
+    item.reflection.remote_revision = Some(item.record.revision);
+    item.reflection.record_comment = None;
+    item.reflection.etag = None;
+    item.reflection.refreshed_at = Some(now);
+    true
+}
+
 /// What a pull found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pulled {
@@ -92,7 +135,20 @@ fn commands(comments: &[Value], seen: &[u64]) -> Vec<Value> {
 }
 
 /// Answers on the todo's issue.
-pub(crate) fn reply(gh: &GitHub, issue: IssueRef, text: &str) -> Result<(), GitHubError> {
+pub(crate) fn reply(
+    gh: &GitHub,
+    issue: IssueRef,
+    source: u64,
+    text: &str,
+) -> Result<(), GitHubError> {
+    let text = format!("{text}\n\n<!-- instrukt:command-reply:{source} -->");
+    let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+    if comments
+        .iter()
+        .any(|comment| has_write_access(comment) && comment["body"].as_str() == Some(&text))
+    {
+        return Ok(());
+    }
     gh.post(
         &format!("/issues/{}/comments", issue.number),
         &json!({ "body": text }),
@@ -143,8 +199,9 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
     }
     if same_record(&head.record, &item.record) {
         // This computer's own write, whose answer never arrived.
+        item.record = with_contents(gh, issue.number, head.record, &item.record)?;
         item.reflection.record_comment = Some(head.comment);
-        item.reflection.remote_revision = Some(head.record.revision);
+        item.reflection.remote_revision = Some(item.record.revision);
         item.reflection.etag = etag;
         return Ok(Pulled::Current);
     }
@@ -222,7 +279,7 @@ pub(crate) fn flush(
                 // A revision this computer wrote landed though its answer
                 // was lost.
                 item.reflection.record_comment = Some(head.comment);
-                item.reflection.remote_revision = Some(head.record.revision);
+                item.reflection.remote_revision = Some(item.record.revision);
             } else {
                 conflict(
                     item,
@@ -249,7 +306,17 @@ pub(crate) fn flush(
                 }
             }
         }
-        let fields = _envelope::issue(&item.record);
+        let mut fields = _envelope::issue(&item.record);
+        let snapshot = gh.read(&format!("/issues/{}", issue.number))?;
+        if let Some(labels) = snapshot["labels"].as_array() {
+            fields.labels.extend(
+                labels
+                    .iter()
+                    .filter_map(|l| l["name"].as_str())
+                    .filter(|l| !output_label(l))
+                    .map(str::to_owned),
+            );
+        }
         gh.patch(&format!("/issues/{}", issue.number), &fields.update_json())?;
         item.reflection.etag = None;
         item.reflection.pending = false;
@@ -857,6 +924,23 @@ fn encode(text: &str) -> String {
     out
 }
 
+pub(crate) fn output_label(label: &str) -> bool {
+    matches!(
+        label,
+        "instrukt:todo"
+            | "kind:feature"
+            | "kind:change"
+            | "kind:bug"
+            | "kind:task"
+            | "status:active"
+            | "status:iceboxed"
+            | "status:structural_holder"
+            | "status:delivered"
+            | "status:removed"
+            | "on-hold"
+    ) || label == TODO_LABEL
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,7 +950,7 @@ mod tests {
 
     fn record(revision: u64, slug: &str) -> TodoRecord {
         TodoRecord {
-            schema: 1,
+            schema: super::super::_model::SCHEMA,
             id: TodoId::parse(&"cd".repeat(16)).unwrap(),
             project: ProjectSlug::parse("demo").unwrap(),
             slug: TodoSlug::parse(slug).unwrap(),

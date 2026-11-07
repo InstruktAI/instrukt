@@ -41,6 +41,7 @@ pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError};
 pub use _names::{ActionId, EffectName, FlowName, StateName};
 pub use _observe::ObservationError;
+pub(crate) use _observe::readiness_approved;
 pub use _render::{ConfigLookup, ConfigLookupError, RenderFailure, RenderFinding, Rendering};
 pub use _schema::WorkflowSchema;
 pub use _service::{

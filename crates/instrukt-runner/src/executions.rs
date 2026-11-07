@@ -14,13 +14,13 @@
 //!   session one recovery message; if it ends again, or is gone, still
 //!   without progress, the execution is an anomaly, reported once.
 
-use instrukt_core::config::{Configuration, Env};
+use instrukt_core::config::Configuration;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use serde::{Deserialize, Serialize};
 
 use crate::anomaly;
 use crate::interfaces::{PickupCandidate, ProjectRef, WorkflowAssignments};
-use crate::sessions::{Observation, SessionState, Sessions};
+use crate::sessions::{Observation, SessionState, Sessions, SessionsError};
 use crate::state::{self, RunnerState, StateError};
 use instrukt_core::state_db::rusqlite::params;
 
@@ -65,9 +65,11 @@ pub fn step(execution: &Execution, progressed: bool, observed: &Observation) -> 
     }
     match observed {
         Observation::Unobservable(_)
-        | Observation::State(SessionState::Running | SessionState::NeedsInput) => Step::Wait,
+        | Observation::State(
+            SessionState::Running | SessionState::NeedsInput | SessionState::Unknown,
+        ) => Step::Wait,
         Observation::State(
-            SessionState::EndedOk | SessionState::EndedFailed | SessionState::Gone,
+            SessionState::InputReady | SessionState::EndedFailed | SessionState::Gone,
         ) => match (execution.recovery_sent, execution.anomaly_raised) {
             (false, _) => Step::Recover,
             (true, false) => Step::RaiseAnomaly,
@@ -183,14 +185,15 @@ impl<'a> Executions<'a> {
     /// for pickup: an execution whose todo is among them was released.
     pub fn observe(
         &self,
+        cx: &crate::dispatch::DispatchContext<'_>,
         config: &Configuration,
-        env: &Env,
         workflow: &dyn WorkflowAssignments,
         project: &ProjectRef,
         offered: &[PickupCandidate],
     ) -> Result<(), StateError> {
         let mut executions = self.load()?;
-        let sessions = Sessions::new(config, env);
+        let env = cx.env;
+        let sessions = Sessions::new(self.state.home(), config, env);
         let mut kept = Vec::with_capacity(executions.len());
         for mut execution in executions.drain(..) {
             if execution.project != project.slug {
@@ -228,19 +231,46 @@ impl<'a> Executions<'a> {
                     execution.recovery_sent = false;
                     execution.anomaly_raised = false;
                 }
-                Step::Recover => {
-                    execution.recovery_sent = true;
-                    match sessions.send(&execution.session, RECOVERY_MESSAGE) {
-                        Ok(()) => {
-                            tracing::info!(event = "execution_recovery_sent", todo = %execution.todo, session = %execution.session);
-                        }
-                        Err(err) => {
-                            tracing::warn!(event = "execution_recovery_undeliverable", todo = %execution.todo, session = %execution.session, error = %err);
+                Step::Recover => match sessions.send(
+                    cx.invocation,
+                    &execution.session,
+                    &crate::inputs::Entry {
+                        id: &format!("recovery:{}:{}", execution.session, execution.state),
+                        kind: crate::inputs::InputKind::Recovery,
+                        assignment: None,
+                        source_at: Some(&cx.now.to_string()),
+                        arrived_at: cx.now,
+                        intent: crate::inputs::Intent::Asap,
+                        content: RECOVERY_MESSAGE,
+                    },
+                ) {
+                    Ok(crate::inputs::InputOutcome::Pending) => {
+                        tracing::debug!(event="execution_recovery_pending",session=%execution.session);
+                    }
+                    Ok(
+                        crate::inputs::InputOutcome::Accepted
+                        | crate::inputs::InputOutcome::Entered,
+                    ) => {
+                        execution.recovery_sent = true;
+                        tracing::info!(event = "execution_recovery_sent", todo = %execution.todo, session = %execution.session);
+                    }
+                    Err(err @ SessionsError::Gone(_)) => {
+                        tracing::warn!(event = "execution_recovery_undeliverable", todo = %execution.todo, session = %execution.session, error = %err);
+                        execution.recovery_sent = true;
+                        execution.anomaly_raised = true;
+                        anomaly::notify(config, env, &execution.session.to_string(), None);
+                    }
+                    Err(err) => {
+                        if observed == Observation::State(SessionState::Gone) {
+                            execution.recovery_sent = true;
                             execution.anomaly_raised = true;
+                            tracing::warn!(event = "execution_recovery_undeliverable", todo = %execution.todo, session = %execution.session, error = %err);
                             anomaly::notify(config, env, &execution.session.to_string(), None);
+                        } else {
+                            tracing::warn!(event = "execution_recovery_pending", todo = %execution.todo, session = %execution.session, error = %err);
                         }
                     }
-                }
+                },
                 Step::RaiseAnomaly => {
                     execution.anomaly_raised = true;
                     tracing::warn!(event = "execution_incomplete", todo = %execution.todo, session = %execution.session);
@@ -299,7 +329,7 @@ mod tests {
 
     #[test]
     fn an_ended_session_without_progress_is_sent_once_then_reported_once() {
-        let ended = Observation::State(SessionState::EndedOk);
+        let ended = Observation::State(SessionState::InputReady);
         assert_eq!(step(&execution(false, false), false, &ended), Step::Recover);
         assert_eq!(
             step(&execution(true, false), false, &ended),

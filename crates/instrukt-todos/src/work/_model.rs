@@ -15,7 +15,7 @@ use crate::evidence::{
 };
 
 /// The record schema this build writes and reads.
-pub(crate) const SCHEMA: u32 = 1;
+pub(crate) const SCHEMA: u32 = 2;
 
 /// A todo's durable identity: survives rename, removal and recovery.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -345,9 +345,35 @@ pub struct Claim {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding {
     pub role: RoleName,
-    pub session: SessionRef,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionRef>,
     pub worktree: Option<PathBuf>,
+    #[serde(flatten)]
+    pub attempt: Attempt,
+}
+
+/// Immutable assignment facts and retained completion/failure evidence.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attempt {
+    pub runtime: Option<instrukt_core::config::Runtime>,
+    pub native_placement: Option<super::DriverPlacement>,
+    pub assignment: instrukt_runner::interfaces::AssignmentKind,
+    pub occurrence: Option<Timestamp>,
+    #[serde(rename = "attempt")]
+    pub number: u64,
+    pub semantic_key: String,
+    pub native_assignment: Option<super::NativeAssignment>,
+    pub lane: Option<instrukt_runner::interfaces::Lane>,
+    pub start_from: Option<String>,
+    pub no_start_reason: Option<String>,
+    pub branch: Option<String>,
+    pub base_head: Option<CommitSha>,
+    pub completion_sequence: Option<u64>,
+    pub completed_head: Option<CommitSha>,
+    pub failure_reason: Option<String>,
+    pub failure_head: Option<CommitSha>,
+    pub failure_workspace: Option<String>,
+    pub failed_at: Option<Timestamp>,
+    pub released_at: Option<Timestamp>,
 }
 
 /// A released dispatch hold.
@@ -398,6 +424,7 @@ mod tests {
             content: None,
         };
         let stamp = |when: Timestamp| StampRecord {
+            source_comment: None,
             fact: StampFact::ArchitectureSkipped { reason: "r".into() },
             at: when,
             actor: Actor::Person { name: "dev".into() },

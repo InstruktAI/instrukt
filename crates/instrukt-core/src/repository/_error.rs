@@ -15,6 +15,10 @@ use super::_section::SectionError;
 /// it concerned.
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
+    #[error(
+        "main is integrator-only; commit in the todo worktree or a short-lived ad hoc worktree, then review its head before integration"
+    )]
+    CanonicalAuthoring,
     #[error("{dir} is not inside a git repository's working tree")]
     NotInWorktree { dir: PathBuf },
     #[error("cannot read {path}: {source}")]
@@ -55,14 +59,6 @@ pub enum RepositoryError {
         revision: String,
         source: Box<GitError>,
     },
-    #[error("the review note of {commit} holds `{line}`, which records no stamp")]
-    MalformedNote { commit: String, line: String },
-    #[error("the system clock reads a time before 1970; a stamp's time cannot be recorded")]
-    ClockBeforeEpoch,
-    #[error("a stamp needs at least one commit")]
-    NoCommits,
-    #[error("an exemption needs a non-empty reason")]
-    EmptyReason,
     #[error("malformed hook worker job `{job}`")]
     WorkerJob { job: String },
     #[error("{path} is not a valid hook run record: {source}")]

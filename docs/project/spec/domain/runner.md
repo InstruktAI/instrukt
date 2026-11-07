@@ -8,7 +8,7 @@ delivered_by: [instrukt-first-build]
 ## What it is
 
 The runner bounded context connects eligible work, received events and due
-times to agent sessions. It owns dispatch, the runtime adapter, the sessions facade, event-source
+times to agent sessions. It owns dispatch, the runtime adapter, operational session inspection, event-source
 translation and time eligibility, including anomaly reporting. It executes
 the enabled modules' work in one process, entered through `instrukt run` or
 `instrukt tick` and woken by the OS scheduler. It has no consumer daemon. A separate opt-in loopback webhook receiver accepts signed external events on the designated ingress computer. The work
@@ -44,11 +44,11 @@ authorization and derived workflow state.
 `runner.runtime`. T3 is shipped first over its published host CLI. The
 adapter translates start-or-wake, start, send, state and conversation reads,
 recognises caller identity without runtime I/O,
-and reports optional capabilities. Configuration contains no runtime verbs.
+and reports optional capabilities. Native agent-operation prose is supplied by
+configuration and rendered through `@config`, independently of this adapter.
 
 **Singleton key**
-: The standing procedure, exact home and optional subject identity carried in its runtime thread
- title; the database binding is a cache. A per-key database lock admits one
+: The standing procedure, exact home and optional subject identity carried as a discoverable semantic key, separate from display title; the database binding is a cache. A per-key database lock admits one
  starter or deliverer at a time.
 
 **Linked-session input**
@@ -73,8 +73,9 @@ and reports optional capabilities. Configuration contains no runtime verbs.
 ## Ownership boundary
 
 - **Owns:** Module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the runtime-adapter trait, the sessions facade and session reuse behavior;
-  runtime capability translation, including optional linked-session input; time
+  activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  runtime capability translation, including optional linked-session input;
+  unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
@@ -87,21 +88,23 @@ and reports optional capabilities. Configuration contains no runtime verbs.
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
   session lifecycle, input delivery, restart, revival, handover,
-  transcripts and their search, cleanup and subscriptions to session
-  activity, all owned by the runtime; instrukt calls only the adapter's
+  transcripts and their search and cleanup, all owned by the runtime; instrukt calls only the adapter's
   released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
-  `instrukt sessions run|send|alive|conversation|link|resolve-start` surface,
+  operational `instrukt sessions list|resolve-start` surface,
   `instrukt ticks status`, and wake-up registration by `instrukt install`;
-  structured adapter operations, five-state observation, bounded conversation
-  reads, optional linked input and notification; all-start key/title discovery
-  and database locking. Every facade command accepts `--json`.
-  Worktree creation returns the runtime path; reattachment requires a distinct
-  runtime capability. Shipped T3 todo delivery uses sequential per-role worktrees
-  with fast-forward handoff through the work and workflow contracts. Events include
+  structured adapter operations, semantic-state observation, optional bounded native conversation
+  reads and explicit delivery/assignment evidence capabilities, optional linked input and notification; instrukt-owned start semantic-key discovery
+  and database locking. Every operational sessions command accepts `--json`.
+  Agents use configured native operations in their own conversation and
+  record native child attempts through work. The adapter starts only without
+  an agent or for an explicit native-capability gap. Native delegation returns
+  shared workspace evidence. The work orchestrator and its native shared children
+  use one todo worktree and branch, with one workspace role admitted at a time
+  and atomic completion/release through the work and workflow contracts. Events include
   `runner.upstream_changed`,
-  `runner.ci_completed`, `runner.main_ahead`, `runner.main_failing` and
+  `runner.ci_completed`, `workflow.preparation_reviewed`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** configuration supplies effective machine and
   project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
@@ -142,7 +145,7 @@ Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 - **Contains:** Canonical procedure, exact home, subject when identity is subject,
   and the configured runtime's session identity.
 - **Invariants:** Activation acceptance is distinct from runtime resolution and
-  event delivery. Exact runtime key-title discovery repairs the cached binding
+  event delivery. Exact runtime semantic-key discovery repairs the cached binding
   under its per-key database lock; status observation determines reuse. Domain
   completion requires its owning work record's evidence. Linked input is an
   optional adapter capability.
@@ -210,10 +213,19 @@ retryable publication status and coordinates so a committed fact is published
 later with its original ID. This supplies no separate outbox/inbox service and
 no accepted ingress buffering during a cluster outage.
 
+### Mechanical canonical checkout maintenance
+
+Each tick observes and fetches canonical main before dispatch for considered
+projects. A clean canonical project checkout behind it is fast-forwarded to
+the observed commit; post-merge publishes documentation and hands the revision
+to enabled blueprint. A dirty, misplaced or diverged checkout is reported and
+preserved, and a later tick retries. This is mechanical runner work, independent
+of event enablement and without a GitHub API call or a main-ahead event.
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
-`runner.upstream_changed`, `runner.main_ahead` → `runner.main_ahead`,
+`runner.upstream_changed`, `workflow.preparation_reviewed` → `workflow.preparation_reviewed`,
 `runner.ci_completed` → `runner.ci_completed`, `runner.main_failing` →
 `runner.main_failing`, and `workflow.finalized` → `workflow.finalized`.
 The producing contexts remain owners of these five facts; subscriptions keep
@@ -221,11 +233,11 @@ these names. Event-platform types ported from `teleclaude.*` use `instrukt.*`.
 No compatibility alias or second occurrence is emitted.
 
 The canonical received boundary is the open event envelope, not a closed enum
-of those five facts. The four runner declarations use project origin;
+of those five facts. The three runner declarations use project origin;
 upstream changes name the observed repository revision as a commit reference,
-main-ahead and main-failing name a repository-qualified commit, and CI completion
-names the candidate commit (including the `no_ci` observation). Finalize-ready
-uses project origin and a todo subject. The existing occurrence-key columns
+main-failing names a repository-qualified commit, and CI completion names the
+candidate commit (including the `no_ci` observation). Finalize-ready and reviewed
+preparation use project origin and a todo subject. The existing occurrence-key columns
 below determine stable IDs, including producer type, independently of payload
 serialization. Producer declarations expose the existing payloads as typed data.
 
@@ -240,7 +252,6 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
 | `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `general/procedure/upstream-watch` |
-| `runner.main_ahead` | Local main is ahead of remote main and no candidate is pending | Project, local main revision, remote main revision | Project, local main revision, remote main revision | Workflow's subscribed integrator |
 | `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
 
@@ -264,7 +275,7 @@ occurrence IDs. Scoped Redis groups own transport progress; settled SQLite
 cursors retain local accounting. A consumer's occurrence mark commits with its
 accepted outcome before ACK. Replay and duplicate protection are bounded, and
 handlers reconcile their subject against current state. Runtime session observations supply the five
-facade states; they do not expand the first-build event vocabulary or replace
+semantic states; they do not expand the first-build event vocabulary or replace
 record-backed completion.
 
 ## Event subjects and origins
@@ -281,9 +292,10 @@ has no origin, as declared in Canonical fields.
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
   — session reuse, five-state observation, sharing a human clarification
-  with linked collaborators, working on T3 Code once it is chosen, looking up
-  earlier conversations, refusing a feature the chosen runtime cannot
-  carry, and an agent carrying out an ending handed to it as its to do.
+  with linked collaborators where supported, working on T3 Code once it is
+  chosen, refusing a feature the chosen runtime cannot carry, and native
+  delegation with record-backed attempts. Archive search and agent-owned
+  session ending are retired goals.
 - **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
@@ -319,7 +331,7 @@ has no origin, as declared in Canonical fields.
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
-| runner → workflow | Published language | `runner.ci_completed` and `runner.main_ahead` wake the integrator to assess candidates and direct commits; `runner.main_failing` wakes it to restore a failing canonical branch |
+| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` wakes it to restore a failing canonical branch |
 
 The runtime adapter and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are
@@ -329,8 +341,11 @@ configuration name selects the implementation
 (`project/instrukt/spec/feature/runner/session-continuity`).
 
 Event activation carries the exact home and optional subject through this seam.
-S6 establishes that handoff's delivery feasibility; runtime lifecycle remains
-runtime-owned.
+The adapter realizes ASAP or only-at-entry intent with steering, queued input
+or idle entry under procedure-event-delivery. Runtime lifecycle and child-ending parent attention remain
+runtime-owned. Instrukt delivers its own events/approvals under session-continuity;
+stamps remain work-record evidence. Native instruction prose is resolved from
+configuration through `@config`; it is never an adapter command template.
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract
@@ -341,10 +356,11 @@ per-role session bindings. Work owns validation and persistence of those writes.
 
 ## Known caveats
 
-- The target delivery contract requires durable acceptance, sequential/batched
+- The target delivery contract requires durable acceptance, bounded batch
   selection, procedure-first briefing and untrusted activation provenance. Its
-  realization through A3's published runtime boundary is the S6 feasibility gate;
-  ordinary conversational JSON is not evidence of equivalence.
+  realization uses the selected runtime's supported input boundary. Missing
+  steering degrades ASAP attention to queued input or idle entry without a
+  validation finding. Attendance and subject revival remain separate limits.
 - Company/person home execution, conversation channels and help desks are unavailable in this port; runtime lifecycle remains runtime-owned.
 
 

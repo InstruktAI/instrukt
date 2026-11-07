@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use instrukt_core::config::{self, Env, Module};
+use instrukt_core::config::{self, Module};
 use instrukt_core::git;
 use instrukt_core::interfaces::TodoExistence;
 use instrukt_runner::interfaces::WorkPorts;
@@ -33,7 +33,7 @@ pub(super) fn available_todo_existence(
     let Some(root) = git::worktree_root(&ctx.cwd)? else {
         return Ok(None);
     };
-    let work = Arc::new(work(ctx));
+    let work = Arc::new(work(ctx)?);
     let project = match work.project_at(&root) {
         Ok(project) => project,
         // No project slug to ask about: the core context's no-answer case.
@@ -48,7 +48,7 @@ pub(super) fn available_todo_existence(
 /// each project by its own effective `modules.todos` (`work-dispatch`,
 /// "Execution contract"). The `todo` namespace keeps its own refusal.
 pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
-    let work = Arc::new(work(ctx));
+    let work = Arc::new(work(ctx)?);
     Ok(Some(WorkPorts {
         pickup: work.clone(),
         claims: work.clone(),
@@ -63,13 +63,17 @@ pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
 /// Work's evidence read contract for workflow, wired as the ports are: the
 /// runner's workflow reads it per project.
 pub(super) fn evidence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn WorkEvidence>>> {
-    Ok(Some(Arc::new(work(ctx))))
+    Ok(Some(Arc::new(work(ctx)?)))
 }
 
 /// The work record of this invocation: the process environment supplies
 /// credentials and the caller's session, the system clock the time.
-pub(crate) fn work(ctx: &Ctx) -> Work {
-    Work::new(ctx.home.clone(), Env::from_process(), ctx.clock.shared())
+pub(crate) fn work(ctx: &Ctx) -> anyhow::Result<Work> {
+    Ok(Work::new(
+        ctx.home.clone(),
+        super::environment(ctx)?,
+        ctx.clock.shared(),
+    ))
 }
 
 /// Whether `modules.todos` is on where the caller stands.

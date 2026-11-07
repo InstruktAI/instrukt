@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
-use instrukt_core::config::{self, Env, Module};
+use instrukt_core::config::{self, Module};
 use instrukt_core::git;
-use instrukt_core::ids::{CommitSha, SessionRef, TodoSlug};
+use instrukt_core::ids::{CommitSha, RoleName, SessionRef, SnippetId, TodoSlug};
 use instrukt_runner::interfaces::{
     AgentPreference, CatchUp, ProjectRef, TaskSchedule, Thinking, TodoKind,
 };
@@ -63,12 +63,69 @@ enum TodoCommand {
     Reactivate(ReactivateArgs),
     /// Record the confirmed delivered commit.
     Deliver(DeliverArgs),
+    /// Reserve a native role assignment, or record no-start/failure evidence.
+    Attempt(AttemptArgs),
+    /// Bind a reserved assignment to its native shared child.
+    Bind(BindArgs),
     /// Record an attributed fact bound to evidence.
     Stamp(StampArgs),
     /// List, read, write and diff a todo's artifacts.
     Artifacts(ArtifactsArgs),
     #[command(flatten)]
     Flow(todo_flow::FlowCommand),
+}
+
+#[derive(Debug, clap::Args)]
+struct AttemptArgs {
+    slug: TodoSlug,
+    #[arg(long)]
+    role: RoleName,
+    #[arg(long)]
+    procedure: Option<SnippetId>,
+    #[arg(long, allow_hyphen_values = true)]
+    args: Option<String>,
+    #[arg(long)]
+    brief: Option<String>,
+    #[arg(long)]
+    attempt: Option<u64>,
+    #[arg(long, conflicts_with="failed", requires_all=["attempt", "reason"])]
+    not_started: bool,
+    #[arg(long, requires_all=["attempt", "reason", "evidence"])]
+    failed: bool,
+    #[arg(long)]
+    reason: Option<String>,
+    #[arg(long)]
+    evidence: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+#[derive(Debug, clap::Args)]
+struct BindArgs {
+    slug: TodoSlug,
+    #[arg(long)]
+    role: RoleName,
+    #[arg(long)]
+    attempt: u64,
+    #[arg(long)]
+    session: SessionRef,
+    #[arg(long)]
+    worktree: Option<PathBuf>,
+    #[arg(long)]
+    branch: String,
+    #[arg(long)]
+    base: CommitSha,
+    #[arg(long)]
+    json: bool,
+}
+pub(super) fn native_input(source: &str) -> anyhow::Result<String> {
+    use std::io::Read as _;
+    if source == "-" {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text)?;
+        Ok(text)
+    } else {
+        Ok(std::fs::read_to_string(source).with_context(|| format!("cannot read {source}"))?)
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -258,6 +315,9 @@ struct StampArgs {
     /// The build is complete at the work branch's head.
     #[arg(long)]
     build_complete: bool,
+    /// Setup or finalizer work is committed and ready for handoff.
+    #[arg(long)]
+    role_complete: bool,
     /// The current deferrals are processed.
     #[arg(long)]
     deferrals_processed: bool,
@@ -333,6 +393,7 @@ enum VerdictArg {
     reason = "the values are the phase names `--phase` takes"
 )]
 enum PhaseArg {
+    PreparationHead,
     PrdReview,
     ArchitectureReview,
     PlanReview,
@@ -367,14 +428,22 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let Some(root) = root else {
         bail!("the work record belongs to a project; run this inside its git repository");
     };
-    let work = Work::new(ctx.home.clone(), Env::from_process(), ctx.clock.shared());
+    let work = Work::new(
+        ctx.home.clone(),
+        crate::wiring::environment(ctx)?,
+        ctx.clock.shared(),
+    );
     let project = work.project_at(&root)?;
     let session = Session {
         work: &work,
         project: &project,
         cwd: ctx.cwd.clone(),
     };
-    session.dispatch(command, ctx)
+    let result = session.dispatch(command, ctx);
+    if let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now()) {
+        tracing::warn!(event="approval_attention_pending",error=%error);
+    }
+    result
 }
 
 struct Session<'a> {
@@ -403,7 +472,7 @@ impl Session<'_> {
                     ctx.out.line("no todos")?;
                 }
                 for entry in &listing.entries {
-                    ctx.out.line(&list_line(entry))?;
+                    ctx.out.line(&list_line(entry, ctx.clock.now()))?;
                 }
                 Ok(ExitCode::SUCCESS)
             }
@@ -466,6 +535,94 @@ impl Session<'_> {
                     outcome.value.slug, args.commit
                 ))?;
                 reflection(ctx, &outcome)
+            }
+            TodoCommand::Attempt(args) => {
+                if args.not_started || args.failed {
+                    let evidence = args
+                        .evidence
+                        .as_deref()
+                        .map(native_input)
+                        .transpose()?
+                        .map(|text| {
+                            serde_json::from_str::<instrukt_todos::work::StoppedChild>(&text)
+                        })
+                        .transpose()?;
+                    let outcome = work.resolve_native_attempt(
+                        project,
+                        &instrukt_todos::work::AttemptResolution {
+                            todo: &args.slug,
+                            role: &args.role,
+                            attempt: args
+                                .attempt
+                                .ok_or_else(|| anyhow::anyhow!("--attempt required"))?,
+                            reason: args.reason.as_deref().unwrap_or(""),
+                            evidence: evidence.as_ref(),
+                        },
+                    )?;
+                    ctx.out.json(&outcome.value)?;
+                } else {
+                    if args.attempt.is_some() || args.reason.is_some() || args.evidence.is_some() {
+                        bail!("resolution flags require --not-started or --failed");
+                    }
+                    let brief = native_input(
+                        args.brief
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("reservation requires --brief"))?,
+                    )?;
+                    let message = match args.procedure.as_ref() {
+                        Some(id) => {
+                            let entry = instrukt_runner::launch::procedure(&ctx.home, id)?;
+                            if entry.role.as_deref() != Some(args.role.as_str()) {
+                                bail!("procedure role differs from --role");
+                            }
+                            instrukt_runner::launch::prepare(
+                                &entry,
+                                args.args.as_deref(),
+                                Some(&brief),
+                            )?
+                            .message
+                        }
+                        None if args.role.as_str() == "setup" => brief,
+                        None => bail!("a non-setup reservation requires --procedure"),
+                    };
+                    let configuration = config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
+                    let env = crate::wiring::environment(ctx)?;
+                    let dispatch = configuration.get_str("runtime.dispatch", &env)?;
+                    let continuation = configuration.get_str("runtime.message_child", &env)?;
+                    let assignment = work.prepare_attempt(
+                        project,
+                        &instrukt_todos::work::AttemptRequest {
+                            todo: &args.slug,
+                            role: &args.role,
+                            procedure: args.procedure.as_ref().map(|id| id.as_str()),
+                            args: args.args.as_deref(),
+                            brief: &message,
+                        },
+                    )?;
+                    let mut reply = serde_json::to_value(&assignment)?;
+                    if let Some(reply) = reply.as_object_mut() {
+                        reply.insert("dispatch_instruction".into(), dispatch.into());
+                        reply.insert("continuation_instruction".into(), continuation.into());
+                    }
+                    ctx.out.json(&reply)?;
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            TodoCommand::Bind(args) => {
+                work.bind_attempt(
+                    project,
+                    &instrukt_todos::work::NativeBinding {
+                        todo: &args.slug,
+                        role: &args.role,
+                        attempt: args.attempt,
+                        session: &args.session,
+                        worktree: args.worktree.as_deref(),
+                        branch: &args.branch,
+                        base: &args.base,
+                    },
+                )?;
+                ctx.out.json(&serde_json::json!({"role":args.role,"attempt":args.attempt,"session":args.session.to_string(),"bound":true}))?;
+                Ok(ExitCode::SUCCESS)
             }
             TodoCommand::Stamp(args) => self.stamp(args, ctx),
             TodoCommand::Artifacts(args) => self.artifacts(args.command, ctx),
@@ -702,6 +859,7 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
     for (set, form) in [
         (args.build_started, StampRequest::BuildStarted),
         (args.build_complete, StampRequest::BuildComplete),
+        (args.role_complete, StampRequest::RoleComplete),
         (args.deferrals_processed, StampRequest::DeferralsProcessed),
         (args.finalize_ready, StampRequest::FinalizeReady),
         (
@@ -755,6 +913,15 @@ fn verdict_request(verdict: VerdictArg, phase: PhaseArg) -> anyhow::Result<Stamp
         }
     };
     match phase {
+        PhaseArg::PreparationHead => match verdict {
+            VerdictArg::Approve => Ok(StampRequest::PreparationHeadVerdict {
+                verdict: ReviewVerdict::Approve,
+            }),
+            VerdictArg::NeedsWork => Ok(StampRequest::PreparationHeadVerdict {
+                verdict: ReviewVerdict::NeedsWork,
+            }),
+            _ => bail!("preparation head review is approve or needs_work"),
+        },
         PhaseArg::PrdReview => preparation(PreparationReview::PrdReview),
         PhaseArg::ArchitectureReview => preparation(PreparationReview::ArchitectureReview),
         PhaseArg::PlanReview => preparation(PreparationReview::PlanReview),
@@ -827,7 +994,7 @@ fn reflection_word(status: &ReflectionStatus) -> String {
     }
 }
 
-fn list_line(entry: &ListEntry) -> String {
+fn list_line(entry: &ListEntry, now: Timestamp) -> String {
     let record = &entry.record;
     let mut parts = vec![
         record.slug.to_string(),
@@ -850,7 +1017,15 @@ fn list_line(entry: &ListEntry) -> String {
                 None => "unclaimed".to_owned(),
             });
             if let Some(at) = last_known.copied_at {
-                parts.push(format!("last known {}", time(at)));
+                let seconds = now.duration_since(at).as_secs();
+                let age = match seconds {
+                    i64::MIN..=-1 => "copy is newer than the current clock".into(),
+                    0..=59 => "less than a minute old".into(),
+                    60..=3599 => format!("{} minutes old", seconds / 60),
+                    3600..=86399 => format!("{} hours old", seconds / 3600),
+                    _ => format!("{} days old", seconds / 86400),
+                };
+                parts.push(format!("last known {} ({age})", time(at)));
             }
         }
     }
@@ -935,6 +1110,7 @@ fn render_view(view: &TodoView) -> String {
             hold.reason,
             match hold.source {
                 HoldSource::Manual => "manual",
+                HoldSource::GitHub => "github",
                 HoldSource::Automatic => "automatic",
             },
             actor(&hold.by),
@@ -1013,16 +1189,54 @@ fn render_view(view: &TodoView) -> String {
     if !record.bindings.is_empty() {
         out.push("sessions:".to_owned());
         for binding in &record.bindings {
+            let a = &binding.attempt;
             out.push(format!(
-                "  {}: {}{}",
+                "  {}/{}: {}",
                 binding.role,
-                binding.session,
+                a.number,
                 binding
-                    .worktree
-                    .as_deref()
-                    .map(|p| format!(" (worktree {})", p.display()))
-                    .unwrap_or_default()
+                    .session
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "start pending".into())
             ));
+            out.push(format!("    key: {}", a.semantic_key));
+            if let Some(branch) = &a.branch {
+                out.push(format!(
+                    "    branch: {branch}; base: {}",
+                    a.base_head
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| "unknown".into())
+                ));
+            }
+            if let Some(path) = &binding.worktree {
+                out.push(format!("    worktree: {}", path.display()));
+            }
+            if let Some(sequence) = a.completion_sequence {
+                out.push(format!(
+                    "    completion: stamp #{sequence}; head: {}",
+                    a.completed_head
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| "unknown".into())
+                ));
+            }
+            if let Some(reason) = &a.failure_reason {
+                out.push(format!(
+                    "    failed: {reason}; preserved head: {}",
+                    a.failure_head
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| "unknown".into())
+                ));
+            }
+            if let Some(workspace) = &a.failure_workspace {
+                out.push(format!("    retained workspace: {workspace}"));
+            }
+            if let Some(at) = a.released_at {
+                out.push(format!("    released: {}", time(at)));
+            }
         }
     }
     if !record.hold_history.is_empty() {
@@ -1203,6 +1417,17 @@ fn fact(fact: &StampFact) -> String {
         StampFact::BuildStarted { base, plan } => {
             format!("build started — base {base}, plan {plan}")
         }
+        StampFact::PreparationHeadReviewed {
+            verdict,
+            head,
+            report,
+        } => format!("preparation head: {verdict:?}; {head}; report {report}"),
+        StampFact::RoleComplete {
+            head,
+            role,
+            attempt,
+            ..
+        } => format!("role complete — {role}/{attempt} head {head}"),
         StampFact::BuildComplete { head } => format!("build complete — head {head}"),
         StampFact::DeferralsProcessed { deferrals } => {
             format!("deferrals processed — deferrals {deferrals}")

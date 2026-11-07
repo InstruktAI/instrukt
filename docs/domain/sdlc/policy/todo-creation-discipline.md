@@ -12,6 +12,16 @@ description: Decide whether a todo should exist, audit that decision at preparat
 
 ## Rules
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.message_peer -->
+
+<!-- @config: runtime.inspect_thread -->
+
 ### Progress, hold, or retire
 
 - **Keep active work actionable.** Each active todo has an authorized outcome,
@@ -44,6 +54,10 @@ description: Decide whether a todo should exist, audit that decision at preparat
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
   evidence to reconcile, never a reason to preserve the state.
+
+### Ad hoc work and workspace placement
+
+- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A todo is created before preparation commits; its `<slug>/prepare` worktree serves preparation, is reviewed and integrated immediately, and is removed with its local/remote branch. Implementation later uses the separate `<slug>/work` worktree based on updated main. No agent other than the integrator commits on main.
 
 ### Decide before creating
 
@@ -111,7 +125,7 @@ description: Decide whether a todo should exist, audit that decision at preparat
 
 - **Execute settled code work in context.** When the approach is known,
   the edit is bounded, and the work needs neither a plan, a builder, nor a
-  handoff, make the change on `main` only when an explicit execution request, a
+  handoff, make the change in a short-lived one-off worktree only when an explicit execution request, a
   bounded brief, or a completed human conversation in which every active
   participant agreed the outcome and the human released the edit supplies
   authority. Human presence alone supplies none. Importance does not decide
@@ -232,7 +246,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 - **Check intent by position.** `input` is the intent record for every kind,
   including work with a supplied plan. The first recipient other than its
   author reads the originating conversation through
-  `instrukt sessions conversation <session-id>` and compares outcome-level
+  the configured runtime conversation read instruction and compares outcome-level
   substance. Confirm the record, clarify expression without changing meaning,
   or return a mistaken interpretation to the human in the responsible thread.
   Record `instrukt todo stamp <slug> --intent-checked` bound to that input
@@ -281,7 +295,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **Communication precedes a dispatch brake.** When the todo already has a live
   claimant, deliver the complete flag to that claimant first — through the
-  session conversation with `instrukt sessions send <session-id>` — and wait for its response. The response closes the loop:
+  session conversation with the configured runtime message instruction — and wait for its response. The response closes the loop:
   it confirms what was understood and reveals whether derived work is already
   contaminated. The claimant normally chooses and records its exit. A log is
   durable evidence after understanding; it is never a substitute for delivering
@@ -357,8 +371,8 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 - **A filer withdraws its own filing once its premise fails.** When the
   session that filed a todo establishes that its premise does not hold, it
   owns the retraction rather than leaving the live claimant to rediscover it.
-  Communicate the evidence through `instrukt sessions send` to the recorded
-  claimant and workers; observe their status through `instrukt sessions alive`
+  Communicate the evidence through the configured runtime message instruction to the recorded
+  claimant and workers; observe their status through the configured runtime status inspection instruction
   and settle their current work before release and removal. A hold brakes
   future dispatch and does not establish that current work stopped. Once the
   claim is released through `instrukt todo update <slug> --unclaim` and release is

@@ -60,13 +60,7 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
 
     crew.stamp(
         slug,
-        &[
-            "--prd-approved",
-            "--by",
-            "human",
-            "--session",
-            "agent:lead-1",
-        ],
+        &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
     );
     steps.push(crew.next("prepare", slug));
 
@@ -173,13 +167,7 @@ fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_anal
     crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
     crew.stamp(
         slug,
-        &[
-            "--prd-approved",
-            "--by",
-            "human",
-            "--session",
-            "agent:lead-1",
-        ],
+        &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
     );
     crew.write(
         slug,
@@ -233,13 +221,7 @@ fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
     crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
     crew.stamp(
         slug,
-        &[
-            "--prd-approved",
-            "--by",
-            "human",
-            "--session",
-            "agent:lead-1",
-        ],
+        &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
     );
     crew.write(
         slug,
@@ -275,4 +257,216 @@ fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
     steps.push(crew.next("prepare", slug));
 
     insta::assert_snapshot!("judged-dependency", redact(&steps.join("=====\n")));
+}
+
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR1
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG5
+// spec: project/instrukt/spec/feature/docs/pending-documentation UC-PD2
+#[test]
+fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tree() {
+    let crew = Crew::new();
+    let project = &crew.project;
+    let slug = "docs-first";
+    let global = project.env.instrukt_home().join("instrukt.yaml");
+    let mut text = std::fs::read_to_string(&global).unwrap();
+    text.push_str(&format!(
+        "modules: {{events: true}}\nredis:\n  cluster:\n    url: '{}'\n",
+        project.env.redis_url()
+    ));
+    std::fs::write(global, text).unwrap();
+    crew.flavor.repo.write("docs/domain/crew/procedure/integrate-preparation.md","---\ndescription: Integrate reviewed preparation immediately.\nrole: integrator\nsubscriptions: [workflow.preparation_reviewed]\nsubscription_home: project\n---\n# Integrate preparation — Procedure\n\n## Goal\n\nIntegrate reviewed preparation docs before build.\n\n## Preconditions\n\nThe exact reviewed preparation head is available.\n\n## Steps\n\nMerge through the candidate gate, fold pending docs, then remove the prepare worktree and local/remote branch.\n\n## Outputs\n\nPublished docs on main.\n\n## Recovery\n\nRetain failed integration or cleanup as owed work.\n");
+    crew.flavor
+        .republish(&project.env, "integrator: publish preparation subscription");
+    let config = project
+        .repo
+        .read("instrukt.yaml")
+        .replace("todos: true", "todos: true\n  events: true");
+    project.repo.write("instrukt.yaml", &config);
+    project
+        .repo
+        .commit("integrator: enable preparation delivery");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    project.env.run(crew.root(), ["sync"]).success();
+    project.create(slug, "change", "Publish the contract before building it.");
+    crew.write(
+        slug,
+        "implementation-plan",
+        "Implement the published contract.",
+    );
+    crew.write(slug, "plan-review-findings", "Approved plan.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    let writer = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let prepare = std::path::Path::new(writer["worktree"].as_str().unwrap());
+    let file = prepare.join("docs/project/spec/feature/early-contract.md");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file,"---\ndescription: Contract available before its implementation.\ndelivered_by: [docs-first]\n---\n# Early contract — Spec\n\n## What it is\n\nAvailable before build.\n\n## Canonical fields\n\nA documented value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n").unwrap();
+    project.env.git(prepare, ["add", "docs"]);
+    project.env.git(
+        prepare,
+        [
+            "commit",
+            "--quiet",
+            "-m",
+            "docs: publish the early contract",
+        ],
+    );
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    let stamp = |session: &str, args: &[&str]| {
+        project
+            .env
+            .instrukt(prepare)
+            .env("T3CODE_THREAD_ID", session.strip_prefix("t3:").unwrap())
+            .args(["todo", "stamp", slug])
+            .args(args)
+            .assert()
+    };
+    stamp(writer["session"].as_str().unwrap(), &["--role-complete"]).success();
+    assert!(
+        !crew
+            .root()
+            .join("docs/project/spec/feature/early-contract.md")
+            .exists()
+    );
+    let read = project
+        .env
+        .run(
+            crew.root(),
+            [
+                "docs",
+                "get",
+                "project/demo/spec/feature/early-contract",
+                "--target",
+                slug,
+            ],
+        )
+        .success();
+    insta::assert_snapshot!(
+        "preparation-only-pending-contract",
+        support::redact(&String::from_utf8_lossy(&read.get_output().stdout).replace(
+            project.env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]"
+        ))
+    );
+    project
+        .env
+        .instrukt(crew.root())
+        .args(["todo", "work", slug])
+        .assert()
+        .failure();
+    let reviewer = crew.worker(
+        slug,
+        "commit-reviewer",
+        Some("crew/procedure/review-commits"),
+    );
+    crew.write(
+        slug,
+        "preparation-review-findings",
+        "All preparation lanes approve this exact head.",
+    );
+    stamp(
+        reviewer["session"].as_str().unwrap(),
+        &["--verdict", "approve", "--phase", "preparation_head"],
+    )
+    .success();
+    project.env.run(crew.root(), ["tick"]).success();
+    let before = crew.runtime.started_count();
+    assert!(before >= 3);
+    let integration = project.env.path("integration-docs");
+    project.repo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "integration-docs",
+        integration.to_str().unwrap(),
+        "main",
+    ]);
+    project.env.git(
+        &integration,
+        [
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "docs-first/prepare",
+            "-m",
+            "integrate reviewed preparation",
+        ],
+    );
+    project
+        .env
+        .run(&integration, ["docs", "fold", slug])
+        .success();
+    project.env.git(&integration, ["add", "docs"]);
+    project.env.git(
+        &integration,
+        [
+            "commit",
+            "--quiet",
+            "-m",
+            "docs: activate reviewed preparation",
+        ],
+    );
+    project
+        .repo
+        .git(["merge", "--quiet", "--ff-only", "integration-docs"]);
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    project.env.run(crew.root(), ["sync"]).success();
+    project
+        .repo
+        .git(["worktree", "remove", prepare.to_str().unwrap()]);
+    project.repo.git(["branch", "-d", "docs-first/prepare"]);
+    project.repo.git([
+        "push",
+        "--quiet",
+        "origin",
+        "--delete",
+        "docs-first/prepare",
+    ]);
+    let current = project
+        .env
+        .run(
+            crew.root(),
+            ["docs", "get", "project/demo/spec/feature/early-contract"],
+        )
+        .success();
+    insta::assert_snapshot!(
+        "integrated-before-build",
+        support::redact(
+            &String::from_utf8_lossy(&current.get_output().stdout).replace(
+                project.env.path("").to_str().unwrap().trim_end_matches('/'),
+                "[TMP]"
+            )
+        )
+    );
+    project
+        .env
+        .run(
+            crew.root(),
+            [
+                "docs",
+                "get",
+                "project/demo/spec/feature/early-contract",
+                "--target",
+                slug,
+            ],
+        )
+        .success();
+    crew.todo(["update", slug, "--unclaim"]);
+    let placement = project
+        .env
+        .instrukt(crew.root())
+        .args(["todo", "work", slug])
+        .assert()
+        .success();
+    let placement: serde_json::Value =
+        serde_json::from_slice(&placement.get_output().stdout).unwrap();
+    assert_eq!(
+        placement["placement"]["base"].as_str(),
+        Some(project.repo.head().as_str())
+    );
+    assert!(!prepare.exists());
+    assert_eq!(crew.runtime.started_count(), before);
 }

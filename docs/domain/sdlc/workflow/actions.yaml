@@ -20,66 +20,69 @@ roles:
   - prd-reviewer
   - prepare-orchestrator
   - project-analyst
+  - setup
   - task-preparer
   - task-runner
   - third-party-researcher
   - upstream-watcher
   - work-orchestrator
 # Commands are configured obligations, not evaluator side effects.
-# A sessions.run command is used only after record lookup/alive requires a start;
-# Workspace-role reuse first requires an active, unreleased attempt, then an
-# available recorded session. Send follow-ups only within that attempt. After
-# release, start the next attempt at the current todo head, or use the explicit
-# recover-attempt source for a recovery builder. Pending starts and handoffs
-# remain outstanding and block another workspace-role dispatch.
-# Run Git effects in the concerned attempt: setup for build admission, the active
-# dispatched role for workspace work, retained finalizer for readiness. Cleanup
-# enumerates every retained attempt path, then role branch, from the project checkout.
+# A todo attempt command reserves facts and returns the native assignment.
+# Delegate through the runtime instruction rendered by @config; immediately record
+# todo bind with the native child id and workspace/base evidence. No action starts
+# a runtime through instrukt. Native child results wake their parent directly.
+# Work workers use shared isolation in the orchestrator's one todo worktree.
+# Preparation writers/reviewers share their separate <slug>/prepare worktree. Approved docs integrate before work starts.
+# One outstanding workspace-role attempt is the workflow's single admission.
+# Reuse only active attempts; stamps release them atomically at the clean shared head.
+# The orchestrator routes all workspace effects to the admitted child and coordinates only.
+# Cleanup removes the one todo worktree after delivery, preserving thread records.
 # Resolve main to the actual canonical default branch. Stop on failure; re-derive after mutation.
 # Render the brief as UTF-8 stdin for --brief -, never interpolate prose into shell text.
-# For sessions.send, pass the rendered brief as one argument through an argv API
-# or correct shell quoting; never substitute its raw bytes into command text.
+# Supply the rendered assignment to native delegation as structured text.
+# Preserve the recorded shared workspace through @config: runtime.dispatch.
+# Bind the returned native identity and matching workspace/base evidence.
 # Serialize a SHA list as space-separated SHAs in the single --args argument.
 # Placeholders may name facts or configuration paths, resolved as config get does.
-# Cleanup enumerates sessions.bound only after claim.held is confirmed false.
+# Delivered worktree cleanup follows confirmed delivery and claim release.
 draft-prd:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  command: instrukt todo attempt {slug} --role intaker --procedure sdlc/procedure/lifecycle/prepare/intake --args {slug} --brief -
   template: templates/draft-prd.md
 rederive-prd:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  command: instrukt todo attempt {slug} --role intaker --procedure sdlc/procedure/lifecycle/prepare/intake --args {slug} --brief -
   template: templates/rederive-prd.md
 revise-prd:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
+  command: instrukt todo attempt {slug} --role intaker --procedure sdlc/procedure/lifecycle/prepare/intake --args {slug} --brief -
   template: templates/revise-prd.md
 draft-architecture:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/architecture --closure
+  command: instrukt todo attempt {slug} --role architect --procedure sdlc/procedure/lifecycle/prepare/architecture --args {slug} --brief -
   template: templates/draft-architecture.md
 rederive-architecture:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/architecture --closure
+  command: instrukt todo attempt {slug} --role architect --procedure sdlc/procedure/lifecycle/prepare/architecture --args {slug} --brief -
   template: templates/rederive-architecture.md
 revise-architecture:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/architecture --closure
+  command: instrukt todo attempt {slug} --role architect --procedure sdlc/procedure/lifecycle/prepare/architecture --args {slug} --brief -
   template: templates/revise-architecture.md
 draft-plan:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  command: instrukt todo attempt {slug} --role planner --procedure sdlc/procedure/lifecycle/prepare/plan-draft --args {slug} --brief -
   template: templates/draft-plan.md
 rederive-plan:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  command: instrukt todo attempt {slug} --role planner --procedure sdlc/procedure/lifecycle/prepare/plan-draft --args {slug} --brief -
   template: templates/rederive-plan.md
 revise-plan:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  command: instrukt todo attempt {slug} --role planner --procedure sdlc/procedure/lifecycle/prepare/plan-draft --args {slug} --brief -
   template: templates/revise-plan.md
 redraft-plan-seeded:
-  command: instrukt docs get sdlc/procedure/lifecycle/prepare/plan-draft --closure
+  command: instrukt todo attempt {slug} --role planner --procedure sdlc/procedure/lifecycle/prepare/plan-draft --args {slug} --brief -
   template: templates/redraft-plan-seeded.md
 review-prd:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-prd --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role prd-reviewer --procedure sdlc/procedure/lifecycle/prepare/review-prd --args {slug} --brief -
   template: templates/review-prd.md
 review-architecture:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-architecture --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role architecture-reviewer --procedure sdlc/procedure/lifecycle/prepare/review-architecture --args {slug} --brief -
   template: templates/review-architecture.md
 review-plan:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/review-plan --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role plan-reviewer --procedure sdlc/procedure/lifecycle/prepare/review-plan --args {slug} --brief -
   template: templates/review-plan.md
 await-prd-approval:
   command: instrukt docs get sdlc/procedure/lifecycle/prepare/overview --closure
@@ -91,11 +94,8 @@ examine-diagnosis:
   command: instrukt docs get sdlc/procedure/lifecycle/prepare/diagnose --closure
   template: templates/examine-diagnosis.md
 analyze-drift:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/prepare/drift-analyze --args {slug} --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role drift-analyzer --procedure sdlc/procedure/lifecycle/prepare/drift-analyze --args {slug} --brief -
   template: templates/analyze-drift.md
-review-claim-commits:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-commits --args '{claim_commits.unreviewed}' --todo {slug} --brief -
-  template: templates/review-claim-commits.md
 release-prepared:
   command: instrukt todo update {slug} --unclaim
   template: templates/release-prepared.md
@@ -121,11 +121,8 @@ await-build-start:
   command: instrukt todo show {slug}
   template: templates/await-build-start.md
 setup-workspace:
-  command: instrukt sessions run --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role setup --brief -
   template: templates/setup-workspace.md
-handoff-role:
-  command: instrukt todo handoff {slug}
-  template: templates/handoff-role.md
 record-finalize-readiness:
   command: instrukt todo show {slug}
   template: templates/record-finalize-readiness.md
@@ -133,31 +130,28 @@ cleanup-delivered:
   command: instrukt todo show {slug}
   template: templates/cleanup-delivered.md
 dispatch-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role builder --procedure sdlc/procedure/lifecycle/work/build --args {slug} --brief -
   template: templates/dispatch-build.md
-recover-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --recover-attempt {recovery.attempt} --brief -
-  template: templates/recover-build.md
 reconcile-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role builder --procedure sdlc/procedure/lifecycle/work/build --args {slug} --brief -
   template: templates/reconcile-build.md
 review-build:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/review-build --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role build-reviewer --procedure sdlc/procedure/lifecycle/work/review-build --args {slug} --brief -
   template: templates/review-build.md
 review-evidence-undetermined:
   command: instrukt todo show {slug}
   template: templates/review-evidence-undetermined.md
 relay-findings:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role builder --procedure sdlc/procedure/lifecycle/work/build --args {slug} --brief -
   template: templates/relay-findings.md
 process-deferrals:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/deferrals --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role deferrer --procedure sdlc/procedure/lifecycle/work/deferrals --args {slug} --brief -
   template: templates/process-deferrals.md
 dispatch-finalize:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role finalizer --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --brief -
   template: templates/dispatch-finalize.md
 restamp-finalize:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --worktree {slug}/work --todo {slug} --brief -
+  command: instrukt todo attempt {slug} --role finalizer --procedure sdlc/procedure/lifecycle/work/finalize --args {slug} --brief -
   template: templates/restamp-finalize.md
 hand-off-integration:
   command: instrukt todo show {slug}
@@ -165,35 +159,29 @@ hand-off-integration:
 effects:
   record.refresh:
     command: instrukt todo show {slug}
-  git.fetch-main:
-    command: git fetch origin main
-    done_when:
-      any:
-      - exists: build.start_base_sha
-      - equals:
-        - setup.handoff_confirmed
-        - true
-  git.merge-main:
-    command: git merge origin/main --no-edit --no-overwrite-ignore
-    done_when:
-      any:
-      - exists: build.start_base_sha
-      - equals:
-        - setup.handoff_confirmed
-        - true
   branch.publish:
-    command: git push --force-with-lease origin HEAD:{slug}
+    command: git push --force-with-lease origin HEAD
     done_when:
       same:
       - worktree.head
       - remote.head
+  branch.remove:
+    command: git branch -d {branch.name}
+    done_when:
+      not: {exists: branch.head}
+  remote_branch.remove:
+    command: git push origin --delete {branch.name}
+    done_when:
+      not: {exists: remote.head}
   worktree.remove:
     command: git worktree remove {worktree.path}
     done_when:
       not:
         exists: worktree.exists
-  role-branch.remove:
-    command: git branch -d {role_branch.name}
-    done_when:
-      not:
-        exists: role_branch.exists
+
+review-preparation-head:
+  command: instrukt todo attempt {slug} --role commit-reviewer --procedure sdlc/procedure/lifecycle/work/review-commits --args {slug} --brief -
+  template: templates/review-preparation-head.md
+await-preparation-integration:
+  command: instrukt todo show {slug}
+  template: templates/await-preparation-integration.md

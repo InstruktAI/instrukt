@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/approvals.rs
+assertion_line: 203
 expression: "redact(&format!(\"{}---\\n{}---\\n{approved}---\\npeer allowed:\\n{allowed}---\\nhuman required:\\n{reserved}---\\n{shown}\",\nString::from_utf8_lossy(&unreasoned.get_output().stderr),\nString::from_utf8_lossy(&sessionless.get_output().stderr),))"
 ---
 instrukt: a peer approval states the peer's reason with `--reason <text>`
@@ -38,21 +39,26 @@ Ask the developer to approve PRD <digest 1> of nested-lists.
 nested-lists · feature · active
 identity: <id 1>
 record status: active
-created: <time> by session agent:lead-1
-revision: 6
+created: <time> by session t3:lead-1
+revision: 7
 intent:
   Keep the depth of nested lists when parsing Markdown.
 reflection: reflected to GitHub
 issue: #1
-claim: held since <time> by session agent:lead-1
+claim: held since <time> by session t3:lead-1
 hold: none
+sessions:
+  prepare-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:prepare-lead:1
+    branch: nested-lists/prepare; base: <commit 1>
+    worktree: [TMP]/team-nested-lists-prepare
 artifacts:
   input (1 version)
-    <digest 2> by session agent:lead-1 at <time>
+    <digest 2> by session t3:lead-1 at <time>
   prd (1 version)
-    <digest 1> by session agent:lead-1 at <time>
+    <digest 1> by session t3:lead-1 at <time>
   prd-review-findings (1 version)
-    <digest 3> by session agent:lead-1 at <time>
+    <digest 3> by session t3:lead-1 at <time>
 stamps:
-  #4 <time> prd_review verdict approve — target <digest 1>, report <digest 3> — by session agent:lead-1, model unknown, eval <digest 4>
-  #5 <time> prd approved by a peer — <digest 1> — reason: it follows the input — by session agent:peer-2, model unknown, eval <digest 4>
+  #4 <time> prd_review verdict approve — target <digest 1>, report <digest 3> — by session t3:lead-1 as prepare-lead, model unknown, eval <digest 4>
+  #5 <time> prd approved by a peer — <digest 1> — reason: it follows the input — by session t3:peer-2, model unknown, eval <digest 4>

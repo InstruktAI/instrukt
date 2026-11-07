@@ -244,14 +244,51 @@ pub trait Claims: Send + Sync {
 /// `session-continuity`, "Runtime worktree binding").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionBinding {
+    pub key: String,
     pub session: SessionRef,
     pub worktree: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssignmentKind {
+    #[default]
+    Unspecified,
+    Driver,
+    Task,
+    Workspace,
+    Child,
+}
+
+pub enum DispatchReservation {
+    Existing(SessionBinding),
+    Start {
+        key: String,
+        creation: crate::runtime::CreationPermit,
+        worktree: Option<crate::runtime::WorktreeRequest>,
+    },
+}
+
+pub struct AcceptedDispatch {
+    pub role: RoleName,
+    pub key: String,
+    pub binding: SessionBinding,
+    pub occurrence: Option<Timestamp>,
 }
 
 /// Reading and writing per-todo, per-role session bindings
 /// (`session-continuity`, "Identity and reuse"). Reuse is a lookup of the
 /// binding followed by `alive`; brief similarity is not identity.
 pub trait SessionBindings: Send + Sync {
+    /// Allocate and retain the assignment before any runtime command.
+    fn reserve_dispatch(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoSlug,
+        role: &RoleName,
+        occurrence: Option<Timestamp>,
+        lane: &Lane,
+    ) -> Result<DispatchReservation, WorkInterfaceError>;
     /// The binding recorded for `todo` and `role`, if any.
     fn session_binding(
         &self,
@@ -260,14 +297,12 @@ pub trait SessionBindings: Send + Sync {
         role: &RoleName,
     ) -> Result<Option<SessionBinding>, WorkInterfaceError>;
 
-    /// Records (or replaces) the binding for `todo` and `role` after a
-    /// session starts, or when the runtime returns its worktree path.
-    fn bind_session(
+    /// Commit the accepted assignment and optional occurrence stamp together.
+    fn record_dispatch(
         &self,
         project: &ProjectRef,
         todo: &TodoSlug,
-        role: &RoleName,
-        binding: &SessionBinding,
+        dispatch: &AcceptedDispatch,
     ) -> Result<(), WorkInterfaceError>;
 }
 
@@ -529,7 +564,8 @@ pub enum WorkflowInterfaceError {
 
 /// The lane workflow derives for a todo (`work-dispatch`, "Todo pickup";
 /// `preparation`, "Kind routing").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Lane {
     /// The `prepare` flow is owed; dispatch its orchestrator.
     Prepare,
@@ -545,6 +581,7 @@ pub enum Lane {
 /// procedure's role from the docs index (`instrukt_core::index`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Responsibility {
+    Role(RoleName),
     /// The action's command names this procedure; the action belongs to
     /// that procedure's `role`.
     Procedure(SnippetId),
@@ -563,6 +600,7 @@ pub struct AssignedEffect {
 /// The obligation at the derived state: the selected action, rendered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssignedObligation {
+    pub dispatch_instruction: Option<String>,
     pub action: String,
     pub responsible: Responsibility,
     /// The action's command with placeholders filled.

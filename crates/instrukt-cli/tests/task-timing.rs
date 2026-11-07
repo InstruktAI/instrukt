@@ -180,7 +180,7 @@ fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
     run_registered(&registered, project.env.home(), "2030-01-06T09:05:00Z");
     assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
     run_registered(&registered, project.env.home(), "2030-01-06T11:05:00Z");
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!("installed-catch-up", project.rt.opening("s1"));
 }
 
@@ -200,7 +200,7 @@ fn an_authorized_task_is_dispatched_when_a_wake_up_arrives_at_its_time() {
 
     // The wake-up at its time dispatches it into the task runner.
     project.tick_at("2030-01-06T09:00:20Z");
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!("task-dispatched", project.rt.opening("s1"));
 }
 
@@ -218,7 +218,7 @@ fn missed_occurrences(policy: &str) -> usize {
     project.tick_at("2030-01-06T09:05:00Z");
     assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
     project.tick_at("2030-01-06T11:05:00Z");
-    project.rt.calls().len()
+    project.rt.started_count()
 }
 
 // spec: project/instrukt/spec/feature/runner/task-timing UC-TT2
@@ -240,7 +240,7 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     project.authorized_task("quarter-hourly-sync", "cron:*/15 * * * *", &[]);
 
     project.tick_at("2030-01-06T09:00:20Z");
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     project.todo_in_session(
         "s1",
         ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
@@ -248,7 +248,7 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
 
     // Success: the next occurrence runs when its time arrives.
     project.tick_at("2030-01-06T09:15:20Z");
-    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 2, "{:?}", project.rt.calls());
     insta::assert_snapshot!("next-occurrence", project.rt.opening("s2"));
 
     // An error needing the developer's judgment: held and notified.
@@ -265,7 +265,7 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     );
     project.rt.set_status("s2", "ended failed");
     project.tick_at("2030-01-06T09:16:20Z");
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"rt:s2");
+    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s2");
     insta::assert_snapshot!(
         "held-after-error",
         work::redact(&project.todo(["show", "quarter-hourly-sync"]))
@@ -274,7 +274,7 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     // No further occurrence runs until the developer resolves it.
     project.tick_at("2030-01-06T09:30:20Z");
     project.tick_at("2030-01-06T09:45:20Z");
-    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 2, "{:?}", project.rt.calls());
     assert_eq!(project.rt.notifications().len(), 1);
 }
 
@@ -316,9 +316,9 @@ fn a_task_failure_committed_before_interrupted_reflection_is_notified_on_the_nex
     assert!(reached, "the runner never reached hold reflection");
 
     project.tick_at("2030-01-06T09:15:20Z");
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"rt:s1");
+    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s1");
     project.tick_at("2030-01-06T09:30:20Z");
-    assert_eq!(project.rt.calls().len(), 1);
+    assert_eq!(project.rt.started_count(), 1);
     assert_eq!(project.rt.notifications().len(), 1);
 }
 
@@ -340,9 +340,9 @@ fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_clai
         ],
     );
     project.tick_at("2030-01-06T09:15:20Z");
-    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 2, "{:?}", project.rt.calls());
 
-    project.env.set_env("RT_SESSION", "s1");
+    project.env.set_env("T3CODE_THREAD_ID", "s1");
     let repeated = project
         .env
         .instrukt(project.repo.path())
@@ -357,7 +357,7 @@ fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_clai
         ])
         .assert()
         .failure();
-    project.env.remove_env("RT_SESSION");
+    project.env.remove_env("T3CODE_THREAD_ID");
 
     insta::assert_snapshot!(
         "stale-outcome",
@@ -365,7 +365,7 @@ fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_clai
     );
     // The second run still holds its claim: the next occurrence waits.
     project.tick_at("2030-01-06T09:30:20Z");
-    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 2, "{:?}", project.rt.calls());
 }
 
 // spec: project/instrukt/spec/feature/runner/task-timing UC-TT4
@@ -379,11 +379,11 @@ fn a_replayed_start_of_a_finished_run_is_refused_and_leaves_the_current_run() {
         ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
     );
     project.tick_at("2030-01-06T09:15:20Z");
-    assert_eq!(project.rt.calls().len(), 2, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 2, "{:?}", project.rt.calls());
     let before = project.todo(["show", "quarter-hourly-sync"]);
 
     // The finished run replays its start of the occurrence it completed.
-    project.env.set_env("RT_SESSION", "s1");
+    project.env.set_env("T3CODE_THREAD_ID", "s1");
     let replayed = project
         .env
         .instrukt(project.repo.path())
@@ -397,7 +397,7 @@ fn a_replayed_start_of_a_finished_run_is_refused_and_leaves_the_current_run() {
         ])
         .assert()
         .failure();
-    project.env.remove_env("RT_SESSION");
+    project.env.remove_env("T3CODE_THREAD_ID");
 
     insta::assert_snapshot!(
         "stale-start",
@@ -413,4 +413,19 @@ fn a_replayed_start_of_a_finished_run_is_refused_and_leaves_the_current_run() {
         "s2",
         ["stamp", "quarter-hourly-sync", "--task-outcome", "success"],
     );
+}
+
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT5
+#[test]
+fn a_lost_task_start_reply_recovers_its_original_occurrence_before_later_firings() {
+    let mut project = Tracked::new(true);
+    project.authorized_task("recover-task", "cron:*/15 * * * *", &[]);
+    project.rt.start_without_printing_ids();
+    project.tick_at("2030-01-06T09:00:20Z");
+    assert_eq!(project.rt.started_count(), 1);
+    project.tick_at("2030-01-06T09:15:20Z");
+    assert_eq!(project.rt.started_count(), 1);
+    project.todo_in_session("s1", ["stamp", "recover-task", "--task-outcome", "success"]);
+    project.tick_at("2030-01-06T09:30:20Z");
+    assert_eq!(project.rt.started_count(), 2);
 }

@@ -6,9 +6,8 @@
 # prd_approval.digest is eligible only for the configured approvals.prd approver;
 # a peer stamp cannot satisfy a human-required gate. Task authorization follows
 # approvals.task identically. Configuration placeholders resolve by config get path.
-# claim_commits.unreviewed includes missing and needs_work verdicts; only approve
-# or exempt settles a commit. Release checks these preconditions again.
 flow: prepare
+requires: [worktree_create, shared_delegation]
 orchestrator: prepare-orchestrator
 initial: start
 states:
@@ -31,8 +30,9 @@ states:
 - plan_review
 - plan_revision
 - drift_analysis
-- commit_review_owed
 - prepared_release_pending
+- preparation_head_review
+- preparation_integration
 transitions:
 - from: start
   to: task_preparation
@@ -255,28 +255,7 @@ transitions:
         - pending
   action: analyze-drift
 - from: plan_review
-  to: commit_review_owed
-  when:
-    all:
-    - all:
-      - all:
-        - equals:
-          - plan_review.verdict
-          - approve
-        - same:
-          - plan_review.target_digest
-          - implementation_plan.digest
-        - same:
-          - plan_review.report_digest
-          - plan_review_findings.digest
-      - not:
-          equals:
-          - implementation_plan.seeded
-          - true
-    - exists: claim_commits.unreviewed
-  action: review-claim-commits
-- from: plan_review
-  to: prepared_release_pending
+  to: preparation_head_review
   when:
     all:
     - all:
@@ -293,4 +272,16 @@ transitions:
         equals:
         - implementation_plan.seeded
         - true
+  action: review-preparation-head
+- from: preparation_head_review
+  to: preparation_integration
+  when: {equals: [preparation.review_current, true]}
+  action: await-preparation-integration
+- from: preparation_head_review
+  to: prepared_release_pending
+  when: {equals: [preparation.integrated, true]}
+  action: release-prepared
+- from: preparation_integration
+  to: prepared_release_pending
+  when: {equals: [preparation.integrated, true]}
   action: release-prepared

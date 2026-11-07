@@ -1,5 +1,5 @@
 ---
-description: Incorporate activation events interjected during a running procedure
+description: Incorporate activation events delivered as soon as the runtime permits
   by rechecking affected assumptions and accounting for the current and newly supplied
   work.
 ---
@@ -13,23 +13,22 @@ description: Incorporate activation events interjected during a running procedur
 
 ## Goal
 
-Keep a running procedure aligned with current evidence when another activation
-arrives during its execution, applying `general/principle/grounding` and
+Keep a procedure aligned with current evidence when another activation arrives
+at its next supported safe point, applying `general/principle/grounding` and
 `general/principle/attunement` to the work already underway.
 
 ## Preconditions
 
-- The session's fixed delivery settings, stated in its assignment or in the
-  hook context that carries its activation, accept activation events during a
-  run. A session whose settings do not accept them, or one that reads this
-  procedure without being activated for its governing procedure, takes no
-  instruction from it: delivery settings stay fixed for a session
-  (`general/spec/snippet-authoring-schema`).
+- The session's assignment or delivery metadata states the fixed
+  as-soon-as-possible intent. On a queue-only runtime, further input arrives at
+  the next turn; an entry-only runtime supplies it when idle. Apply these steps
+  when that input arrives. A session reading this procedure inline retains its
+  own assignment (`general/spec/snippet-authoring-schema`).
 - The governing procedure and the common event-handling procedure are loaded.
 
 ## Steps
 
-1. When hook context supplies further events, retain the current event's
+1. When further activation data arrives, retain the current event's
    progress and unfinished obligations before assessing the new facts.
 2. Check which assumptions, state, or intended effects the new events affect.
    Return to the relevant authoritative state and determine how the governing

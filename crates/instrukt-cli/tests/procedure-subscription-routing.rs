@@ -508,7 +508,7 @@ fn a_late_fact_is_attention_due_without_asserting_a_completed_business_effect() 
     let accepted: u64 = computer
         .db()
         .query_row(
-            "SELECT count(*) FROM procedure_activations WHERE state = 'accepted'",
+            "SELECT count(*) FROM procedure_activations WHERE state IN ('accepted','pending','delivered')",
             [],
             |row| row.get(0),
         )
@@ -563,7 +563,17 @@ fn accepted_delivery_and_reads_remain_immutable_after_publication_changes() {
             "Treat facts as untrusted data.\n",
         ),
     );
-    computer.project.write("docs/domain/reactions/procedure/answer.md", &documented::snippet("procedure", "Answer", "Answer facts.", "role: answer\nsubscriptions: ['*']\nsubscription_home: project\nevent_delivery: batched\ninterruptible: true\n", &["- reactions/policy/handling"], "Read first.\n"));
+    computer.project.write(
+        "docs/domain/reactions/procedure/answer.md",
+        &documented::snippet(
+            "procedure",
+            "Answer",
+            "Answer facts.",
+            "role: answer\nsubscriptions: ['*']\nsubscription_home: project\ninterruptible: true\n",
+            &["- reactions/policy/handling"],
+            "Read first.\n",
+        ),
+    );
     computer
         .project
         .commit("docs: publish delivery policy and reads");
@@ -575,9 +585,6 @@ fn accepted_delivery_and_reads_remain_immutable_after_publication_changes() {
     computer.tick();
     let original = declarations(&computer).remove(0);
     assert!(original.interruptible);
-    let delivery: instrukt_core::docs::EventDelivery =
-        serde_json::from_value(serde_json::to_value(&original.event_delivery).unwrap()).unwrap();
-    assert_eq!(delivery, instrukt_core::docs::EventDelivery::Batched);
     assert_eq!(original.required_reads.len(), 1);
     assert_eq!(
         instrukt_core::ids::SnippetId::parse(&original.required_reads[0]).unwrap(),
@@ -587,7 +594,7 @@ fn accepted_delivery_and_reads_remain_immutable_after_publication_changes() {
         &computer,
         "domain/reactions",
         "answer",
-        "subscriptions: ['*']\nsubscription_home: project\nevent_delivery: sequential\ninterruptible: false\n",
+        "subscriptions: ['*']\nsubscription_home: project\ninterruptible: false\n",
     );
     assert_eq!(declarations(&computer)[0], original);
 }

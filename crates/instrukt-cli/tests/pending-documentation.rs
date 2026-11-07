@@ -9,6 +9,8 @@
 mod common;
 #[path = "support/documented.rs"]
 mod documented;
+#[path = "support/t3.rs"]
+mod t3;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -136,6 +138,38 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
     let env = TestEnv::new();
     let demo = published_demo(&env);
 
+    let runtime = t3::FakeT3::create(&env);
+    let github = common::github::FakeGitHub::start();
+    github.add_repo("acme/demo");
+    github.configure(&env);
+    let file = env.instrukt_home().join("instrukt.yaml");
+    let mut global = std::fs::read_to_string(&file).unwrap();
+    global.push_str("runner: {runtime: t3}\n");
+    std::fs::write(file, global).unwrap();
+    demo.write("instrukt.yaml","schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo}\nworkflow: {domain: acme}\n");
+    env.instrukt(demo.path())
+        .env("GITHUB_TOKEN", "test-token")
+        .args([
+            "todo",
+            "create",
+            "build-it",
+            "Prepare the new contract.",
+            "--kind",
+            "change",
+            "--approved",
+        ])
+        .assert()
+        .success();
+    let worktree = env.path("build-it-prepare");
+    demo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "build-it/prepare",
+        worktree.to_str().unwrap(),
+        "main",
+    ]);
     let listed = env
         .run(demo.path(), ["docs", "index", "--target", "build-it"])
         .success();
@@ -156,7 +190,10 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
             ],
         )
         .success();
-    insta::assert_snapshot!("todo-lens", stdout(&env, &lens));
+    insta::assert_snapshot!(
+        "todo-lens",
+        stdout(&env, &lens).replace(&github.url(), "[GITHUB_API]")
+    );
     // The lens's own material is read and its value resolved; another
     // todo's is never resolved, so the read succeeds without its refusal.
 
@@ -167,4 +204,5 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
         )
         .success();
     insta::assert_snapshot!("other-todos-snippet-withheld", stdout(&env, &not_mine));
+    assert!(runtime.calls().is_empty());
 }

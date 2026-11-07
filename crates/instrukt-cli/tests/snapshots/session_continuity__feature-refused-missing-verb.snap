@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/session-continuity.rs
-expression: "stderr(&env, &run)"
----
-instrukt: refused; nothing was written:
-[TMP]/home/.instrukt/instrukt.yaml: modules.todos: todo dispatch and recurring tasks need `send`, which runtime `rt` leaves empty

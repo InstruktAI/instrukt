@@ -96,9 +96,7 @@ pub struct IndexEntry {
     pub parameters: Vec<IndexParameter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch: Option<IndexDispatch>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_delivery: Option<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default = "default_interruptible")]
     pub interruptible: bool,
 }
 
@@ -153,4 +151,8 @@ impl GlobalIndex {
                 source,
             })
     }
+}
+
+fn default_interruptible() -> bool {
+    true
 }

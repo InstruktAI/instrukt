@@ -12,9 +12,8 @@ use super::_interpolate::{Interpolator, Mode};
 use super::_layer::{Layer, read_usable};
 use super::_merge::overlay;
 use super::_module::Module;
-use super::_runtime::{self, Env, RuntimeEntry};
+use super::_runtime::{Env, Runtime};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
-use super::_shipped;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 
@@ -66,7 +65,6 @@ pub enum Notify {
 #[derive(Debug, Clone)]
 pub struct Configuration {
     value: Value,
-    runtimes: Vec<RuntimeEntry>,
     project_root: Option<PathBuf>,
 }
 
@@ -82,7 +80,7 @@ impl Configuration {
         };
         let project_root = project.as_ref().and(repo_root).map(Path::to_path_buf);
         Ok(Self::from_value(
-            effective_value(global.as_ref(), project.as_ref()),
+            effective_value(global.as_ref(), project.as_ref())?,
             project_root,
         ))
     }
@@ -100,10 +98,8 @@ impl Configuration {
     }
 
     fn from_value(value: Value, project_root: Option<PathBuf>) -> Self {
-        let runtimes = _runtime::entries(value.get("runtimes"));
         Self {
             value,
-            runtimes,
             project_root,
         }
     }
@@ -115,13 +111,12 @@ impl Configuration {
 
     /// The value at dotted `path` (the whole configuration when `None`),
     /// interpolated in `env`. Transport credentials are masked before expansion;
-    /// transport resolves them through its typed accessor. `runtime.*` addresses
-    /// the active runtime.
+    /// typed accessors resolve them for I/O. `runtime.session_id` uses the selected adapter.
     pub fn get(&self, path: Option<&str>, env: &Env) -> Result<Value, ConfigError> {
         let mut value = self.value.clone();
         super::_redis::redact(&mut value, "");
         super::_webhooks::redact(&mut value);
-        Interpolator::new(&value, &self.runtimes, Mode::Expand(env)).get(path)
+        Interpolator::new(&value, Mode::Expand(env)).get(path)
     }
 
     /// Read machine-owned Redis settings, resolving credential references for I/O.
@@ -155,44 +150,34 @@ impl Configuration {
     }
 
     /// Expands the references of a template read from this configuration
-    /// (a runtime entry's command, an action) in `env`.
+    /// (an action or a notification command) in `env`.
     pub fn expand(&self, template: &str, env: &Env) -> Result<String, ConfigError> {
-        Interpolator::new(&self.value, &self.runtimes, Mode::Expand(env))
-            .expand_text(template, None)
+        Interpolator::new(&self.value, Mode::Expand(env)).expand_text(template, None)
     }
 
-    /// The runtime mapping, in order; templates unexpanded.
-    pub fn runtimes(&self) -> &[RuntimeEntry] {
-        &self.runtimes
+    /// The selected compiled runtime. Installed tools and caller context never select one.
+    pub fn runner_runtime(&self) -> Result<Option<Runtime>, ConfigError> {
+        self.str_at(&["runner", "runtime"])?
+            .map(|name| {
+                Runtime::named(name)
+                    .ok_or_else(|| invalid("runner.runtime", "unknown compiled runtime adapter"))
+            })
+            .transpose()
     }
 
-    /// The active runtime: the first entry whose `session_id_env` is set in
-    /// `env`. Refused when none is; no runtime is guessed.
-    pub fn active_runtime(&self, env: &Env) -> Result<&RuntimeEntry, ConfigError> {
-        _runtime::active(&self.runtimes, env).ok_or(ConfigError::NoActiveRuntime)
+    pub fn caller(&self, env: &Env) -> Result<Option<crate::ids::SessionRef>, ConfigError> {
+        Ok(self
+            .runner_runtime()?
+            .and_then(|runtime| runtime.caller(env)))
     }
 
-    /// The active agent: the first agent-CLI entry whose `session_id_env` is
-    /// set in `env` — the active-runtime rule applied to agent CLIs.
-    pub fn active_agent(&self, env: &Env) -> Option<&RuntimeEntry> {
-        _runtime::active_agent(&self.runtimes, env)
-    }
-
-    /// The runtime the developer chose, which an OS-started runner uses:
-    /// `runner.runtime` (a declared or shipped entry), defaulting to the
-    /// first declared entry; `None` with neither. Nothing is detected.
-    pub fn runner_runtime(&self) -> Result<Option<&RuntimeEntry>, ConfigError> {
-        match self.str_at(&["runner", "runtime"])? {
-            Some(name) => self
-                .runtimes
-                .iter()
-                .find(|entry| entry.name == name)
-                .map(Some)
-                .ok_or_else(|| {
-                    invalid("runner.runtime", "names no runtime of the runtime mapping")
-                }),
-            None => Ok(self.runtimes.first()),
-        }
+    pub fn caller_identity(
+        &self,
+        env: &Env,
+    ) -> Result<Option<crate::interfaces::CallerIdentity>, ConfigError> {
+        Ok(self
+            .runner_runtime()?
+            .and_then(|runtime| env.caller_identity(runtime.name())))
     }
 
     /// Whether `features` are available on the chosen runtime; `None` when
@@ -447,8 +432,19 @@ fn invalid(key: &str, message: &str) -> ConfigError {
 
 /// Defaults, then the global layer, then the project layer — each layer
 /// contributing only the keys it may hold.
-pub(crate) fn effective_value(global: Option<&Value>, project: Option<&Value>) -> Value {
+pub(crate) fn effective_value(
+    global: Option<&Value>,
+    project: Option<&Value>,
+) -> Result<Value, ConfigError> {
     let mut value = _schema::defaults(LayerKind::Global);
+    let shipped: Value =
+        serde_yaml_ng::from_str(include_str!("shipped/t3.yaml")).map_err(|source| {
+            ConfigError::Parse {
+                path: "shipped/t3.yaml".into(),
+                source,
+            }
+        })?;
+    overlay(&mut value, &shipped);
     if let Some(global) = global {
         overlay(&mut value, &_schema::permitted(global, LayerKind::Global));
     }
@@ -456,8 +452,7 @@ pub(crate) fn effective_value(global: Option<&Value>, project: Option<&Value>) -
         overlay(&mut value, &_schema::defaults(LayerKind::Project));
         overlay(&mut value, &_schema::permitted(project, LayerKind::Project));
     }
-    _shipped::join_chosen(&mut value);
-    value
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -470,11 +465,14 @@ mod tests {
 
     fn config(global: &str, project: Option<&str>) -> Configuration {
         let project = project.map(yaml);
-        Configuration::from_value(effective_value(Some(&yaml(global)), project.as_ref()), None)
+        Configuration::from_value(
+            effective_value(Some(&yaml(global)), project.as_ref()).unwrap(),
+            None,
+        )
     }
 
     const GLOBAL: &str = "schema_version: 1\nmodules: {todos: true, blueprint: true}\n\
-        runner: {autostart: true, runtime: b, notify: 'notify-me'}\n\
+        runner: {autostart: true, runtime: t3, notify: 'notify-me'}\n\
         github: {api_url: 'http://github.local'}\n\
         runtimes: [{name: a, session_id_env: A}, {name: b, session_id_env: B, agent: claude}]\n\
         agents: {order: [claude], thinking_mode: slow, claude: {git_author: 'C <c@x>'}}\n";
@@ -489,11 +487,6 @@ mod tests {
         assert!(cfg.module_enabled(Module::Blueprint).unwrap());
         assert!(cfg.runner_autostart("build").unwrap());
         assert!(!cfg.runner_autostart("bug").unwrap());
-        assert_eq!(
-            cfg.runtimes().len(),
-            2,
-            "a project never supplies the runtime mapping"
-        );
         let global = config(GLOBAL, None);
         assert_eq!(
             cfg.runner_runtime().unwrap(),
@@ -505,11 +498,6 @@ mod tests {
         );
         assert_eq!(cfg.agents_order().unwrap(), global.agents_order().unwrap());
         assert_eq!(cfg.approver(ApprovalGate::Task).unwrap(), Approver::Peer);
-        assert_eq!(
-            cfg.active_agent(&Env::from_pairs([("B", "1")]))
-                .map(|e| e.index),
-            Some(1)
-        );
     }
 
     #[test]

@@ -44,6 +44,7 @@ fn list(findings: &[Finding]) -> String {
 pub(crate) struct Action {
     pub command: String,
     pub procedure: Option<SnippetId>,
+    pub role: Option<RoleName>,
     pub template: String,
 }
 
@@ -85,6 +86,7 @@ pub(crate) struct Definition {
     /// The role of the flow's orchestrator: it owns every action whose
     /// command names no procedure.
     pub orchestrator: RoleName,
+    pub requires: Vec<instrukt_core::config::WorkflowCapability>,
     pub initial: StateName,
     pub transitions: Vec<Transition>,
 }
@@ -294,6 +296,18 @@ fn parse_actions(dir: &Path, doc: &Value, findings: &mut Vec<Finding>) -> Option
     if !saw_roles {
         report.push("", Problem::MissingKey("roles"));
     }
+    for (id, action) in &catalog.actions {
+        if let Some(role) = action.as_ref().and_then(|action| action.role.as_ref())
+            && !catalog.roles.contains(role)
+        {
+            report.push(
+                &format!("{id}.command"),
+                Problem::InvalidRole(format!(
+                    "assignment role `{role}` is not declared under roles"
+                )),
+            );
+        }
+    }
     Some(catalog)
 }
 
@@ -380,6 +394,21 @@ fn parse_action(dir: &Path, id: &str, value: &Value, report: &mut Report<'_>) ->
                     None
                 }
             });
+    let role = command
+        .and_then(|command| {
+            let words = command.split_whitespace().collect::<Vec<_>>();
+            words
+                .windows(2)
+                .find(|pair| pair[0] == "--role")
+                .map(|pair| pair[1])
+        })
+        .and_then(|name| match RoleName::parse(name) {
+            Ok(role) => Some(role),
+            Err(_) => {
+                report.push(&format!("{id}.command"), Problem::InvalidRole(name.into()));
+                None
+            }
+        });
     let template = template_path.and_then(|path| read_template(dir, path, id, report));
     if report.count() > before {
         return None;
@@ -387,6 +416,7 @@ fn parse_action(dir: &Path, id: &str, value: &Value, report: &mut Report<'_>) ->
     Some(Action {
         command: command?.to_owned(),
         procedure,
+        role,
         template: template?,
     })
 }
@@ -445,7 +475,14 @@ fn parse_definition(
     let fields = fields(
         doc,
         "",
-        &["flow", "orchestrator", "initial", "states", "transitions"],
+        &[
+            "flow",
+            "orchestrator",
+            "requires",
+            "initial",
+            "states",
+            "transitions",
+        ],
         report,
     )?;
     let before = report.count();
@@ -478,6 +515,22 @@ fn parse_definition(
             }
         }
     });
+    let requires = match fields.get("requires") {
+        None => {
+            report.push("requires", Problem::MissingKey("requires"));
+            Vec::new()
+        }
+        Some(value) => match serde_yaml_ng::from_value::<
+            Vec<instrukt_core::config::WorkflowCapability>,
+        >(value.clone())
+        {
+            Ok(requires) => requires,
+            Err(_) => {
+                report.push("requires", Problem::Shape("a list of runtime capabilities: worktree_create, worktree_attach, link, notify, agent_selection"));
+                Vec::new()
+            }
+        },
+    };
     let states = parse_states(fields.get("states"), report);
     let initial = required_string(fields, "initial", "", report);
     if let Some(initial) = initial
@@ -507,6 +560,7 @@ fn parse_definition(
     }
     Some(Definition {
         orchestrator: orchestrator?,
+        requires,
         initial: StateName::new(initial?),
         transitions,
     })
@@ -679,6 +733,7 @@ effects:
     const FLOW: &str = "\
 flow: work
 orchestrator: builder
+requires: []
 initial: start
 states: [start, building]
 transitions:
@@ -864,7 +919,7 @@ other:
         let actions = "\
 roles: [builder]
 run:
-  command: instrukt sessions run --procedure sdlc/procedure/lifecycle/work/build --args {slug}
+  command: instrukt todo attempt {slug} --role builder --procedure sdlc/procedure/lifecycle/work/build --args {slug}
   template: templates/build.md
 read:
   command: instrukt docs get sdlc/procedure/lifecycle/prepare/intake --closure
@@ -899,7 +954,7 @@ show:
         let actions = "\
 roles: [builder]
 build:
-  command: instrukt sessions run --procedure not/a-taxonomy/x --brief -
+  command: instrukt todo attempt {slug} --role builder --procedure not/a-taxonomy/x --brief -
   template: templates/build.md
 ";
         let got = findings(&[("actions.yaml", actions), TEMPLATE]);
@@ -955,6 +1010,7 @@ effects:
         let flow = "\
 flow: prepare
 orchestrator: builder
+requires: []
 initial: begin
 states: [start, building, start]
 transitions:

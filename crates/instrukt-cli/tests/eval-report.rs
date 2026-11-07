@@ -62,16 +62,11 @@ fn tracked(slug: &str, repository: &str) -> String {
 
 impl Evaluated {
     fn new() -> Self {
-        let mut project = Project::with_runtime(Some("AGENT_SESSION"));
-        let model = project.env.path("model");
-        let layer = project.env.instrukt_home().join("instrukt.yaml");
-        let global = std::fs::read_to_string(&layer).unwrap();
-        std::fs::write(
-            &layer,
-            format!("{global}    model: cat '{}'\n", model.display()),
-        )
-        .unwrap();
-        project.env.set_env("AGENT_SESSION", "s1");
+        let mut project = Project::with_runtime(Some("T3CODE_THREAD_ID"));
+        let runtime = runtime::FakeRuntime::new(&project.env, "t3", false);
+        runtime.open_session("s1");
+        let model = runtime.state_dir().join("s1.json");
+        project.env.set_env("T3CODE_THREAD_ID", "s1");
         project.env.set_env("INSTRUKT_NOW", "2030-01-05T08:00:00Z");
         let flavor = workflow::Flavor::publish(&project.env);
         // The eval set: a review policy, published an hour later.
@@ -101,7 +96,12 @@ impl Evaluated {
 
     /// The runtime reports `model` from now on.
     fn uses(&self, model: &str) {
-        std::fs::write(&self.model, format!("{model}\n")).unwrap();
+        let mut thread: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&self.model).unwrap()).unwrap();
+        let mut words = model.split_whitespace();
+        thread["providerInstanceId"] = words.next().unwrap().into();
+        thread["model"] = words.next().unwrap().into();
+        std::fs::write(&self.model, serde_json::to_vec(&thread).unwrap()).unwrap();
     }
 
     /// The clock reads `at` from now on.

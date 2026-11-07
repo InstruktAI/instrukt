@@ -75,6 +75,7 @@ pub enum FactType {
     ShaList,
     /// A list of runtime/id session bindings.
     SessionList,
+    AttemptList,
 }
 
 impl fmt::Display for FactType {
@@ -86,6 +87,7 @@ impl fmt::Display for FactType {
             FactType::Sha => f.write_str("SHA"),
             FactType::Enum(members) => f.write_str(&members.join("|")),
             FactType::ShaList => f.write_str("list of SHA"),
+            FactType::AttemptList => f.write_str("list of retained role attempts"),
             FactType::SessionList => f.write_str("list of runtime/id session bindings"),
         }
     }
@@ -94,6 +96,9 @@ impl fmt::Display for FactType {
 /// The fact table, one row per name.
 const CATALOG: &[(&str, FactType)] = &[
     ("kind", FactType::Enum(KINDS)),
+    ("preparation.head", FactType::Sha),
+    ("preparation.integrated", FactType::Bool),
+    ("preparation.review_current", FactType::Bool),
     ("deps.delivered", FactType::Bool),
     ("prd.digest", FactType::Text),
     ("architecture.digest", FactType::Text),
@@ -128,7 +133,6 @@ const CATALOG: &[(&str, FactType)] = &[
     ("prd_approval.by_human", FactType::Bool),
     ("architecture_skipped.reason", FactType::Text),
     ("diagnosis_settled.digest", FactType::Text),
-    ("claim_commits.unreviewed", FactType::ShaList),
     ("drift.prd", FactType::Enum(DRIFT)),
     ("drift.architecture", FactType::Enum(DRIFT)),
     ("drift.implementation_plan", FactType::Enum(DRIFT)),
@@ -144,23 +148,21 @@ const CATALOG: &[(&str, FactType)] = &[
     ("finalize.status", FactType::Enum(FINALIZE)),
     ("finalize.sha", FactType::Sha),
     ("setup.worktree.path", FactType::Text),
-    ("setup.handoff_confirmed", FactType::Bool),
-    ("handoff.pending", FactType::Bool),
-    ("recovery.attempt", FactType::Text),
+    ("setup.complete", FactType::Bool),
     ("finalizer.review_pending", FactType::Bool),
-    ("finalizer.handoff_current", FactType::Bool),
+    ("finalizer.completion_current", FactType::Bool),
     ("finalizer.session", FactType::Text),
-    ("role_branch.name", FactType::Text),
-    ("role_branch.exists", FactType::Bool),
     ("worktree.exists", FactType::Bool),
     ("worktree.path", FactType::Text),
     ("claim.held", FactType::Bool),
     ("sessions.bound", FactType::SessionList),
+    ("attempts.retained", FactType::AttemptList),
     ("task_plan.digest", FactType::Text),
     ("task_approved.target_digest", FactType::Text),
     ("task_approved.by", FactType::Enum(APPROVERS)),
     ("worktree.clean", FactType::Bool),
     ("worktree.head", FactType::Sha),
+    ("branch.name", FactType::Text),
     ("branch.head", FactType::Sha),
     ("remote.head", FactType::Sha),
     ("quality_checklist.digest", FactType::Text),
@@ -215,6 +217,7 @@ pub enum FactValue {
     ShaList(Vec<CommitSha>),
     /// The runtime/id session bindings `sessions.bound` lists.
     Sessions(Vec<SessionRef>),
+    Attempts(Vec<crate::work::Binding>),
 }
 
 impl FactValue {
@@ -224,6 +227,7 @@ impl FactValue {
             FactValue::Text(text) => text.is_empty(),
             FactValue::ShaList(list) => list.is_empty(),
             FactValue::Sessions(list) => list.is_empty(),
+            FactValue::Attempts(list) => list.is_empty(),
             FactValue::Bool(_) | FactValue::Int(_) | FactValue::Sha(_) => false,
         }
     }
@@ -244,7 +248,8 @@ impl FactValue {
             | (FactValue::Text(_), FactType::Text)
             | (FactValue::Sha(_), FactType::Sha)
             | (FactValue::ShaList(_), FactType::ShaList)
-            | (FactValue::Sessions(_), FactType::SessionList) => true,
+            | (FactValue::Sessions(_), FactType::SessionList)
+            | (FactValue::Attempts(_), FactType::AttemptList) => true,
             (FactValue::Text(member), FactType::Enum(members)) => {
                 members.contains(&member.as_str())
             }
@@ -265,6 +270,22 @@ impl FactValue {
                 .map(CommitSha::as_str)
                 .collect::<Vec<_>>()
                 .join(" "),
+            FactValue::Attempts(list) => list
+                .iter()
+                .map(|b| {
+                    format!(
+                        "{}/{} branch={} path={}",
+                        b.role,
+                        b.attempt.number,
+                        b.attempt.branch.as_deref().unwrap_or("none"),
+                        b.worktree
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "pending".into())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
             FactValue::Sessions(list) => list
                 .iter()
                 .map(|session| format!("{}/{}", session.runtime, session.id))
@@ -373,7 +394,7 @@ mod tests {
         let facts = Facts::new()
             .with("prd.digest", FactValue::Text(String::new()))
             .unwrap()
-            .with("claim_commits.unreviewed", FactValue::ShaList(vec![]))
+            .with("sessions.bound", FactValue::Sessions(vec![]))
             .unwrap()
             .with("build.complete", FactValue::Bool(false))
             .unwrap()
@@ -381,7 +402,7 @@ mod tests {
             .unwrap();
         let get = |name| facts.get(FactName::parse(name).unwrap());
         assert_eq!(get("prd.digest"), None);
-        assert_eq!(get("claim_commits.unreviewed"), None);
+        assert_eq!(get("build_review.baseline_commit"), None);
         assert_eq!(get("build.complete"), Some(&FactValue::Bool(false)));
         assert_eq!(get("build_review.round"), Some(&FactValue::Int(0)));
     }

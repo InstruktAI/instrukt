@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/session-continuity.rs
-expression: stdout(&children)
----
-Settle T3 thread `thread:2` with the T3 thread organize tool (`t3_thread_organize`, action `settle`).

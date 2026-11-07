@@ -1,78 +1,16 @@
-# The runtime entry instrukt ships for T3 Code
-# (`project/instrukt/spec/feature/runner/session-continuity`, "Shipped T3
-# Code entry"). It is configuration only: the sessions facade drives it
-# through the same verbs as an entry a developer maps.
-#
-# Command verbs run `t3 thread` on the computer that runs the T3 server.
-# Each multi-line template defines a shell function and ends with its
-# name, so the call's inputs, appended as positional parameters, become
-# the function's arguments. Shell variables are written `$name`, never
-# with braces, which configuration interpolation would read as its own.
-name: t3
-session_id_env: T3CODE_THREAD_ID
-start: |-
-  instrukt_t3_start() {
-    if [ -z "$INSTRUKT_WORKTREE" ]; then
-      t3 thread start . "$1"
-      return
-    fi
-    base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD) || {
-      echo "the project names no default branch (origin/HEAD), so no worktree can be based on it" >&2
-      return 1
-    }
-    base=$(printf '%s' "$base" | sed 's|^origin/||')
-    id=$(t3 thread start --worktree "$base" --branch "$INSTRUKT_WORKTREE" . "$1") || return 1
-    printf '%s\n' "$id"
-    tries=0
-    while [ "$tries" -lt 60 ]; do
-      path=$(t3 thread show --json --messages 0 "$id" | sed -n 's/.*"worktreePath":"\([^"]*\)".*/\1/p')
-      if [ -n "$path" ]; then
-        printf '%s\n' "$path"
-        return 0
-      fi
-      tries=$((tries + 1))
-      sleep 1
-    done
-    echo "thread $id reported no worktree path" >&2
-    return 1
-  }
-  instrukt_t3_start
-send: t3 thread send {runtime.session_id}
-alive: |-
-  instrukt_t3_alive() {
-    if ! out=$(t3 thread show --json --messages 0 {runtime.session_id} 2>&1); then
-      case "$out" in
-        *"is no longer available"*) echo gone; return 0 ;;
-      esac
-      printf '%s\n' "$out" >&2
-      return 1
-    fi
-    case "$out" in
-      *'"archived":true'*) echo gone; return 0 ;;
-    esac
-    case "$out" in
-      *'"pendingRequestCount":0,'*) ;;
-      *'"pendingRequestCount":'*) echo needs-input; return 0 ;;
-    esac
-    status=$(printf '%s\n' "$out" | tr ',' '\n' | sed -n 's/^"status":"\([a-z_]*\)"$/\1/p' | head -n 1)
-    case "$status" in
-      preparing|queued|starting|running) echo running ;;
-      waiting) echo needs-input ;;
-      idle|completed) echo ended ok ;;
-      failed|interrupted|cancelled|rolled_back) echo ended failed ;;
-      *) echo "T3 reported a thread status instrukt does not know: '$status'" >&2; return 1 ;;
-    esac
-  }
-  instrukt_t3_alive
-conversation: t3 thread show --messages 100 {runtime.session_id}
-history:
-  show: t3 thread show --messages 100
-  search:
-    kind: agent
-    instruction: Search T3's threads for the text below with the T3 thread search tool (`t3_thread_search`), and read the thread ids it names; `instrukt sessions history show <id>` shows one of them.
-end:
-  kind: agent
-  instruction: Settle T3 thread `{runtime.session_id}` with the T3 thread organize tool (`t3_thread_organize`, action `settle`).
-end_self:
-  kind: agent
-  instruction: Settle this thread with the T3 thread organize tool (`t3_thread_organize`, action `settle`), naming no thread. T3 applies it when this turn ends, so make it the last thing you do.
+runtimes:
+  t3:
+    dispatch: "Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery."
+    message_child: "Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation."
+    message_peer: "Use native thread messaging for the supplied peer/coordinator thread id and text. Preserve its identity and the message's attribution."
+    read_thread: "Read the identified thread with native thread-read operations, including the relevant message range and attribution. Report pagination or unavailable evidence; read no archive/history service."
+    inspect_thread: "Read the identified native thread or own delegated task through its native status/result operation. Follow native completion/wake instructions; inspect a running task only when those instructions permit it."
+    look_around: "Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child."
+    steer: "Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn."
+    discuss: "Use a supported native discussion capability for the requested collaboration, preserving each participant's attribution. Report an unavailable capability; the linked-conversation mechanism remains unsettled and no instrukt forwarding route is supplied."
+    start_thread: "Fetch origin before each new phase branch, then for a preparation orchestrator start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Fetch origin again and start work later from origin/main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main."
+    cancel_child: "Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work."
+    finish_thread: "Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling."
+    discover_environments: "Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access."
+    connect_environment: "Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite."
+    dispatch_remote: "Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success."

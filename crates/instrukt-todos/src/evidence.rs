@@ -66,6 +66,7 @@ pub struct TodoEvidence {
     /// Per-role session bindings, retained after their sessions end
     /// (`sessions.bound`, `worktree.path`).
     pub bindings: Vec<RoleBinding>,
+    pub branch: Option<String>,
     /// The dispatch hold, while set.
     pub hold: Option<HoldRecord>,
     /// The prerequisites, with structural holders expanded to the todos
@@ -311,6 +312,9 @@ pub struct ModelIdentity {
 /// "Evidence and attribution").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StampRecord {
+    /// GitHub decision occurrence, retained through reflection and reconstruction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_comment: Option<u64>,
     pub fact: StampFact,
     pub at: Timestamp,
     pub actor: Actor,
@@ -411,6 +415,11 @@ pub enum TaskResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "fact", rename_all = "snake_case")]
 pub enum StampFact {
+    PreparationHeadReviewed {
+        verdict: ReviewVerdict,
+        head: CommitSha,
+        report: ContentDigest,
+    },
     /// `--verdict approve|needs_work --phase <preparation review>`.
     PreparationVerdict {
         phase: PreparationReview,
@@ -480,6 +489,14 @@ pub enum StampFact {
     },
     /// `--build-complete`: the stamped work-branch head.
     BuildComplete { head: CommitSha },
+    RoleComplete {
+        head: CommitSha,
+        role: RoleName,
+        attempt: u64,
+        base: CommitSha,
+        artifacts: Vec<(ArtifactName, ContentDigest)>,
+        commits: Vec<CommitSha>,
+    },
     /// `--deferrals-processed`: the deferrals artifact it covers.
     DeferralsProcessed { deferrals: ContentDigest },
     /// `--finalize-ready`: the commit handed to integration.
@@ -515,6 +532,7 @@ pub struct ClaimRecord {
 pub struct RoleBinding {
     pub role: RoleName,
     pub binding: SessionBinding,
+    pub attempt: crate::work::Attempt,
 }
 
 impl RoleBinding {
@@ -528,6 +546,9 @@ impl RoleBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HoldSource {
+    /// An attributable GitHub hold-label action.
+    #[serde(rename = "github")]
+    GitHub,
     /// `instrukt todo update <slug> --hold --reason`.
     Manual,
     /// Set by the runner or by a stamp that establishes one.

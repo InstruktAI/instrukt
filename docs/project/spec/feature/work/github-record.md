@@ -63,7 +63,7 @@ revision check at reflection catches any change it missed.
 Listings, `instrukt todo list` among them, read only the state database. The
 todos this computer holds claims on are shown from the local record. Every
 other todo is shown as its last known copy, the local record's or the pickup
-listing's, whichever was read later, labelled with the computer its claim
+listing's, whichever was read later (`todos.refreshed_at` and `listing_copies.copied_at` respectively), labelled with the computer its claim
 names, or unclaimed, and how old the copy is.
 
 ### Issues and visible work
@@ -186,6 +186,47 @@ approver comments on the todo's issue:
 A comment from anyone else changes no work record and is answered on the
 issue.
 
+An applied approval or request-changes decision wakes the todo's current
+claim-holding orchestrator if that session is alive, with the as-soon-as-possible
+intent. The notice carries the decision, gate, reason when given, attribution
+and bound evidence. The decision and pending attention commit before runtime
+I/O; failed observation or delivery retains its cause and retries under
+`project/instrukt/spec/feature/runner/session-continuity`. With no live
+orchestrator it is only a state update: next pickup or a deliberate start
+continues from it. No approval event or second stamp-driven wake is emitted.
+Re-reading an already applied comment neither reapplies the decision nor
+creates another notice. The decision stamp retains its source comment identity
+through reflection, claim movement and local database reconstruction. Its confirmation reply is retained with acceptance and
+retried separately. A source-comment marker reconciles a reply whose posting
+acknowledgement was lost, so confirmation retry changes no work fact.
+
+### GitHub hold label and output labels
+
+`hold` is the one inbound control label. Adding it on the todo's issue by a
+collaborator with repository write access sets the todo's dispatch hold, with
+generated reason `held from GitHub by <login>`, GitHub actor, source and time.
+Removing it by a collaborator with write access releases the current dispatch
+hold and attributes that release to the removing login. Neither action changes
+the claim, artifacts, prerequisites or work already running. Structural holders
+keep their existing no-hold rule. Label actions from a login without write
+access change no work record; unlike approval commands, authorized hold changes
+need no membership in `github.approvers`.
+
+Interest-driven refresh reads attributable label changes and applies each
+accepted change once, in source order, retaining its GitHub action identity.
+Retrying a refresh cannot reapply a processed action. instrukt's own reflection
+writes are reconciled as output, not interpreted as fresh human commands.
+A label snapshot lacking its action and author is insufficient to attribute a
+new hold or release. Inability to verify the actor or read changes is reported
+and leaves the record unchanged for that action.
+
+Every other label instrukt writes is output only. Reflection restores those
+labels from record status and never reads a collaborator's label edit as work
+state. Labels outside instrukt's output set remain collaborator-owned. Board
+lanes and `Record status` reflection retain the existing contract; moving a
+card changes no work fact. Hold semantics belong to
+`project/instrukt/spec/feature/work/dependencies-and-holds`.
+
 Reflection retains unfinished work across retries. Rate limiting defers
 reflection until the provider permits it; it does not lose local work. Issue,
 artifact, pull-request and optional board progress are recoverable without
@@ -265,6 +306,33 @@ the remote record before creating duplicate evidence.
   When the todo's claim moves to the developer's computer
   Then the work starts from the todo as GitHub holds it now
   And each later command on that todo acts on its current state
+```
+
+### UC-GR8: Continue preparation after a GitHub decision
+
+```gherkin
+Given a developer has a current reviewed approval gate on a todo's GitHub issue
+When an authorized approver submits an admissible approval or request-changes comment
+Then the decision is recorded with GitHub attribution and current evidence
+And its live claim-holding orchestrator receives the decision as soon as its runtime permits
+But when there is no live orchestrator
+Then only the record changes and the next pickup or deliberate start continues from it
+And replaying that comment creates no second decision notice
+```
+
+### UC-GR9: Control a todo's hold from its GitHub issue
+
+```gherkin
+Given a developer follows a todo through its GitHub issue
+When a collaborator with write access adds the hold label
+Then the todo is held with reason "held from GitHub by <login>" attributed to that collaborator
+When a collaborator with write access removes that label
+Then the dispatch hold is released with the removing login recorded
+And neither operation changes the todo's evidence or claim
+But when another instrukt-written label is edited or the board card is moved
+Then no work state is changed and reflection restores the output labels
+But when the actor lacks write access
+Then their hold-label action changes no work record
 ```
 
 ## Known caveats

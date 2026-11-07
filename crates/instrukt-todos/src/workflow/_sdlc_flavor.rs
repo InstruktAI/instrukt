@@ -220,24 +220,10 @@ fn pending_drift_owes_analysis_before_release() {
 }
 
 #[test]
-fn unreviewed_claim_commits_owe_review_with_the_shas_as_one_argument() {
-    let mut f = prepared_feature();
-    f.insert(
-        "claim_commits.unreviewed",
-        FactValue::ShaList(vec![sha('a'), sha('b')]),
-    )
-    .unwrap();
-    let derived = derive("prepare", f);
-    assert_eq!(
-        at(&derived),
-        ("commit_review_owed", Some("review-claim-commits"))
-    );
-    assert!(obligation(derived).command.is_ok());
-}
-
-#[test]
 fn a_prepared_feature_is_released() {
-    let derived = derive_with("prepare", prepared_feature(), &session_config);
+    let mut facts = prepared_feature();
+    facts.insert("preparation.integrated", yes()).unwrap();
+    let derived = derive_with("prepare", facts, &session_config);
     assert_eq!(
         at(&derived),
         ("prepared_release_pending", Some("release-prepared"))
@@ -249,7 +235,9 @@ fn a_prepared_feature_is_released() {
 
 #[test]
 fn the_release_brief_renders_outside_any_runtime_session() {
-    let derived = derive("prepare", prepared_feature());
+    let mut facts = prepared_feature();
+    facts.insert("preparation.integrated", yes()).unwrap();
+    let derived = derive("prepare", facts);
     assert!(obligation(derived).brief.is_ok());
 }
 
@@ -290,6 +278,7 @@ fn prepared_change() -> Facts {
     let base = facts(&[
         ("kind", text("change")),
         ("deps.delivered", yes()),
+        ("preparation.integrated", yes()),
         ("implementation_plan.digest", text("plan-1")),
         ("plan_review_findings.digest", text("plan_review-findings")),
     ]);
@@ -303,6 +292,7 @@ fn building_change() -> Facts {
         vec![
             ("worktree.path".into(), text("/wt/add-login")),
             ("setup.worktree.path".into(), text("/wt/add-login")),
+            ("setup.complete".into(), yes()),
             ("build.start_base_sha".into(), text("base-1")),
             ("build.plan_digest".into(), text("plan-1")),
             ("quality_checklist.digest".into(), text("qc-1")),
@@ -316,6 +306,9 @@ fn a_delivered_todo_owes_worktree_removal_while_the_worktree_exists() {
         ("delivery.commit", FactValue::Sha(sha('d'))),
         ("worktree.exists", yes()),
         ("worktree.path", text("/wt/add-login")),
+        ("branch.name", text("add-login/work")),
+        ("branch.head", FactValue::Sha(sha('d'))),
+        ("remote.head", FactValue::Sha(sha('d'))),
     ]);
     let derived = derive("work", delivered);
     assert_eq!(
@@ -323,7 +316,10 @@ fn a_delivered_todo_owes_worktree_removal_while_the_worktree_exists() {
         ("delivered_cleanup", Some("cleanup-delivered"))
     );
     let obligation = obligation(derived);
-    assert_eq!(effect_names(&obligation), ["worktree.remove"]);
+    assert_eq!(
+        effect_names(&obligation),
+        ["worktree.remove", "branch.remove", "remote_branch.remove"]
+    );
     assert!(obligation.effects[0].command.is_ok());
     assert_eq!(obligation.responsible, orchestrator("work-orchestrator"));
 
@@ -390,23 +386,20 @@ fn a_prepared_change_without_a_worktree_owes_workspace_setup() {
 }
 
 #[test]
-fn build_admission_owes_refresh_and_upstream_sync_until_the_base_is_recorded() {
+fn completed_setup_does_not_repeat_synchronization_for_a_record_only_admission_gap() {
     let mut f = prepared_change();
     f.insert("worktree.path", text("/wt/add-login")).unwrap();
     f.insert("setup.worktree.path", text("/wt/add-login"))
         .unwrap();
+    f.insert("setup.complete", yes()).unwrap();
     let derived = derive("work", f.clone());
     assert_eq!(
         at(&derived),
         ("build_admission_pending", Some("await-build-start"))
     );
-    assert_eq!(
-        effect_names(&obligation(derived)),
-        ["record.refresh", "git.fetch-main", "git.merge-main"]
-    );
-
+    assert!(effect_names(&obligation(derived)).is_empty());
     f.insert("build.start_base_sha", text("base-1")).unwrap();
-    assert_eq!(effect_names(&obligation_of("work", f)), ["record.refresh"]);
+    assert!(effect_names(&obligation_of("work", f)).is_empty());
 }
 
 #[test]
@@ -523,8 +516,8 @@ fn a_task_routes_to_the_task_runner() {
 // ---- responsibility ----
 
 /// The sdlc actions whose commands name no procedure.
-const ORCHESTRATOR_STEPS: [&str; 12] = [
-    "handoff-role",
+const ORCHESTRATOR_STEPS: [&str; 11] = [
+    "await-preparation-integration",
     "record-finalize-readiness",
     "release-prepared",
     "return-to-prepare-kickback",
@@ -532,7 +525,6 @@ const ORCHESTRATOR_STEPS: [&str; 12] = [
     "await-dependencies",
     "await-task-runner",
     "await-build-start",
-    "setup-workspace",
     "cleanup-delivered",
     "review-evidence-undetermined",
     "hand-off-integration",
@@ -547,7 +539,12 @@ fn every_sdlc_action_belongs_to_its_procedure_or_its_flows_orchestrator() {
         for transition in &definition.transitions {
             let (id, action) = &transition.action;
             let responsible = Responsible::of(action, definition);
-            if steps.contains(id.as_str()) {
+            if id.as_str() == "setup-workspace" {
+                assert_eq!(
+                    responsible,
+                    Responsible::Role(RoleName::parse("setup").unwrap())
+                );
+            } else if steps.contains(id.as_str()) {
                 seen_steps.insert(id.as_str());
                 assert_eq!(
                     responsible,
@@ -567,7 +564,7 @@ fn every_sdlc_action_belongs_to_its_procedure_or_its_flows_orchestrator() {
     assert_eq!(seen_steps, steps);
     assert_eq!(
         flavor.actions.len() - flavor.action_procedures().count(),
-        ORCHESTRATOR_STEPS.len()
+        ORCHESTRATOR_STEPS.len() + 1
     );
 }
 
@@ -584,6 +581,7 @@ fn value_for(name: FactName, pick: u8) -> FactValue {
         FactType::Sha => FactValue::Sha(sha(['a', 'b'][n % 2])),
         FactType::Enum(members) => text(members[n % members.len()]),
         FactType::ShaList => FactValue::ShaList(vec![sha('a'); n % 3]),
+        FactType::AttemptList => FactValue::Attempts(Vec::new()),
         FactType::SessionList => {
             FactValue::Sessions(vec![SessionRef::parse("rt:s").unwrap(); n % 2])
         }

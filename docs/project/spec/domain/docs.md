@@ -267,7 +267,7 @@ recorded by publication.
 
 Docs owns validation and resolution of subscribed procedure metadata: patterns,
 required `subscription_home`, optional `subscription_identity` and
-`subscription_attendance`, `event_delivery`, `interruptible`, role and authored
+`subscription_attendance`, `interruptible`, role and authored
 Required reads. Publication copies those facts and position/owning-project reach
 into the existing generated index. Runner routing consumes that index, never
 scans source documents to reconstruct subscriptions. General/domain declarations

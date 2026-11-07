@@ -34,17 +34,19 @@ its focused procedure and records the evidence for the next derivation.
 
 ### Defaults — read these once and carry them through every phase
 
-1. **One session drives the whole prepare lifecycle.** The session you are
-   in loads each phase's procedure when the selected action routes there,
-   does the work itself, and calls the flow again.
+1. **One orchestrator drives preparation in `<slug>/prepare`.**
+   Reserve doc writers and independent reviewers as native shared children through
+   the selected workflow action and `runtime.dispatch`; bind their native ids.
+   Route their artifacts and findings, then call the flow again. One doc writer
+   works at a time in that shared project folder.
 2. **Each phase has its own focus, sharpened by a hat.** The flavor's action
    and rendered template name the phase's procedure and hat — BA for intake, Architect for architecture,
    Planner for the plan. The hat sharpens focus for that phase on top of your
-   lifecycle awareness and comes off when the next procedure loads.
+   assigned procedure and comes off when that contribution ends.
 3. **Reviewers are independently dispatched.** A review step runs in a separate
-   session through `instrukt sessions run`, or continues through
-   `instrukt sessions send` after the recorded binding is observed with
-   `instrukt sessions alive`; you follow it under the orchestration
+   session through configured runtime delegation, or continues through
+   the configured runtime message instruction after the recorded binding is observed with
+   the configured runtime status inspection instruction; you follow it under the orchestration
    loop (`general/procedure/orchestration`), and you own whether another review
    pass is due (`sdlc/procedure/lifecycle/review`). Escalation follows
    `general/policy/human-contract`, never the review count.
@@ -56,7 +58,7 @@ its focused procedure and records the evidence for the next derivation.
    grounding (`sdlc/policy/peer-invocation`). Every session you dispatch reports
    to you through its own output and artifacts.
 
-The bug lane is the one exception to the first default: a dispatched peer
+The bug lane retains its triage/examination split: a dispatched peer
 authors the `diagnosis` while this session triages before it and examines the
 written mechanism after it, or settles a reporter's confirmed causal account at
 triage without a peer (`sdlc/procedure/lifecycle/prepare/diagnose`).
@@ -72,17 +74,31 @@ triage without a peer (`sdlc/procedure/lifecycle/prepare/diagnose`).
 
 ## Steps
 
+### Phase worktrees
+
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree.
+
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+
+After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
+
+
 Use `instrukt <command> -h` for individual commands.
+
+### Preparation workspace and immediate integration
+
+The orchestrator and its native shared doc writers/reviewers use the todo's T3-managed `<slug>/prepare` worktree. Review binds that clean head before merge. Approval wakes the integrator immediately so the docs reach main before build. After confirmed integration, remove the prepare worktree and delete its local and remote branch. Work later starts in `<slug>/work` from the updated main. Ad hoc work uses its own reviewed one-off worktree; only the integrator writes main.
 
 ### Worker selection and reuse
 
-Select independent reviewers, commit reviewers and drift analysts using the
+Select doc writers, independent reviewers, commit reviewers and drift analysts using the
 procedure's dispatch preferences or the global agent order, availability first.
 When the adapter cannot select an agent, report its project defaults. Read the
 todo's recorded role binding before dispatch. Observe an active unreleased
-attempt through `instrukt sessions alive` and deliver its follow-up through
-`instrukt sessions send`. Start a new attempt only after the preceding attempt
-is released; unresolved starts remain pending for their keyed recovery.
+attempt through the configured runtime status inspection instruction and deliver its follow-up through
+the configured runtime message instruction. Start a new attempt only after the preceding attempt
+is released; unresolved native starts retain their reservation for recovery from native
+task evidence.
 Retain the returned native id and attempt evidence. Deliver each worker only
 its assignment template, outputs and blocker destination. A reply or ended
 turn establishes no completion: read the required artifacts and stamps.
@@ -115,7 +131,7 @@ any input clarification into Step 2.
    kind. Check whether an intent-checked stamp binds this version.
 2. A current check travels unchanged. If this version has no current check
    and you are its first recipient other than its author, read its originating
-   conversation through `instrukt sessions conversation <session-id>` and
+   conversation through the configured runtime conversation read instruction and
    compare the outcome-level substance. Confirm the record, clarify its
    expression without changing its meaning, or return a mistaken interpretation
    to the human in this thread. Record the checked input version, conversation
@@ -159,8 +175,8 @@ short — passes and proceeds to Step 1a.
 
 Before artifact derivation, assess under `sdlc/policy/process-change-authority`
 whether delivery changes a process-layer contract. When it does, identify the
-pending process-contract changes here and author them on `main` in Step 2,
-before planning. When an underlying consequence belongs to the human, surface
+pending process-contract changes here and author them in the preparation worktree in Step 2,
+before planning, through the responsible shared doc writer. When an underlying consequence belongs to the human, surface
 only that outcome (`general/policy/human-contract`) and absorb the decision into
 the owning artifact.
 
@@ -218,8 +234,9 @@ here. It requires an explicit `doc_impact_none` basis, no pending documentation
 or uncommitted delivery fold for the slug, and no prior build work or unresolved
 review to bypass. A `bug` never takes this path.
 
-Execute on canonical `main`, commit, and resolve independent review under
-`general/policy/commits`. Record the eligibility basis, delivery commits, review
+Execute in a one-off worktree, commit, and obtain independent review of its
+committed head under `general/policy/commits`. Only the integrator merges it to
+canonical main through the integration gate. Record the eligibility basis, delivery commits, review
 reference, and remaining publication obligation in the todo's `log`.
 
 The integrator retains publication through the integration gate. Keep the
@@ -256,21 +273,37 @@ from the record. Evaluation alone completes no work.
 
 ### 3. Do each routed phase's work
 
-Load the procedure the selected action names and do its focused work. Dispatch
-independent reviews through the sessions facade, reusing the recorded session
-per todo and role after `instrukt sessions alive`. Read conversations through
-`instrukt sessions conversation`; questions for the human stay in the asking
+Reserve the doc writer or reviewer the selected action names and delegate its
+focused assignment through configured native shared delegation. Keep the parent
+in the `<slug>/prepare` worktree to route results and record obligations. Reuse only the
+recorded active role attempt after native inspection. Reserve a new worker
+with the selected `instrukt todo attempt` action,
+delegate its returned assignment natively, then record `todo bind`. The runtime
+delivers its result to this parent.
+Yield while the child works; read its native result and closing message
+before deciding the next contribution. Read conversations through
+the configured runtime conversation read instruction; questions for the human stay in the asking
 session's thread. Observe completion in the work record: the required artifact
-and stamp must both be present and current. A successful ended turn alone is
-not completion. Session recovery follows the runner's session-continuity
-contract, including one send to the same session when evidence is missing and
-an anomaly if it remains missing.
+and stamp must both be present and current. Doc writers record `--role-complete`
+with their required artifact digests and exact authored commit references on clean
+`<slug>/prepare`; the transaction releases the writer. Reviewers release with
+their verdict. Independent review binds the complete preparation-worktree head. A successful ended turn alone is
+not completion. Return a missing obligation to the retained child through a
+bounded follow-up when it can continue; route confirmed unavailability through
+the owning recovery contract with its evidence retained.
 
 Call `instrukt todo prepare {slug}` again after the required evidence is
 recorded. The returned action, rather than an output token or dispatch header,
 determines the next obligation.
 
 ### 4. Honor the feature PRD approval gate
+
+After presenting the current gate, yield with the claim and conversation
+retained. An applied approval or request-changes decision reaches this live
+claim-holding orchestrator with ASAP intent. Read its attribution and evidence,
+then re-enter preparation from the updated record. When no live orchestrator
+holds the claim, the recorded decision waits for next pickup or a deliberate
+start. The work record supplies the decision; the notice restores attention.
 
 In the feature lane, internal PRD review precedes its configured approval
 moment. When intake writes or rewrites the PRD, the selected action routes to
@@ -359,14 +392,7 @@ when downstream was already produced.
 
 ### 7. Terminal state
 
-Preparation is complete once the selected kind's required derivations,
-artifact-and-stamp evidence, current reviews, applicable approvals and drift
-settlement are present. Every commit authored on canonical `main` under the
-preparation claim also needs an `approve` note with its independent report
-binding, or an author's `exempt` note with reason under
-`general/policy/commits`. A `needs_work` or missing note remains unsettled;
-`claim_commits.unreviewed` includes every commit with neither settled verdict. The returned
-obligation names any remaining work.
+Preparation is complete once the selected kind's derivations, current artifact reviews, applicable approvals and drift settlement are present, its preparation-worktree head has current independent approval, and that reviewed documentation is integrated and published on main. The returned obligation names any remaining head review or integration. No per-SHA note on main substitutes for this evidence.
 
 Run `instrukt todo update <slug> --unclaim` and confirm release before leaving
 the lane. Record readiness and the handoff; the runner owns later execution
@@ -407,8 +433,11 @@ claim.
   artifacts; never solicit an attestation from the creator. Reading a named
   session's transcript under Step 0a recovers meaning and is not solicitation.
 - **The originating conversation cannot be read for an owed intent check.**
-  Preserve the gap; no intent-checked stamp is invented. The runner dispatches
-  the check where that conversation is readable. If the originating conversation is
+  Preserve the gap and dispatch the checker where that conversation is
+  readable, using configured runtime delegation as the responsible
+  orchestrator, with a reserved attempt and recorded native child binding. Retain the child binding and inspect its ending and evidence
+  before continuing; record the intent check only from its verified result.
+  If the originating conversation is
   permanently unavailable, return the intent to the human in the responsible thread; a
   new `input` version from that conversation becomes the checkable basis. Corroborative
   transcript gaps

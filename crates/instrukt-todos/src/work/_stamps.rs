@@ -22,13 +22,18 @@ use crate::evidence::{
 /// One admitted stamp form, as `instrukt todo stamp <slug>` takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StampRequest {
+    PreparationHeadVerdict {
+        verdict: ReviewVerdict,
+    },
     /// `--verdict approve|needs_work --phase prd_review|architecture_review|plan_review`.
     PreparationVerdict {
         phase: PreparationReview,
         verdict: ReviewVerdict,
     },
     /// `--verdict approve|changes_requested --phase build_review`.
-    BuildVerdict { verdict: BuildVerdict },
+    BuildVerdict {
+        verdict: BuildVerdict,
+    },
     /// `--prd-approved|--task-approved --by human|peer [--session
     /// <runtime:id>] [--reason <text>]`; a peer approval names its
     /// session and reason.
@@ -40,17 +45,26 @@ pub enum StampRequest {
     },
     /// `--prd-approved|--task-approved --carry-from <stamp-id>`: an earlier
     /// approval carried to the current evidence (`approvals`).
-    CarriedApproval { gate: ApprovalGate, from: u64 },
+    CarriedApproval {
+        gate: ApprovalGate,
+        from: u64,
+    },
     /// `--intent-checked`.
     IntentChecked,
     /// `--kickback --reason <text>`.
-    Kickback { reason: String },
+    Kickback {
+        reason: String,
+    },
     /// `--architecture-skipped <reason>`.
-    ArchitectureSkipped { reason: String },
+    ArchitectureSkipped {
+        reason: String,
+    },
     /// `--diagnosis-settled`.
     DiagnosisSettled,
     /// `--diagnosis-unresolved --reason <text>`.
-    DiagnosisUnresolved { reason: String },
+    DiagnosisUnresolved {
+        reason: String,
+    },
     /// `--drift-reviewed <artifact> cosmetic|substantive <reason>`.
     DriftReviewed {
         artifact: ArtifactName,
@@ -61,13 +75,17 @@ pub enum StampRequest {
     BuildStarted,
     /// `--build-complete`.
     BuildComplete,
+    /// Setup, finalizer or preparation-writer completion and atomic attempt release.
+    RoleComplete,
     /// `--deferrals-processed`.
     DeferralsProcessed,
     /// `--finalize-ready`.
     FinalizeReady,
     /// `--task-firing-started [--occurrence <RFC 3339>]`: the occurrence
     /// the run executes; now when not given (deliberate pickup).
-    TaskFiringStarted { occurrence: Option<Timestamp> },
+    TaskFiringStarted {
+        occurrence: Option<Timestamp>,
+    },
     /// `--task-outcome success|error [--reason <text>] [--occurrence <RFC 3339>]`.
     TaskOutcome {
         result: TaskResult,
@@ -117,6 +135,13 @@ pub(crate) fn resolve(
         releases_claim: false,
     };
     Ok(match request {
+        StampRequest::PreparationHeadVerdict { verdict } => {
+            plain(StampFact::PreparationHeadReviewed {
+                verdict: *verdict,
+                head: head(inputs.cwd)?,
+                report: current(record, "preparation-review-findings")?,
+            })
+        }
         StampRequest::PreparationVerdict { phase, verdict } => {
             let (target, report) = reviewed_artifacts(record.kind, *phase);
             plain(StampFact::PreparationVerdict {
@@ -297,15 +322,63 @@ pub(crate) fn resolve(
             });
             let base = match original {
                 Some(base) => base,
-                None => merge_base(inputs.cwd, inputs.base_branch)?,
+                None => match record
+                    .bindings
+                    .iter()
+                    .find(|b| b.role.as_str() == "setup")
+                    .and_then(|b| b.attempt.base_head.clone())
+                {
+                    Some(base) => base,
+                    None => merge_base(inputs.cwd, inputs.base_branch)?,
+                },
             };
             Resolved {
                 fact: StampFact::BuildStarted { base, plan },
-                branch: Some(branch(inputs.cwd)?),
+                branch: record.branch.clone().or(Some(branch(inputs.cwd)?)),
                 already_recorded: false,
                 releases_claim: false,
                 actor: None,
             }
+        }
+        StampRequest::RoleComplete => {
+            let binding = record
+                .bindings
+                .iter()
+                .find(|b| b.session.as_ref() == inputs.session && b.attempt.released_at.is_none())
+                .ok_or_else(|| WorkError::refused("no active role attempt"))?;
+            let base = binding
+                .attempt
+                .base_head
+                .clone()
+                .ok_or_else(|| WorkError::refused("role base is absent"))?;
+            let artifacts = match binding.role.as_str() {
+                "intaker" => vec![artifact_names::PRD],
+                "architect" => vec![artifact_names::ARCHITECTURE],
+                "planner" => vec![artifact_names::IMPLEMENTATION_PLAN],
+                _ => vec![],
+            }
+            .into_iter()
+            .map(|name| Ok((ArtifactName::new(name), current(record, name)?)))
+            .collect::<Result<Vec<_>, WorkError>>()?;
+            let commits = git::run(
+                inputs.cwd,
+                ["log", "--format=%H", &format!("{}..HEAD", base)],
+            )?
+            .lines()
+            .map(|sha| CommitSha::parse(sha).map_err(|e| WorkError::refused(e.to_string())))
+            .collect::<Result<Vec<_>, _>>()?;
+            plain(StampFact::RoleComplete {
+                artifacts,
+                commits,
+                head: head(inputs.cwd)?,
+                role: binding.role.clone(),
+                attempt: binding.attempt.number,
+                base: binding
+                    .attempt
+                    .base_head
+                    .clone()
+                    .ok_or_else(|| WorkError::refused("role base is absent"))?,
+            })
         }
         StampRequest::BuildComplete => plain(StampFact::BuildComplete {
             head: head(inputs.cwd)?,
@@ -313,9 +386,23 @@ pub(crate) fn resolve(
         StampRequest::DeferralsProcessed => plain(StampFact::DeferralsProcessed {
             deferrals: current(record, artifact_names::DEFERRALS)?,
         }),
-        StampRequest::FinalizeReady => plain(StampFact::FinalizeReady {
-            commit: head(inputs.cwd)?,
-        }),
+        StampRequest::FinalizeReady => {
+            let commit = head(inputs.cwd)?;
+            let already_recorded = record
+                .stamps
+                .iter()
+                .rev()
+                .find_map(|stamp| match &stamp.fact {
+                    StampFact::FinalizeReady { commit: prior } => Some(prior == &commit),
+                    StampFact::BuildComplete { .. } | StampFact::Kickback { .. } => Some(false),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            Resolved {
+                already_recorded,
+                ..plain(StampFact::FinalizeReady { commit })
+            }
+        }
         StampRequest::TaskFiringStarted { occurrence } => {
             task_only(record)?;
             let occurrence = occurrence.unwrap_or(inputs.now);
@@ -387,10 +474,9 @@ pub(crate) fn resolve(
                 .as_ref()
                 .is_some_and(|claim| match &claim.session {
                     Some(holder) => holder == caller,
-                    None => record
-                        .bindings
-                        .iter()
-                        .any(|b| &b.session == caller && b.role.as_str() == TASK_RUNNER_ROLE),
+                    None => record.bindings.iter().any(|b| {
+                        b.session.as_ref() == Some(caller) && b.role.as_str() == TASK_RUNNER_ROLE
+                    }),
                 });
             let occurrence = mine.occurrence;
             let reason = reason
@@ -449,7 +535,7 @@ fn reviewed_artifacts(kind: TodoKind, phase: PreparationReview) -> (&'static str
 /// stands: its target is `target`, its report is the current findings,
 /// and no later kickback invalidated that review nor a later substantive
 /// drift judgment hit the artifact it judged. The reason when not.
-fn supporting_review(
+pub(super) fn supporting_review(
     record: &TodoRecord,
     phase: PreparationReview,
     target: &ContentDigest,
@@ -578,7 +664,7 @@ fn task_only(record: &TodoRecord) -> Result<(), WorkError> {
     }
 }
 
-fn head(cwd: &Path) -> Result<CommitSha, WorkError> {
+pub(super) fn head(cwd: &Path) -> Result<CommitSha, WorkError> {
     let sha = git::run(cwd, ["rev-parse", "--verify", "HEAD^{commit}"])?;
     CommitSha::parse(sha.trim()).map_err(|err| WorkError::refused(err.to_string()))
 }

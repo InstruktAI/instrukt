@@ -81,15 +81,14 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError
             });
         }
     }
-    let agents: BTreeSet<String> = config
-        .runtimes()
-        .iter()
-        .filter_map(|entry| entry.agent.clone())
-        .collect();
+    let agents: Option<BTreeSet<String>> = config
+        .runner_runtime()?
+        .and_then(|runtime| runtime.startable_agents())
+        .map(|names| names.iter().map(|s| (*s).to_owned()).collect());
     let env = CheckEnv {
         repo_root: request.repo_root,
         wiring: request.wiring,
-        agents: &agents,
+        agents: agents.as_ref(),
         schemas: &schemas,
     };
     let (mut findings, mut notices) = check_all(&corpus, &env)?;
@@ -97,7 +96,7 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError
     super::_directives::check(
         &corpus,
         request.repo_root,
-        &super::_render::Values::publish(&config),
+        &super::_render::Values::publish(&config, request.wiring.caller_identity.as_deref()),
         &mut findings,
     )?;
     for module in config.requires()? {
@@ -178,8 +177,8 @@ fn scope_of(repo_root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, DocsErr
 pub(super) struct CheckEnv<'a> {
     pub repo_root: &'a Path,
     pub wiring: &'a CoreWiring,
-    /// The agents the configured runtime mapping can start.
-    pub agents: &'a BTreeSet<String>,
+    /// Available adapter metadata; absence cannot validate or reject agent names.
+    pub agents: Option<&'a BTreeSet<String>>,
     /// The working tree's position schemas.
     pub schemas: &'a Schemas,
 }
@@ -329,8 +328,10 @@ fn check_version(
                 Some("subscription_home: project required at project position".into()),
             );
         }
-        if let Some(dispatch) = &version.frontmatter().entry.dispatch {
-            for agent in dispatch.agents.iter().filter(|a| !env.agents.contains(*a)) {
+        if let Some(dispatch) = &version.frontmatter().entry.dispatch
+            && let Some(agents) = env.agents
+        {
+            for agent in dispatch.agents.iter().filter(|a| !agents.contains(*a)) {
                 push(
                     out,
                     path,
@@ -1759,7 +1760,7 @@ mod tests {
             &CheckEnv {
                 repo_root: root,
                 wiring,
-                agents: &agents,
+                agents: Some(&agents),
                 schemas: &Schemas::default(),
             },
         )
@@ -1996,7 +1997,7 @@ mod tests {
             &CheckEnv {
                 repo_root: Path::new("/nonexistent-repo"),
                 wiring: &CoreWiring::default(),
-                agents: &agents,
+                agents: Some(&agents),
                 schemas: &Schemas::default(),
             },
         );

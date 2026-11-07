@@ -231,25 +231,62 @@ fn receive(
         "0",
     ]);
     let event = (|| -> Result<EventEnvelope, crate::events::EnvelopeError> {
+        let kind = source.delivery_kind(
+            event_type
+                .strip_prefix(&format!("{domain}."))
+                .unwrap_or(&event_type),
+        );
+        let subject = if let Some(field) = source.subject_from() {
+            let mut value = &serde_json::Value::Object(data.clone());
+            for component in field.split('.') {
+                value = value.get(component).ok_or_else(|| {
+                    crate::events::EnvelopeError::Declaration(format!(
+                        "missing subject field {field}"
+                    ))
+                })?;
+            }
+            let identity = match value {
+                serde_json::Value::String(text) if !text.is_empty() => text.clone(),
+                serde_json::Value::Number(number) => number.to_string(),
+                _ => {
+                    return Err(crate::events::EnvelopeError::Declaration(
+                        "subject field must be a nonempty string or number".into(),
+                    ));
+                }
+            };
+            format!(
+                "{domain}:project:{project}/{}",
+                crate::keyed::encode(&identity)
+            )
+        } else {
+            format!("{domain}:project:{project}")
+        };
+        let mut extensions = BTreeMap::from([("inbound_verify".into(), protocol.as_str().into())]);
+        if kind == instrukt_core::event_type::DeliveryKind::State {
+            extensions.insert("inbound_delivery".into(), "state".into());
+        }
         Ok(EventEnvelope {
             id: claim.clone(),
             event_type,
             source: computer.into(),
-            subject: EventRef::new(
-                ReferenceKind::InboundSource,
-                &format!("{domain}:project:{project}"),
-            )?,
+            subject: EventRef::new(ReferenceKind::InboundSource, &subject)?,
             time: now.try_into()?,
             data,
             home: EventHome::Project(project),
             home_owner: EventHomeOwner::Unresolved,
             related: Vec::new(),
             causationid: None,
-            extensions: BTreeMap::from([("inbound_verify".into(), protocol.as_str().into())]),
+            extensions,
         })
     })();
+    let event = match event {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(event="webhook_subject_invalid",error=%error);
+            return (400, "invalid subject data\n".into());
+        }
+    };
     let result = (|| -> Result<(), crate::transport::TransportError> {
-        let event = event?;
         let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(home))?;
         transport.publish_claimed(&event, &claim, CLAIM_TTL)?;
         Ok(())

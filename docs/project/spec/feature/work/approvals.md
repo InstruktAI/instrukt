@@ -60,8 +60,11 @@ rather than a fixed workflow role, determines who performs the check. For work
 committed directly from a conversation, commit review is the first recipient.
 
 The check runs on the computer where the originating conversation is readable.
-That computer’s runner dispatches the checker; GitHub carries no copy of the
-conversation.
+The responsible orchestrator there dispatches the checker through an
+configured native delegation instruction, reserving its role attempt and
+binding the native child id through work commands. Its runtime delivers the
+result to that parent. GitHub carries the checked record and
+stamp; the conversation remains in its runtime.
 
 An intent check establishes fidelity of the record. An approval authorizes a
 particular reviewed outcome. One never substitutes for the other.

@@ -56,7 +56,7 @@ codes! {
     SubscriptionHomeMissing => "frontmatter-subscription-home-missing",
     SubscriptionReachInvalid => "frontmatter-subscription-reach-invalid",
     SubscriptionsWithoutRole => "frontmatter-subscriptions-without-role",
-    /// `event_delivery` or `interruptible` without `subscriptions`.
+    /// `interruptible` without `subscriptions`.
     DeliverySettingMisplaced => "frontmatter-delivery-setting-misplaced",
     DeliverySettingInvalid => "frontmatter-delivery-setting-invalid",
     RoleInvalid => "frontmatter-role-invalid",

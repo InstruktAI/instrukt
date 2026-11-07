@@ -292,3 +292,34 @@ fn an_engine_left_hanging_past_its_time_limit_is_ended_for_the_next_revision() {
         "the left engine was ended, not finished"
     );
 }
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG4
+// spec: project/instrukt/spec/feature/blueprint/graph-generation UC-BG1
+#[test]
+fn a_runner_fast_forward_hands_the_fetched_main_revision_to_blueprint() {
+    let env = machine();
+    let command = engine(&env);
+    let repo = project(&env, Some(&command));
+    let first = revision(&repo, "baseline", Some(&first_map()));
+    repo.git(["push", "--quiet", "-u", "origin", "main"]);
+    wait_generated(&env, &first);
+    // The local runner considers the published project, even without events.
+    let global = env.instrukt_home().join("instrukt.yaml");
+    let mut text = std::fs::read_to_string(&global).unwrap();
+    text.push_str("modules: {todos: true}\n");
+    std::fs::write(global, text).unwrap();
+    env.run(repo.path(), ["sync"]).success();
+    if !repo.git(["status", "--porcelain"]).is_empty() {
+        repo.commit("integrator: include generated baseline files");
+        repo.git(["push", "--quiet", "origin", "main"]);
+    }
+    let other = env.clone_repo(&env.path("origin.git"), "integrator");
+    let delivered = revision(&other, "integrated", Some(&second_map()));
+    other.git(["push", "--quiet", "origin", "main"]);
+    env.run(env.home(), ["tick"]).success();
+    assert_eq!(repo.head(), delivered);
+    assert_eq!(
+        wait_generated(&env, &delivered).state,
+        GenerationState::Mapped
+    );
+}

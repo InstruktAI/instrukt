@@ -43,6 +43,8 @@ pub enum SourceError {
         git_ref: String,
         detail: String,
     },
+    #[error("cannot synchronize canonical checkout {dir}: {reason}")]
+    Sync { dir: String, reason: String },
     #[error(transparent)]
     Process(#[from] ProcessError),
     #[error(transparent)]
@@ -179,55 +181,19 @@ pub fn upstream_changes(
 /// What local git says about a project's main and its candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainObservation {
-    pub local_main: Option<CommitSha>,
     pub remote_main: Option<CommitSha>,
-    /// Local main strictly ahead of remote main.
-    pub ahead: bool,
     /// The active integrate candidate.
     pub candidate: Option<CommitSha>,
 }
 
-impl MainObservation {
-    /// `runner.main_ahead` when local main is ahead and no candidate is
-    /// pending.
-    pub fn main_ahead(&self, project: &ProjectSlug) -> Option<Event> {
-        match (
-            &self.local_main,
-            &self.remote_main,
-            self.ahead,
-            &self.candidate,
-        ) {
-            (Some(local), Some(remote), true, None) => Some(Event::MainAhead {
-                project: project.clone(),
-                local_main: local.clone(),
-                remote_main: remote.clone(),
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// Reads local main, and the remote's current canonical main and
+/// Reads the remote's current canonical main and
 /// `integrate` heads, and the active candidate. The remote heads are the
 /// remote's own answer (`git ls-remote`), never a tracking ref a fetch may
 /// not have refreshed; the commits are then fetched into their tracking
 /// refs so ancestry can be judged against them.
 pub fn observe_main(root: &Path) -> Result<MainObservation, SourceError> {
     let branch = git::default_branch(root, CANONICAL_REMOTE)?;
-    let local_main = resolve(root, &format!("refs/heads/{branch}"))?;
     let (remote_main, integrate) = remote_heads(root, &branch)?;
-    let ahead = match (&local_main, &remote_main) {
-        (Some(local), Some(remote)) if local != remote => git::succeeds(
-            root,
-            [
-                "merge-base",
-                "--is-ancestor",
-                remote.as_str(),
-                local.as_str(),
-            ],
-        )?,
-        _ => false,
-    };
     let candidate = match (integrate, &remote_main) {
         (Some(head), Some(main)) => {
             let promoted = git::succeeds(
@@ -240,11 +206,59 @@ pub fn observe_main(root: &Path) -> Result<MainObservation, SourceError> {
         (None, _) => None,
     };
     Ok(MainObservation {
-        local_main,
         remote_main,
-        ahead,
         candidate,
     })
+}
+
+/// Advance the canonical checkout mechanically; Git's post-merge hook publishes
+/// the new docs and hands its revision to blueprint. Never switch or force a checkout.
+pub fn synchronize_main(root: &Path, observed: &MainObservation) -> Result<(), SourceError> {
+    let Some(remote) = &observed.remote_main else {
+        return Ok(());
+    };
+    let branch = git::default_branch(root, CANONICAL_REMOTE)?;
+    let local = git::run(
+        root,
+        ["rev-parse", "--verify", &format!("refs/heads/{branch}")],
+    )?;
+    if local == remote.as_str() {
+        return Ok(());
+    }
+    let refused = |reason: &str| SourceError::Sync {
+        dir: root.display().to_string(),
+        reason: reason.to_owned(),
+    };
+    if !git::succeeds(
+        root,
+        ["merge-base", "--is-ancestor", &local, remote.as_str()],
+    )? {
+        return Err(refused(
+            "local main is not an ancestor of remote main; preserve its history and reconcile in a reviewed worktree",
+        ));
+    }
+    let checked_out = git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    if checked_out != branch {
+        return Err(refused(
+            "project checkout is not on canonical main; restore its intended placement before retrying",
+        ));
+    }
+    if !git::run(root, ["status", "--porcelain=v1", "--untracked-files=all"])?.is_empty() {
+        return Err(refused(
+            "project checkout is dirty; preserve its changes and retry after their owner clears the checkout",
+        ));
+    }
+    git::run(
+        root,
+        [
+            "merge",
+            "--ff-only",
+            "--no-overwrite-ignore",
+            remote.as_str(),
+        ],
+    )?;
+    tracing::info!(event = "canonical_checkout_advanced", dir = %root.display(), commit = %remote);
+    Ok(())
 }
 
 /// How many times a sample of the remote's heads is taken before the
@@ -406,68 +420,9 @@ fn fetch_commits(root: &Path, commits: &[&CommitSha]) -> Result<bool, SourceErro
     Ok(fetched.success)
 }
 
-/// The commit `git_ref` names; `None` when the ref does not exist.
-fn resolve(root: &Path, git_ref: &str) -> Result<Option<CommitSha>, SourceError> {
-    let output = git::run_output(
-        root,
-        [
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{git_ref}^{{commit}}"),
-        ],
-    )?;
-    if output.status.code() == Some(1) {
-        return Ok(None);
-    }
-    if !output.status.success() {
-        return Err(SourceError::Git(git::GitError::Failed {
-            dir: root.to_path_buf(),
-            args: format!("rev-parse --verify --quiet {git_ref}"),
-            status: output.status.to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        }));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(CommitSha::parse(text.trim()).ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sha(c: char) -> CommitSha {
-        CommitSha::parse(&c.to_string().repeat(40)).unwrap()
-    }
-
-    #[test]
-    fn main_ahead_needs_local_ahead_and_no_pending_candidate() {
-        let project = ProjectSlug::parse("demo").unwrap();
-        let ahead = MainObservation {
-            local_main: Some(sha('a')),
-            remote_main: Some(sha('b')),
-            ahead: true,
-            candidate: None,
-        };
-        assert_eq!(
-            ahead.main_ahead(&project),
-            Some(Event::MainAhead {
-                project: project.clone(),
-                local_main: sha('a'),
-                remote_main: sha('b'),
-            })
-        );
-        let pending = MainObservation {
-            candidate: Some(sha('c')),
-            ..ahead.clone()
-        };
-        assert_eq!(pending.main_ahead(&project), None);
-        let level = MainObservation {
-            ahead: false,
-            ..ahead
-        };
-        assert_eq!(level.main_ahead(&project), None);
-    }
 
     #[test]
     fn a_sample_that_cannot_be_fetched_is_retaken_then_given_up_at_the_bound() {

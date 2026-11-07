@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context as _;
-use instrukt_core::config::{self, Configuration, Env, InitOutcome, Layer, Revision, parse_patch};
+use instrukt_core::config::{self, Configuration, InitOutcome, Layer, Revision, parse_patch};
 use serde_yaml_ng::Value;
 
 use crate::context::Ctx;
@@ -41,7 +41,7 @@ struct LayerArgs {
 
 #[derive(Debug, clap::Args)]
 struct GetArgs {
-    /// Dotted path, e.g. `modules.todos` or `runtime.conversation`.
+    /// Dotted path, e.g. `modules.todos` or `runtime.session_id`.
     path: Option<String>,
     /// Read the global layer alone.
     #[arg(long)]
@@ -100,7 +100,7 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     } else {
         Configuration::load_at(&ctx.home, &ctx.cwd)?
     };
-    let value = configuration.get(args.path.as_deref(), &Env::from_process())?;
+    let value = configuration.get(args.path.as_deref(), &crate::wiring::environment(ctx)?)?;
     if args.json {
         ctx.out.json(&value)?;
         return Ok(ExitCode::SUCCESS);

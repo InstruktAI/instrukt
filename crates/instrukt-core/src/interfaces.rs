@@ -18,6 +18,18 @@ use std::sync::Arc;
 
 use crate::ids::{CommitSha, ProjectSlug, RoleName, SnippetId, TodoSlug};
 
+/// Caller identity supplied by the explicitly selected runtime adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallerIdentity {
+    pub session: crate::ids::SessionRef,
+    pub agent: Option<String>,
+}
+/// Recognize native caller context without performing runtime I/O.
+pub trait CallerIdentityLookup: Send + Sync {
+    fn lookup_caller(&self, env: &crate::config::Env) -> Option<CallerIdentity>;
+    fn caller_variables(&self) -> &'static [&'static str];
+}
+
 /// An optional module could not answer a core question.
 #[derive(Debug, thiserror::Error)]
 #[error("{module}: {message}")]
@@ -113,6 +125,7 @@ pub trait GraphGeneration: Send + Sync {
 /// reference.
 #[derive(Clone, Default)]
 pub struct CoreWiring {
+    pub caller_identity: Option<Arc<dyn CallerIdentityLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
@@ -122,6 +135,7 @@ pub struct CoreWiring {
 impl std::fmt::Debug for CoreWiring {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CoreWiring")
+            .field("caller_identity", &self.caller_identity.is_some())
             .field("todo_existence", &self.todo_existence.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
             .field("flavor_schema", &self.flavor_schema.is_some())

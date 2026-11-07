@@ -58,6 +58,12 @@ one todo is the scope-and-size gate's decision
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.message_peer -->
+
 Use `instrukt <command> -h` for individual commands.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
@@ -173,7 +179,7 @@ the override:
   silently proceeding or dropping.
 - **This premise supersedes** — replaces, broadens, or obsoletes an existing
   todo. Act by that todo's state: a living orchestrator gets a best-effort
-  informational message (`instrukt sessions send`) plus a surface to the human;
+  informational message (the configured runtime message instruction) plus a surface to the human;
   a dormant todo gets surfaced and optionally frozen (`instrukt todo freeze`,
   reversible); a todo already claimed and building is halted only on
   certainty — below that bar, surface to the human and let it proceed.
@@ -265,12 +271,12 @@ to consolidate the rule into its established owner and adapt existing
 consumers is causal completion, not adjacent refactoring. Moving an adjacent
 owner's rule into the bug's current context is still scope and ownership creep.
 
-### 2d. Reserve scenario test bindings on main when the project has tests
+### 2d. Reserve scenario test bindings in preparation when the project has tests
 
 Before drafting the tasks in a project that opts into tests, reserve every
 feature-spec scenario the plan will bind so a concurrent prepare cannot bind
 the same scenario. Read the
-current scenario inventory on `main` for each feature spec the plan touches — the
+current scenario inventory on main and in the target preparation worktree for each feature spec the plan touches — the
 live scenarios via `instrukt docs get <id>`, and any pending claims via
 `instrukt docs index --target <slug>` and `instrukt docs get <id> --target <slug>`.
 
@@ -289,14 +295,14 @@ For each scenario the plan will bind:
   scenario unchanged; the delivery fold clears the wrap and the test binding becomes
   the permanent record.
 - **A scenario already reserved by another in-flight todo** — enclosed by that todo's
-  pending marker on `main` — is not claimed again: reuse it by reference with no
+  pending marker in its owning preparation worktree — is not claimed again: reuse it by reference with no
   second binding, or author a distinct scenario. When both todos must author the same
   region, serialize with `instrukt todo update <this-slug> --after <owning-slug>` so this
   plan drafts against the owner's approved scenarios.
 
 A scenario enclosed by no pending marker and bound by no test is unclaimed and free
 to reserve. The plan's declared bindings are what the plan-review reservation check
-validates against these on-`main` claims.
+validates against the published claims and the pending preparation worktrees.
 
 ### 3. Draft the implementation plan
 
@@ -477,7 +483,8 @@ phase authors the pending snippets that describe the work's intended state. A
   `<stem>.{slug}.md` companion for a wholesale rework (see the doc-snippet
   authoring procedure).
 - Author no plan task for the snippets. Doc reflection is complete once prepare
-  has authored them, and the integrator folds them at delivery; the work phase
+  has authored them; independent head review and the integrator's fold and
+  integration make them public before build. The work phase
   never takes the doc layer's state as work. A plan that carries a documentation
   task — including one that only confirms or verifies pending markers — has
   misplaced prepare's own work, and the plan reviewer rejects it.
@@ -549,7 +556,8 @@ instrukt todo prepare {slug}
 ```
 
 The returned action and rendered template carry the next obligation. Dispatch
-or reuse the independent plan-review session through the sessions facade.
+or reuse the independent plan-review session through configured runtime
+delegation and child messaging under `general/procedure/ai-to-ai-operations`.
 The review is done when the record carries the current findings artifact and
 verdict stamp. Approval permits the next derived obligation; needs-work
 returns here with `plan-review-findings` for fix, evidence-backed rejection,
@@ -578,7 +586,7 @@ or re-derivation under step 1b. Record the revision and call prepare again.
 
 ## Discipline
 
-Reserve every scenario binding on `main` before drafting tasks — plan-draft step
+Reserve every scenario binding in the preparation worktree before drafting tasks — plan-draft step
 2d. Skipping it lets a concurrent prepare bind the same scenario in its own
 worktree; the plan-review reservation check exists to catch that late, not to
 excuse skipping the reservation early.

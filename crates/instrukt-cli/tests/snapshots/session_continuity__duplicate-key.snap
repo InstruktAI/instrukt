@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+assertion_line: 105
+expression: "shown(&p, &out.get_output().stderr)"
+---
+instrukt: runtime key conflict for `instrukt:todo:demo/<id 1>:prepare-orchestrator:1`; no thread was selected or started

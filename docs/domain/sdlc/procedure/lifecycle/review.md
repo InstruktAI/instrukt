@@ -29,6 +29,12 @@ citation rules, severity schema, verdict arithmetic, and reviewer separation.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.read_thread -->
+
 ### 0. Ground the target and reuse relevant assessment evidence
 
 Establish the invoking procedure's target, scope and applicable contracts
@@ -55,7 +61,7 @@ session transcript named by an artifact's writers or a commit's `Session:`
 trailer — that reading corroborates the authorized basis and never gates the
 work. Read it when it can be read. When it cannot — the writer has no recorded
 session, or the conversation is unavailable through
-`instrukt sessions conversation <session-id>` — record what you tried and why
+the configured runtime conversation read instruction — record what you tried and why
 it failed, and proceed on the artifact or commit as the authorized basis, with its governing
 contracts. Do not block or refuse on that absence alone: durable authority
 lives in the artifact (`general/policy/leadership`). The absence supplies no intent either; nothing

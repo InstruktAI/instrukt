@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 7bd85ad8099d6a5c9f8f2ba5e050b08626d672e5eefd354c169f806071b77818 # shrinks to value = Sequence [String("y")]

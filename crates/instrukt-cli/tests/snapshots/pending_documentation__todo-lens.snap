@@ -1,6 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/pending-documentation.rs
-expression: "stdout(&env, &lens)"
+assertion_line: 193
+expression: "stdout(&env, &lens).replace(&github.url(), \"[GITHUB_API]\")"
 ---
 # instrukt docs get --target build-it: acme/spec/fresh acme/policy/reworked acme/spec/live acme/concept/old
 # Required reads (not loaded) that must have been read at least once: acme/spec/later
@@ -11,7 +12,7 @@ type: spec
 domain: acme
 scope: global
 description: A new contract build-it delivers.
-source: [TMP]/demo/docs/domain/acme/spec/fresh.md
+source: [TMP]/build-it-prepare/docs/domain/acme/spec/fresh.md
 ---
 # Fresh — Spec
 
@@ -29,7 +30,7 @@ type: policy
 domain: acme
 scope: global
 description: A live policy with a next version.
-source: [TMP]/demo/docs/domain/acme/policy/reworked.md
+source: [TMP]/build-it-prepare/docs/domain/acme/policy/reworked.md
 ---
 # Reworked — Policy
 
@@ -59,7 +60,7 @@ type: spec
 domain: acme
 scope: global
 description: A live contract with pending additions.
-source: [TMP]/demo/docs/domain/acme/spec/live.md
+source: [TMP]/build-it-prepare/docs/domain/acme/spec/live.md
 ---
 # Live — Spec
 
@@ -69,7 +70,7 @@ The current text.
 
 Added by build-it.
 ```
-https://api.github.com
+[GITHUB_API]
 ```
 
 - field: replaced by build-it
@@ -84,5 +85,5 @@ type: concept
 domain: acme
 scope: global
 description: A concept build-it retires.
-source: [TMP]/demo/docs/domain/acme/concept/old.md
+source: [TMP]/build-it-prepare/docs/domain/acme/concept/old.md
 ---

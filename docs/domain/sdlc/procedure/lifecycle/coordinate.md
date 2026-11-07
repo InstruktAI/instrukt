@@ -74,15 +74,15 @@ the address-only challenge of `sdlc/concept/coordination-cases` NC-29.
 
 **Tandem for judgment.** Every material disposition, defect-ownership judgment
 or human-owned question is independently challenged by one peer before action.
-Establish it lazily through `instrukt sessions run`, selected from `dispatch`
+Establish it lazily through configured runtime delegation, selected from `dispatch`
 or `agents.order`, availability first, preferring another model when available.
 It receives case sources and governing contracts, never a preferred conclusion,
 and has no coordination mandate or mutation authority. Keep and reuse its
-recorded session; use `send` for case exchanges and `sessions link` when the
+recorded session; use the configured message value for case exchanges and the configured runtime discussion instruction when the
 runtime supports shared discussion. The peer remains alive but unlinked between
 judgments. Close the link only after both sessions agree on the disposition,
 including whether any residue is human-owned or safety-gated, with
-`instrukt sessions link --remove <a> <b>`. At most one peer is live at a time;
+the configured runtime discussion instruction. At most one peer is live at a time;
 record the failed peer's disposition and confirm that its assignment has
 stopped before replacing it, with no overlapping work. At its own handoff,
 the coordinator records the peer's remaining obligations. The runtime owns
@@ -130,12 +130,28 @@ evidence and interpretation, kept distinguishable.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.dispatch -->
+
+<!-- @config: runtime.inspect_thread -->
+
+<!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.message_peer -->
+
+<!-- @config: runtime.look_around -->
+
+<!-- @config: runtime.discuss -->
+
 ### 1. Frame the fleet
 
 Use `instrukt todo list` and `instrukt todo show <slug>` to identify this
 project's work, claims and per-role session bindings. Observe identified sessions
-through `instrukt sessions alive` and read their conversations through
-`instrukt sessions conversation`. The integrator is the recorded standing
+through the configured runtime status inspection instruction and read their conversations through
+the configured runtime conversation read instruction. The integrator is the recorded standing
 session for its procedure and project. Builders remain managed by their work
 orchestrator; their evidence informs assessment of that owner.
 
@@ -167,11 +183,18 @@ contract. Do not resend or ask for acknowledgement. Positive evidence of a
 missing owner or skipped obligation, or a contract-defined time condition,
 can establish another finding. Re-read the bearing source before acting.
 
+For a judgment peer you dispatched, read its parent-attention notice as that
+peer's finished-turn, failed-turn or input-wait account, including its closing
+message. Recheck the case sources before the disposition. Builders' ending
+notices go to their dispatching work orchestrator; assess that owner's current
+evidence under this coordination mandate. Receive ASAP attention through the
+runtime's available safe point and preserve the peer's continuing obligations.
+
 ### 4. Assess across the field
 
 Check whether multiple assignments collide or an owner's attention is missing.
 Use the governing owners' contracts to distinguish runtime state from work
-completion; the five facade states do not replace artifacts and stamps. A
+completion; native status observations do not replace artifacts and stamps. A
 failed observation is unknown. Preserve uncertainty where available sources
 cannot establish ownership or progress; agent-side insufficiency is not a
 human-owned judgment.
@@ -179,7 +202,7 @@ human-owned judgment.
 ### 5. Intervene by address
 
 After peer challenge, send the smallest address-only pointer through
-`instrukt sessions send <id> <pointer>`. A policy-violating todo is pointed out
+the configured runtime message instruction. A policy-violating todo is pointed out
 to its live claimant under the creation-policy reconciliation clause.
 Challenge its basis while leaving the disposition with its contractual owner.
 This role may take up a deadlock it observes: it owns that disposition with its
@@ -221,10 +244,10 @@ source evidence is unavailable, state that concrete observation gap.
 ### Tools
 
 - `instrukt todo list` / `show` — work and recorded session bindings.
-- `instrukt sessions alive` / `conversation` — identified-session evidence.
-- `instrukt sessions send` — address-only intervention or peer challenge.
-- `instrukt sessions run` — establish the judgment peer, never dispatch production.
-- `instrukt sessions link <a> <b>` — joint reasoning where supported.
+- Configured native status inspection and conversation read — identified-session evidence.
+- the configured runtime message instruction — address-only intervention or peer challenge.
+- the configured runtime delegation instruction — establish the judgment peer, never dispatch production.
+- the configured runtime discussion instruction — joint reasoning where supported.
 - `instrukt todo create <slug> '<content>' --kind bug --approved` — evidenced ownerless defects only.
 - Filtered `instrukt docs index` / `get` — current governing contracts.
 

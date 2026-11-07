@@ -53,7 +53,9 @@ pub(crate) fn select_lane(
         Some(Responsible::Procedure(procedure)) => {
             role_of(procedure).as_ref() == Some(prepare_orchestrator)
         }
-        Some(Responsible::Orchestrator(_)) | None => preparation_owes_procedure,
+        Some(Responsible::Orchestrator(_) | Responsible::Role(_)) | None => {
+            preparation_owes_procedure
+        }
     };
     if routes_to_preparation {
         Lane::Prepare
@@ -128,7 +130,7 @@ mod tests {
             ("templates/ship.md", "Ship {slug}.\n"),
             (
                 "work.yaml",
-                "flow: work\norchestrator: lead\ninitial: start\nstates: [start, shipped]\n\
+                "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, shipped]\n\
                  transitions:\n- from: start\n  to: shipped\n  when: {exists: prd.digest}\n  action: ship\n",
             ),
         ]);

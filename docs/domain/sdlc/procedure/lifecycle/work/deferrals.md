@@ -62,7 +62,7 @@ dispatch:
      the same evidence. Otherwise close the entry.
 3. Record each entry's disposition — the created or filed slug, or why it was
    closed — in the todo's `log`.
-4. Confirm the role worktree is clean at its captured todo head, then stamp
+4. Confirm the shared todo worktree is clean at its captured todo head, then stamp
    processing complete:
    - `instrukt todo stamp {slug} --deferrals-processed`
 5. The processing stamp binds the current deferrals artifact and releases this deferrer attempt in

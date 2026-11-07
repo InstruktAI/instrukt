@@ -20,6 +20,8 @@ mod flavor;
 mod runtime;
 #[path = "support/work.rs"]
 mod support;
+#[path = "support/workflow.rs"]
+mod workflow;
 
 use common::TestEnv;
 use common::github::{CannedResponse, FakeGitHub};
@@ -152,8 +154,8 @@ fn a_revision_github_accepted_whose_answer_was_lost_completes_without_a_conflict
 // spec: project/instrukt/spec/feature/work/github-record UC-GR2
 #[test]
 fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() {
-    let project = Project::new();
-    let repo = &project.repo;
+    let crew = workflow::Crew::new();
+    let project = &crew.project;
     project.create("nested-lists", "feature", INTENT);
     project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
     project.ok([
@@ -163,13 +165,16 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         "implementation-plan",
         "1. Track depth in the parser.\n2. Render it.",
     ]);
-    repo.git(["checkout", "--quiet", "-b", "nested-lists"]);
-    repo.write("parser.rs", "fn parse() {}\n");
-    let built = repo.commit("Track list depth");
+    let workspace = crew.workspace("nested-lists");
+    std::fs::write(workspace.join("parser.rs"), "fn parse() {}\n").unwrap();
+    project.env.git(&workspace, ["add", "parser.rs"]);
+    project
+        .env
+        .git(&workspace, ["commit", "--quiet", "-m", "Track list depth"]);
+    let built = project.env.git(&workspace, ["rev-parse", "HEAD"]);
     project
         .github
-        .set_branch(REPOSITORY, "nested-lists", &built);
-    project.ok(["stamp", "nested-lists", "--build-started"]);
+        .set_branch(REPOSITORY, "nested-lists/work", &built);
     project.ok([
         "artifacts",
         "write",
@@ -177,18 +182,58 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         "review-findings",
         "No findings.",
     ]);
-    project.ok([
-        "stamp",
+    crew.write(
         "nested-lists",
-        "--verdict",
-        "approve",
-        "--phase",
-        "build_review",
-    ]);
+        "prd-review-findings",
+        "The product requirement is approved.",
+    );
+    crew.stamp(
+        "nested-lists",
+        &["--verdict", "approve", "--phase", "prd_review"],
+    );
+    crew.stamp("nested-lists", &["--prd-approved", "--by", "human"]);
+    crew.write(
+        "nested-lists",
+        "plan-review-findings",
+        "The implementation plan is approved.",
+    );
+    crew.stamp(
+        "nested-lists",
+        &["--verdict", "approve", "--phase", "plan_review"],
+    );
+    crew.next("work", "nested-lists");
+    crew.todo_in(&workspace, ["stamp", "nested-lists", "--build-started"]);
+    let worker = crew.worker(
+        "nested-lists",
+        "build-reviewer",
+        Some("crew/procedure/review-build"),
+    );
+    project
+        .env
+        .instrukt(Path::new(worker["worktree"].as_str().unwrap()))
+        .env(
+            "T3CODE_THREAD_ID",
+            worker["session"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("t3:")
+                .unwrap(),
+        )
+        .args([
+            "todo",
+            "stamp",
+            "nested-lists",
+            "--verdict",
+            "approve",
+            "--phase",
+            "build_review",
+        ])
+        .assert()
+        .success();
 
     project.ok(["deliver", "nested-lists", "--commit", &built]);
 
-    insta::assert_snapshot!("delivery-on-github", redact(&github_view(&project)));
+    insta::assert_snapshot!("delivery-on-github", redact(&github_view(project)));
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR3
@@ -479,7 +524,7 @@ fn a_todo_whose_claim_moves_here_starts_from_what_github_holds_now() {
     });
     project.tick();
 
-    assert_eq!(project.rt.calls().len(), 1, "{:?}", project.rt.calls());
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     let shown = project.todo(["show", "tidy-imports"]);
     insta::assert_snapshot!(
         "claim-moved-here",
@@ -868,4 +913,359 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
             board_state(&project, "acme", 8, &issues)
         )
     );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR7
+#[test]
+fn an_existing_local_item_uses_the_later_pickup_copy_and_shows_its_age() {
+    let mut project = flavor::Tracked::new(false);
+    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
+    project.todo([
+        "create",
+        "held-away",
+        "Keep this record visible locally.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    seed_revision(&project.github, |record| {
+        record["claim"] = serde_json::json!({"machine":OTHER_MACHINE,"at":"2030-01-06T09:00:00Z"});
+    });
+    project.tick_at("2030-01-06T09:01:00Z");
+    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:06:00Z");
+    project.github.clear_requests();
+    let listed = project.todo(["list"]);
+    assert!(project.github.requests().is_empty());
+    insta::assert_snapshot!("local-copy-age", redact(&listed));
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR9
+#[test]
+fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change_work() {
+    let project = Project::new();
+    project.create(
+        "held-work",
+        "feature",
+        "Retain this work through a dispatch pause.",
+    );
+    let action = |id: u64, event: &str, login: &str| serde_json::json!({"id":id,"event":event,"label":{"name":"hold"},"actor":{"login":login},"created_at":"2026-11-06T10:00:00Z"});
+    let respond = |actions: Vec<Value>, login: &str, permission: &str| {
+        project.github.respond_once(
+            "GET",
+            "/issues/1/events",
+            CannedResponse {
+                status: 200,
+                headers: vec![],
+                body: actions.into(),
+            },
+        );
+        project.github.respond_once(
+            "GET",
+            &format!("/collaborators/{login}/permission"),
+            CannedResponse {
+                status: 200,
+                headers: vec![],
+                body: serde_json::json!({"permission":permission}),
+            },
+        );
+    };
+    project
+        .github
+        .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
+    respond(
+        vec![action(801, "labeled", "maintainer")],
+        "maintainer",
+        "write",
+    );
+    let held = project.ok(["show", "held-work"]);
+    project.ok([
+        "artifacts",
+        "write",
+        "held-work",
+        "log",
+        "Progress remains available.",
+    ]);
+    let before = project.github.artifacts(REPOSITORY, 1);
+    project.github.edit_issue(REPOSITORY, 1, |issue| {
+        issue.labels.retain(|l| l != "hold" && l != "status:active");
+        issue.labels.push("status:delivered".into());
+        issue.labels.push("team-owned".into());
+    });
+    respond(
+        vec![
+            action(801, "labeled", "maintainer"),
+            action(802, "unlabeled", "collaborator"),
+        ],
+        "collaborator",
+        "write",
+    );
+    let released = project.ok(["show", "held-work"]);
+    // A subsequent write reflects the accepted release and restores output labels.
+    project.ok(["update", "held-work"]);
+    assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
+    respond(vec![action(803, "labeled", "outsider")], "outsider", "read");
+    let refused = project.ok(["show", "held-work"]);
+    insta::assert_snapshot!(
+        "github-hold-label-audit",
+        redact(&format!("{held}---\n{released}---\n{refused}"))
+    );
+    insta::assert_json_snapshot!(
+        "github-restored-output-labels",
+        project.github.issue(REPOSITORY, 1).unwrap()["labels"]
+    );
+}
+// spec: project/instrukt/spec/feature/work/github-record UC-GR8
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
+#[test]
+fn a_github_decision_wakes_only_its_live_claimant_and_replay_creates_no_second_notice() {
+    let crew = workflow::Crew::new();
+    let project = &crew.project;
+    project.create("approval-work", "feature", "Review the desired outcome.");
+    crew.next("prepare", "approval-work");
+    crew.write("approval-work", "prd", "The desired reviewed outcome.");
+    let reviewer = crew.worker(
+        "approval-work",
+        "prd-reviewer",
+        Some("crew/procedure/review-prd"),
+    );
+    let reviewer = reviewer["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    for args in [
+        vec![
+            "artifacts",
+            "write",
+            "approval-work",
+            "prd-review-findings",
+            "The outcome is complete.",
+        ],
+        vec![
+            "stamp",
+            "approval-work",
+            "--verdict",
+            "approve",
+            "--phase",
+            "prd_review",
+        ],
+    ] {
+        project
+            .env
+            .instrukt(&crew.phase_workspace("approval-work", true))
+            .env("T3CODE_THREAD_ID", reviewer)
+            .arg("todo")
+            .args(args)
+            .assert()
+            .success();
+    }
+
+    crew.runtime.open_session("lead-1");
+    crew.runtime.set_status("lead-1", "ended ok");
+    let config = project.repo.path().join("instrukt.yaml");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text = text.replace("github:\n", "github:\n  approvers: [maintainer]\n");
+    std::fs::write(config, text).unwrap();
+    let issue = project.github.issue(REPOSITORY, 1).unwrap();
+    let body = issue["body"].as_str().unwrap();
+    let prefix = body
+        .lines()
+        .find(|line| line.starts_with("**Awaiting approval:** prd"))
+        .unwrap()
+        .split('`')
+        .nth(1)
+        .unwrap();
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        &format!("/instrukt approve prd {prefix}"),
+    );
+    crew.todo(["show", "approval-work"]);
+    assert_eq!(crew.runtime.sent_count("lead-1"), 0); // This manually opened thread had no initial assignment message.
+    let first = crew.runtime.input_log("lead-1");
+    insta::assert_snapshot!("github-decision-attention", redact(&first));
+    let started = crew.runtime.started_count();
+    insta::assert_snapshot!(
+        "preparation-after-github-decision",
+        redact(&crew.next("prepare", "approval-work"))
+    );
+    assert_eq!(crew.runtime.started_count(), started);
+    crew.todo(["show", "approval-work"]);
+    let second = crew.runtime.input_log("lead-1");
+    assert_eq!(first, second);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR8
+#[test]
+fn a_confirmation_failure_retries_without_reapplying_the_github_decision() {
+    let project = Project::new();
+    project.repo.write("instrukt.yaml","schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo, approvers: [maintainer]}\n");
+    project.create(
+        "reply-work",
+        "feature",
+        "Preserve the decision through confirmation failure.",
+    );
+    project.ok([
+        "artifacts",
+        "write",
+        "reply-work",
+        "prd",
+        "The current outcome.",
+    ]);
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        "/instrukt request-changes prd Clarify scope.",
+    );
+    let before = project.github.comments(REPOSITORY, 1).len();
+    project.github.respond_once(
+        "POST",
+        "/issues/1/comments",
+        CannedResponse {
+            status: 502,
+            headers: vec![],
+            body: serde_json::json!({"message":"Bad Gateway"}),
+        },
+    );
+    project.ok(["show", "reply-work"]);
+    assert_eq!(project.github.comments(REPOSITORY, 1).len(), before);
+    let recovered = project.ok(["show", "reply-work"]);
+    assert_eq!(project.github.comments(REPOSITORY, 1).len(), before + 1);
+    let again = project.ok(["show", "reply-work"]);
+    assert_eq!(project.github.comments(REPOSITORY, 1).len(), before + 1);
+    assert_eq!(redact(&recovered), redact(&again));
+    insta::assert_snapshot!("decision-after-reply-retry", redact(&again));
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR8
+#[test]
+fn moving_work_to_another_computer_keeps_the_decisions_source_identity() {
+    let project = Project::new();
+    let config = "schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo, approvers: [maintainer]}\n";
+    project.repo.write("instrukt.yaml", config);
+    project.create(
+        "moved-decision",
+        "feature",
+        "Keep the applied decision when work moves.",
+    );
+    project.ok([
+        "artifacts",
+        "write",
+        "moved-decision",
+        "prd",
+        "The current outcome.",
+    ]);
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        "/instrukt request-changes prd Clarify the result.",
+    );
+    project.ok(["show", "moved-decision"]);
+    project.ok([
+        "artifacts",
+        "write",
+        "moved-decision",
+        "log",
+        "Reflect the applied decision.",
+    ]);
+    let other = project.other_computer();
+    other.repo.write("instrukt.yaml", config);
+    other.ok([
+        "update",
+        "moved-decision",
+        "--hold",
+        "--reason",
+        "Inspect on this computer.",
+    ]);
+    insta::assert_snapshot!(
+        "moved-decision-applied-once",
+        redact(&other.ok(["show", "moved-decision"]))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR8
+#[test]
+fn a_failed_mixed_handover_does_not_resend_an_approval_to_a_released_claimant() {
+    let crew = workflow::Crew::new();
+    let project = &crew.project;
+    project.create(
+        "mixed-attention",
+        "feature",
+        "Keep attention with its current claimant.",
+    );
+    crew.next("prepare", "mixed-attention");
+    crew.write("mixed-attention", "prd", "The outcome.");
+    let child = crew.worker(
+        "mixed-attention",
+        "prd-reviewer",
+        Some("crew/procedure/review-prd"),
+    );
+    let child = child["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    crew.runtime.open_session("lead-1");
+    crew.runtime.set_status("lead-1", "ended ok");
+    project.env.run(crew.root(), ["sync"]).success();
+    crew.runtime
+        .finish(child, "completed", "The review turn ended.");
+    let file = project.repo.path().join("instrukt.yaml");
+    let text = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("github:\n", "github:\n  approvers: [maintainer]\n");
+    std::fs::write(file, text).unwrap();
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        "/instrukt request-changes prd Clarify scope.",
+    );
+    std::fs::write(crew.runtime.state_dir().join("send-failure"), "").unwrap();
+    project.env.run(crew.root(), ["tick"]).success();
+    crew.todo(["update", "mixed-attention", "--unclaim"]);
+    std::fs::remove_file(crew.runtime.state_dir().join("send-failure")).unwrap();
+    crew.todo(["show", "mixed-attention"]);
+    assert_eq!(crew.runtime.message_count("lead-1"), 0);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR8
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
+#[test]
+fn request_changes_wakes_the_live_claimant_once_without_a_worker_ending() {
+    let crew = workflow::Crew::new();
+    let project = &crew.project;
+    let slug = "request-direction";
+    project.create(slug, "feature", "Keep the requested direction.");
+    crew.next("prepare", slug);
+    crew.write(slug, "prd", "The current outcome.");
+    crew.runtime.open_session("lead-1");
+    crew.runtime.set_status("lead-1", "ended ok");
+    let source = project
+        .repo
+        .read("instrukt.yaml")
+        .replace("github:\n", "github:\n  approvers: [maintainer]\n");
+    project.repo.write("instrukt.yaml", &source);
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        "/instrukt request-changes prd Clarify the audience.",
+    );
+    crew.todo(["show", slug]);
+    assert_eq!(crew.runtime.message_count("lead-1"), 1);
+    insta::assert_snapshot!(
+        "github-request-changes-attention",
+        redact(&crew.runtime.input_log("lead-1"))
+    );
+    crew.todo(["show", slug]);
+    assert_eq!(crew.runtime.message_count("lead-1"), 1);
 }

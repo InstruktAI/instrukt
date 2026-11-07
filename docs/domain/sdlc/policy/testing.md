@@ -110,7 +110,7 @@ never blesses a diff its own change produced.
    earns its own named test (rules 13-14). A binding to a non-existent scenario is an orphan; it too
    fails the check.
 
-   Every scenario a plan will bind is reserved at prepare, on `main`, before the build-time binding
+   Every scenario a plan will bind is reserved in the preparation worktree and integrated to main before the build-time binding
    act — the claim is that the scenario is enclosed by a pending marker owning the binding for the
    drafting todo. A newly authored scenario carries the claim as its own `planned:<slug>` block; an
    existing live-and-unbound scenario is claimed by wrapping its `### UC-…` block in a

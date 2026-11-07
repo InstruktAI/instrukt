@@ -7,7 +7,6 @@ use serde_yaml_ng::{Mapping, Value};
 use super::_error::FindingKind;
 use super::_interpolate::{join, key_text, mask_references};
 use super::_module::Module;
-use super::_runtime::{AGENT_FIELD, HISTORY_FIELD, REQUIRED_FIELDS, VerbName, parse_verb};
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
@@ -72,6 +71,7 @@ enum Shape {
     Version,
     RedisTimeout,
     Webhooks,
+    Runtimes,
     MachineId,
     Port,
     Credential,
@@ -85,7 +85,6 @@ enum Shape {
     OnOff,
     Approver,
     Autostart,
-    Runtimes,
     WatchList,
     StrList,
     ModuleList,
@@ -158,6 +157,7 @@ fn schema() -> Node {
             ]),
         ),
         ("webhooks", Leaf(ProjectOnly, Shape::Webhooks)),
+        ("runtimes", Leaf(GlobalOnly, Shape::Runtimes)),
         (
             "ingress",
             map(vec![
@@ -178,7 +178,6 @@ fn schema() -> Node {
                 ("autostart", Leaf(Both, Shape::Autostart)),
             ]),
         ),
-        ("runtimes", Leaf(GlobalOnly, Shape::Runtimes)),
         (
             "agents",
             Node::Map {
@@ -353,6 +352,20 @@ enum Field {
 fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     let invalid = |message: &str| KeyFinding::new(path, FindingKind::InvalidValue, message);
     match shape {
+        Shape::Runtimes => match value.as_mapping() {
+            Some(entries) => {
+                let fields: Vec<_> = super::_runtime::ACTIONS
+                    .iter()
+                    .map(|name| (*name, Field::NonEmptyStr))
+                    .collect();
+                for (name, entry) in entries {
+                    check_record(entry, &join(path, &key_text(name)), &[], &fields, out);
+                }
+            }
+            None => out.push(invalid(
+                "expected a mapping of runtime names to agent-action values",
+            )),
+        },
         Shape::Webhooks => {
             if let Err(error) = super::_webhooks::parse(Some(value)) {
                 out.push(invalid(&error.to_string()));
@@ -530,87 +543,6 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
             }
             None => out.push(invalid("expected a list of `{remote, ref}`")),
         },
-        Shape::Runtimes => match value.as_sequence() {
-            Some(seq) => {
-                for (i, item) in seq.iter().enumerate() {
-                    check_runtime_entry(item, &join(path, &i.to_string()), out);
-                }
-            }
-            None => out.push(invalid("expected a list of runtime entries")),
-        },
-    }
-}
-
-/// One runtime-mapping entry: `name` and `session_id_env`, an optional
-/// `agent`, and verbs each in a verb form of a kind the verb takes
-/// (`layered-configuration`, "Runtime entries").
-fn check_runtime_entry(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
-    let Some(map) = value.as_mapping() else {
-        out.push(KeyFinding::new(
-            path,
-            FindingKind::InvalidValue,
-            "expected a mapping",
-        ));
-        return;
-    };
-    for field in REQUIRED_FIELDS {
-        if !map.contains_key(field) {
-            out.push(KeyFinding::new(
-                &join(path, field),
-                FindingKind::Missing,
-                "missing",
-            ));
-        }
-    }
-    for (key, field_value) in map {
-        let name = key_text(key);
-        let child = join(path, &name);
-        if REQUIRED_FIELDS.contains(&name.as_str()) || name == AGENT_FIELD {
-            check_field(Field::Str, field_value, &child, out);
-        } else if name == HISTORY_FIELD {
-            check_history(field_value, &child, out);
-        } else if let Some(verb) = VerbName::from_key(&name).filter(|v| v.top_level()) {
-            check_verb(verb, field_value, &child, out);
-        } else {
-            out.push(KeyFinding::new(
-                &child,
-                FindingKind::UnknownKey,
-                "unknown key",
-            ));
-        }
-    }
-}
-
-fn check_history(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
-    let Some(map) = value.as_mapping() else {
-        out.push(KeyFinding::new(
-            path,
-            FindingKind::InvalidValue,
-            "expected a mapping with the verbs `search` and `show`",
-        ));
-        return;
-    };
-    for (key, verb_value) in map {
-        let name = key_text(key);
-        let child = join(path, &name);
-        match VerbName::from_key(&format!("{HISTORY_FIELD}.{name}")) {
-            Some(verb) => check_verb(verb, verb_value, &child, out),
-            None => out.push(KeyFinding::new(
-                &child,
-                FindingKind::UnknownKey,
-                "unknown key",
-            )),
-        }
-    }
-}
-
-fn check_verb(verb: VerbName, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
-    if let Err(err) = parse_verb(verb, value) {
-        out.push(KeyFinding::new(
-            path,
-            FindingKind::InvalidValue,
-            err.to_string(),
-        ));
     }
 }
 
@@ -801,6 +733,9 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         })
     };
     match shape {
+        Shape::Runtimes => {
+            json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
+        }
         Shape::Webhooks => super::_webhooks::editor_schema(),
         Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
         Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),
@@ -839,45 +774,7 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             },
         }),
         Shape::WatchList => json!({ "type": "array", "items": record(&["remote", "ref"], &[]) }),
-        Shape::Runtimes => {
-            let mut optional: Vec<(&str, serde_json::Value)> =
-                vec![(AGENT_FIELD, json!({ "type": "string" }))];
-            optional.extend(
-                VerbName::ALL
-                    .into_iter()
-                    .filter(|verb| verb.top_level())
-                    .map(|verb| (verb.key(), json_verb(verb))),
-            );
-            let history = json!({
-                "type": "object",
-                "properties": {
-                    "search": json_verb(VerbName::HistorySearch),
-                    "show": json_verb(VerbName::HistoryShow),
-                },
-                "additionalProperties": false,
-            });
-            optional.push((HISTORY_FIELD, history));
-            json!({ "type": "array", "items": record(&REQUIRED_FIELDS, &optional) })
-        }
     }
-}
-
-/// The forms `verb` takes: a command string, `{kind: command, template}`,
-/// and, where an agent may carry it out, `{kind: agent, instruction}`.
-fn json_verb(verb: VerbName) -> serde_json::Value {
-    let form = |kind: &str, field: &str| {
-        json!({
-            "type": "object",
-            "properties": { "kind": { "const": kind }, field: { "type": "string" } },
-            "required": ["kind", field],
-            "additionalProperties": false,
-        })
-    };
-    let mut forms = vec![json!({ "type": "string" }), form("command", "template")];
-    if !verb.command_only() {
-        forms.push(form("agent", "instruction"));
-    }
-    json!({ "anyOf": forms })
 }
 
 /// The values reads answer for unset keys of `layer`'s own keys.
@@ -934,8 +831,7 @@ mod tests {
         findings.iter().map(|f| (f.key.as_str(), f.kind)).collect()
     }
 
-    const GLOBAL_ONLY: &str = "runtimes: []\n\
-        agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
+    const GLOBAL_ONLY: &str = "agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
         ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
@@ -1061,7 +957,6 @@ mod tests {
         assert_eq!(
             judged(&findings),
             [
-                ("runtimes", N),
                 ("agents.order", N),
                 ("agents.thinking_mode", N),
                 ("agents.claude.git_author", N),
@@ -1123,7 +1018,7 @@ mod tests {
                 ("modules.todos", I),
                 ("ticks", I),
                 ("runner.autostart", I),
-                ("runtimes.0.bogus", U),
+                ("runtimes", I),
                 ("agents.thinking_mode", I),
                 ("agents.order.1", I),
                 ("agents.order.2", I),
@@ -1135,39 +1030,6 @@ mod tests {
             LayerKind::Global,
         );
         assert_eq!(judged(&empty_order), [("agents.order", I)]);
-    }
-
-    #[test]
-    fn a_verb_outside_its_forms_or_of_a_kind_it_does_not_take_is_a_finding() {
-        let findings = check(
-            &yaml(
-                "schema_version: 1\nruntimes:\n\
-                 \x20 - name: a\n    session_id_env: A\n    send: s\n\
-                 \x20   end: {kind: agent, instruction: close it}\n\
-                 \x20   end_self: {kind: command, template: x}\n\
-                 \x20   history: {show: s, search: {kind: agent, instruction: look}}\n\
-                 \x20 - name: b\n    session_id_env: B\n\
-                 \x20   start: {kind: agent, instruction: start one}\n\
-                 \x20   send: {kind: shell, template: x}\n\
-                 \x20   alive: {kind: command, template: x, instruction: y}\n\
-                 \x20   conversation: {kind: command, instruction: y}\n\
-                 \x20   link: [x]\n\
-                 \x20   history: {search: s, browse: s}\n",
-            ),
-            LayerKind::Global,
-        );
-        use FindingKind::{InvalidValue as I, UnknownKey as U};
-        assert_eq!(
-            judged(&findings),
-            [
-                ("runtimes.1.start", I),
-                ("runtimes.1.send", I),
-                ("runtimes.1.alive", I),
-                ("runtimes.1.conversation", I),
-                ("runtimes.1.link", I),
-                ("runtimes.1.history.browse", U),
-            ]
-        );
     }
 
     #[test]

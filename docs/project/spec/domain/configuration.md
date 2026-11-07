@@ -50,7 +50,7 @@ removes a key, any other value replaces.
 
 **Interpolation**
 : Expanding a value's references when it is read: `{other.key}`, `${VAR}`, and
-the derived `runtime.session_id`.
+the derived `runtime.session_id` and selected `runtime.<operation>`.
 
 **Selected runtime**
 : The compiled adapter explicitly chosen by global `runner.runtime`, initially
@@ -68,7 +68,8 @@ be absent outside that runtime and does not change runtime selection.
 
 - **Owns** — the `instrukt.yaml` schema; layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
-  revisions and safe patching; interpolation; validation of the explicit runtime choice and derived caller identity.
+  revisions and safe patching; interpolation; validation of the explicit runtime
+  choice, agent-action instruction entries and derived caller identity.
 - **Does not own** — what any key does: docs and publication read
   `project`; repository decides when publication runs and its commit
   composition reads adapter caller identity and `agents.<name>.git_author` and decides the
@@ -93,8 +94,8 @@ be absent outside that runtime and does not change runtime selection.
 
 Global `agents.order` supplies the default ordered agent preferences with
 thinking mode. Dispatch preferences use the selected adapter's capabilities and
-availability metadata; there are no executable runtime templates in
-configuration. `get --revision` prints the layer revision; `get --json` renders
+availability metadata. Global runtime entries carry native agent-operation
+instructions, resolved by `@config`; instrukt executes no instruction prose. `get --revision` prints the layer revision; `get --json` renders
 JSON.
 
 ### Aggregates

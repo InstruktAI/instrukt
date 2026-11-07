@@ -133,6 +133,12 @@ The human owns final `prd_approved`.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.message_peer -->
+
 ### 1. Establish mode and orient
 
 Apply the artifact-discovery rule from `preparation-artifact-quality` first —
@@ -248,7 +254,7 @@ pattern as the duplicate triage in `diagnose`:
 
 - The related todo has a **living orchestrator** (an active prepare or work
   session) AND you hold context it lacks → send one **best-effort** informational
-  message (`instrukt sessions send <session_id> "<info>"`), substance only — no
+  message (the configured runtime message instruction), substance only — no
   acknowledgement, no echo. Never block on it: if that session is absent or flaky,
   move on.
 - A **dormant prepared/unclaimed** todo this premise depends on → record the edge:
@@ -266,7 +272,7 @@ todo's state, and **never halt running work except on certainty**:
   freeze it (`instrukt todo freeze`, reversible) to hold it pending their decision.
   Nothing in flight is lost.
 - Other todo **claimed, still in prepare** → hand the supersession to its living
-  orchestrator (`instrukt sessions send`) and surface to the human. The obsolete call
+  orchestrator (the configured runtime message instruction) and surface to the human. The obsolete call
   remains the human's.
 - Other todo **claimed, building or delivering** → the gate is **confidence**, set
   tight:

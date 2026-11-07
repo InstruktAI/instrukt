@@ -15,13 +15,13 @@ Redis connection or running consumer.
 ### Commands
 
 `instrukt events list [--domain <owner>]` lists every declared type with name,
-version, description and what it is about, and points to `instrukt events schema
+version, description, delivery classification and what it is about, and points to `instrukt events schema
 <type>`. The owner filter selects the first segment, including `instrukt`,
 `runner` and `workflow` as applicable to shipped producers.
 
 `instrukt events schema <type>` shows the full generated declaration: name,
 version, description, subject kind, allowed origin kinds or none, data fields
-with JSON kind and nullability, related kinds, and any family/state/standing.
+with JSON kind and nullability, related kinds, mandatory delivery classification (`occurrence` or `state`), and any family/state/standing.
 An unknown type fails visibly naming the requested type; an empty owner list
 is an empty result. Both views derive from the exact producer declarations.
 Neither shows notification rules, consumer actions, audiences or routing scope.

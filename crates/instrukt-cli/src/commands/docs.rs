@@ -159,11 +159,13 @@ fn index(args: IndexArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let reading = match &args.domain {
         Some(domain) => docs::get_domain(&DomainRequest {
+            env: &crate::wiring::environment(ctx)?,
             home: &ctx.home,
             cwd: &ctx.cwd,
             domain,
         })?,
         None => docs::get(&GetRequest {
+            env: &crate::wiring::environment(ctx)?,
             home: &ctx.home,
             cwd: &ctx.cwd,
             ids: &args.ids,

@@ -17,11 +17,11 @@ agents; instrukt configuration and installation commands remain local.
 
 ### Skill package and entry
 
-The package consists of `skills/instrukt-configure/SKILL.md` and
-`skills/instrukt-configure/runtime/t3.md`. The entry's Agent Skills frontmatter
+The package entry is `skills/instrukt-configure/SKILL.md`. The entry's Agent Skills frontmatter
 uses `name`, `description` and optional `license`, `compatibility`, `metadata`;
-the description is at most 1024 characters. Runtime instructions are supporting
-Markdown within the same package.
+the description is at most 1024 characters. Runtime actions are configuration
+values retrieved through the shared native-operation procedure, not packaged
+runtime-specific Markdown.
 
 The developer supplies a checkout or a copy of this complete skill directory
 to the configuring agent on each participating computer. This is a source
@@ -61,8 +61,8 @@ endpoint, project placement and an unset runtime choice. Existing choices are
 kept unless the requested outcome changes them. An unset runtime means no
 runtime; the agent's host does not select one.
 
-The selected `runner.runtime` routes coordination to the packaged
-`runtime/<runtime>.md` when present. Each target still retains its own runtime
+The selected `runner.runtime` chooses the configured action values rendered
+by `general/procedure/ai-to-ai-operations`, retrieved on demand by the skill. Each target still retains its own runtime
 choice. Without an available route, the developer runs the same skill locally
 on each computer with the agreed facts. Local core configuration remains usable
 without a runtime; runtime-dependent enablement follows capability validation.
@@ -84,31 +84,30 @@ Reruns preserve matching settings and working resources, and repair differences
 through the same commands. Installation findings remain distinct from valid
 configuration; they retain their named repair doors.
 
-### T3 coordination
+### Runtime coordination
 
-The T3 route uses T3's linked-environment capabilities and dispatches one local
-configuration task per participating environment, including local work. Each
-task receives the agreed facts, that machine's intended settings and project
-paths, the skill package and a report destination. It performs only its
-computer's configuration and verification, returning references, completed
-changes and unmet prerequisites. The coordinator compares those reports for
-agreement and leaves failed or inaccessible computers explicitly incomplete.
+The shared operation procedure renders `runtime.discover_environments`,
+`runtime.connect_environment` and `runtime.dispatch_remote` through `@config`.
+Their entries carry native or capability-gap route instructions; the skill and
+workflow contain no runtime-specific call or packaged runtime route. The names,
+required inputs and T3 values are owned by layered-configuration.
 
-T3 publishes remote access through its environment MCP interface in **Outside
-agents**. Its host `t3 -h` describes environment linking; the published thread
-help describes host-local thread operations. Runtime instructions discover the
-capabilities and permission limits supplied by that T3 connection. A host-local
-thread start does not select a remote computer; remote tasks use the target
-linked environment. Harness-specific tool names are outside this skill's text.
+The coordinating agent assigns one local brief per participating computer,
+including local work. Each agent receives agreed facts, intended settings,
+project paths, the skill package and a report destination. Each performs its
+own computer's configuration and verification and returns completed changes and
+unmet prerequisites. The coordinator compares reports for agreement and retains
+partial success; inaccessible computers stay incomplete. Runtime environment
+addresses and instrukt machine IDs remain separate observed facts.
 
-### Use cases
+## Use cases
 
 #### UC-CS1: Configure a two-computer cluster
 
 ```gherkin
 Given a developer wants two linked computers to use instrukt events
 And has selected one ingress and supplied the cluster connection and project placement
-When the developer runs the configuration skill with T3 coordination
+When the developer runs the configuration skill using T3's configured action values
 Then one local configuration task per computer records and verifies its intended settings
 And both computers agree on ingress identity, the logical cluster store and project placement
 And only ingress installs the demanded receiver with its declaring project homes

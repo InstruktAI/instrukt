@@ -456,7 +456,12 @@ fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() 
     drop(blocked);
     wait_published(&env, "demo", &rebased);
     finished_run(&env, "demo", Hook::PostRewrite);
-    finished_run(&env, "demo", Hook::PostCheckout);
+    // The rebase's detached checkout does not publish unintegrated state.
+    assert!(
+        !env.instrukt_home()
+            .join("state/hooks/demo/post-checkout.yaml")
+            .exists()
+    );
 }
 
 // spec: project/instrukt/spec/feature/repository/hook-sections UC-HK3

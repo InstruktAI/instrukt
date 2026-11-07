@@ -334,11 +334,8 @@ mod tests {
     fn exists_holds_for_false_but_not_for_empty_evidence() {
         let c = parse("exists: worktree.exists").unwrap();
         assert!(c.holds(&facts(&[("worktree.exists", FactValue::Bool(false))])));
-        let c = parse("exists: claim_commits.unreviewed").unwrap();
-        assert!(!c.holds(&facts(&[(
-            "claim_commits.unreviewed",
-            FactValue::ShaList(vec![])
-        )])));
+        let c = parse("exists: sessions.bound").unwrap();
+        assert!(!c.holds(&facts(&[("sessions.bound", FactValue::Sessions(vec![]))])));
     }
 
     #[test]

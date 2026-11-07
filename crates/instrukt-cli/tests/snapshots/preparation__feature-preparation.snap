@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/preparation.rs
+assertion_line: 148
 expression: "redact(&steps.join(\"=====\\n\"))"
 ---
 todo: nested-lists (demo)
@@ -21,7 +22,9 @@ state: prd_review
 transition: prd_drafting -> prd_review (#2)
 action: review-prd
 responsible: prd-reviewer (crew/procedure/review-prd)
-command: instrukt sessions run --procedure crew/procedure/review-prd --args nested-lists --todo nested-lists --brief -
+command: instrukt todo attempt nested-lists --role prd-reviewer --procedure crew/procedure/review-prd --args nested-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Review the PRD of nested-lists (version <digest 1>).
@@ -45,7 +48,9 @@ state: prd_review
 transition: prd_drafting -> prd_review (#2)
 action: review-prd
 responsible: prd-reviewer (crew/procedure/review-prd)
-command: instrukt sessions run --procedure crew/procedure/review-prd --args nested-lists --todo nested-lists --brief -
+command: instrukt todo attempt nested-lists --role prd-reviewer --procedure crew/procedure/review-prd --args nested-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Review the PRD of nested-lists (version <digest 3>).
@@ -93,7 +98,9 @@ state: drift_analysis
 transition: plan_review -> drift_analysis (#8)
 action: analyze-drift
 responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt sessions run --procedure crew/procedure/drift-analyze --args nested-lists --todo nested-lists --brief -
+command: instrukt todo attempt nested-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args nested-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Judge the drift of nested-lists: PRD fresh, plan pending.
@@ -117,7 +124,9 @@ state: drift_analysis
 transition: plan_review -> drift_analysis (#8)
 action: analyze-drift
 responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt sessions run --procedure crew/procedure/drift-analyze --args nested-lists --todo nested-lists --brief -
+command: instrukt todo attempt nested-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args nested-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Judge the drift of nested-lists: PRD fresh, plan pending.
@@ -141,7 +150,9 @@ state: drift_analysis
 transition: plan_review -> drift_analysis (#8)
 action: analyze-drift
 responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt sessions run --procedure crew/procedure/drift-analyze --args nested-lists --todo nested-lists --brief -
+command: instrukt todo attempt nested-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args nested-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Judge the drift of nested-lists: PRD pending, plan pending.
@@ -165,7 +176,9 @@ state: prd_review
 transition: prd_drafting -> prd_review (#2)
 action: review-prd
 responsible: prd-reviewer (crew/procedure/review-prd)
-command: instrukt sessions run --procedure crew/procedure/review-prd --args nested-lists --todo nested-lists --brief -
+command: instrukt todo attempt nested-lists --role prd-reviewer --procedure crew/procedure/review-prd --args nested-lists --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
 effects: none
 instructions:
 Review the PRD of nested-lists (version <digest 4>).

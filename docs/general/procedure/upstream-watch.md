@@ -5,6 +5,7 @@ role: upstream-watcher
 subscriptions:
   - runner.upstream_changed
 subscription_home: project
+interruptible: false
 ---
 # Upstream Watch — Procedure
 

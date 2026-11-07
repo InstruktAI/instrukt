@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/approvals.rs
+assertion_line: 300
 expression: "redact(&format!(\"{shown}---\\n{}\",\nanswers.join(\"\\n\"))).replace(&earlier,\n\"<earlier prefix>\").replace(&current, \"<current prefix>\")"
 ---
 nested-lists · feature · active
@@ -28,5 +29,11 @@ stamps:
   #8 <time> prd approved by a human — <digest 3> — by @maintainer
 ---
 @maintainer: the prd evidence changed since `<earlier prefix>`; review it and approve the current one again: `/instrukt approve prd <current prefix>`. Nothing changed.
+
+<!-- instrukt:command-reply:1017 -->
 @passer-by: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed.
+
+<!-- instrukt:command-reply:1018 -->
 @maintainer: recorded your approval of prd `<current prefix>`.
+
+<!-- instrukt:command-reply:1019 -->

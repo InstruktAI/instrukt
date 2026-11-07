@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use instrukt_core::config::Env;
 use instrukt_core::interfaces::FlavorRoles;
 use instrukt_runner::interfaces::WorkflowAssignments;
 use instrukt_todos::evidence::WorkEvidence;
@@ -35,11 +34,8 @@ pub(super) fn assignments(
     ctx: &Ctx,
     evidence: Option<Arc<dyn WorkEvidence>>,
 ) -> anyhow::Result<Option<Arc<dyn WorkflowAssignments>>> {
+    let env = super::environment(ctx)?;
     Ok(evidence.map(|evidence| -> Arc<dyn WorkflowAssignments> {
-        Arc::new(Workflow::new(
-            ctx.home.clone(),
-            evidence,
-            Env::from_process(),
-        ))
+        Arc::new(Workflow::new(ctx.home.clone(), evidence, env))
     }))
 }

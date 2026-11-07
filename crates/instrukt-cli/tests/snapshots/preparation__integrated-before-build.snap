@@ -1,0 +1,30 @@
+---
+source: crates/instrukt-cli/tests/preparation.rs
+assertion_line: 434
+expression: "support::redact(&String::from_utf8_lossy(&current.get_output().stdout).replace(project.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
+---
+# instrukt docs get: project/demo/spec/feature/early-contract
+
+---
+id: project/demo/spec/feature/early-contract
+type: spec
+domain: project
+scope: project
+description: Contract available before its implementation.
+source: [TMP]/demo/docs/project/spec/feature/early-contract.md
+---
+# Early contract — Spec
+
+## What it is
+
+Available before build.
+
+## Canonical fields
+
+A documented value.
+
+## Known caveats
+
+None.
+
+## See Also

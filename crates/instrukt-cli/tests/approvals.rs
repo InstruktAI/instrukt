@@ -173,9 +173,9 @@ fn a_peer_approves_where_the_project_allows_it_with_its_session_and_reason() {
     let approve = ["stamp", slug, "--prd-approved", "--by", "peer"];
 
     // In the peer's session but stating no reason; then with no session.
-    crew.project.env.set_env("AGENT_SESSION", "peer-2");
+    crew.project.env.set_env("T3CODE_THREAD_ID", "peer-2");
     let unreasoned = crew.project.todo(approve).failure();
-    crew.project.env.remove_env("AGENT_SESSION");
+    crew.project.env.remove_env("T3CODE_THREAD_ID");
     let sessionless = crew
         .project
         .todo(
@@ -186,14 +186,14 @@ fn a_peer_approves_where_the_project_allows_it_with_its_session_and_reason() {
         )
         .failure();
 
-    crew.project.env.set_env("AGENT_SESSION", "peer-2");
+    crew.project.env.set_env("T3CODE_THREAD_ID", "peer-2");
     let approved = crew.todo(
         approve
             .iter()
             .copied()
             .chain(["--reason", "it follows the input"]),
     );
-    crew.project.env.set_env("AGENT_SESSION", "lead-1");
+    crew.project.env.set_env("T3CODE_THREAD_ID", "lead-1");
     let allowed = crew.next("prepare", slug);
     // The project reserves the gate for the developer.
     prd_approved_by(&crew, "human");
@@ -362,17 +362,17 @@ fn an_approval_names_its_source_and_stays_bound_to_the_approved_evidence() {
 // spec: project/instrukt/spec/feature/work/approvals UC-AP2
 #[test]
 fn the_first_other_recipient_checks_the_recorded_intent_against_its_conversation() {
-    let mut project = Project::with_runtime(Some("AGENT_SESSION"));
-    project.env.set_env("AGENT_SESSION", "author-1");
+    let mut project = Project::with_runtime(Some("T3CODE_THREAD_ID"));
+    project.env.set_env("T3CODE_THREAD_ID", "author-1");
     project.create(
         "nested-lists",
         "feature",
         "Keep the depth of nested lists when parsing Markdown.",
     );
 
-    project.env.set_env("AGENT_SESSION", "checker-2");
+    project.env.set_env("T3CODE_THREAD_ID", "checker-2");
     let checked = project.ok(["stamp", "nested-lists", "--intent-checked"]);
-    project.env.set_env("AGENT_SESSION", "builder-3");
+    project.env.set_env("T3CODE_THREAD_ID", "builder-3");
     let received = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!(

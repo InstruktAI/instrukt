@@ -43,18 +43,21 @@ conversation still has an open question.
   handoff even if this session stays for another obligation.
 - **Artifacts are the evidence trail.** Write outcomes that stand alone for
   the next reader. Conversations are read through
-  `instrukt sessions conversation` when their evidence is needed; only artifacts
+  the native instructions in `general/procedure/ai-to-ai-operations` when their
+  evidence is needed; only artifacts
   and stamps are reflected into the work store.
 - **Reuse follows recorded identity.** Preserve the session per todo and role;
-  observe it with `instrukt sessions alive`, continue it through `send`, and
-  start through `run` when a new session is required. Similar briefs establish
+  observe and continue it through configured runtime instructions. A new
+  worker uses native delegation and a recorded role-attempt binding. Similar briefs establish
   no session identity. An ended turn may leave a reusable conversation.
 - **Observation and completion differ.** `running`, `needs-input`, `ended ok`,
   `ended failed` and `gone` describe runtime execution. A failed observation
   establishes none of them. Artifact and stamp requirements still govern completion.
-- **Incomplete evidence remains incomplete.** The runner sends once to the
-  same session after an ended run without its artifact or stamp, or a gone
-  session; continued absence is an anomaly. Silence alone authorizes no duplicate.
+- **Incomplete evidence remains incomplete.** A child's ending restores its
+  parent's attention; the parent reads the closing account and current record
+  before selecting recovery under the owning procedure. A runner-owned execution
+  without a parent keeps its session-continuity recovery. Runtime silence alone
+  establishes no missing work or failed session.
 - **Workers record their contribution.** The dispatcher accounts for later
   rounds and pending human conversation before recording the handoff.
   Starting a peer confers no authority over that peer's other obligations.

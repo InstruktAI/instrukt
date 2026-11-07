@@ -1,5 +1,7 @@
-# Workspace setup — {slug}
+# Complete shared workspace setup — {slug}
 
-Work in your bound setup attempt's returned worktree at its captured todo head. Return its path and remain available for setup follow-ups from the work orchestrator. The orchestrator runs upstream synchronization, the opening commit, configured project preparation and first publication there.
+Owed: complete setup in the todo worktree already recorded for your orchestrator.
 
-After those outcomes succeed, confirm the worktree is clean, record `instrukt todo stamp {slug} --role-complete`, and report its committed head and completion evidence to the orchestrator. Resolve synchronization failures within this outstanding attempt when you can. Otherwise report the reason, committed role head, path and unfinished workspace state to the orchestrator for `instrukt todo handoff {slug} --failed --reason <text>`. Preserve the work there for a recovery builder admitted after confirmed failed release.
+Work in that same worktree on the todo branch under your bound shared setup attempt. Capture the original base before synchronization. Fetch and merge accepted upstream main, make the opening commit through `instrukt repo commit`, run the project's configured `prepare` action when declared, and publish the todo branch. Record the original base and approved plan with `instrukt todo stamp {slug} --build-started`, and write `quality-checklist` through `instrukt todo artifacts write {slug} quality-checklist '<content>'`, including `## Build Gates (Builder)`, Build and Review sections and project-specific gates.
+
+Verify the shared tree is clean, then record `instrukt todo stamp {slug} --role-complete`. Completion releases your attempt atomically. Report its head, setup outcomes and evidence references to your parent. Resolve synchronization within this attempt; report a blocker with preserved work and native status when it cannot continue.

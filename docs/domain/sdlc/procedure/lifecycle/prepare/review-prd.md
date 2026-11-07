@@ -37,12 +37,18 @@ not review architecture, implementation mechanism, or concrete proof.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.read_thread -->
+
 1. Discover the todo's artifacts, then read the `input`, the drafted `prd`, and
    any `log` or deferral material that bears on product intent. Load the relevant
    product and domain snippets. Inspect the current `input` version and its
    intent-checked stamp. Take a current check as given. If no current check
    exists and you are the first recipient other than its author, read the
-   originating conversation with `instrukt sessions conversation <session-id>`
+   originating conversation with the configured runtime conversation read instruction
    and compare outcome-level substance. Confirm fidelity and record
    `instrukt todo stamp {slug} --intent-checked` for that input version.
    Clarification returns to the author for a new version; a mistaken

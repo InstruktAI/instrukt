@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+assertion_line: 396
+expression: "String::from_utf8_lossy(&refusal.get_output().stderr).replace(crew.project.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\")"
+---
+instrukt: refused; nothing was written:
+[TMP]/demo/instrukt.yaml: modules.todos: [TMP]/home/.instrukt/docs/crew/workflow/work.yaml requires worktree_attach; runtime `t3` lacks this capability

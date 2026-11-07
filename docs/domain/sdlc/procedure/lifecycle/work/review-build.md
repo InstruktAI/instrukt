@@ -35,6 +35,12 @@ shared review procedure supplies the review judgment.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.read_thread -->
+
 ### 1. Establish the slug's review context
 
 Use the slug supplied by the dispatch. A build reviewer never selects work from
@@ -141,7 +147,7 @@ instrukt todo stamp {slug} --verdict approve|changes_requested --phase build_rev
 State the summary and verdict in your own turn output. The orchestrator reads
 `review-findings` and its bound stamp from the record. A reply or ended turn
 establishes no completion without both. Conversation access, when needed, uses
-`instrukt sessions conversation <session-id>`.
+the configured runtime conversation read instruction.
 The reviewer writes no other artifact and makes no source change.
 
 ## Outputs

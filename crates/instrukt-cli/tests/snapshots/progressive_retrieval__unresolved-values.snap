@@ -18,7 +18,7 @@ source: [TMP]/demo/docs/domain/acme/procedure/fragile.md
 
 Before.
 
-> instrukt: configured value `runtime.session_id` cannot be resolved: no configured runtime's session variable is set; `runtime.*` has no value here
+> instrukt: configured value `runtime.session_id` cannot be resolved: no selected runtime caller context is available; choose runner.runtime and run inside its caller session
 
 > instrukt: configured value `no.such.setting` cannot be resolved: `no.such.setting` does not exist: no `no` in the configuration
 

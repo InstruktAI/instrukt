@@ -42,6 +42,7 @@ pub struct Obligation {
     pub command: Rendering,
     /// The action's rendered template: the instructions.
     pub brief: Rendering,
+    pub dispatch_instruction: Option<Rendering>,
     /// Effects still owed along the selected walk, in listed order.
     pub effects: Vec<OwedEffect>,
 }
@@ -51,6 +52,7 @@ pub struct Obligation {
 /// procedure's frontmatter: its `role` is resolved from the index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Responsible {
+    Role(RoleName),
     /// The command names this procedure (`--procedure <id>` or
     /// `docs get <id>`); the action belongs to the procedure's `role`.
     Procedure(SnippetId),
@@ -62,6 +64,11 @@ pub enum Responsible {
 impl Responsible {
     /// The party for `action` when `flow`'s definition selects it.
     pub(crate) fn of(action: &Action, definition: &Definition) -> Self {
+        if let Some(role) = &action.role
+            && action.procedure.is_none()
+        {
+            return Self::Role(role.clone());
+        }
         match &action.procedure {
             Some(procedure) => Responsible::Procedure(procedure.clone()),
             None => Responsible::Orchestrator(definition.orchestrator.clone()),
@@ -185,7 +192,20 @@ fn obligation(
         })
         .collect();
     let (action_id, action) = &transition.action;
-    let brief = render(&action.template, &bindings);
+    let template = if action.role.is_some() {
+        action
+            .template
+            .split_inclusive('\n')
+            .filter(|line| line.trim() != "<!-- @config: runtime.dispatch -->")
+            .collect::<String>()
+    } else {
+        action.template.clone()
+    };
+    let dispatch_instruction = action
+        .role
+        .as_ref()
+        .map(|_| render("<!-- @config: runtime.dispatch -->", &bindings));
+    let brief = render(&template, &bindings);
     bindings.brief = Some(&brief);
     let command = render(&action.command, &bindings);
     Obligation {
@@ -198,6 +218,7 @@ fn obligation(
         responsible: Responsible::of(action, definition),
         command,
         brief,
+        dispatch_instruction,
         effects,
     }
 }
@@ -242,6 +263,7 @@ effects:
     const WALK: &str = "\
 flow: work
 orchestrator: builder
+requires: []
 initial: start
 states: [start, middle, end, side]
 transitions:
@@ -409,6 +431,7 @@ transitions:
         let cyclic = "\
 flow: work
 orchestrator: builder
+requires: []
 initial: start
 states: [start, middle]
 transitions:

@@ -383,7 +383,7 @@ impl Work {
                     ready: false,
                     last_known: (!here).then(|| LastKnown {
                         runs_on: runs_on(&it.record),
-                        copied_at: None,
+                        copied_at: it.reflection.refreshed_at,
                     }),
                 }
             })
@@ -648,8 +648,7 @@ impl Work {
         })
     }
 
-    /// Records one stamp form. `--finalize-ready` appends
-    /// `workflow.finalized` to `events` first, idempotently.
+    /// Record a stamp and any integration event in one transaction; replay retains the original fact.
     pub fn stamp(
         &self,
         project: &ProjectRef,
@@ -667,7 +666,26 @@ impl Work {
                 status_word(record.status)
             )));
         }
-        let session = s.caller_session();
+        let session = s.caller_session()?;
+        let completion =
+            super::_attempts::completion_binding(&record, session.as_ref(), cwd, request)?;
+        if let Some((binding, _)) = completion
+            && record.bindings[binding].attempt.released_at.is_some()
+            && let Some(sequence) = record.bindings[binding].attempt.completion_sequence
+            && let Some(stamp) = record
+                .stamps
+                .iter()
+                .find(|stamp| stamp.sequence == sequence)
+        {
+            return Ok(Outcome {
+                value: stamp.clone(),
+                reflection: s.status(index),
+                docs_changed: Vec::new(),
+            });
+        }
+        if matches!(request, StampRequest::FinalizeReady) {
+            super::_attempts::readiness(&record, session.as_ref(), cwd, &project.root)?;
+        }
         let base = s.base.clone();
         let resolved = _stamps::resolve(
             request,
@@ -701,6 +719,7 @@ impl Work {
             *grounding = grounding_now(&mut s, index, artifact.as_str(), &content)?;
         }
         let stamp = StampRecord {
+            source_comment: None,
             fact,
             at: s.now,
             role: role_of(&record, &actor),
@@ -714,6 +733,23 @@ impl Work {
         // The finalize-ready handoff commits with its `workflow.finalized`
         // event, in one transaction.
         let handoff = match &stamp.fact {
+            StampFact::PreparationHeadReviewed {
+                verdict: crate::evidence::ReviewVerdict::Approve,
+                head,
+                ..
+            } => {
+                let log = events.ok_or_else(|| {
+                    WorkError::refused("preparation approval requires the integrator event log")
+                })?;
+                Some((
+                    log,
+                    vec![Event::PreparationReviewed {
+                        project: project.slug.clone(),
+                        todo: slug.clone(),
+                        revision: head.clone(),
+                    }],
+                ))
+            }
             StampFact::FinalizeReady { commit } => {
                 let log = events.ok_or_else(|| {
                     WorkError::refused(
@@ -746,8 +782,15 @@ impl Work {
                 }
             }
             s.flush()?;
+            let retained = record
+                .stamps
+                .iter()
+                .rev()
+                .find(|prior| prior.fact == stamp.fact)
+                .cloned()
+                .ok_or_else(|| WorkError::refused("replayed fact has no retained stamp"))?;
             return Ok(Outcome {
-                value: stamp,
+                value: retained,
                 reflection: s.status(index),
                 docs_changed: std::mem::take(&mut s.docs_changed),
             });
@@ -756,7 +799,16 @@ impl Work {
         let events = handoff
             .as_ref()
             .map(|(log, events)| (*log, events.as_slice()));
-        s.commit_with_events("stamped", events, |s| {
+        let decision = matches!(
+            stamp.fact,
+            StampFact::Approval { .. } | StampFact::ChangesRequested { .. }
+        )
+        .then(|| serde_json::to_string(&stamp))
+        .transpose()
+        .map_err(|e| WorkError::refused(e.to_string()))?;
+        let todo_id = record.id.to_string();
+        let decision_sequence = record.sequence + 1;
+        s.commit_with("stamped", |s| {
             let record = &mut s.items[index].record;
             if let StampFact::DiagnosisUnresolved { reason, .. } = &stamp.fact {
                 if let Some(previous) = record.hold.take() {
@@ -784,7 +836,19 @@ impl Work {
             }
             let mut stamp = stamp;
             stamp.sequence = record.next_sequence();
+            if let Some((binding, _)) = completion {
+                let b = &mut record.bindings[binding];
+                b.attempt.completion_sequence = Some(stamp.sequence);
+                b.attempt.completed_head = Some(super::_stamps::head(cwd)?);
+                b.attempt.released_at = Some(now);
+            }
             record.stamps.push(stamp);
+            Ok(())
+        },|tx|{
+            if let Some((log,events))=events {for event in events {log.append(tx,event)?;}}
+            if let Some(content)=decision {
+                tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT DO NOTHING",instrukt_core::state_db::rusqlite::params![todo_id,decision_sequence,content]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;
+            }
             Ok(())
         })?;
         s.flush()?;
@@ -1052,7 +1116,7 @@ fn apply_update(
         });
     }
     if request.unclaim {
-        let caller = s.caller_session();
+        let caller = s.caller_session()?;
         let machine = s.machine()?;
         let record = &mut s.items[index].record;
         let claim = record.claim.as_ref().ok_or_else(|| {
@@ -1065,7 +1129,7 @@ fn apply_update(
             && caller.as_ref().is_some_and(|caller| {
                 claim.session.as_ref() == Some(caller)
                     || record.bindings.iter().any(|b| {
-                        &b.session == caller
+                        b.session.as_ref() == Some(caller)
                             && (!is_task
                                 || b.role.as_str() == instrukt_runner::dispatch::TASK_RUNNER_ROLE)
                     })
@@ -1075,6 +1139,14 @@ fn apply_update(
                 "`{}` is claimed elsewhere; only the session holding the claim, or one bound to the todo on the claiming computer, releases it",
                 record.slug
             )));
+        }
+        for binding in &mut record.bindings {
+            if binding.attempt.assignment == instrukt_runner::interfaces::AssignmentKind::Driver
+                && binding.session.as_ref() == caller.as_ref()
+                && binding.attempt.released_at.is_none()
+            {
+                binding.attempt.released_at = Some(now);
+            }
         }
         record.claim = None;
     }
@@ -1624,7 +1696,7 @@ fn role_of(record: &TodoRecord, actor: &Actor) -> Option<instrukt_core::ids::Rol
     record
         .bindings
         .iter()
-        .find(|b| &b.session == session)
+        .find(|b| b.session.as_ref() == Some(session))
         .map(|b| b.role.clone())
 }
 
@@ -1812,6 +1884,7 @@ mod tests {
     fn a_started_implementation_keeps_its_kind() {
         let mut started = record("started", 1, &[]);
         started.stamps.push(StampRecord {
+            source_comment: None,
             fact: StampFact::BuildStarted {
                 base: CommitSha::parse(&"a".repeat(40)).unwrap(),
                 plan: ContentDigest::new("sha256:x"),

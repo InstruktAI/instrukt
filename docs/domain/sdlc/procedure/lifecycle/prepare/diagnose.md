@@ -50,6 +50,20 @@ and an objective of alleviation never reliably reaches cause.
 
 ## Steps
 
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.dispatch -->
+
+<!-- @config: runtime.inspect_thread -->
+
+<!-- @config: runtime.message_child -->
+
+<!-- @config: runtime.message_peer -->
+
+<!-- @config: runtime.read_thread -->
+
 ### 1. Triage — the driving session, before any peer is dispatched
 
 Simultaneous log scans and human reports produce near-coincident reports of the same
@@ -84,7 +98,7 @@ judgment is yours to make from the symptoms, not a string match.
   twin's `input` against the survivor's. If this twin carries discovery context the survivor
   does not surface — a distinct reproduction, a second occurrence site, an environment
   detail — and you are **confident it is genuinely additive**, send a single informational
-  message to the survivor's active session (`instrukt sessions send <session_id> "<info>"`)
+  message to the survivor's active session (the configured runtime message instruction)
   before retiring. Substance only: no acknowledgement, no echo, no narration. If you are not
   sure it adds, stay silent and just retire.
 - **If the reported signal is a no-fix candidate, decide that before
@@ -146,13 +160,15 @@ discovery effort and leaves unchanged what stands between a cause and a plan.
 
 ### 2. Dispatch the peer — the driving session
 
-Dispatch one peer session for this phase through `instrukt sessions run`.
+Reserve one diagnoser attempt through `instrukt todo attempt`, delegate the
+returned assignment natively under the configured instruction, then record its
+native child id with `todo bind` before the peer records its work.
 Use the procedure's `dispatch` order or global `agents.order`, taking the
-first agent the runtime reports available. Without an availability check,
-a failed start tries the next entry; exhaustion is an anomaly.
-Record and reuse the peer's session id with `instrukt sessions alive` and
-`instrukt sessions send`; read its conversation through
-`instrukt sessions conversation` when needed. A quiet session is not grounds
+first agent the runtime reports available. Only a rejection proven to precede creation permits another entry; an ambiguous
+native start retains its reserved attempt. Exhaustion is an anomaly.
+Record and reuse the peer's session id with the configured runtime status inspection instruction and
+the configured runtime message instruction; read its conversation through
+the configured runtime conversation read instruction when needed. A quiet session is not grounds
 for another diagnosis dispatch.
 
 The driving session remains the execution claimant. The peer owns investigation

@@ -87,6 +87,22 @@ impl GitHub {
         }
     }
 
+    pub fn can_write(&self, login: &str) -> Result<bool, GitHubError> {
+        let path = format!("/collaborators/{login}/permission");
+        let permission = self.read(&path)?;
+        if let Some(push) = permission["user"]["permissions"]["push"].as_bool() {
+            return Ok(push);
+        }
+        match permission["permission"].as_str() {
+            Some("write" | "maintain" | "admin") => Ok(true),
+            Some("read" | "none" | "triage" | "pull") => Ok(false),
+            _ => Err(GitHubError::Decode {
+                path,
+                message: "missing or unrecognized repository permission".into(),
+            }),
+        }
+    }
+
     pub fn repository(&self) -> &str {
         &self.repository
     }

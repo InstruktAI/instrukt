@@ -2,13 +2,13 @@
 source: crates/instrukt-cli/tests/approvals.rs
 expression: "redact(&format!(\"{checked}---\\n{received}\"))"
 ---
-stamped nested-lists: intent checked — input <digest 1> against conversation agent-cli:author-1
+stamped nested-lists: intent checked — input <digest 1> against conversation t3:author-1
 reflection: reflected to GitHub
 ---
 nested-lists · feature · active
 identity: <id 1>
 record status: active
-created: <time> by session agent-cli:author-1
+created: <time> by session t3:author-1
 revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
@@ -18,6 +18,6 @@ claim: not held
 hold: none
 artifacts:
   input (1 version)
-    <digest 1> by session agent-cli:author-1 at <time>
+    <digest 1> by session t3:author-1 at <time>
 stamps:
-  #2 <time> intent checked — input <digest 1> against conversation agent-cli:author-1 — by session agent-cli:checker-2, model unknown
+  #2 <time> intent checked — input <digest 1> against conversation t3:author-1 — by session t3:checker-2, model unknown

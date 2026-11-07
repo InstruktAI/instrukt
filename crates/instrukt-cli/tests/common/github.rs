@@ -1269,6 +1269,13 @@ fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -
     let number = |text: &str| text.parse::<u64>().ok();
     match (method, rest) {
         ("GET", []) => Reply::ok(state.repo(&full).json()),
+        ("GET", ["collaborators", login, "permission"]) => {
+            let allowed = state.repo(&full).comments.values().any(|c| {
+                c.login == *login
+                    && matches!(c.association.as_str(), "OWNER" | "MEMBER" | "COLLABORATOR")
+            });
+            Reply::ok(json!({"permission":if allowed{"write"}else{"read"}}))
+        }
         ("GET", ["branches", branch @ ..]) => {
             let branch = branch.join("/");
             match state.repo(&full).branches.get(&branch) {
@@ -1593,6 +1600,7 @@ fn issue_route(
                 None => Reply::not_found(),
             }
         }
+        ("GET", ["events"]) => Reply::ok(json!([])),
         ("GET", ["labels"]) => {
             let r = state.repo(full);
             let items = r.issues[&n]

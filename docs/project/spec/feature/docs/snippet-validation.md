@@ -54,12 +54,14 @@ Core declares the role-lookup interface, as for pending-slug existence; the CLI
 wires its todos implementation. With todos off, no role-membership lookup runs.
 
 Validation checks procedure `dispatch` names against the configured runtime
-mapping’s startable agents. Configuration supplies that set; docs owns the
+adapter's startable agents. Configuration supplies that set; docs owns the
 frontmatter finding. `requires` is not snippet frontmatter: it is the project
 layer's configuration key naming the modules the flavor needs. `docs validate`
 and `sync` report a configuration finding when it names a module that is off
 under the effective switches (project over global), not the global layer in
-isolation.
+isolation. A workflow flow definition's separate top-level `requires` list names
+runtime capabilities under `project/instrukt/spec/feature/workflow/workflow-definition`;
+it is not that module list or snippet frontmatter.
 
 ### Subscription declarations
 
@@ -67,7 +69,9 @@ Subscribed procedures require nonempty shared-matcher patterns, `role` and one
 `subscription_home` (`project`, `platform`, `company`, `person`); they cannot also
 carry `activation_trigger`. Identity is `home` or `subject` (default home),
 attendance `attended` or `unattended` (default attended), delivery `sequential` or
-`batched` (default sequential), and interruptible is boolean (default false).
+`batched` (default sequential), and interruptible is boolean (default true,
+ASAP; false selects only-at-entry). Missing steering is a supported degradation,
+not a declaration finding.
 These fields without subscriptions, unknown values and malformed patterns are
 findings naming file and field. A project-position subscription answers only its
 own project and must declare project home; general/domain positions reach all

@@ -1,5 +1,5 @@
 ---
-description: Runtime adapter primitives, T3 thread dispatch, recoverable keyed start identity, session observation and record-backed completion.
+description: Unattended runtime adapter operations, native agent delegation and record bindings, keyed recovery and settled-thread inspection.
 visibility: public
 delivered_by: [instrukt-first-build]
 ---
@@ -7,15 +7,19 @@ delivered_by: [instrukt-first-build]
 
 ## What it is
 
-The runner defines a Rust runtime-adapter trait and ships the T3 implementation
-first. The machine chooses it explicitly with `runner.runtime: t3`. The adapter
-translates instrukt's dispatch requests into the runtime's published host CLI;
-its implementation is code, never configured command templates.
+The runner defines a Rust runtime-adapter trait and ships T3 first, explicitly
+selected with global `runner.runtime`. It acts where instrukt has no agent:
+todo orchestrator pickup, event-driven standing agents, recurring tasks,
+keyed singleton discovery and event/approval delivery. Its implementation is code.
 
-The runtime owns session lifecycle, input delivery, restart, revival, handover,
-transcripts, cleanup and subscriptions to session activity. instrukt owns
-events, schedules, dispatch decisions and session bindings. Runtime task or
-event facilities do not replace instrukt's runner.
+An agent operating in its own conversation uses runtime-native operations via
+read-time `@config` instructions for delegation, child messages, peer messages,
+conversation reads, current-thread listing, status inspection and steering.
+Only a runtime capability absent natively may use an explicit adapter fallback.
+Native child reports and endings reach the parent through the runtime, without
+an instruction, instrukt child observation or a second parent wake.
+The runtime owns lifecycle, input delivery, restart, revival, handover,
+transcripts and cleanup. instrukt owns its work facts, events and schedules.
 
 ## Canonical fields
 
@@ -27,107 +31,151 @@ creates no replacement session identity.
 
 | Primitive | Input and result | Released consumer |
 | --- | --- | --- |
-| `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event-hook handoff. | Event activation of a standing procedure. |
-| `start` | Project, durable start key, opening brief and optional worktree request (base revision and branch); returns the session and, when requested, its worktree path. | Todo-role dispatch, setup-only worktree dispatch and scheduled task occurrences. |
-| `send` | Native session id and text; acknowledges acceptance by that runtime. | Follow-up work, event delivery and one-send recovery. |
-| `read_state` | Native session id; returns one of the five states below, session identity and available runtime metadata. | Reuse decisions, dispatch observation and task completion checks. |
+| `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event input consumption. | Event activation of a standing procedure. |
+| `start` | Project, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator and scheduled task occurrences. |
+| `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
+| `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id` and commit attribution. |
-| `read_conversation` | Native session id; returns the runtime's recent messages with their attribution and the read's extent. | Independent intent checking and worker-evidence inspection. |
-| `link` | Two session ids and add/remove; returns acknowledgement or unsupported. Optional capability. | The released linked-collaborator goal and peer-discussion doctrine. |
+| `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
+| `link` | Two session ids and add/remove; returns acknowledgement or unsupported. Optional capability. | Fallback only where native shared-input linking is absent and the adapter supports it. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
-Worktree creation and attachment to an existing worktree are distinct explicit
-adapter capabilities, alongside linking, notification and agent/model selection.
+Worktree creation, shared native delegation and attachment to an existing
+worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended CLI adapter lacks attachment and instrukt agent-preference mapping. Agent workflow requirements use typed native capability metadata;
+unattended consumers use adapter capabilities. Linking, notification and
+agent/model selection retain their optional capability contracts.
 Availability information, when the runtime supplies it, is adapter metadata;
 there are no configurable `available` or `model` commands. A
 runtime operation failure is distinct from an unsupported capability.
 Unsupported operations report the runtime and capability; an unavailable runtime
 leaves work pending.
 
+Standing assignment input retains machine-readable procedure, home, subject,
+role, attendance and interruptibility facts beside its system-origin loader.
+After loss of local binding caches, semantic-key discovery recovers those fixed
+facts through the selected adapter's supported assignment-evidence capability
+with native provenance before reuse. Missing or
+contradictory assignment evidence fails visibly; current publication cannot
+replace unknown initialized settings. Any observed waiting delivery reserves
+the shared slot until its entry is observed.
+
 The opening brief carries the procedure's closure read, bound parameters,
 optional task `occurrence: <RFC 3339>`, and supplied briefing text. The runner
 binds procedure parameters before dispatch. User text travels as separate
 process arguments or standard input, never as executable shell text.
 
-For subscribed procedures, the opening brief contains assignment facts only.
-The initial activation is retained before startup and its body enters through
-the actual procedure-entry hook. Later wakes are content-free. `send` remains a
-general text primitive; its acceptance is not an event-delivery acknowledgement.
-The adapter's event capability must realize the separate target contract in
-`project/instrukt/spec/feature/runner/procedure-event-delivery`, including
-eligible boundaries and untrusted provenance. Unsupported hook, attendance or
-continuation behavior is reported explicitly rather than implemented as ordinary
-conversational event text.
+For subscribed procedures, the opening input establishes the assignment before
+its separately identified event data. Delivery has two intents: as soon as
+possible (default) and only at entry. The adapter exposes steering, queue-only
+or entry-only realization, as specified in
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. T3 uses queued
+input rather than a required hook. Missing steering creates no finding.
+Runtime acceptance is transport evidence, not entry consumption or completion.
+One session-wide waiting slot combines instrukt event, approval and runner-owned recovery deliveries
+while preserving their separate identities. Native agent messages and child
+reports belong to the runtime and do not occupy this instrukt-owned slot.
+Recovery here concerns only instrukt-started orchestrators/tasks, never their
+natively delegated workers.
 
-### Public sessions surface
+### The waiting message is a delivery log
 
-These commands remain because released workflows dispatch workers, inspect
-intent evidence and continue recorded conversations through a runtime-neutral
-surface. All accept `--json`; no command prints an instruction for an agent to
-execute in place of its operation.
+The composer places the message composition time at the top. Each delivery is
+one entry, ordered by arrival from oldest at the top to newest at the bottom.
+Every entry retains its source identity, kind (`event`, `approval` or `recovery`), source occurrence time and arrival time. An unavailable
+source time is explicitly unknown; the arrival time never substitutes for it.
+Event entries mark their envelopes as untrusted data. Combining preserves every
+entry and its timestamps; a retry retains the exact composed log and time.
 
-| Command | Contract |
-| --- | --- |
-| `instrukt sessions run [--procedure <id>] [--args <text>] [--brief <file\|->] [--worktree <name>] [--todo <slug>] [--recover-attempt <role/attempt>] [--start-key <key>]` | Call `start` and return the native id and requested worktree path. With `--todo`, record the role-attempt binding through work. `--recover-attempt` selects a confirmed failed writing attempt as a new builder's base. `--start-key` resumes an existing recorded request and accepts no changed start inputs. |
-| `instrukt sessions send <id> <text>` | Call `send` for the identified session; return the id after acceptance. |
-| `instrukt sessions alive <id>` | Call `read_state`; print its semantic state or report observation failure. |
-| `instrukt sessions conversation <id>` | Call `read_conversation` for an identified conversation; report that this is a bounded recent read. |
-| `instrukt sessions link [--remove] <a> <b>` | Call optional `link`, or report unsupported. |
-| `instrukt sessions resolve-start <key> --session <runtime:id> \| --none` | Resolve any ambiguous start under its key lock: verify and bind the named keyed thread, or record the operator's confirmation that no thread was created and no start remains in flight. The standing-agent shorthand `<procedure>@<project>` resolves the home-identity project responsibility; subject or successor recovery uses its full key. |
+### Runtime evidence capabilities
 
-A subscribed home-identity procedure entered by `sessions run --procedure`
-uses the standing-agent guard and starts attended in its resolved home; it
-refuses naming an existing standing agent. Subject-bound manual entry is
-unsupported. Other `run` assignments retain the start behavior below.
+Native project identity is optional metadata, separate from instrukt project
+identity and the scoped native session reference (runtime, endpoint and native
+conversation incarnation). A missing native project id does not make an
+assignment invalid. A runtime's idle or exited process supplies no successful
+work outcome; unknown/unobservable, input-ready, running and terminal failure
+remain distinct. T3-specific state translation is confined to its adapter.
 
-`--procedure` is required except for setup-only `run --worktree <name> --brief
-<file|->`. A setup run takes no `--args`, sends only the setup brief, and
-returns a worktree path without an implementation instruction. With `--todo`,
-it binds the `setup` role attempt; without it, it is a standalone run.
-The returned evidence includes the start key. A retry addresses the recorded
-key rather than allocating another request. Worktree paths remain in todo-role
-attempt bindings after a run ends; filesystem observation supplies
-`worktree.exists`.
+Acceptance and consumption are distinct runtime capabilities. Each observation
+retains its native reference when supplied, source, meaning and observation
+time. Transport submission or a completed prior turn proves no consumption.
+Unknown or unsupported consumption keeps the one waiting slot occupied and
+reports the capability gap. Structured transcript/run ids are one adapter's
+evidence, not shared prerequisites. Assignment recovery likewise uses an explicit
+capability; unreadable initialization evidence stays a visible gap.
 
-Session ending, self-ending and history search are outside this surface. The
-runtime handles ending and cleanup; instrukt supplies no ending verb, agent-kind
-instruction or distinct "yours to do" exit status.
+### Operational sessions surface
+
+`instrukt sessions list [--since <duration> | --all] [--json]` inspects the
+runtime threads instrukt uses for keyed lookup, not an agent's way to look
+around. It lists project sessions with separate semantic key and display title,
+state and available native activity time with provenance, newest known time first. The default settled-thread window is three days;
+active non-settled threads remain visible regardless of age. `--since` accepts
+integer `s`, `m`, `h`, `d` or `w` durations; `--all` includes all settled threads.
+The flags are mutually exclusive. Filtering uses only native timestamps whose adapter-declared meaning supports
+the activity window. Missing activity is explicitly unknown and remains visible
+as unfilterable; local observation time is separate and never substitutes for it.
+An invalid supplied timestamp is an observation error. T3 uses the later of
+`updatedAt` and `settledAt`; other adapters expose their supported meaning.
+
+`instrukt sessions resolve-start <key> --session <runtime:id> | --none` resolves
+instrukt's own ambiguous keyed starts under the key lock. It verifies and binds
+the named keyed thread, or records confirmation that no thread was created and
+no start remains in flight. It cannot resolve native delegated-child attempts;
+those use the work record's `todo attempt`/`todo bind` contract. Standing home
+shorthand `<procedure>@<project>` remains available; subjects and successors use
+the full key.
+
+Agent-native `run`, `send`, `alive`, `conversation` and `link` facades are absent
+from this surface. Explicit capability-gap fallbacks, if a runtime needs one,
+are named in its configuration instruction; no fallback is enabled for a native
+operation. Session ending and history search remain runtime-owned and outside
+the released instrukt surface. The runner's automatic starts return acceptance
+to its own dispatch path, never an instruction for an agent to execute.
 
 ### Runtime choice and feature availability
 
 `runner.runtime` is global-only and names a compiled adapter. It has no default.
 `t3` is the first shipped implementation. No code chooses a runtime from
 installed tools or session environment variables. Unknown adapter names are
-validation findings; runtime entries and verb templates are not settings.
+validation findings. Runtime instruction entries are configuration prose, not
+adapter verb templates.
 
 | Feature | Needs |
 | --- | --- |
-| Standing agents (`modules.events`) | `start_or_wake`, `send`, `read_state`, `read_conversation`, plus eligible procedure-event hook delivery and the assignment/continuation capabilities required by the subscription. |
-| Todo dispatch (`modules.todos`) | Keyed `start` with worktree creation, `send`, `read_state`, `read_conversation`. The shipped sdlc workflow uses per-role worktrees. A workflow declaring shared-worktree attachment additionally needs that capability. |
-| Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state`, `read_conversation`. |
+| Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
+| Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
+| Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
 | Linked-session input | Optional `link`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
-Enabling a module without a selected runtime, or with an adapter lacking a
-required capability, is refused without changing configuration. The refusal and
+Enabling a module without a selected runtime, or with its native/adapter path
+lacking a required capability, is refused without changing configuration. The refusal and
 `config validate` name the runtime and missing capability, or state that no
 runtime is chosen. A temporarily unreachable runtime is an execution failure,
 never a reason to select another adapter or create a replacement session.
-Linked-session input and notification remain unavailable on T3's published CLI;
+Enablement reads the selected workflow's typed `requires` declaration under
+`project/instrukt/spec/feature/workflow/workflow-definition`; it does not infer
+requirements from action prose. Missing steering is a supported degradation,
+not an enablement failure. Linked-session input and notification remain
+unavailable on T3's published CLI;
 instrukt does not rebuild them.
 
 ### Start keys and locks
 
-Every start instrukt makes has a durable key carried as the thread's exact
-`--title`, including setup-only and ad-hoc starts. Keys are scoped to the
+Every instrukt-owned start has a stable semantic key distinct from its display
+title. The selected adapter establishes exact discoverable key evidence; T3
+encodes the key in its `--title`, while another adapter may use a native label.
+Renaming display text never changes semantic identity or proves absence. Missing
+or conflicting key evidence stays unresolved. Keys are scoped to the
 selected runtime and execution checkout. Todo/task/run keys retain registered project scope:
 
-| Assignment | Exact title |
+| Assignment | Semantic key |
 | --- | --- |
 | Standing procedure | `instrukt:standing:<encoded-procedure>@<encoded-home>[:subject:<encoded-subject>][:generation:<n>]` |
-| Todo role | `instrukt:todo:<encoded-project>/<encoded-slug>:<encoded-role>:<attempt>` |
-| Task occurrence | `instrukt:task:<encoded-project>/<encoded-slug>:<encoded-occurrence>` |
-| Other starts, including standalone setup | `instrukt:run:<encoded-project>:<request-id>` |
+| Runner-owned todo orchestrator | `instrukt:todo:<encoded-project>/<todo-id>:<encoded-role>:<attempt>` |
+| Native child assignment | The same role-attempt semantic key is supplied to native delegation and retained by work; it is not an adapter-discovery key. |
+| Task occurrence | `instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` |
+| Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 
 For standing keys, the canonical home token is `project:<slug>` or `platform`;
 company/person tokens retain their kind but cannot execute in this release.
@@ -140,7 +188,7 @@ identity, confirmed closure plus proven inability to resume permits succession;
 closed unattended assignments are not revived. A failed send, failed observation or
 unresolved start never does. Prior generations remain evidence; one current
 generation is admitted under the procedure/home guard and key lock. Discovery
-checks all generation-family titles for that responsibility before selection;
+checks all generation-family semantic keys for that responsibility before selection;
 missing evidence of which generation is current is a conflict, never permission
 to reuse a retired generation or start another. The four keyed-dispatch rules
 below apply to the established current generation.
@@ -152,38 +200,52 @@ and trimming trailing fractional zeros; retries and catch-up retain that instant
 request ids are generated 32-character lowercase hex identities. Allocate and
 persist them before dispatch. A retry retains its key; an unresolved attempt
 cannot be bypassed by allocating another attempt or request id. Matching is
-exact. The registered checkout independently selects T3's project.
+exact. The execution scope is independent of optional native project identity.
 
-A project-slug, todo-slug or procedure-id change requires reconciliation of
-outstanding keys and bindings before dispatch under the changed address.
+The `todo-id` is the immutable `todos.id` (32 lowercase hex characters), not
+the mutable slug. A todo rename keeps its keys and any outstanding startup's captured branch and opening input; a later same-slug todo has a
+different identity and cannot collide with the retained earlier keys.
+A project-slug or procedure-id change requires reconciliation of outstanding
+keys and bindings before dispatch under the changed address.
 Completed task occurrences retain their key and are not started again.
 
 Every start or wake claims `runtime_key_locks` before discovery and retains
 ownership through binding and delivery-result recording. This applies to
-manual session commands as well as runner dispatch. Lock changes are short
+operational start resolution and runner dispatch, not native child delegation. Lock changes are short
 transactions under the writer lock; no transaction spans a runtime command.
-The machine runner lock serializes eligible owners, including `resolve-start`.
+The machine runtime-dispatch guard serializes eligible owners, including `resolve-start`. The long-lived runner holds its separate lifetime lock while acquiring this dispatch guard only for each wake, so operational resolution can run between wakes.
 A successor holding that lock may recover a dead invocation's key ownership
 while retaining unresolved markers; elapsed time alone permits no new start.
 
-### T3 keyed dispatch and recovery
+### Keyed dispatch and recovery
+
+Every unattended path selects its adapter through `runner.runtime`. Under the
+key lock, perform successful discovery by semantic key before creation; a single
+exact match repairs the binding, zero matches permit creation only without an
+unresolved start, and failed/conflicting discovery permits none. Failed sends
+retain the target. Native assignment, acceptance and consumption observations
+carry their own supported evidence and provenance.
+
+### T3 realization of keyed dispatch
 
 The same discovery and start rules govern every key, for both `start` and
 `start_or_wake`:
 
 1. Under the key lock, run `t3 thread list --project <checkout> --json`.
    Require a complete, valid project listing. Match `title` exactly and retain
-   `threadId` and `projectId`. The `runtime_bindings` mapping is a cache, never
+   `threadId` and any available `projectId`. Native project id is optional
+   metadata, independent of instrukt project identity. The `runtime_bindings` mapping is a cache, never
    proof of absence.
 2. One match selects that thread and repairs the cache, including after loss
-   of instrukt's database. A recovered todo-role thread must use its
-   recorded branch rooted at the captured base; recover any requested worktree
-   path with `show`.
+   of instrukt's database. A recovered runner-owned thread must match its
+   retained assignment; recover any requested worktree path with `show`.
+   Native delegated children are recovered from native task evidence instead;
+   T3 project listing need not expose them.
    Commit the binding before sending unconfirmed input. For standing events,
    commit the activation target in `standing_deliveries` before any runtime
-   handoff. A busy thread receives ordinary follow-up text as its next turn. Procedure
-   events remain pending for the eligible hook boundary; only a content-free
-   wake can enter conversational input.
+   handover. A busy thread receives ASAP input as its next turn. Only one
+   instrukt message waits there; additional input stays durable for the next
+   combined message. Only-at-entry input remains in instrukt until idle.
 3. Zero matches permits a new start only with no unresolved `runtime_starts`
    marker, bound session or recorded delivery target. Commit the marker,
    key, brief and worktree request before `t3 thread start --title <key>
@@ -198,7 +260,8 @@ The same discovery and start rules govern every key, for both `start` and
 
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
-One match recovers the same session; unconfirmed input may be resent there.
+One match recovers the same session. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
+otherwise unconfirmed input may be resent there.
 An empty listing alone never clears a marker. Report the key and
 `instrukt sessions resolve-start <key>` once and keep the assignment pending.
 `--session` verifies the exact key, project and any recorded worktree request
@@ -209,9 +272,9 @@ A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
 
-Runtime acceptance commits with its dispatch result and binding. Event delivery
-commits only after successful eligible hook handoff; content-free wake acceptance
-does not consume the event. Consumer
+Runtime acceptance commits with its dispatch result and binding. Selected event
+handover commits with that acceptance, while queued entry consumption remains
+separate. A content-free wake alone consumes no event. Consumer
 handled marks instead track durable activation acceptance under
 `project/instrukt/spec/feature/runner/procedure-subscription-routing`; they do not
 wait for a runtime send. Input delivery is at least once across a lost acknowledgement
@@ -224,63 +287,55 @@ Commands run on the computer hosting T3 and instrukt. `start` has no
 remote-environment flag. The project operand is its registered checkout, not an
 assumed current worktree: T3 may not recognise a linked checkout as `.`. The
 adapter runs the installed `t3` on the host's executable search path; there are
-no T3-specific configuration keys in this contract.
+no configured command templates in this adapter contract. Agent-native
+instruction prose is a separate configuration surface.
 
 | Operation | CLI translation and evidence |
 | --- | --- |
 | Plain start | `t3 thread start --title <key> <checkout> -`; stdout supplies the native id. No `--wait`: execution and acceptance are separate. |
-| New worktree start | Add `--worktree <base-revision> --branch <name>`. The flag creates a new runtime-owned worktree; it is not an existing-worktree path. Read the resulting thread with `show --json` for the path. |
-| Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn. |
+| Todo phase orchestrator start | Preparation: `--worktree origin/main --branch <slug>/prepare`. Work: `--worktree origin/main --branch <slug>/work`; resumption on another computer: `--worktree origin/<slug>/work --branch <slug>/work`. Creation refuses an existing local phase branch. Native shared children inherit the orchestrator's recorded phase worktree. |
+| Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search. |
 | Recover keyed identity | `t3 thread list --project <checkout> --json`; top-level array entries carry `threadId`, `projectId`, `title`, `status`, `link`, `providerInstanceId`, `model`, `settled`, `snoozed`, and timestamps. `settled` alone does not make a thread gone. |
 | Link and notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 
-### T3 per-role worktrees
+T3 project listing includes settled threads and supplies no server-side time
+filter. The adapter matches their keys exactly. Sending to a settled thread
+wakes a new turn and un-settles it; settling is never evidence of absence or
+permission for a second keyed start. Archived or explicitly unknown threads are
+gone. The published CLI omits subagent threads from project listing; this
+surface reports only the threads the runtime exposes.
 
-The shipped sdlc delivery workflow dispatches roles of one todo sequentially.
-Each role attempt gets a new T3-created worktree from the todo branch's captured
-current head SHA: `--worktree <base-sha> --branch <role-branch>`. The branch name
-is `<todo-branch>--role-<role-utf8-hex>-<attempt>`, with the role's UTF-8 bytes
-encoded as lowercase hex. A branch collision is a finding, never permission to
-reuse an unrelated branch. Record the base SHA, branch and returned path before
-admitting work. Setup uses the same convention with role `setup`.
+### One worktree per todo team
 
-`run --todo <slug> --recover-attempt <role/attempt>` is the explicit base
-exception for a new builder-role worktree. It requires a worktree request,
-current approved preparation, the claim-holding orchestrator and a confirmed
-failed writing attempt of that todo. Capture its immutable recorded failure
-head instead of the todo head and retain the recovery link before calling
-`start`. The source is the latest unsettled failed binding; a still-outstanding
-source or successor, an unknown or superseded binding, unavailable source
-commit, other role or absent `--todo` refuses dispatch. Holds retain their normal effect. Retry of an unresolved
-start retains that captured recovery source and the same durable key.
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
-After a code-writing role's completion stamp, advance the todo branch to the
-stamped role head by fast-forward only, then release that attempt as evidence.
-The next role starts only after that handoff is recorded. A read-only review
-runs in its own worktree at the same todo head; its verdict releases the attempt
-without a branch advance. A deferrer likewise uses its own attempt; its current
-`--deferrals-processed` evidence releases it without a branch advance. These
-read-only releases commit with their stamps and require clean worktrees at the
-captured todo head. Branch handoff, refusal and crash reconciliation are
-owned by `project/instrukt/spec/feature/workflow/delivery-cycle`.
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
-An active attempt may receive follow-ups in its bound thread. After release,
-a fixer or later round gets a new attempt at the current todo head, with the
-explicit failed-attempt recovery exception above; earlier
-conversations, branches and paths remain evidence. Workflows requiring shared
-worktree attachment are refused at enablement naming that missing capability;
-T3's shipped delivery workflow requires creation only.
+After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
-### Observation, identity and completion
+### Approval attention
+
+Applying an approval or request-changes decision commits its work-record fact
+before attempting attention delivery. If the todo's current execution claim
+names a live orchestrator session, queue the decision, attribution and bound
+evidence to that session with the as-soon-as-possible intent. A failed liveness
+read or send retains a pending notice with its cause; retry rechecks the current
+claim. A released or replaced claim cannot route a stale notice to its former
+holder. If no live claimant exists, the decision is only a state update; next
+pickup or a deliberate start derives from it. Approval attention neither starts
+an orchestrator nor publishes a decision event. Re-reading an already applied
+GitHub command creates no second attention item.
+
+### T3 observation translation and work completion
 
 | State | Runtime observation |
 | --- | --- |
 | `running` | `running`, `starting`, `resuming` or `queued`. |
 | `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
-| `ended ok` | `idle`, `completed` or `stopped`, with no outstanding input. |
-| `ended failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
+| `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
+| `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
 | `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. |
 
 An unrecognised status or response shape, command failure or unreachable runtime
@@ -289,16 +344,27 @@ metadata must be verified against the installed T3 response before translation;
 a fake runtime fixture is not evidence of the live shape.
 
 Work records retain sessions per todo, role and attempt; subsequent work reads that
-binding and confirms that its attempt is active and unreleased before observing
-it for a work follow-up through `send`. An ended turn can leave a reusable
+binding and confirms that its attempt is active and unreleased before sending
+a native follow-up to it. An ended turn can leave a reusable
 conversation within that active attempt. A released finalizer's record-only
-readiness write uses its retained binding after confirmed handoff; further
+readiness write uses its retained binding after confirmed completion and release; further
 workspace work requires a new attempt. Artifact writers and stamps retain `<runtime>:<id>` identity. A
-step is complete only with its required artifact and stamp. After an ended run
-without either, or a gone session, the runner attempts one recovery send to that
-same id; continued absence raises an anomaly. Observation failure retries
+step is complete only with its required artifact and stamp. For a runner-owned
+execution, after a terminal run without either, or a gone session,
+the runner attempts one recovery send to that same id; continued absence raises an anomaly. Observation failure retries
 observation instead. Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
+
+### Fresh canonical base
+
+Before creating either `<slug>/prepare` or `<slug>/work`, fetch origin and use
+`t3 thread start <project> - --worktree origin/main --branch <slug>/<phase> --title <key>`.
+Only the integrator writes and pushes gate-green exact commits to main; local
+main can lag and supplies no new-phase base. A fetch failure leaves startup
+unperformed, with its cause visible. A retained published `<slug>/work` on
+another computer is continuation of the existing phase, using freshly fetched
+`origin/<slug>/work` with the same local branch name; it is never reset to main.
+For repositories whose canonical branch has another name, use that remote ref.
 
 ## Use cases
 
@@ -321,31 +387,25 @@ But when the developer identifies the keyed thread that was created
 Then instrukt verifies and binds that thread without starting another
 ```
 
-### UC-SS3: A developer on T3 Code has agents work after choosing T3 as their runtime
+### UC-SS3: A developer has runner pickup after choosing T3
 
 ```gherkin
-Given a developer has chosen T3 Code as the runtime on this computer
-When instrukt dispatches work in a registered project
-Then the compiled adapter starts its T3 conversation without configured command templates
-And subsequent work reaches that recorded conversation
-And an agent can read its recent messages through instrukt
+Given a developer explicitly chose T3 Code as this computer's runtime
+When the runner picks up an eligible prepared todo for work
+Then instrukt derives the phase branch and the adapter creates its orchestrator in that phase's one managed worktree
+And the orchestrator delegates workers natively with shared isolation and records their role-attempt bindings
+And all roles use that worktree and todo branch with one outstanding workspace role
+And agent reads and follow-ups use configured native instructions
 ```
 
-### UC-SS5: A developer switches on a feature their runtime cannot carry
+### UC-SS5: A developer switches on a feature their runtime can carry
 
 ```gherkin
-Given a developer's selected runtime adapter lacks a capability a feature needs
-When the developer enables that feature
-Then instrukt refuses and names the runtime and missing capability
-And configuration remains unchanged
-But when the adapter provides all the required capabilities
-Then the feature can be enabled
-
-Given a developer has chosen T3 with worktree creation but no attachment capability
-When the developer enables the shipped sdlc delivery workflow
-Then its per-role worktrees permit enablement
-But when the developer enables a workflow requiring attachment to an existing worktree
-Then instrukt refuses naming the attachment capability and leaves configuration unchanged
+Given a developer's selected runtime supports worktree creation and shared native delegation but not existing-worktree attachment
+When they enable the shipped sdlc workflow
+Then those capabilities permit its one-worktree todo teams
+But a custom workflow requiring existing-worktree attachment is refused with the missing capability named
+And a feature missing another required capability is refused without changing configuration
 ```
 
 ### UC-SS6: A developer who has chosen no runtime is never given one
@@ -406,76 +466,122 @@ Then instrukt reports the identity conflict and leaves the event pending
 And neither conversation is chosen arbitrarily and no third conversation is started
 ```
 
-### UC-SS13: Recover todo work after its start reply was lost
+### UC-SS13: Recover todo orchestrator pickup after its start reply was lost
 
 ```gherkin
-Given a developer's todo role was created in T3 but its start reply was lost
-When instrukt resumes dispatch after a restart
-Then it recovers that role's keyed thread and worktree without starting another
-But when a successful listing cannot find that thread
-Then the todo remains pending with its unresolved key and the resolve-start command
-And only explicit resolution or proof of rejection permits another start for that key
+Given T3 created a developer's todo orchestrator but instrukt lost its start reply
+When the runner resumes pickup after a restart
+Then it recovers that orchestrator's keyed thread without starting another
+But when a successful listing cannot find it
+Then pickup remains pending under its unresolved key until explicit resolution or proof of rejection
 ```
 
-### UC-SS4: An agent looks up what an earlier conversation said (to retire)
-
-UC-SS4 is to retire: the superseded scenario remains only while its existing
-test bindings are removed by the builder.
+### UC-SS14: A builder's ending wakes its idle orchestrator natively
 
 ```gherkin
-  Given a developer's runtime mapping fills how their runtime searches and shows past conversations
-  When an agent following doctrine needs what an earlier conversation said about a subject
-  Then instrukt searches that runtime for it, or tells the agent how to search with its own runtime's tools
-  And shows a conversation the search finds
-  But when the runtime it is running in leaves history search empty
-  Then it is told which verb is missing, and no search is made
+Given a developer's orchestrator delegated its bound builder through the runtime
+And the orchestrator is idle
+When the builder reports its ending
+Then the runtime wakes that parent with its native child result
+And instrukt does not observe the child or compose a second ending delivery
+And the parent checks the recorded attempt, completion stamp and release before deciding what follows
 ```
 
-### UC-SS7: An agent told that an ending is its to do ends the sessions itself (to retire)
-
-UC-SS7 is to retire: the superseded scenario remains only while its existing
-test bindings are removed by the builder.
+### UC-SS15: A busy orchestrator receives its child's native result
 
 ```gherkin
-  Given a developer's runtime fills ending as an instruction for the agent
-  And an agent has released a todo whose child sessions are bound to it
-  When the agent ends the todo's sessions and then its own through instrukt
-  Then instrukt tells it, for each session, what to do with its own runtime's tools, and that doing it is the agent's
-  And once the agent has done so, the child sessions and its own are ended in the runtime
-  But when the developer's runtime needs no ending
-  Then instrukt says so and nothing more is owed
+Given a developer's orchestrator is working while its native reviewer child runs
+When that child reports its result
+Then the runtime delivers native parent attention through its supported boundary
+And no instrukt runtime-input entry or waiting slot is created for that result
+And the parent relates the native child id to its recorded role attempt before deciding what follows
 ```
+
+### UC-SS16: Assess native child failure without inferring workflow completion
+
+```gherkin
+Given a developer's orchestrator has a bound native child
+When native task evidence reports a failure, input wait or confirmed absence
+Then the parent assesses that evidence under its retained assignment
+And instrukt neither polls that child nor produces a parent notice
+And no completion stamp or attempt release is inferred
+```
+
+### UC-SS17: Dispatch a later todo that reuses a slug
+
+```gherkin
+Given a developer retains runtime threads for an earlier todo
+And a later todo reuses that todo's slug with a different immutable ID
+When the later todo dispatches a role or task occurrence
+Then its runtime key uses the later todo's immutable ID
+And it neither collides with nor adopts the earlier todo's conversation
+And renaming the later todo preserves its existing keys
+```
+
+### UC-SS18: Wake a settled orchestrator in its retained conversation
+
+```gherkin
+Given a developer's orchestrator is settled but remains reachable in T3
+When instrukt delivers an event or approval to its recorded session
+Then T3 starts its next turn and un-settles that conversation
+And keyed discovery still selects it without starting another thread
+```
+
+### UC-SS19: Find recent project conversations with truthful activity evidence
+
+```gherkin
+Given a developer's selected runtime exposes active and dormant conversations
+When the developer lists sessions within an activity window
+Then each result has separate semantic key and display title, state and available activity evidence with provenance
+And old dormant sessions with verified activity times are excluded unless --all is given
+And active sessions and sessions with unknown activity time remain visible
+And local observation time never substitutes for native activity
+And the JSON form carries the same facts
+```
+
+### UC-SS20: Wake an older standing agent by key
+
+```gherkin
+Given a developer's standing agent has been settled longer than the sessions-list window
+When a later activation needs that responsibility
+Then keyed discovery searches all project threads and finds its exact semantic key independently of display title
+And the existing conversation wakes without a new thread
+And the listing window has no part in that decision
+```
+
+### UC-SS4: Conversation archive lookup (retired)
+
+Retired: history search and archive lookup are outside A3; its test bindings have been removed.
+
+### UC-SS7: Agent-owned session ending (retired)
+
+Retired: the runtime owns session ending; its test bindings have been removed.
 
 ## Known caveats
 
-- Runtime start/send acceptance supplies transport evidence only. Event-hook
-  provenance, eligible boundaries, attendance and subject continuation remain
-  the build feasibility gate under
-  `project/instrukt/spec/feature/runner/procedure-event-delivery`. No published
-  T3 capability is assumed to provide those semantics.
-- UC-SS4 is to retire: history search and archive lookup are not released in A3.
-- UC-SS7 is to retire: session ending and agent-kind instructions belong to the runtime.
-- T3 has no atomic server-side keyed start. Request pingdotgg/t3code#31621
-  would replace list-before-start inside the adapter; it is not implemented
-  here. The local lock protects instrukt starters on this computer, not
-  external actors creating duplicate titles. Preserve keyed titles in T3;
-  renaming or deleting them can require operator resolution.
-- T3's list JSON supplies the array and fields above, without a worktree
-  path. The `show` response schema is not established by CLI help. Its decoder
-  needs real-response verification; the existing fixture's `thread.worktreePath`,
-  `pendingRequestCount` and `archived` fields alone establish no T3 guarantees.
-- T3 cannot attach a fresh thread to an existing worktree. The shipped sdlc
-  workflow uses per-role worktrees; attachment-dependent workflows remain
-  unavailable. An upstream attach option would allow roles to share one
-  worktree again; it is to be requested from T3, alongside keyed-start request
-  pingdotgg/t3code#31621. instrukt does not take over runtime worktree lifecycle.
-- T3 accepts `--provider` only with `--model`; instrukt agent names and
-  thinking modes alone do not select that pair. Until an adapter can resolve
-  the requested pair, starts use the T3 project's defaults and report that
-  limitation; preferred-agent fallthrough is not claimed on T3.
-- Conversation reads are limited to the latest 100 messages. A reader needing
-  older evidence reports the gap; no history service, transcript store or
-  search implementation is added.
+- Re-creating a deleted work orchestrator while its branch remains checked out
+  in the retained worktree needs existing-worktree binding. T3's CLI lacks it;
+  remove that worktree safely first, or start through the runtime's own existing-
+  worktree binding where available (T3 MCP). Waking a settled retained thread
+  uses its recorded workspace and has no such gap.
+- T3 host-CLI ASAP delivery is queue-only. Consumption, assignment recovery and
+  activity timestamps require their own supported evidence; a send acknowledgement
+  or completed prior run proves no consumption.
+- T3 native shared delegation inherits the parent's recorded workspace. Native
+  children may be absent from project listings; their parent recovers them through
+  native task evidence.
+- UC-SS4 is retired: history search and archive lookup are outside A3.
+- UC-SS7 is retired: session ending belongs to the runtime.
+- T3 has no atomic server-side keyed start. Request pingdotgg/t3code#31621 could
+  replace list-before-start; the local lock protects only instrukt starters.
+  Because T3 encodes semantic keys in titles, changing that encoding requires
+  explicit identity reconciliation, never a replacement start from a lost match.
+- T3's list JSON carries no worktree path. `show` decoder fields require verified
+  runtime evidence; a fixture alone establishes no native response guarantee.
+- T3 accepts `--provider` only with `--model`. Until requested preferences resolve
+  to that pair, starts use project defaults and report that limitation.
+- T3 conversation reads cover the latest 100 messages. Missing older evidence is
+  a visible gap; no archive or history service is introduced.
 
 ## See Also
 

@@ -22,7 +22,7 @@ projects keep their own tooling.
 | Hook | When instrukt installs it | What the hook run does |
 | --- | --- | --- |
 | `post-commit` | always | starts `instrukt sync` detached |
-| `post-merge` | always | starts `instrukt sync` detached; when a pull advances main and blueprint is enabled, hands the revision to blueprint |
+| `post-merge` | always | starts `instrukt sync` detached; when a pull or runner fast-forward advances main to its fetched upstream head and blueprint is enabled, hands the revision to blueprint |
 | `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
 | `post-checkout` | always | starts `instrukt sync` detached |
 | `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |

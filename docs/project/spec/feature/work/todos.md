@@ -101,48 +101,67 @@ counterpart of the claim recorded before dispatch. Session bindings remain
 evidence of the assignment's conversations. The runtime owns ending those
 sessions; release changes the claim, not their lifecycle.
 
-### Completed role handoff
+### Native role-attempt recording
 
-`instrukt todo handoff <slug>` is the claim-holding work orchestrator's command
-for a completed setup, builder/fixer or finalizer attempt. It refreshes that
-todo under the existing command contract, resolves the outstanding attempt,
-and requires its bound completion stamp and clean worktree at the stamped
-role head. It persists source and expected todo heads in the state database,
-fast-forwards the todo branch with an expected-old-head comparison, then
-confirms the advance and releases the attempt. Recovery and divergence follow
-`project/instrukt/spec/feature/workflow/delivery-cycle`.
+`instrukt todo attempt <slug> --role <role> [--procedure <id>] [--args <text>]
+--brief <file|->` reserves an attempt for the claim-holding orchestrator. It
+returns the rendered assignment, declared role, monotonic attempt, semantic key,
+display title and captured starting SHA. Every assignment carries its phase's recorded worktree and branch: `<slug>/prepare` for preparation, `<slug>/work` for work. The command records facts and calls no runtime.
+Setup admits its setup-only brief; other roles match the procedure's declared role.
 
-The durable attempt and completion sequence identify the operation. A retry
-finishes its pending intent or reports its confirmed handoff without advancing
-again. With no outstanding attempt, it reports the most recent confirmed
-handoff; it never selects an incomplete or read-only attempt as new work.
-Review verdicts and deferral-processing evidence release their attempts directly.
+Reservation commits before native delegation. An outstanding same-role retry
+returns the same attempt and inputs. Changed inputs or a second workspace role
+refuse while that attempt is outstanding. Claim, hold and preparation checks
+apply. Every new work attempt captures the current shared todo head. The
+orchestrator delegates with shared isolation through `runtime.dispatch`.
 
-`instrukt todo handoff <slug> --failed --reason <text>` is the alternative
-release for an outstanding writing attempt that cannot finish synchronization.
-It requires the claim-holding orchestrator, a non-empty reason and an observable
-committed role-branch head, but no completion stamp or clean worktree. It records
-the failure, role branch, head, path and any unfinished workspace state, releases
-the attempt and queues reflection in one local transaction. It changes no Git
-ref, preserves the worktree and role branch, and establishes neither completion
-nor readiness. A builder can then be admitted with
-`instrukt sessions run --todo <slug> --recover-attempt <role/attempt> …` at that
-recorded failed head. A completed recovery hands off through the normal command.
+Immediately after delegation it records `instrukt todo bind <slug> --role <role>
+--attempt <n> --session <runtime:id> [--worktree <path>] --branch <branch>
+--base <sha>`. Binding requires the reservation, same claim holder and selected
+runtime, exact role/attempt, and workspace, branch and clean initial head matching
+the reserved assignment. Work children inherit the orchestrator's recorded todo
+worktree; preparation children inherit the preparation orchestrator's `<slug>/prepare` worktree. Bind
+before workspace work, record writes or stamps. If a child starts before binding,
+it reports that prerequisite and awaits its parent's native follow-up. Exact
+replay succeeds; changed child identity or workspace refuses. Binding neither
+calls the runtime nor transfers the orchestrator's claim to the child.
 
-Failed release is refused while a recorded ref advance may already have happened;
-reconcile that normal handoff's intent first. With no outstanding attempt,
-`--failed` reports the most recent confirmed failed release and its reason,
-without another mutation. With an outstanding attempt, either form addresses
-that attempt; re-observe the binding before invoking the command after dispatch.
+An interrupted dispatch or bind leaves the reservation outstanding. Recover the
+existing child through the parent's native task evidence and bind it; project
+listings may omit native children. `instrukt todo attempt <slug> --role <role>
+--attempt <n> --not-started --reason <text>` records proof of rejection before
+creation, or explicit confirmation that no child exists and no start remains in
+flight, before retrying the same assignment. Silence, missing binding and empty
+listings supply no such evidence. A workspace mismatch stays a visible binding
+gap; resolve that assignment before admitting work.
 
-| Exit status | Meaning |
-| --- | --- |
-| `0` | The requested normal handoff or failed release is confirmed, including an unchanged replay. Normal output identifies attempt, role, source, expected head and confirmed head. Failed output explicitly names the failed outcome, reason, attempt, preserved role branch/head/path and unchanged todo head. |
-| `1` | Observation, Git or persistence prevented confirmation of the requested outcome. Output names the failure and any recorded intent; retry resumes that operation. Neither handoff nor failed release is implied. |
-| `2` | The requested operation is refused: wrong claim, read-only role, no matching outcome to replay, missing normal completion/clean-head evidence or non-fast-forward; for failed release, missing reason or observable role head, or an unresolved possible ref advance. Output names the condition. Normal divergence additionally records an automatic hold and both branches and heads, retaining the attempt and role branch. |
+The work orchestrator coordinates only. Setup, builder, fixer, reviewer,
+deferrer and finalizer operate serially in that same worktree, with one
+outstanding workspace-role attempt at a time. Completion stamps release writing
+attempts atomically; review verdicts and deferral-processing stamps release their
+read-only attempts. Released bindings remain tracking and evaluation evidence.
+Native parent linkage and child attention remain runtime-owned.
 
-A pending intent keeps the attempt outstanding and blocks later workspace-role
-admission. The command neither marks finalize readiness nor publishes a branch.
+### Role completion and failed attempts
+
+Successful role completion and attempt release commit together under
+`project/instrukt/spec/feature/work/stamps`. All commits already belong to the
+todo branch in its shared worktree. A repeated completion records no second
+release; interrupted record writes leave either the previous state or the
+completed transaction. No separate Git advancement is owed between roles.
+
+When an attempt cannot continue, its parent records `instrukt todo attempt
+<slug> --role <role> --attempt <n> --failed --reason <text> --evidence <file|->` only with supplied native
+evidence that the child has stopped and a clean shared worktree on the recorded
+branch. It validates the supplied stopped-child evidence and placement against the
+binding without calling the runtime. The command retains the reason, observed
+head and workspace evidence,
+and releases that attempt with reflection in one transaction. It creates no
+completion or readiness stamp. Repeating the same failure reports its retained
+outcome; a changed binding or supplied evidence of continuing work refuses. A dirty or conflicted tree
+keeps the attempt outstanding for native recovery. A successor starts at the
+current shared head after confirmed release, preserving all committed work.
+The original build base remains unchanged. There is no failed-branch recovery base.
 
 ### Supported metadata and listing selections
 
@@ -184,7 +203,9 @@ the record; deciding whether a candidate passes the integration gate belongs
 to workflow. Delivered entries are read-only. `instrukt todo work <slug>` may derive and
 return the delivered workspace-removal obligation from retained evidence; it
 changes no delivered record. The integrator executes removal outside evaluation.
-Claim release and session cleanup belong to the work lane before handoff.
+Claim release belongs to the work lane before integration handoff. After delivery,
+the integrator removes the todo's one worktree from the project folder, retaining
+failed removal as owed work and preserving the runtime thread record.
 
 ## Use cases
 
@@ -237,16 +258,31 @@ Claim release and session cleanup belong to the work lane before handoff.
   Then the withdrawal is refused and names where that work is
 ```
 
-### UC-TD6: Resume a completed change after an interrupted handoff
+### UC-TD6: Role-branch handoff (retired)
+
+Retired: every role commits directly in the todo's single shared worktree.
+
+### UC-TD7: Record a natively delegated worker without starting another
 
 ```gherkin
-Given a developer's completed role work is committed and stamped in its own worktree
-When the agent acting for the developer runs instrukt todo handoff and it is interrupted
-Then the recorded handoff intent retains the completed work and intended todo head
-When the agent retries the handoff
-Then the todo branch reaches that stamped work once and the attempt is released
-And another retry reports the confirmed handoff without another branch advance
-But a divergent todo branch is held for reconciliation with the role work preserved
+Given a developer's orchestrator reserved a role attempt and delegated its assignment with shared isolation
+When it binds the returned native child id and the same worktree, todo branch and captured head
+Then instrukt records that role and attempt without calling the runtime
+And the worker can stamp its required evidence against the binding
+But a different child id, workspace, branch or starting head is refused
+And the original attempt remains outstanding
+```
+
+### UC-TD8: Recover a native dispatch whose binding was interrupted
+
+```gherkin
+Given a developer's orchestrator reserved a role attempt before native delegation
+And the child result or subsequent binding was interrupted
+When the orchestrator resumes
+Then the same attempt and assignment remain outstanding
+And it recovers the child from native delegation evidence and records the binding
+But missing local evidence or an empty project thread list does not permit another child
+And retry is admitted only after recorded proof or explicit confirmation of no native start
 ```
 
 ## Known caveats

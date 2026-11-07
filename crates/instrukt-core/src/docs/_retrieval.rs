@@ -47,6 +47,7 @@ pub struct IndexRequest<'a> {
 /// What `docs get` reads.
 #[derive(Debug, Clone, Copy)]
 pub struct GetRequest<'a> {
+    pub env: &'a crate::config::Env,
     pub home: &'a Home,
     /// The caller's working directory: where read-time commands run, and
     /// the project it stands in.
@@ -59,6 +60,7 @@ pub struct GetRequest<'a> {
 /// What `docs get --domain` reads.
 #[derive(Debug, Clone, Copy)]
 pub struct DomainRequest<'a> {
+    pub env: &'a crate::config::Env,
     pub home: &'a Home,
     /// The caller's working directory: the project it stands in.
     pub cwd: &'a Path,
@@ -74,15 +76,108 @@ pub struct Reading {
     pub unresolved: bool,
 }
 
+fn target_workspace(
+    home: &Home,
+    caller: &Caller,
+    target: Option<&TodoSlug>,
+) -> Result<Option<(ProjectSlug, PathBuf)>, DocsError> {
+    use crate::state_db::{
+        StateDbError, StateRead,
+        rusqlite::{OptionalExtension, params},
+    };
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    let project = caller
+        .project
+        .as_ref()
+        .ok_or_else(|| DocsError::ConfigUnresolved {
+            path: "--target".into(),
+            reason: "target documentation needs its project".into(),
+        })?;
+    let state = StateRead::open(home)?.ok_or_else(|| DocsError::ConfigUnresolved {
+        path: target.to_string(),
+        reason: "target todo has no work record".into(),
+    })?;
+    let recorded: bool = state
+        .conn()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM todos WHERE project=?1 AND slug=?2)",
+            params![project.as_str(), target.as_str()],
+            |r| r.get(0),
+        )
+        .map_err(StateDbError::sqlite(state.path()))?;
+    if !recorded {
+        return Err(DocsError::ConfigUnresolved {
+            path: target.to_string(),
+            reason: "target todo has no work record".into(),
+        });
+    }
+    let branch = format!("{target}/prepare");
+    let root = caller
+        .repo_root
+        .as_ref()
+        .ok_or_else(|| DocsError::ConfigUnresolved {
+            path: target.to_string(),
+            reason: "target needs a registered checkout".into(),
+        })?;
+    let listing = git::run(root, ["worktree", "list", "--porcelain"])?;
+    let path = listing
+        .split("\n\n")
+        .find(|entry| {
+            entry
+                .lines()
+                .any(|l| l == format!("branch refs/heads/{branch}"))
+        })
+        .and_then(|entry| entry.lines().find_map(|l| l.strip_prefix("worktree ")))
+        .map(PathBuf::from);
+    let Some(path) = path else {
+        let approved:Option<String>=state.conn().query_row("SELECT json_extract(s.evidence,'$.head') FROM stamps s JOIN todos t ON t.id=s.todo_id WHERE t.project=?1 AND t.slug=?2 AND s.fact='preparation_head_reviewed' AND json_extract(s.evidence,'$.verdict')='approve' ORDER BY s.sequence DESC LIMIT 1",params![project.as_str(),target.as_str()],|r|r.get(0)).optional().map_err(StateDbError::sqlite(state.path()))?.flatten();
+        if let Some(head) = approved {
+            let main = crate::github::default_branch(root)?;
+            let remote = format!("refs/remotes/origin/{main}");
+            let reference = if git::succeeds(root, ["show-ref", "--verify", "--quiet", &remote])? {
+                remote
+            } else {
+                main
+            };
+            if git::succeeds(root, ["merge-base", "--is-ancestor", &head, &reference])? {
+                return Ok(None);
+            }
+        }
+        return Err(DocsError::ConfigUnresolved{path:target.to_string(),reason:"preparation worktree is missing and its integration is unconfirmed; no main-checkout fallback".into()});
+    };
+    Ok(Some((project.clone(), path)))
+}
+fn target_index(
+    index: &mut GlobalIndex,
+    target: Option<&(ProjectSlug, PathBuf)>,
+    home: &Home,
+) -> Result<(), DocsError> {
+    if let Some((project, root)) = target {
+        let corpus = Corpus::load(root, home)?;
+        index.snippets.retain(|e| &e.source_project != project);
+        index
+            .snippets
+            .extend(crate::publication::target_entries(project, &corpus, root));
+    }
+    Ok(())
+}
+
 const AREAS: &str = "principle|concept|policy|procedure|design|spec|adr";
 
 /// The `docs index` listing.
 pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
     let started = Instant::now();
     let caller = Caller::of(req.cwd)?;
-    let Some(index) = GlobalIndex::load(req.home)? else {
+    let target = target_workspace(req.home, &caller, req.target)?;
+    let Some(mut index) =
+        GlobalIndex::load(req.home)?.or_else(|| target.as_ref().map(|_| GlobalIndex::default()))
+    else {
         return Ok(nothing_published());
     };
+
+    target_index(&mut index, target.as_ref(), req.home)?;
     let owners = position_owners(req.home)?;
     let valid = valid_domains(&index, &owners);
     let domains = named_domains(req.domains, &valid)?;
@@ -98,6 +193,12 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
                 .join("|")
         ),
     ];
+    if let Some((_, root)) = &target {
+        out.push(format!(
+            "# Pending source: preparation worktree {}",
+            root.display()
+        ));
+    }
     for domain in &domains {
         let owner = owners.get(domain).cloned().or_else(|| {
             index
@@ -301,12 +402,17 @@ fn slugs<'a>(slugs: impl IntoIterator<Item = &'a TodoSlug>) -> String {
 pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
     let started = Instant::now();
     let caller = Caller::of(req.cwd)?;
-    let Some(index) = GlobalIndex::load(req.home)? else {
+    let target = target_workspace(req.home, &caller, req.target)?;
+    let Some(mut index) =
+        GlobalIndex::load(req.home)?.or_else(|| target.as_ref().map(|_| GlobalIndex::default()))
+    else {
         return Err(DocsError::UnknownIds {
             ids: req.ids.to_vec(),
             nothing_published: true,
         });
     };
+
+    target_index(&mut index, target.as_ref(), req.home)?;
     let mut requested: Vec<&IndexEntry> = Vec::new();
     let mut third_party: Vec<&ThirdPartyEntry> = Vec::new();
     let mut unknown = Vec::new();
@@ -332,8 +438,9 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
     let reader = Reader {
         home: req.home,
         index: &index,
-        values: Values::read(&configuration),
+        values: Values::read(&configuration, req.env),
         lens: req.target.map_or(Lens::Current, Lens::Target),
+        target: target.as_ref(),
     };
     let warning = behind_warning(req.home, &caller)?;
     let reading = if req.closure {
@@ -509,8 +616,9 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
     let reader = Reader {
         home: req.home,
         index: &index,
-        values: Values::read(&configuration),
+        values: Values::read(&configuration, req.env),
         lens: Lens::Current,
+        target: None,
     };
     let mut out = vec![format!("# instrukt docs get --domain {domain}")];
     let Some(selection) = reader.domain_index(&domain)? else {
@@ -713,27 +821,38 @@ struct Reader<'i> {
     index: &'i GlobalIndex,
     values: Values<'i>,
     lens: Lens<'i>,
+    target: Option<&'i (ProjectSlug, PathBuf)>,
 }
 
 impl<'i> Reader<'i> {
     /// Reads the snippet `entry` indexes, with its companions.
     fn load(&self, entry: &'i IndexEntry) -> Result<Loaded<'i>, DocsError> {
-        let (root, repo_rel, project) = match entry.scope {
+        let (mut root, repo_rel, project) = match entry.scope {
             IndexScope::Global => (self.home.docs_dir(), global_rel(entry)?, None),
             IndexScope::Local => {
                 let (root, rel) = local_root(entry)?;
                 (root, rel, Some(entry.source_project.clone()))
             }
         };
+        let targeted = self
+            .target
+            .filter(|(project, _)| project == &entry.source_project);
+        if let Some((_, worktree)) = targeted {
+            root = worktree.clone();
+        }
         let outside: fn(PathBuf) -> DocsError = match entry.scope {
             IndexScope::Global => outside_home,
             IndexScope::Local => outside_repository,
         };
-        let (on_disk, as_source) = match entry.scope {
-            // The home holds `docs/general/…` and `docs/domain/<x>/…` at
-            // `<docs>/general/…` and `<docs>/<x>/…`: the id's own path.
-            IndexScope::Global => (format!("{}.md", entry.id.as_str()), repo_rel.clone()),
-            IndexScope::Local => (repo_rel.clone(), repo_rel.clone()),
+        let (on_disk, as_source) = if targeted.is_some() {
+            (repo_rel.clone(), repo_rel.clone())
+        } else {
+            match entry.scope {
+                // The home holds `docs/general/…` and `docs/domain/<x>/…` at
+                // `<docs>/general/…` and `<docs>/<x>/…`: the id's own path.
+                IndexScope::Global => (format!("{}.md", entry.id.as_str()), repo_rel.clone()),
+                IndexScope::Local => (repo_rel.clone(), repo_rel.clone()),
+            }
         };
         let missing = || match entry.scope {
             IndexScope::Global => DocsError::MissingPublishedFile {
@@ -1007,6 +1126,15 @@ impl<'i> Reader<'i> {
     /// Where `entry`'s snippet is authored: its file in the checkout its
     /// owner published from, or in its project.
     fn source(&self, entry: &IndexEntry) -> Result<String, DocsError> {
+        if let Some((project, root)) = self.target
+            && project == &entry.source_project
+        {
+            let rel = match entry.scope {
+                IndexScope::Global => global_rel(entry)?,
+                IndexScope::Local => local_root(entry)?.1,
+            };
+            return Ok(root.join(rel).display().to_string());
+        }
         Ok(match entry.scope {
             IndexScope::Local => entry.path.display().to_string(),
             IndexScope::Global => {
@@ -1260,7 +1388,6 @@ mod tests {
             required_reads: Vec::new(),
             parameters: Vec::new(),
             dispatch: None,
-            event_delivery: None,
             interruptible: false,
         }
     }

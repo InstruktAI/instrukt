@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/interpolation.rs
+expression: "String::from_utf8_lossy(&out.get_output().stderr)"
+---
+instrukt: no selected runtime caller context is available; choose runner.runtime and run inside its caller session

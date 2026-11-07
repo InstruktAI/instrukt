@@ -22,7 +22,7 @@ instruction, classify and govern each consequence separately.
 ### Process changes are authored where the human is
 
 A process change is authored by the session the human directs it with, in that
-session. It is never handed to a dispatched worker, a peer, or another todo's
+session's worktree. The human-directed authoring session writes there; only the integrator merges the reviewed head to main. It is never handed to a dispatched worker, a peer, or another todo's
 preparation. That session designs the mechanism itself: it grounds the change in
 current contracts and verified substrate, records the material reason and
 before/after guarantee in the change description, authors the process contract

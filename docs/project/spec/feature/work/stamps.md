@@ -40,6 +40,10 @@ transfer approval to its replacement. Rebuilding after a review does not turn
 the earlier review into a verdict on a different commit. Earlier decisions
 remain available as history when current evidence changes.
 
+### Preparation head review
+
+`--verdict approve|needs_work --phase preparation_head` binds the current clean preparation-worktree head and `preparation-review-findings`. It releases the independent `commit-reviewer` attempt atomically. Approval appends `workflow.preparation_reviewed` in the same transaction for immediate integrator attention. A later head or report invalidates that review. Preparation writers cannot review their own head.
+
 ### Mutation boundary
 
 `instrukt todo stamp <slug>` records an allowed fact. The whole resulting
@@ -60,8 +64,8 @@ invalid resulting state is refused without a partial local stamp.
 | Drift judgment | Affected artifact and the evidence examined. |
 | Settled diagnosis | Current diagnosis content. |
 | Build start | Original base commit and current approved plan digest. |
-| Build completion | Current build evidence and stamped role-branch head; branch handoff must reach that exact head before the next role is admitted. Any later todo-branch change clears completion until restamped. |
-| Role completion | Setup or finalizer role, attempt, base and committed role-branch head; handoff evidence only, independent of build completion or finalize readiness. |
+| Build completion | Current build evidence and clean shared todo-branch head; completion releases the attempt atomically. Any later todo-branch change clears completion until restamped. |
+| Role completion | Setup/finalizer or preparation doc-writer role and attempt, exact clean branch head and required artifact/commit references; releases the attempt atomically, independently of build completion or readiness. |
 | Deferrals processed | Dispositions covering the current deferrals artifact; `deferrals.pending` is false only while this binding is current. |
 | Finalize readiness | Candidate commit handed to integration. |
 | Task-firing outcome | Particular execution and its result or failure reason. |
@@ -90,6 +94,23 @@ only while that binding covers the current artifact. For a bound deferrer
 attempt, the stamp requires its clean worktree at the captured todo head and
 releases the attempt in the same transaction without advancing a branch.
 
+### Decision attention and completion evidence
+
+An applied approval or request-changes decision retains pending attention for
+the todo's current live claim-holding orchestrator with the as-soon-as-possible
+intent. With no live orchestrator it is only a record update for next pickup or
+a deliberate start. The recording transaction precedes runtime delivery;
+session-continuity owns retry and claim revalidation. Replaying the same
+applied decision creates no second notice. This applies to CLI recording and
+GitHub intake alike.
+
+Stamps, verdicts and changes requested are tracking and evaluation evidence;
+they are not published events to drive worker dispatch. A worker's ending
+reaches its parent through native runtime delivery, and that parent
+reads the stamps before deciding what follows. The exact-candidate
+`workflow.finalized` handoff remains the existing integrator event, not a second
+worker-ending or approval notice.
+
 ### Stamp forms
 
 | Command suffix after `instrukt todo stamp <slug>` | Bound evidence and result |
@@ -103,77 +124,69 @@ releases the attempt in the same transaction without advancing a branch.
 | `--intent-checked` | Current input version, originating conversation and checking session. |
 | `--kickback --reason <text>` | Current input, invalidated plan and review evidence; sets `<r>.cleared_by_substantive_drift` for preparation reviews invalidated by the kickback. |
 | `--task-firing-started` | Particular due occurrence and start; the runner's last-fired accounting. |
-| `--build-complete` | Bound builder/fixer attempt's committed role head; clears the previous build-review verdict and finalize readiness. |
-| `--role-complete` | Bound setup/finalizer attempt's committed role head, base and attempt. Records `role_complete` for fast-forward handoff without marking the build complete or emitting a finalization event. |
+| `--build-complete` | Bound builder/fixer attempt's clean committed todo head; releases the attempt and clears the previous build-review verdict and finalize readiness in one transaction. |
+| `--role-complete` | Bound setup/finalizer or preparation doc-writer attempt, required outputs and clean committed branch head. Records `role_complete` and releases the attempt atomically without build completion or finalization event. |
 
 Approval forms with `--by` and optional `--session` are owned by the approvals
 spec; build start, finalize readiness, deferral processing and task outcome
 forms are specified here. These forms are the admitted stamp set, rather than
 instructions to infer additional stamps.
 
-### Build start, handoff and review rounds
+### Build start, completion and review rounds
 
 `instrukt todo stamp <slug> --build-started` records the original base commit
-and approved plan digest before builder admission; recovery preserves the original base.
+and approved plan digest before implementation. Reconciliation preserves that base.
 
-Completion commands resolve the caller's current todo-role attempt, require a
-clean worktree and bind its exact committed head. The completion stamp permits
-`instrukt todo handoff <slug>`, invoked by the orchestrator under
-`project/instrukt/spec/feature/workflow/delivery-cycle`; it does not itself
-move a Git ref. The expected promotion of that exact role head to the todo
-branch preserves the completion binding. A different head requires fresh
-evidence. A review verdict targets the captured todo head and never advances
-a branch. After every writing-role completion, the workflow emits the
-orchestrator-facing handoff command before another role is admitted. The
-command owns durable advance intent, ref update, confirmation and release;
-its exit statuses are specified by `project/instrukt/spec/feature/work/todos`.
+Completion resolves the caller's bound outstanding attempt and verifies the
+shared worktree is clean on the todo branch at the exact stamped head.
+`--build-complete` releases builder/fixer attempts; `--role-complete` releases
+setup/finalizer attempts. Stamp, release, new todo revision and pending reflection
+commit in one transaction. Exact replay reports the retained outcome without a
+second release. Missing or stale evidence keeps the attempt outstanding. These
+commands change no Git ref: each role commits directly on the todo branch.
 
-A build-review verdict requires a clean review worktree at the captured todo
-head and releases that bound attempt in the verdict transaction without a
-branch advance. Follow-up workspace work after release requires a new attempt;
-runtime availability alone never permits reuse.
+A build-review verdict binds the current shared worktree head and complete
+findings digest and releases its reviewer in the same transaction. That tree
+must remain clean at the head captured for review. Deferral processing likewise
+releases its bound read-only attempt only against current dispositions. New
+workspace work after release requires a new attempt with shared isolation.
+Preparation doc writers (`intaker`, `architect`, `planner`) also record
+`--role-complete` against the required artifact digests and authored commit SHAs
+at the clean todo-worktree head. It releases that writer so the parent can dispatch independent
+review. Preparation verdict stamps release their corresponding reviewer attempts;
+commit reviews retain the exact SHA and report-note binding. Missing outputs keep
+the writer outstanding. Commit review remains owed after writer release.
 
-A finalizer's `--role-complete` requires only a clean committed worktree whose
-head matches its role branch and published todo head. It does not require the
-new head to match the earlier reviewed candidate. After confirmed handoff and
-release, changed content or review evidence requires independent review of the
-advanced todo head before readiness. An attempt unable to finish synchronization
-uses `todo handoff --failed --reason <text>` without a completion stamp;
-that release establishes failure evidence only. Its recovery builder stamps
-`--build-complete` and hands off normally before review.
+Review rounds count verdict stamps; repeated evaluation counts no round.
+
+The finalizer's `--role-complete` requires a clean shared worktree whose head,
+local todo branch and published todo head match. It may complete after changing
+the earlier reviewed candidate. Release permits independent review of that
+current head in the same worktree; readiness still waits for current approval.
+A failed attempt records only failure under the todo-attempt contract, never
+completion or readiness.
 
 `instrukt todo stamp <slug> --finalize-ready` requires current independent
-approval, no outstanding workspace-role attempt, the finalizer's confirmed
-handoff and equality of its clean worktree head, local todo branch and published
-todo branch. It records the exact-commit handoff
-and appends `workflow.finalized` through the runner's event-log interface idempotently, keyed by
-project, todo and SHA, in the stamp's own transaction: the stamp is never
-recorded without its event, nor the event without its stamp. It does not
-release the execution claim.
+approval, no outstanding workspace-role attempt, the latest successful finalizer
+completion and equality of its clean shared worktree head, local todo branch,
+published todo branch and completed candidate. Readiness uses the caller's
+retained finalizer binding after release and admits no further workspace work.
+New changes require a new finalizer attempt and its completion.
 
-Readiness resolves the caller's retained finalizer binding after its confirmed
-handoff and attempt release. It is a record-only write, not renewed admission to
-that workspace attempt. Further workspace changes require a new finalizer
-attempt and its own completion and confirmed handoff.
-
-Build-review rounds are counted from verdict stamps, each releasing its own
-attempt. There is no review-occurrence admission write; repeated evaluation
-alone counts no round.
+The readiness stamp and `workflow.finalized` event append commit together,
+idempotently by project/todo/SHA. It records the exact candidate for integration
+and does not release the execution claim.
 
 ## Use cases
 
-Stamp capture and validation support the goals in the approval, GitHub-record
-and evaluation-report specs. They introduce no separate stakeholder goal.
-Completion and crash-safe handoff
-are exercised by UC-TD6 in `project/instrukt/spec/feature/work/todos` and
-UC-DC2, UC-DC3, UC-DC4, UC-DC6 and UC-DC7 in
-`project/instrukt/spec/feature/workflow/delivery-cycle`.
+Stamp capture supports the approval, GitHub-record and evaluation-report goals.
+Shared completion and release are exercised by UC-DC2, UC-DC4, UC-DC5, UC-DC6
+and UC-DC7 in `project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 ## Known caveats
 
-- Role-completion evidence does not establish a successful Git handoff. The
-  retained attempt's confirmed advance establishes that handoff under
-  `project/instrukt/spec/feature/workflow/delivery-cycle`.
+- Role completion alone establishes neither current independent approval nor
+  finalize readiness; each binds its own current evidence.
 
 ## See Also
 

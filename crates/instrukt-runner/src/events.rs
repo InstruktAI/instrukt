@@ -24,7 +24,7 @@ pub use instrukt_core::event_type::{TypePattern, TypePatternError};
 
 // One declaration defines the producer's Rust fields, wire name and catalog.
 macro_rules! acquisition_events {
-    ($($variant:ident, $name:literal, $description:literal, $subject:ident {
+    ($($variant:ident, $name:literal, $description:literal, $delivery:ident, $subject:ident {
         $($field:ident: $ty:ty),* $(,)?
     });* $(;)?) => {
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -43,17 +43,17 @@ macro_rules! acquisition_events {
             }
 
             pub fn declaration(&self) -> EventDeclaration {
-                match self { $(Self::$variant { .. } => acquisition_events!(@declaration $name, $description, $subject, $($field: $ty),*)),* }
+                match self { $(Self::$variant { .. } => acquisition_events!(@declaration $name, $description, $delivery, $subject, $($field: $ty),*)),* }
             }
 
             pub fn declarations() -> Vec<EventDeclaration> {
-                vec![$(acquisition_events!(@declaration $name, $description, $subject, $($field: $ty),*)),*]
+                vec![$(acquisition_events!(@declaration $name, $description, $delivery, $subject, $($field: $ty),*)),*]
             }
         }
     };
-    (@declaration $name:literal, $description:literal, $subject:ident, $($field:ident: $ty:ty),*) => {
+    (@declaration $name:literal, $description:literal, $delivery:ident, $subject:ident, $($field:ident: $ty:ty),*) => {
         EventDeclaration {
-            name: $name.into(), version: 1, description: $description.into(),
+            name: $name.into(), delivery_kind: instrukt_core::event_type::DeliveryKind::$delivery, version: 1, description: $description.into(),
             subject_kind: Some(ReferenceKind::$subject), home_kinds: vec![HomeKind::Project],
             data_fields: vec![$(DataField::of::<$ty>(stringify!($field).trim_start_matches("r#"))),*],
             related_kinds: vec![ReferenceKind::Session], state: None,
@@ -62,19 +62,19 @@ macro_rules! acquisition_events {
 }
 
 acquisition_events! {
-    UpstreamChanged, "runner.upstream_changed", "A watched upstream ref changed.", Commit {
+    UpstreamChanged, "runner.upstream_changed", "A watched upstream ref changed.", State, InboundSource {
         project: ProjectSlug, remote: String, r#ref: String, revision: CommitSha
     };
-    MainAhead, "runner.main_ahead", "Local main is ahead of remote main with no candidate pending.", Commit {
-        project: ProjectSlug, local_main: CommitSha, remote_main: CommitSha
-    };
-    CiCompleted, "runner.ci_completed", "The integrate candidate CI completed, including a no-CI observation.", Commit {
+    CiCompleted, "runner.ci_completed", "The integrate candidate CI completed, including a no-CI observation.", State, Commit {
         project: ProjectSlug, candidate: CommitSha, result: CiResult
     };
-    MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", Commit {
+    MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", State, InboundSource {
         project: ProjectSlug, head: CommitSha
     };
-    WorkflowFinalized, "workflow.finalized", "A finalize-ready todo was handed off to integration.", Todo {
+    PreparationReviewed, "workflow.preparation_reviewed", "Reviewed preparation documentation is ready for immediate integration.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, revision: CommitSha
+    };
+    WorkflowFinalized, "workflow.finalized", "A finalize-ready todo was handed off to integration.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, revision: CommitSha
     };
 }
@@ -83,9 +83,9 @@ impl Event {
     pub fn project(&self) -> &ProjectSlug {
         match self {
             Self::UpstreamChanged { project, .. }
-            | Self::MainAhead { project, .. }
             | Self::CiCompleted { project, .. }
             | Self::MainFailing { project, .. }
+            | Self::PreparationReviewed { project, .. }
             | Self::WorkflowFinalized { project, .. } => project,
         }
     }
@@ -101,16 +101,12 @@ impl Event {
                 revision,
                 ..
             } => key.extend([remote.as_str(), r#ref.as_str(), revision.as_str()]),
-            Self::MainAhead {
-                local_main,
-                remote_main,
-                ..
-            } => key.extend([local_main.as_str(), remote_main.as_str()]),
             Self::CiCompleted {
                 candidate, result, ..
             } => key.extend([candidate.as_str(), result.as_str()]),
             Self::MainFailing { head, .. } => key.push(head.as_str()),
-            Self::WorkflowFinalized { todo, revision, .. } => {
+            Self::PreparationReviewed { todo, revision, .. }
+            | Self::WorkflowFinalized { todo, revision, .. } => {
                 key.extend([todo.as_str(), revision.as_str()])
             }
         }

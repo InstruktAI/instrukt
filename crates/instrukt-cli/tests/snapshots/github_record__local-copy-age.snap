@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: redact(&listed)
+---
+held-away · change · active · runs on <id 1> · last known <time> (5 minutes old)

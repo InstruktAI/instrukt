@@ -27,7 +27,9 @@ moving already accepted work out of its original responsibility.
 
 Only the emitting computer resolves the activation. A project home uses that
 computer's registered project checkout; platform uses its registered instrukt
-checkout. Neither the invoking working directory nor a domain publisher's
+checkout. Platform enablement uses the machine's global events setting; the execution
+checkout's project override governs that project's events, rather than platform
+responsibilities. Neither the invoking working directory nor a domain publisher's
 checkout substitutes for that home. An absent home is a visible activation
 failure, never a request to forward work. Company and person references remain
 representable; executing those homes is unsupported in this release. Unknown
@@ -100,7 +102,7 @@ records assignment bindings and the continuation decision only.
 
 ### Fixed assignment and attendance
 
-Role, attendance, cardinality and interruptibility are fixed at session
+Role, attendance and delivery intent are fixed at session
 initialization and survive revival. Accepted activations retain their own
 declaration as evidence. A new successor uses the current published role,
 attendance and delivery settings. Required reads are retrieved from current
@@ -112,19 +114,34 @@ sessions from ordinary human listings unless explicitly requested. This is a
 runtime capability, with the T3 limitation below. Work an unattended agent
 dispatches has its own attendance; it does not inherit unattended status.
 
-Manual `instrukt sessions run --procedure <id>` for a subscribed home-identity
-procedure takes the same guard and resolves the home of the declared kind from
-the invocation's registered project, or platform. It starts an attended agent
-only when none stands; otherwise it refuses naming the existing agent.
-Subject-bound manual start is unavailable. A procedure with no usable declared
-role creates no agent. Manual entry never bypasses module or runtime gates.
+Manual agent entry first records `instrukt events bind <procedure> --reserve`.
+This record-only command takes the responsibility guard, resolves the procedure's
+declared project/platform home, and reserves an attended home-identity generation
+only when no standing generation or unresolved reservation exists. It returns a
+reservation token, exact title/key and initialized assignment brief. An existing
+generation refuses naming its session, before any native call. A repeated caller
+reservation returns the same facts without permitting another native start.
+
+The agent uses `@config: runtime.start_thread`, then records `instrukt events bind <procedure> --reservation <token>
+--session <runtime:id> --evidence <file|->`. The agent supplies the native
+identity and observed title/initialized-assignment evidence. Binding checks those
+facts against the reserved home, role, attendance and delivery settings, records
+the generation under that same guard. Binding performs no runtime I/O. An exact replay succeeds; changed identity refuses. Neither
+record command starts a thread. An interrupted native result retains the
+reservation for native inspection and binding. Rejection-before-creation proof
+or explicit confirmation that no thread exists and no start remains in flight
+uses `events bind <procedure> --reservation <token> --not-started --reason <text>`
+before retry of those same assignment facts. Automatic activation waits for this
+reservation's resolution rather than starting another generation.
+Subject-bound manual entry remains unavailable; module, usable-role and runtime
+gates apply before reservation. No history lookup is introduced.
 
 ### Activation outcome
 
 The activation identity remains `(event ID, procedure, exact home)`. Repeating
 an accepted or delivered activation reuses its record while retained. Distinct
 events remain distinct even when their payloads match. Acceptance, session
-resolution, runtime wake acceptance, event handoff and domain completion are
+resolution, runtime input acceptance, entry consumption and domain completion are
 different outcomes. Missing home, missing subject, unusable procedure, failed
 continuation and delivery failure stay observable with the activation and
 responsibility identity. No failure silently disposes of retained work.
@@ -212,10 +229,10 @@ Then keyed discovery recovers that agent without creating another
 
 ```gherkin
 Given a developer is in a registered project with an enabled home-identity subscribed procedure
-When the developer starts that procedure deliberately
-Then it uses the same standing identity as event activation
-But when that agent already stands
-Then the start is refused naming that agent
+When their agent reserves manual entry before starting it natively and binding its native id
+Then the same standing identity is recorded for later event activation
+But when a generation or unresolved reservation already stands
+Then entry is refused before native start and identifies that assignment
 ```
 
 ### UC-PSA12: Keep a human conversation separate from standing work
@@ -321,8 +338,8 @@ Then it receives that event under the same declared delivery rules as an attende
 
 ```gherkin
 Given a developer deliberately starts a home-identity procedure declaring unattended event activation
-When its standing session is initialized
-Then that manually started session is attended
+When their agent reserves attended entry and binds its natively initialized standing session
+Then that session retains its attended initialization for event delivery
 ```
 
 ### UC-PSA27: Continue unattended work without reviving a closed run
@@ -337,7 +354,7 @@ Then the closed run is not revived and a new successor uses the current declarat
 
 ```gherkin
 Given a procedure has no usable declared role
-When an agent is requested for it
+When automatic activation or manual entry reservation is requested for it
 Then entry refuses before creating a session and identifies the missing role
 ```
 
@@ -352,6 +369,8 @@ Then entry refuses before creating a session and identifies the missing role
   claimed as supported instrukt use cases. The absent source UC-PSA28 stays absent.
 - A runtime's idle or settled thread is not necessarily closed. Observation
   errors and duplicate key titles never authorize a replacement.
+- Steering is optional: ASAP uses queue-only or idle-entry delivery when that
+  is the runtime's capability. Missing steering is no activation finding.
 - Replay suppression lasts only while activation/delivery evidence is retained.
   Lost handoff acknowledgements can repeat data; procedures reconcile effects
   idempotently. Standing agents can compact and rely on domain-owned records.

@@ -76,24 +76,20 @@ impl Event {
             Self::UpstreamChanged {
                 project,
                 remote,
-                revision,
+                r#ref,
                 ..
             } => EventRef::new(
-                ReferenceKind::Commit,
-                &format!("{project}/{remote}/{revision}"),
+                ReferenceKind::InboundSource,
+                &format!("{project}/{remote}/{ref}"),
             )?,
-            Self::MainAhead {
-                project,
-                local_main,
-                ..
-            } => EventRef::new(ReferenceKind::Commit, &format!("{project}/{local_main}"))?,
+
             Self::CiCompleted {
                 project, candidate, ..
             } => EventRef::new(ReferenceKind::Commit, &format!("{project}/{candidate}"))?,
-            Self::MainFailing { project, head, .. } => {
-                EventRef::new(ReferenceKind::Commit, &format!("{project}/{head}"))?
+            Self::MainFailing { project, .. } => {
+                EventRef::new(ReferenceKind::InboundSource, &format!("{project}/main"))?
             }
-            Self::WorkflowFinalized { todo, .. } => {
+            Self::PreparationReviewed { todo, .. } | Self::WorkflowFinalized { todo, .. } => {
                 EventRef::new(ReferenceKind::Todo, todo.as_str())?
             }
         };
@@ -124,7 +120,7 @@ macro_rules! dead_letter {
         impl DeadLettered {
             pub fn declaration() -> EventDeclaration {
                 EventDeclaration {
-                    name: "instrukt.system.event.dead_lettered".into(), version: 1,
+                    name: "instrukt.system.event.dead_lettered".into(), delivery_kind: instrukt_core::event_type::DeliveryKind::Occurrence, version: 1,
                     description: "A persistently failing stream entry was parked in a dead letter destination.".into(),
                     subject_kind: Some(ReferenceKind::StreamEntry), home_kinds: Vec::new(),
                     data_fields: vec![$(DataField::of::<String>(stringify!($field))),+],

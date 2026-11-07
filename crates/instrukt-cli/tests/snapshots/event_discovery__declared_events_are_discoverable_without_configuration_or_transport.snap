@@ -3,15 +3,15 @@ source: crates/instrukt-cli/tests/event-discovery.rs
 assertion_line: 11
 expression: "String::from_utf8_lossy(&run.get_output().stdout)"
 ---
-instrukt.system.event.dead_lettered v1 — A persistently failing stream entry was parked in a dead letter destination. (subject: stream_entry)
+instrukt.system.event.dead_lettered v1 — A persistently failing stream entry was parked in a dead letter destination. (subject: stream_entry, delivery: Occurrence)
   instrukt events schema instrukt.system.event.dead_lettered
-runner.ci_completed v1 — The integrate candidate CI completed, including a no-CI observation. (subject: commit)
+runner.ci_completed v1 — The integrate candidate CI completed, including a no-CI observation. (subject: commit, delivery: State)
   instrukt events schema runner.ci_completed
-runner.main_ahead v1 — Local main is ahead of remote main with no candidate pending. (subject: commit)
-  instrukt events schema runner.main_ahead
-runner.main_failing v1 — Remote canonical main head completed CI red. (subject: commit)
+runner.main_failing v1 — Remote canonical main head completed CI red. (subject: inbound_source, delivery: State)
   instrukt events schema runner.main_failing
-runner.upstream_changed v1 — A watched upstream ref changed. (subject: commit)
+runner.upstream_changed v1 — A watched upstream ref changed. (subject: inbound_source, delivery: State)
   instrukt events schema runner.upstream_changed
-workflow.finalized v1 — A finalize-ready todo was handed off to integration. (subject: todo)
+workflow.finalized v1 — A finalize-ready todo was handed off to integration. (subject: todo, delivery: Occurrence)
   instrukt events schema workflow.finalized
+workflow.preparation_reviewed v1 — Reviewed preparation documentation is ready for immediate integration. (subject: todo, delivery: Occurrence)
+  instrukt events schema workflow.preparation_reviewed

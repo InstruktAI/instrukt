@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"
@@ -311,5 +311,99 @@ CREATE TABLE task_failures (
 
 CREATE TABLE wakeups (
     last_at TEXT NOT NULL
+);
+"#;
+
+/// Version 2: all-start identity, durable recovery and per-key ownership.
+const V2: &str = r#"
+ALTER TABLE session_bindings RENAME TO session_bindings_v1;
+CREATE TABLE session_bindings (
+ todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+ role TEXT NOT NULL, attempt INTEGER NOT NULL, runtime TEXT, semantic_key TEXT NOT NULL, display_title TEXT,
+ session TEXT, worktree TEXT, branch TEXT, base_head TEXT,
+ completion_sequence INTEGER, completed_head TEXT,
+ failure_reason TEXT, failure_head TEXT, failure_workspace TEXT, failed_at TEXT,
+ released_at TEXT,
+ evidence TEXT NOT NULL,
+ PRIMARY KEY(todo_id,role,attempt), UNIQUE(runtime,semantic_key)
+);
+INSERT INTO session_bindings (todo_id,role,attempt,runtime,semantic_key,session,worktree,evidence)
+SELECT todo_id,role,1,substr(session,1,instr(session,':')-1),
+       'legacy:' || todo_id || ':' || role,session,worktree,
+       json_object('role',role,'session',session,'worktree',worktree,'assignment','unspecified',
+                   'attempt',1,'semantic_key','legacy:' || todo_id || ':' || role)
+FROM session_bindings_v1;
+DROP TABLE session_bindings_v1;
+ALTER TABLE todos ADD COLUMN refreshed_at TEXT;
+CREATE TABLE runtime_key_locks (
+ runtime TEXT NOT NULL, semantic_key TEXT NOT NULL, project TEXT,
+ owner TEXT, acquired_at TEXT NOT NULL, PRIMARY KEY(runtime,semantic_key)
+);
+CREATE TABLE runtime_starts (
+ runtime TEXT NOT NULL, semantic_key TEXT NOT NULL, project TEXT, kind TEXT NOT NULL,
+ subject TEXT NOT NULL, checkout TEXT NOT NULL, brief TEXT NOT NULL, request TEXT NOT NULL,
+ begun_at TEXT NOT NULL, reported INTEGER NOT NULL, resolved_at TEXT, resolved_by TEXT,
+ resolution TEXT, state TEXT NOT NULL, PRIMARY KEY(runtime,semantic_key)
+);
+CREATE TABLE runtime_bindings (
+ runtime TEXT NOT NULL, semantic_key TEXT NOT NULL, kind TEXT NOT NULL, project TEXT,
+ subject TEXT NOT NULL, session TEXT NOT NULL, display_title TEXT, project_id TEXT, checkout TEXT NOT NULL,
+ worktree TEXT, branch TEXT, base_head TEXT, accepted INTEGER NOT NULL, request TEXT,
+ PRIMARY KEY(runtime,semantic_key)
+);
+"#;
+
+/// Version 3: durable session-wide input and standing/parent attention.
+const V3: &str = r#"
+ALTER TABLE stamps ADD COLUMN source_comment INTEGER;
+CREATE UNIQUE INDEX stamps_decision_source ON stamps(todo_id,source_comment) WHERE source_comment IS NOT NULL;
+ALTER TABLE inbound_commands ADD COLUMN reply TEXT;
+ALTER TABLE inbound_commands ADD COLUMN reply_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE procedure_activations ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'occurrence';
+ALTER TABLE procedure_activations ADD COLUMN subject TEXT;
+ALTER TABLE procedure_activations ADD COLUMN event_type TEXT;
+DROP INDEX holds_current;
+ALTER TABLE holds RENAME TO holds_old;
+CREATE TABLE holds (todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE, source TEXT NOT NULL, reason TEXT NOT NULL, set_by TEXT NOT NULL, set_at TEXT NOT NULL, released_at TEXT, released_by TEXT);
+INSERT INTO holds SELECT * FROM holds_old ORDER BY rowid;
+DROP TABLE holds_old;
+CREATE UNIQUE INDEX holds_current ON holds(todo_id) WHERE released_at IS NULL;
+CREATE TABLE runtime_inputs (
+ runtime TEXT NOT NULL, session TEXT NOT NULL, input_id TEXT NOT NULL,
+ intent TEXT NOT NULL, content TEXT NOT NULL, state TEXT NOT NULL,
+ kind TEXT NOT NULL, source_at TEXT, arrived_at TEXT NOT NULL, assignment TEXT,
+ group_id TEXT, selected_content TEXT, waiting INTEGER NOT NULL DEFAULT 0, retry_blocked INTEGER NOT NULL DEFAULT 0,
+ evidence_source TEXT, evidence_at TEXT, accepted_at TEXT, entered_run TEXT, replayed_run TEXT, watch_run INTEGER NOT NULL DEFAULT 1, failure TEXT,
+ PRIMARY KEY(runtime,session,input_id)
+);
+CREATE UNIQUE INDEX runtime_input_waiting ON runtime_inputs(runtime,session) WHERE waiting=1;
+CREATE TABLE procedure_responsibilities (
+ responsibility TEXT PRIMARY KEY NOT NULL, procedure TEXT NOT NULL, exact_home TEXT NOT NULL,
+ subject TEXT, generation INTEGER NOT NULL, semantic_key TEXT NOT NULL UNIQUE,
+ checkout TEXT NOT NULL, declaration TEXT NOT NULL, request TEXT NOT NULL,
+ session TEXT, terminal TEXT, seen_position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE procedure_generations (responsibility TEXT NOT NULL,generation INTEGER NOT NULL,semantic_key TEXT NOT NULL,session TEXT NOT NULL,declaration TEXT NOT NULL,request TEXT NOT NULL,terminal TEXT NOT NULL,PRIMARY KEY(responsibility,generation));
+CREATE TABLE standing_deliveries (
+ event_id TEXT NOT NULL, procedure TEXT NOT NULL, exact_home TEXT NOT NULL,
+ responsibility TEXT NOT NULL, position INTEGER PRIMARY KEY AUTOINCREMENT,
+ envelope TEXT NOT NULL, declaration TEXT NOT NULL, state TEXT NOT NULL,
+ target TEXT, input_id TEXT, failure TEXT,
+ UNIQUE(event_id,procedure,exact_home)
+);
+CREATE TABLE manual_standing_reservations (
+ responsibility TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, caller TEXT NOT NULL,
+ home TEXT NOT NULL, declaration TEXT NOT NULL, request TEXT NOT NULL, session TEXT,
+ retry_allowed INTEGER NOT NULL DEFAULT 0, no_start_reason TEXT
+);
+CREATE TABLE approval_attention (
+ todo_id TEXT NOT NULL, decision_sequence INTEGER NOT NULL, content TEXT NOT NULL,
+ target TEXT, input_id TEXT, state TEXT NOT NULL, failure TEXT,
+ PRIMARY KEY(todo_id,decision_sequence)
+);
+CREATE TABLE github_label_actions (
+ project TEXT NOT NULL, issue_number INTEGER NOT NULL, action_id INTEGER NOT NULL,
+ todo_id TEXT NOT NULL, action TEXT NOT NULL, login TEXT NOT NULL,
+ at TEXT NOT NULL, outcome TEXT NOT NULL, PRIMARY KEY(project,issue_number,action_id)
 );
 "#;

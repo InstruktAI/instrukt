@@ -1,5 +1,5 @@
 ---
-description: 'Integrate exact verified candidates, publish settled direct commits through the same gate, and restore a red main before repair.'
+description: 'Integrate exact verified candidates, publish reviewed preparation and one-off worktree heads through the same gate, and restore a red main before repair.'
 visibility: 'public'
 role: integrator
 parameters:
@@ -9,10 +9,11 @@ dispatch:
   thinking_mode: slow
 subscriptions:
   - workflow.finalized
+  - workflow.preparation_reviewed
   - runner.ci_completed
-  - runner.main_ahead
   - runner.main_failing
 subscription_home: project
+interruptible: false
 ---
 
 # Integration — Procedure
@@ -24,7 +25,7 @@ subscription_home: project
 
 ## Goal
 
-Merge finalized work and settled direct commits into a verified candidate,
+Merge finalized work and reviewed preparation and one-off worktree heads into a verified candidate,
 advance canonical main to exactly that commit, and recover a red baseline
 before repairing its cause. The standing integrator owns composition,
 failure interpretation, promotion and recovery.
@@ -32,32 +33,38 @@ failure interpretation, promotion and recovery.
 ## Preconditions
 
 - Main names the repository's canonical default branch; use its actual ref.
-- `workflow.finalized` identifies a todo and finalized commit, or
+- `workflow.preparation_reviewed` identifies an approved preparation head and report,
+  or `workflow.finalized` identifies a todo and finalized commit, or
   `runner.ci_completed` identifies the submitted candidate and result, or
-  `runner.main_ahead` identifies local main ahead of remote main with no candidate pending, or
   `runner.main_failing` identifies remote main's head commit whose CI completed red.
 - One standing integrator session is recorded per subscribing procedure and
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
   `trees/_integration/`, separately from the project checkout and todo worktrees.
-- The candidate's finalized evidence and branch are readable. Settled direct
-  commits on local main are also available for candidate composition. Read each
-  direct commit's git-note verdict: `approve` with its report binding or
-  `exempt` with its author's reason makes it settled. Stop at the first commit
-  with neither; that commit and its descendants stay outside the candidate.
+- A work candidate has finalized evidence. Preparation arrives as `workflow.preparation_reviewed` with the exact reviewed head and report; integrate it as soon as possible before build, then remove its clean worktree and delete `<slug>/prepare` locally and on origin. Keep any failed cleanup owed. Ad hoc candidates likewise retain exact-head review.
 - Project CI and required checks, or the configured `test` action when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
 
 ## Steps
+
+### Configured runtime operations
+
+Apply these configured action values to the identified assignment and session.
+
+<!-- @config: runtime.dispatch -->
+
+<!-- @config: runtime.message_child -->
+
+<!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.inspect_thread -->
 
 ### 1. Route the activating event
 
 - **`workflow.finalized`:** read the todo's artifacts, approval and matching
   finalized commit. Reconcile the handoff against repository state. A replay
   of the same project, todo and commit is the same logical handoff.
-- **`runner.main_ahead`:** inspect local main and read the git-note verdicts
-  on its direct commits. Compose settled direct commits through Step 2 even
-  when no finalized todo is waiting.
+- **`workflow.preparation_reviewed`:** verify the exact reviewed preparation head and complete report, then integrate its docs as soon as possible before build. Fold its pending markers in the integration worktree before candidate verification. After confirmed integration remove the clean prepare worktree and delete `<slug>/prepare` locally and on origin; retain any failed cleanup as owed work.
 - **`runner.ci_completed`:** reconcile the result with the exact submitted
   candidate and current GitHub check state. Proceed under Step 3 only when
   the required result is complete for that commit.
@@ -73,15 +80,15 @@ or promote whatever commit now occupies the integration branch.
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
 2. Compose from accepted upstream main in the integration worktree. Merge the
-   finalized branch, when present, and take settled direct commits on local main along.
-   Read each direct commit's git-note verdict in ancestry order and take
-   `approve` or `exempt`. Stop at the first commit with neither, retaining it
-   and its descendants for settlement without replaying them under new SHAs.
+   finalized work branch, reviewed preparation branch or reviewed one-off branch.
+   Match independent approval to that exact branch head and complete report.
+   A changed or unreviewed head waits for current review; no per-commit git-note
+   verdict admits a candidate.
    Uncommitted project-root files are outside the candidate and remain untouched.
 3. Read the delivery context, diff and branch history. Where integration needs
    a commit, compose it around the delivery intent and record it through
    `instrukt repo commit` under `general/policy/commits`.
-4. Run `instrukt docs fold <slug>` to reconcile the todo's pending documentation for delivery under the owning
+4. Run `instrukt docs fold <slug>` to reconcile the todo's pending documentation at preparation integration (or work delivery for code-associated pending material) under the owning
    documentation contract before freezing the candidate. The work lane authors
    no new doc contract here. Include the resulting content in the commit verified.
 5. The integrator may batch finalized candidates according to its judgment.
@@ -114,8 +121,8 @@ builders, reviewers and the evaluator add no suite execution of their own.
   work orchestrator; a trivial integration correction is no substitute for it.
   Any changed candidate is pushed to `integrate` and verified again.
 
-Direct commits with `approve` or `exempt` git-note verdicts receive the same verification as todo deliveries; they
-supply no separate route to push main. A change to the candidate after a green
+Reviewed preparation, work and one-off heads receive the same candidate verification.
+A change to the candidate after a green
 result invalidates promotion evidence for the resulting commit.
 
 ### 4. Handle conflicts and rejected promotion
@@ -145,25 +152,18 @@ Stage the resolved files and record the resolution through `instrukt repo
 commit`. Submit the resulting candidate for fresh verification.
 
 If main moved or its push is rejected, fetch and inspect the new ancestry.
-Reconcile against current main, preserving direct local commits. A new merge,
+Reconcile against current main, preserving all accepted deliveries. A new merge,
 rebase or resolution produces a new candidate and requires verification through
 `integrate`; never retry a changed commit directly onto main using the old green.
 Do not rebase shared local main or overwrite another session's uncommitted files.
 
-### REPO ROOT SYNC REQUIRED
+### Canonical checkout synchronization belongs to the runner
 
-After promotion, the integrator fast-forwards the project checkout's local main
-to the exact promoted commit. The candidate took direct commits along, so local
-main is an ancestor; confirm that ancestry again before syncing. Fetch remote
-main and, at the project root on main, run
-`git merge --ff-only --no-overwrite-ignore <promoted-commit>`. The checkout's hooks then publish and map the promoted content.
-
-Inspect the working tree first. Leave unrelated dirty paths intact; if a dirty
-or ignored path blocks the fast-forward, preserve it and route clearance to its
-owner. Never stash, overwrite or discard another session's work, or rebase
-shared main. If new direct commits have arrived, return them through their
-git-note review and candidate verification gate before synchronizing; do not
-force the checkout back to the promoted commit. A failed sync remains owed.
+After promotion, confirm remote main. Each computer's next tick fetches and
+fast-forwards its clean canonical checkout; the post-merge hook publishes docs
+and hands the revision to blueprint. Do not perform a separate agent sync.
+Dirty, misplaced or diverged checkouts are reported and preserved for their
+owner; the runner retries after the obstruction is resolved.
 
 ### 5. Restore a red main first
 
@@ -180,24 +180,35 @@ may deliver only a reference to the session, never its failure content.
 
 ### 6. Complete the handoff and park
 
-After promotion, confirm the exact remote commit and record delivery evidence
-with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered commit
-under the work-record contract. Preserve working
-resources until their delivery and cleanup obligations are established.
+After preparation promotion, confirm the reviewed head is integrated on canonical
+main and publication completed. Remove its clean worktree and delete `<slug>/prepare`
+locally and on origin; keep failed cleanup owed. This delivers documentation,
+not the implementation: do not mark the todo delivered. Work begins later from
+that updated main in `<slug>/work`.
+
+After work promotion, confirm the exact remote commit and record delivery evidence
+with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered
+commit under the work-record contract. Preserve working resources until their
+delivery and cleanup obligations are established.
 
 Re-run `instrukt todo work <slug>` after delivery: the flavor owes
 `worktree.remove`, running `git worktree remove {worktree.path}` until
-`worktree.exists` is absent. A failed removal remains owed; removal of the
-worktree never removes the persistent integration worktree.
+`worktree.exists` is absent. Select only the todo's one shared worktree; retained
+role-attempt rows refer to that same path. A dirty or in-use worktree or failed
+removal remains owed. Then execute `branch.remove` and `remote_branch.remove`
+for the captured `<slug>/work` branch; failed local or origin deletion remains
+owed until the corresponding head is absent. Preserve the runtime thread record and retained attempt evidence;
+todo cleanup is separate from the persistent integration workspace.
 
 When all current work is settled, park as the standing integrator. The next
-`workflow.finalized`, `runner.ci_completed`, `runner.main_ahead` or `runner.main_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
+`workflow.finalized`, `workflow.preparation_reviewed`, `runner.ci_completed` or `runner.main_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
 binding.
 
 ## Outputs
 
 - Exact verified candidates promoted and confirmed on remote main.
-- Settled direct local-main commits included through the same gate.
+- Reviewed preparation docs published before build, with preparation worktree and
+  local/origin branch cleanup; reviewed one-off work integrated through the same gate.
 - Durable delivery evidence, or findings returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 

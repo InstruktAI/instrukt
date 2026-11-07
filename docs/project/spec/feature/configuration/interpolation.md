@@ -20,12 +20,34 @@ caller-bound values are never written back or stored in published snippets.
 | `{other.key}` | The value at that dotted configuration path, itself expanded. |
 | `${VAR}` | The caller's environment variable `VAR`; an unset variable is an error. |
 | `{runtime.session_id}` | The caller id recognised by the explicitly selected runtime adapter. |
+| `{runtime.<operation>}` | The string at `runtimes.<selected runner.runtime>.<operation>`. |
 
 Expansion occurs on every read. A self-reference or cycle fails and names the
-cycle. `runtime.session_id` is the sole derived runtime value; runtime verb
-lookups, templates and instructions are not configuration paths. A snippet
-needing a recorded conversation names `instrukt sessions conversation <id>`
-rather than interpolating a command.
+cycle. The selected-runtime instruction alias and caller identity are distinct
+read-time values. Instruction lookup needs explicit runtime selection but no
+caller id. The stored instruction is returned as data. Code performs only named lookup
+and ordinary interpolation; it embeds no agent-native instruction, fallback
+command, default wording or tool-selection branch. Unattended adapter operations
+remain compiled code under their separate contract.
+Workflow assignment fields (brief, role, attempt, title/key, base and branch)
+are passed separately to the agent, not substituted as shell or configuration
+expressions into this prose.
+
+A procedure renders an operation with a standalone directive, for example:
+
+```markdown
+<!-- @config: runtime.dispatch -->
+```
+
+Every agent-action consumer uses this same `@config: runtime.<name>` form.
+The complete names, required inputs and shipped T3 entry values are owned by
+`project/instrukt/spec/feature/configuration/layered-configuration`. A value may
+render a native instruction or an implemented instrukt route for a missing native
+capability; the consumer carries neither choice in its prose or code.
+An absent runtime, entry or operation fails lookup visibly; no facade or runtime
+is silently chosen. These context-dependent aliases remain invalid in compiled
+agent files; procedures retrieve them on demand. A native child's ending is
+runtime delivery, with no instruction or instrukt-produced input.
 
 ### Caller identity
 
@@ -61,25 +83,29 @@ But outside that runtime's caller context
 Then the read fails without guessing a runtime or session
 ```
 
-### UC-VI1: An agent obtains the command that reads its own conversation (to retire)
+### UC-VI1: Reading a configured conversation command (retired)
 
-UC-VI1 is to retire: the superseded scenario remains only while its existing
-test bindings are removed by the builder.
+Retired: agent conversation reads use selected-runtime action values; this id is not reused.
+
+### UC-VI4: Render a runtime action without a caller session
 
 ```gherkin
-Given a developer's machine maps the runtimes it uses, with a command to read a session's conversation
-When an agent running in one of those runtimes asks for the command to read its conversation
-Then it receives the command for its own session in the runtime it is running in
-But when it runs in no mapped runtime
-Then it is told that no configured runtime matches, and no command is given
+Given a developer explicitly selected a runtime with a configured delegation instruction
+And no caller session identity is available
+When a procedure renders runtime.dispatch through its config directive
+Then the instruction comes verbatim from that runtime's configuration entry
+And the same directive can render another runtime's configured instrukt fallback route
+And no session is started by the read
+But an absent runtime or instruction is reported as unresolved rather than guessed
 ```
 
 ## Known caveats
 
-- UC-VI1 is to retire: obtaining a configured conversation command is replaced
-  by the adapter-backed sessions conversation command.
-- `runtime.<verb>` and `runtimes` are unknown configuration paths. The
-  pre-release template mapping is neither read nor migrated.
+- UC-VI1 is retired: obtaining an executable conversation command is outside
+  the contract. Configured action values do not revive this retired goal.
+- Only `runtime.session_id` and `runtime.<operation>` are derived
+  runtime paths. Legacy executable verb mappings are neither read nor migrated.
+- Current-thread listing and metadata search do not release archive/history search; A3's history templates remain outside this contract.
 
 ## See Also
 

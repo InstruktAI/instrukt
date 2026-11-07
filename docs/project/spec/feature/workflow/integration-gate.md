@@ -20,8 +20,8 @@ branch protection.
 
 ### Candidate and verification
 
-The finalized candidate is the todo branch head after its finalizer role
-worktree has completed its fast-forward handoff under
+The finalized candidate is the shared todo branch head after successful
+finalizer completion and release, current independent approval and readiness under
 `project/instrukt/spec/feature/workflow/delivery-cycle`. The integrator reads
 that branch and stamped commit; it does not inherit a shared todo worktree.
 
@@ -30,13 +30,7 @@ and pushes the resulting commit to `integrate`. It may batch
 candidates according to its judgment. A merge conflict remains work for the
 integrator to resolve before there is a candidate to verify.
 
-Each tick compares local main with remote main using local git, without an
-API call. When local main is ahead and no candidate is pending, the runner
-emits `runner.main_ahead` to wake the integrator. The integrator fetches the
-review notes ref and reads direct commits' git-note verdicts
-(`project/instrukt/spec/feature/repository/attributed-commit`) and takes settled direct commits through the same
-candidate and verification gate. It takes commits whose latest stamp is `approve` or
-`exempt`, stopping at the first commit that is not.
+The integrator receives reviewed todo or one-off worktree heads. Main has no independent authoring commits to discover: only the integrator merges candidates, and publication goes live atomically at that integration. Reviewed preparation docs arrive through `workflow.preparation_reviewed` and are integrated as soon as possible before any build. Their clean `<slug>/prepare` worktree and local/remote branch are removed after confirmed integration; work starts separately from the new main. A dependent todo waits for delivery of the contracts it requires.
 
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head
@@ -116,6 +110,25 @@ that can require notification. Ordinary approval and new-intent requests
 remain in the responsible agent's thread. The runner owns whether and how an
 anomaly is notified; the integration gate reports the unresolved failure.
 
+### Mechanical canonical-checkout synchronization
+
+On each tick, before dispatch, the runner observes remote main with Git and
+fetches the observed commits without a GitHub API call. When remote main is
+ahead, it fast-forwards the clean project checkout's local main to that exact
+commit with `git merge --ff-only --no-overwrite-ignore`. The existing post-merge
+hook publishes documentation and hands the revision to blueprint when enabled.
+This runs for considered projects with todos or events enabled, independently
+of the events switch. Equal heads require no merge. Dirty checkouts, a checkout
+on another branch, failed fetches and non-fast-forward history are reported;
+no checkout is forced, switched, stashed or discarded. A later tick retries.
+The integrator promotes remote main; it no longer synchronizes other checkouts.
+
+`runner.main_failing` wakes the integrator for revert-first recovery. The
+existing recovery obligation keeps subsequent deliveries from building on the
+known-red baseline; work-dispatch defines no outstanding-event admission check
+or automatic hold. Mechanical synchronization and new phase-base fetching add
+no red-main hold and do not interpret the event as a second gate.
+
 ## Use cases
 
 ### UC-IG1: A developer's integrator learns each candidate's own verification result
@@ -144,14 +157,30 @@ Then the integrator is woken with the revert's own verification result
 And the failing result of the reverted delivery is never reported for the revert
 ```
 
-### UC-IG3: Direct commits on local main wake the integrator
+### UC-IG3: Discover direct-main commits (retired)
+
+Retired: main has a single writer and no direct-main authoring pickup.
+
+### UC-IG4: Read contracts another computer has integrated
 
 ```gherkin
-Given a developer committed reviewed work directly on their local main
-And no integration candidate is pending
-When the runner next checks the project
-Then the integrator is woken to take those commits through integration
-And it can read each commit's latest review verdict
+Given another computer's integrator has pushed reviewed and verified documentation to canonical main
+And this computer's published project checkout still has the previous main
+When this computer's runner ticks
+Then it fetches and fast-forwards the clean canonical checkout
+And the post-merge hook publishes the new documentation for this computer's agents
+But a dirty checkout or non-fast-forward history is reported and preserved for retry
+```
+
+### UC-IG5: Build after preparation contracts are published
+
+```gherkin
+Given a developer's todo has documentation committed in its preparation worktree
+When independent review approves that exact preparation head
+Then an occurrence event wakes the integrator to integrate it through the candidate gate as soon as possible
+And its documentation is published before the implementation starts
+And the integrator removes the merged preparation worktree and its local and origin branch
+And work starts separately from freshly fetched remote main
 ```
 
 ## Known caveats

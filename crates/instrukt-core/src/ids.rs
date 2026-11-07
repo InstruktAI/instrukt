@@ -148,7 +148,7 @@ identifier!(
 );
 
 identifier!(
-    /// The `name` of a runtime-mapping entry (`runtimes.<n>.name`), the
+    /// The name of a compiled runtime adapter, the
     /// first half of a [`SessionRef`].
     RuntimeName,
     "runtime name",

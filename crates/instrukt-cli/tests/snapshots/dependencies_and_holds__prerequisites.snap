@@ -23,6 +23,6 @@ artifacts:
 stamps:
   none
 ---
-parser-depth · change · active · unclaimed
-renderer-depth · change · active · unclaimed
-nested-lists · feature · active · waits for parser-depth, renderer-depth · unclaimed
+parser-depth · change · active · unclaimed · last known <time> (less than a minute old)
+renderer-depth · change · active · unclaimed · last known <time> (less than a minute old)
+nested-lists · feature · active · waits for parser-depth, renderer-depth · unclaimed · last known <time> (less than a minute old)

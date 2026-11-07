@@ -149,8 +149,6 @@ fn entry(
             agent: d.agents.clone(),
             thinking_mode: serde_plain(&d.thinking_mode),
         }),
-        event_delivery: (!procedure.subscriptions.is_empty())
-            .then(|| serde_plain(&procedure.event_delivery)),
         interruptible: procedure.interruptible,
     })
 }
@@ -249,6 +247,20 @@ pub(super) fn patch(
     })
 }
 
+/// Index a target worktree without publishing it or changing the live index.
+pub(crate) fn target_entries(
+    project: &ProjectSlug,
+    corpus: &Corpus,
+    root: &Path,
+) -> Vec<IndexEntry> {
+    let domains = corpus
+        .published_domains()
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    Contribution::of(project, corpus, &domains, root).snippets
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -296,7 +308,6 @@ mod tests {
             required_reads: Vec::new(),
             parameters: Vec::new(),
             dispatch: None,
-            event_delivery: None,
             interruptible: false,
         }
     }

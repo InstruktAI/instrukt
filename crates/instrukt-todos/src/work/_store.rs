@@ -38,6 +38,7 @@ pub(crate) struct LocalItem {
 /// What this computer knows of one item's reflection.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ReflectionState {
+    pub refreshed_at: Option<Timestamp>,
     /// The issue's number and REST id.
     pub issue: Option<IssueRef>,
     /// The comment carrying the committed revision this computer last
@@ -113,6 +114,43 @@ impl Store {
         self.db.path()
     }
 
+    /// Retain an answered command and its fixed confirmation atomically.
+    pub fn save_with_reply(
+        &mut self,
+        item: &LocalItem,
+        comment: u64,
+        answer: &str,
+    ) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        self.db.write(|tx| {
+            save_in(tx, &path, item)?;
+            retain_reply(tx, &path, item.record.id.as_str(), comment, answer)
+        })
+    }
+    pub fn pending_replies(&self, todo: &str) -> Result<Vec<(u64, String)>, WorkError> {
+        query(
+            self.db.conn(),
+            self.db.path(),
+            "SELECT comment_id,reply FROM inbound_commands WHERE todo_id=?1 AND reply_pending=1 ORDER BY comment_id",
+            todo,
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    }
+    pub fn reply_sent(&mut self, todo: &str, comment: u64) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        self.db.write(|tx| {
+            tx.execute(
+                "UPDATE inbound_commands SET reply_pending=0 WHERE todo_id=?1 AND comment_id=?2",
+                params![todo, comment],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            Ok(())
+        })
+    }
+
+    pub fn label_seen(&self, issue: u64, action: u64) -> Result<bool, WorkError> {
+        self.db.conn().query_row("SELECT EXISTS(SELECT 1 FROM github_label_actions WHERE project=?1 AND issue_number=?2 AND action_id=?3)",params![self.project.as_str(),issue,action],|r|r.get(0)).map_err(StateDbError::sqlite(self.db.path())).map_err(Into::into)
+    }
     /// Every local item of the project, in identity order.
     pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
         load_items(self.db.conn(), self.db.path(), &self.project)
@@ -230,6 +268,17 @@ impl Store {
             Ok(())
         })
     }
+}
+
+pub(crate) fn retain_reply(
+    tx: &Connection,
+    path: &Path,
+    todo: &str,
+    comment: u64,
+    answer: &str,
+) -> Result<(), WorkError> {
+    tx.execute("INSERT INTO inbound_commands(todo_id,comment_id,reply,reply_pending) VALUES (?1,?2,?3,1) ON CONFLICT(todo_id,comment_id) DO UPDATE SET reply=COALESCE(inbound_commands.reply,excluded.reply),reply_pending=CASE WHEN inbound_commands.reply IS NULL THEN 1 ELSE inbound_commands.reply_pending END",params![todo,comment,answer]).map_err(StateDbError::sqlite(path))?;
+    Ok(())
 }
 
 fn save_copy_in(
@@ -390,13 +439,12 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         ],
     )
     .map_err(&sql)?;
-    for table in [
-        "prerequisites",
-        "stamps",
-        "holds",
-        "session_bindings",
-        "inbound_commands",
-    ] {
+    tx.execute(
+        "UPDATE todos SET refreshed_at=?2 WHERE id=?1",
+        params![id, item.reflection.refreshed_at.map(|t| t.to_string())],
+    )
+    .map_err(&sql)?;
+    for table in ["prerequisites", "stamps", "holds", "session_bindings"] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE todo_id = ?1"),
             params![id],
@@ -415,8 +463,8 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         let (fact, evidence) = split_fact(&stamp.fact)?;
         tx.execute(
             "INSERT INTO stamps (todo_id, sequence, fact, at, actor, role, model, model_version,
-                model_provenance, eval_fingerprint, human_involved, evidence)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                model_provenance, eval_fingerprint, human_involved, evidence, source_comment)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 stamp.sequence,
@@ -430,6 +478,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
                 stamp.eval_fingerprint,
                 stamp.human_involved,
                 evidence,
+                stamp.source_comment,
             ],
         )
         .map_err(&sql)?;
@@ -455,20 +504,11 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         .map_err(&sql)?;
     }
     for binding in &r.bindings {
+        let a = &binding.attempt;
         tx.execute(
-            "INSERT OR REPLACE INTO session_bindings (todo_id, role, session, worktree)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![
-                id,
-                binding.role.as_str(),
-                binding.session.to_string(),
-                binding
-                    .worktree
-                    .as_ref()
-                    .map(|w| w.to_string_lossy().into_owned()),
-            ],
-        )
-        .map_err(&sql)?;
+            "INSERT INTO session_bindings (todo_id,role,attempt,runtime,semantic_key,session,worktree,branch,base_head,completion_sequence,completed_head,failure_reason,failure_head,failure_workspace,failed_at,released_at,evidence,display_title) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+            params![id,binding.role.as_str(),a.number,a.runtime.map(|r|r.name()).or_else(||binding.session.as_ref().map(|s|s.runtime.as_str())),a.semantic_key,binding.session.as_ref().map(ToString::to_string),binding.worktree.as_ref().map(|p|p.to_string_lossy()),a.branch,a.base_head.as_ref().map(ToString::to_string),a.completion_sequence,a.completed_head.as_ref().map(ToString::to_string),a.failure_reason,a.failure_head.as_ref().map(ToString::to_string),a.failure_workspace,a.failed_at.map(|t|t.to_string()),a.released_at.map(|t|t.to_string()),serde_json::to_string(binding).map_err(|e|invalid(path,e.to_string()))?,a.native_assignment.as_ref().map(|a|a.title.as_str())],
+        ).map_err(&sql)?;
     }
     let f = &item.reflection;
     tx.execute(
@@ -798,7 +838,13 @@ fn load_item(conn: &Connection, path: &Path, row: TodoRow) -> Result<LocalItem, 
         }
     }
     record.number_unsequenced();
-    let reflection = load_reflection(conn, path, &id)?;
+    let mut reflection = load_reflection(conn, path, &id)?;
+    let refreshed: Option<String> = conn
+        .query_row("SELECT refreshed_at FROM todos WHERE id=?1", [&id], |r| {
+            r.get(0)
+        })
+        .map_err(StateDbError::sqlite(path))?;
+    reflection.refreshed_at = refreshed.map(|t| time(path, &t)).transpose()?;
     Ok(LocalItem { record, reflection })
 }
 
@@ -870,7 +916,7 @@ fn load_stamps(conn: &Connection, path: &Path, id: &str) -> Result<Vec<StampReco
         conn,
         path,
         "SELECT sequence, fact, at, actor, role, model, model_version, model_provenance,
-            eval_fingerprint, human_involved, evidence
+            eval_fingerprint, human_involved, evidence,source_comment
          FROM stamps WHERE todo_id = ?1 ORDER BY rowid",
         id,
         |row| {
@@ -886,6 +932,7 @@ fn load_stamps(conn: &Connection, path: &Path, id: &str) -> Result<Vec<StampReco
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<bool>>(9)?,
                 row.get::<_, String>(10)?,
+                row.get::<_, Option<u64>>(11)?,
             ))
         },
     )?;
@@ -903,8 +950,10 @@ fn load_stamps(conn: &Connection, path: &Path, id: &str) -> Result<Vec<StampReco
                 eval_fingerprint,
                 human_involved,
                 evidence,
+                source_comment,
             )| {
                 Ok(StampRecord {
+                    source_comment,
                     fact: join_fact(path, &fact, &evidence)?,
                     at: time(path, &at)?,
                     actor: actor(path, &by)?,
@@ -926,28 +975,16 @@ fn load_stamps(conn: &Connection, path: &Path, id: &str) -> Result<Vec<StampReco
 }
 
 fn load_bindings(conn: &Connection, path: &Path, id: &str) -> Result<Vec<Binding>, WorkError> {
-    let rows = query(
+    query(
         conn,
         path,
-        "SELECT role, session, worktree FROM session_bindings WHERE todo_id = ?1 ORDER BY rowid",
+        "SELECT evidence FROM session_bindings WHERE todo_id=?1 ORDER BY rowid",
         id,
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
-        },
-    )?;
-    rows.into_iter()
-        .map(|(role, bound, worktree)| {
-            Ok(Binding {
-                role: RoleName::parse(&role).map_err(|e| invalid(path, e.to_string()))?,
-                session: session(path, &bound)?,
-                worktree: worktree.map(PathBuf::from),
-            })
-        })
-        .collect()
+        |row| row.get::<_, String>(0),
+    )?
+    .into_iter()
+    .map(|json| serde_json::from_str(&json).map_err(|e| invalid(path, e.to_string())))
+    .collect()
 }
 
 fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<ReflectionState, WorkError> {
@@ -963,6 +1000,7 @@ fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<Reflectio
                 let number: Option<u64> = row.get(0)?;
                 let issue_id: Option<u64> = row.get(6)?;
                 Ok(ReflectionState {
+                    refreshed_at: None,
                     issue: number
                         .zip(issue_id)
                         .map(|(number, id)| IssueRef { number, id }),

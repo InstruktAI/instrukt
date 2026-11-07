@@ -1,623 +1,566 @@
-//! `project/instrukt/spec/feature/runner/session-continuity`: the
-//! sessions facade links conversations through the runtime mapping, so
-//! a developer's clarification reaches the linked conversation as their
-//! words; a standing agent whose start was interrupted waits until the
-//! developer settles it. A developer who chose T3 Code has agents work in
-//! T3 threads through instrukt's shipped entry; a feature the chosen
-//! runtime cannot carry is refused; history lookups and endings an agent
-//! owes are handed to it as instructions. The runtimes are fakes of the
-//! test's own (`support/runtime.rs`, and `support/t3.rs` for T3's `t3`).
-#![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
-
+//! Runtime-owned threads and native child records, exercised through instrukt's CLI.
+#![allow(clippy::unwrap_used, reason = "isolated CLI setup")]
 mod common;
 #[path = "support/documented.rs"]
 mod documented;
 #[path = "support/flavor.rs"]
 mod flavor;
-#[path = "support/fork.rs"]
-mod fork;
 #[path = "support/runtime.rs"]
 mod runtime;
-#[path = "support/t3.rs"]
-mod t3;
-
-use std::path::Path;
-
-use assert_cmd::assert::Assert;
-use common::TestEnv;
+#[path = "support/work.rs"]
+mod support;
+#[path = "support/workflow.rs"]
+mod workflow;
 use flavor::Tracked;
-use fork::{STANDING_AGENT, push_upstream_change, tick, watched_fork};
-use runtime::{FakeRuntime, global_layer, global_layer_with};
-use t3::FakeT3;
-
-/// The exit status of a call that is the agent's to do.
-const YOURS_TO_DO: i32 = 3;
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
-#[test]
-fn a_clarification_typed_in_one_conversation_reaches_the_linked_one_as_the_developers_words() {
-    let env = TestEnv::new();
-    let rt = FakeRuntime::new(&env, "rt", true);
-    global_layer(&env, "events: true", &[&rt]);
-    rt.open_session("s1");
-    rt.open_session("s2");
-    let cwd = env.path("");
-
-    let linked = env
-        .run(&cwd, ["sessions", "link", "rt:s1", "rt:s2"])
-        .success();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&linked.get_output().stdout),
-        @"linked rt:s1 and rt:s2"
-    );
-
-    rt.developer_types("s1", "Use the staging database, not production.");
-
-    let read = env
-        .run(&cwd, ["sessions", "conversation", "rt:s2"])
-        .success();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&read.get_output().stdout),
-        @"developer (typed in s1): Use the staging database, not production."
-    );
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
-#[test]
-fn a_clarification_reaches_the_runtime_byte_for_byte_and_executes_nothing() {
-    let env = TestEnv::new();
-    let rt = FakeRuntime::new(&env, "rt", true);
-    global_layer(&env, "events: true", &[&rt]);
-    rt.open_session("s2");
-    let cwd = env.path("");
-    let canary = env.path("canary");
-    let clarification = format!(
-        "Use the staging database; not production.\n\
-         Don't run $(touch {c}-dollar) or `touch {c}-tick` or \"quoted\" 'text' | cat > {c}-pipe & echo",
-        c = canary.display()
-    );
-
-    // A collaborator's session opens with the clarification as its brief,
-    // and the clarification is sent to the developer's other session.
-    let started = env
-        .instrukt(&cwd)
-        .args(["sessions", "run", "--worktree", "shared", "--brief", "-"])
-        .write_stdin(clarification.clone())
-        .assert()
-        .success();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&started.get_output().stdout)
-            .replace(rt.state_dir().to_str().unwrap(), "<sessions>"),
-        @r"
-    rt:s1
-    <sessions>/worktrees/shared
-    "
-    );
-    env.run(&cwd, ["sessions", "send", "rt:s2", &clarification])
-        .success();
-
-    assert_eq!(rt.opening("s1"), clarification);
-    assert_eq!(rt.sent("s2", 1), clarification);
-
-    // A session id is no command either, quoted or not.
-    let hostile_id = "x$(touch${IFS}planted-id)`touch${IFS}planted-tick`'\";";
-    rt.open_session(hostile_id);
-    env.run(
-        &cwd,
-        [
-            "sessions",
-            "send",
-            &format!("rt:{hostile_id}"),
-            &clarification,
-        ],
-    )
-    .success();
-    assert_eq!(rt.sent(hostile_id, 1), clarification);
-    let observed = env
-        .run(&cwd, ["sessions", "alive", &format!("rt:{hostile_id}")])
-        .success();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&observed.get_output().stdout),
-        @"needs-input"
-    );
-    env.run(
-        &cwd,
-        ["sessions", "conversation", &format!("rt:{hostile_id}")],
-    )
-    .success();
-    for planted in ["planted-id", "planted-tick"] {
-        assert!(!cwd.join(planted).exists(), "{planted} was executed");
-    }
-    for suffix in ["dollar", "tick", "pipe"] {
-        let planted = std::path::PathBuf::from(format!("{}-{suffix}", canary.display()));
-        assert!(!planted.exists(), "{} was executed", planted.display());
-    }
-}
-
-/// A machine whose agent order is `alpha` then `beta`, each started by its
-/// own agent CLI; `alpha`'s CLI creates sessions but prints no id for
-/// them. A fork's upstream changed once its watch was set.
-struct Interrupted {
-    env: TestEnv,
-    alpha: FakeRuntime,
-    beta: FakeRuntime,
-}
-
-impl Interrupted {
-    fn new() -> Self {
-        let env = TestEnv::new();
-        let alpha = FakeRuntime::new(&env, "alpha", false).starting_agent("alpha");
-        let beta = FakeRuntime::new(&env, "beta", false).starting_agent("beta");
-        global_layer_with(
-            &env,
-            "events: true",
-            &[&alpha, &beta],
-            "agents:\n  order: [alpha, beta]\n  thinking_mode: med\n",
-        );
-        let upstream = watched_fork(&env);
-        let cwd = env.path("");
-        tick(&env, &cwd);
-        alpha.start_without_printing_ids();
-        push_upstream_change(&upstream, "one.md");
-        Self { env, alpha, beta }
-    }
-
-    fn cwd(&self) -> std::path::PathBuf {
-        self.env.path("")
-    }
-
-    fn starts(&self) -> (usize, usize) {
-        (self.alpha.started_count(), self.beta.started_count())
-    }
-
-    /// The developer is told of the interrupted start, and further
-    /// wake-ups start nothing for the agent.
-    fn told_and_waiting(&self) {
-        tick(&self.env, &self.cwd());
-        assert_eq!(self.starts(), (1, 0), "the next agent was not tried");
-        tick(&self.env, &self.cwd());
-        tick(&self.env, &self.cwd());
-        assert_eq!(self.starts(), (1, 0), "no new session while unknown");
-        insta::allow_duplicates! {
-            insta::assert_snapshot!(
-                self.alpha.notifications().join("\n"),
-                @"instrukt sessions resolve-start fork/procedure/upstream-watch@fork --session <runtime:id> | --none"
-            );
-        }
-    }
-
-    fn resolve(&self, how: &[&str]) {
-        let mut args = vec!["sessions", "resolve-start", STANDING_AGENT];
-        args.extend_from_slice(how);
-        self.env.run(&self.cwd(), args).success();
-    }
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
-#[test]
-fn when_no_session_was_created_the_standing_agent_starts_again() {
-    let machine = Interrupted::new();
-    machine.told_and_waiting();
-
-    machine.resolve(&["--none"]);
-    tick(&machine.env, &machine.cwd());
-
-    assert_eq!(machine.starts(), (2, 0), "the agent started again");
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
-#[test]
-fn when_the_created_session_is_named_it_is_bound_and_no_second_one_starts() {
-    let machine = Interrupted::new();
-    machine.told_and_waiting();
-
-    machine.resolve(&["--session", "alpha:s1"]);
-    machine.alpha.set_status("s1", "ended ok");
-    tick(&machine.env, &machine.cwd());
-
-    assert_eq!(machine.starts(), (1, 0), "no second session");
-    assert_eq!(
-        machine.alpha.sent_count("s1"),
-        1,
-        "the bound session got the change"
-    );
-}
-
-fn stdout(assert: &Assert) -> String {
-    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
-}
-
-/// Standard error with the test's temporary directory shown as `[TMP]`.
-fn stderr(env: &TestEnv, assert: &Assert) -> String {
-    let base = env.path("").display().to_string();
-    String::from_utf8_lossy(&assert.get_output().stderr)
-        .replace(base.trim_end_matches('/'), "[TMP]")
-}
-
-/// The machine's global layer as a developer who chose T3 Code writes it:
-/// `runner.runtime: t3` and nothing mapped of their own.
-fn chose_t3(env: &TestEnv, modules: &str) {
-    write_global(
-        env,
-        &format!("schema_version: 1\nmodules: {{{modules}}}\nrunner: {{runtime: t3}}\n"),
-    );
-}
-
-fn write_global(env: &TestEnv, text: &str) {
-    let path = env.instrukt_home().join("instrukt.yaml");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, text).unwrap();
-}
-
-fn global_text(env: &TestEnv) -> String {
-    std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap()
-}
-
-fn global_revision(env: &TestEnv, cwd: &Path) -> String {
-    stdout(
-        &env.run(cwd, ["config", "get", "--global", "--revision"])
-            .success(),
-    )
-    .trim()
-    .to_owned()
-}
-
-fn patch_global(env: &TestEnv, cwd: &Path, yaml: &str) -> Assert {
-    let revision = global_revision(env, cwd);
-    env.run(
-        cwd,
-        [
-            "config",
-            "patch",
-            "--global",
-            "--revision",
-            &revision,
-            "--yaml",
-            yaml,
-        ],
-    )
-}
-
-/// A tracked project on a machine that chose T3 Code, with work tracking
-/// switched on there; `t3` is the fake on the test's `PATH`.
-fn tracked_on_t3(autostart: bool) -> (Tracked, FakeT3) {
-    let mut project = Tracked::new(autostart);
-    let t3 = FakeT3::install(&mut project.env);
-    chose_t3(&project.env, "todos: true");
-    project.github.configure(&project.env);
-    (project, t3)
-}
-
-fn create_change(project: &Tracked) {
+use runtime::FakeT3;
+fn change(project: &Tracked, slug: &str) {
     project.todo([
         "create",
-        "tidy-imports",
-        "Sort the imports of every module.",
+        slug,
+        "Improve the parser.",
         "--kind",
         "change",
         "--approved",
     ]);
 }
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
-#[test]
-fn work_dispatched_on_a_machine_that_chose_t3_runs_in_a_t3_thread_of_the_project() {
-    let (project, t3) = tracked_on_t3(true);
-    create_change(&project);
-
-    project.tick();
-
-    assert_eq!(t3.threads(), ["thread:1"]);
-    assert_eq!(t3.folder("thread:1"), project.repo.path());
+fn shown(project: &Tracked, bytes: &[u8]) -> String {
+    support::redact(&String::from_utf8_lossy(bytes).replace(
+        project.env.path("").to_str().unwrap().trim_end_matches('/'),
+        "[TMP]",
+    ))
 }
-
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn further_work_reaches_the_same_t3_thread_and_reads_back_through_instrukt() {
-    let (project, t3) = tracked_on_t3(true);
-    create_change(&project);
-    project.tick();
-    let cwd = project.repo.path();
-
-    project
+fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    let fake = FakeT3::create(&p.env);
+    insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/prepare");
+    assert!(fake.worktree("s1").is_dir());
+    for command in ["run", "send", "alive", "conversation", "link"] {
+        p.env.run(p.repo.path(), ["sessions", command]).failure();
+    }
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
+#[test]
+fn lost_start_result_recovers_the_same_orchestrator_and_its_phase_worktree() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.rt.kill_runner_on_next_start();
+    p.env.run(p.env.home(), ["tick"]).failure();
+    p.tick();
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    let fake = FakeT3::create(&p.env);
+    assert!(fake.worktree("s1").is_dir());
+    assert_eq!(fake.message_count("s1"), 1);
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
+#[test]
+fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("empty-start", true);
+    p.tick();
+    let record = p.todo(["show", "parser"]);
+    let key = record
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("key: "))
+        .unwrap()
+        .to_owned();
+    fake.flag("empty-start", false);
+    p.tick();
+    assert_eq!(fake.threads().len(), 0);
+    p.env
+        .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
+        .success();
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    fake.flag("list-failure", true);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
+#[test]
+fn conflicting_keyed_threads_never_admit_a_replacement() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("silent-start", true);
+    p.tick();
+    fake.flag("duplicate", true);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    let key = fake.title("s1");
+    let out = p
         .env
         .run(
-            cwd,
-            ["sessions", "send", "t3:thread:1", "Also sort the tests."],
+            p.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s1"],
         )
-        .success();
-    let read = project
-        .env
-        .run(cwd, ["sessions", "conversation", "t3:thread:1"])
-        .success();
-
-    assert_eq!(t3.threads().len(), 1, "no second thread");
-    assert_eq!(t3.message_count("thread:1"), 2);
-    assert_eq!(stdout(&read), t3.messages("thread:1"));
+        .failure();
+    insta::assert_snapshot!("duplicate-key", shown(&p, &out.get_output().stderr));
 }
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
 #[test]
-fn a_worktree_request_on_t3_bases_the_thread_on_the_default_branch_and_prints_its_path() {
-    let mut env = TestEnv::new();
-    let t3 = FakeT3::install(&mut env);
-    chose_t3(&env, "events: true");
-    let origin = env.bare_remote("demo");
-    let seed = env.git_repo("seed");
-    seed.write("README.md", "# demo\n");
-    seed.commit("the developer's project");
-    seed.git(["push", "--quiet", origin.to_str().unwrap(), "main"]);
-    let repo = env.clone_repo(&origin, "demo");
-
-    let run = env
-        .instrukt(repo.path())
-        .args(["sessions", "run", "--worktree", "feature-x", "--brief", "-"])
-        .write_stdin("Prepare the workspace.")
+fn native_discussion_reports_the_link_gap_without_rebuilding_it() {
+    let p = Tracked::new(false);
+    let out = p
+        .env
+        .run(p.repo.path(), ["config", "get", "runtime.discuss"])
+        .success();
+    insta::assert_snapshot!(
+        "native-discussion-gap",
+        String::from_utf8_lossy(&out.get_output().stdout)
+    );
+    assert_eq!(p.rt.calls().len(), 0);
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS6
+#[test]
+fn installed_t3_does_not_select_itself() {
+    let p = Tracked::new(false);
+    std::fs::write(
+        p.env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\n",
+    )
+    .unwrap();
+    let out = p
+        .env
+        .run(p.repo.path(), ["sessions", "list", "--json"])
+        .failure();
+    insta::assert_snapshot!("no-selected-runtime", shown(&p, &out.get_output().stderr));
+    assert_eq!(p.rt.calls().len(), 0);
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS19
+#[test]
+fn operational_listing_filters_only_known_settled_activity_and_keeps_unknown_times() {
+    let p = Tracked::new(false);
+    let fake = FakeT3::create(&p.env);
+    for id in ["active", "recent", "old", "unknown"] {
+        fake.seed(
+            id,
+            p.repo.path(),
+            &format!("instrukt:run:{id}"),
+            "Native assignment",
+        );
+    }
+    for id in ["recent", "old", "unknown"] {
+        fake.set_status(id, "completed");
+        fake.change(id, "settled", true.into());
+    }
+    fake.change("old", "updatedAt", "2020-01-01T00:00:00Z".into());
+    fake.change("unknown", "updatedAt", serde_json::Value::Null);
+    let list = p
+        .env
+        .instrukt(p.repo.path())
+        .env("INSTRUKT_NOW", "2026-11-07T10:00:00Z")
+        .args(["sessions", "list", "--json"])
         .assert()
         .success();
-
-    assert_eq!(t3.worktree_base("thread:1"), "main");
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&list.get_output().stdout).unwrap();
+    assert_eq!(items.len(), 3);
+    insta::assert_snapshot!(
+        "recent-active-and-settled-sessions",
+        shown(&p, &list.get_output().stdout)
+    );
+    let all = p
+        .env
+        .run(p.repo.path(), ["sessions", "list", "--all", "--json"])
+        .success();
     assert_eq!(
-        stdout(&run),
-        format!("t3:thread:1\n{}\n", t3.worktree("thread:1").display())
+        serde_json::from_slice::<Vec<serde_json::Value>>(&all.get_output().stdout)
+            .unwrap()
+            .len(),
+        4
+    );
+    p.env
+        .run(
+            p.repo.path(),
+            ["sessions", "list", "--all", "--since", "3d"],
+        )
+        .failure();
+    p.env
+        .run(p.repo.path(), ["sessions", "list", "--since", "bad"])
+        .failure();
+}
+fn pending_builder() -> (workflow::Crew, serde_json::Value) {
+    let crew = workflow::Crew::new();
+    crew.project.create("parser", "change", "Improve parser.");
+    crew.write("parser", "implementation-plan", "Improve depth.");
+    crew.write("parser", "plan-review-findings", "Approved.");
+    crew.stamp(
+        "parser",
+        &["--verdict", "approve", "--phase", "plan_review"],
+    );
+    crew.next("work", "parser");
+    let child = crew.worker("parser", "setup", None);
+    (crew, child)
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS14
+#[test]
+fn an_idle_parents_native_child_result_has_no_instrukt_ending_delivery() {
+    let (crew, child) = pending_builder();
+    crew.runtime.open_session("lead-1");
+    crew.runtime.finish(
+        child["session"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("t3:")
+            .unwrap(),
+        "completed",
+        "Native completion result.",
+    );
+    crew.project.env.run(crew.root(), ["tick"]).success();
+    assert_eq!(FakeT3::create(&crew.project.env).message_count("lead-1"), 0);
+    let result = crew.todo(["show", "parser"]);
+    insta::assert_snapshot!(
+        "native-ending-record",
+        support::redact(
+            &result.replace(
+                crew.project
+                    .env
+                    .path("")
+                    .to_str()
+                    .unwrap()
+                    .trim_end_matches('/'),
+                "[TMP]"
+            )
+        )
+    );
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS15
+#[test]
+fn a_busy_parents_native_result_uses_no_instrukt_waiting_slot() {
+    let (crew, child) = pending_builder();
+    crew.runtime.open_session("lead-1");
+    crew.runtime.set_status("lead-1", "running");
+    crew.runtime.finish(
+        child["session"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("t3:")
+            .unwrap(),
+        "completed",
+        "Native result while parent runs.",
+    );
+    crew.project.env.run(crew.root(), ["tick"]).success();
+    assert_eq!(FakeT3::create(&crew.project.env).message_count("lead-1"), 0);
+    let active = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo", "attempt", "parser", "--role", "setup", "--brief", "-",
+        ])
+        .write_stdin("Changed inputs are refused.")
+        .assert();
+    active.failure();
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS16
+#[test]
+fn native_failure_or_input_wait_never_becomes_instrukt_completion() {
+    for state in ["failed", "waiting"] {
+        let (crew, child) = pending_builder();
+        crew.runtime.open_session("lead-1");
+        crew.runtime.set_status(
+            child["session"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("t3:")
+                .unwrap(),
+            state,
+        );
+        crew.project.env.run(crew.root(), ["tick"]).success();
+        assert_eq!(FakeT3::create(&crew.project.env).message_count("lead-1"), 0);
+        crew.project
+            .env
+            .instrukt(crew.root())
+            .args([
+                "todo", "attempt", "parser", "--role", "setup", "--brief", "-",
+            ])
+            .write_stdin("Changed inputs stay blocked.")
+            .assert()
+            .failure();
+    }
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17
+#[test]
+fn renaming_a_todo_keeps_its_reserved_semantic_identity() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let key = fake.title("s1");
+    p.todo(["update", "parser", "--slug", "parser-depth"]);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.title("s1"), key);
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS18
+#[test]
+fn approval_wakes_a_settled_orchestrator_in_its_retained_conversation() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    fake.set_status("s1", "completed");
+    fake.change("s1", "settled", true.into());
+    p.todo(["artifacts", "write", "parser", "prd", "Keep parser depth."]);
+    p.todo([
+        "artifacts",
+        "write",
+        "parser",
+        "prd-review-findings",
+        "Approve current requirements.",
+    ]);
+    p.todo([
+        "stamp",
+        "parser",
+        "--verdict",
+        "approve",
+        "--phase",
+        "prd_review",
+    ]);
+    p.todo(["stamp", "parser", "--prd-approved", "--by", "human"]);
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.message_count("s1"), 2);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
+// spec: project/instrukt/spec/feature/workflow/workflow-definition UC-WD2
+#[test]
+fn unattended_requirements_admit_creation_and_shared_children_but_refuse_attachment() {
+    let crew = workflow::Crew::new();
+    let path = "docs/domain/crew/workflow/work.yaml";
+    let supported = crew.flavor.repo.read(path).replace(
+        "requires: []",
+        "requires: [worktree_create, shared_delegation]",
+    );
+    crew.flavor.repo.write(path, &supported);
+    crew.flavor.republish(
+        &crew.project.env,
+        "declare supported workspace capabilities",
+    );
+    let revision = crew
+        .project
+        .env
+        .run(crew.root(), ["config", "get", "--revision"])
+        .success();
+    let revision = String::from_utf8_lossy(&revision.get_output().stdout);
+    crew.project
+        .env
+        .run(
+            crew.root(),
+            [
+                "config",
+                "patch",
+                "--revision",
+                revision.trim(),
+                "--yaml",
+                "modules: {todos: true}",
+            ],
+        )
+        .success();
+    let content = crew.flavor.repo.read(path).replace(
+        "requires: [worktree_create, shared_delegation]",
+        "requires: [worktree_attach]",
+    );
+    crew.flavor.repo.write(path, &content);
+    crew.flavor
+        .republish(&crew.project.env, "declare required native linking");
+    let before = std::fs::read(crew.root().join("instrukt.yaml")).unwrap();
+    let revision = crew
+        .project
+        .env
+        .run(crew.root(), ["config", "get", "--revision"])
+        .success();
+    let revision = String::from_utf8_lossy(&revision.get_output().stdout);
+    let refusal = crew
+        .project
+        .env
+        .run(
+            crew.root(),
+            [
+                "config",
+                "patch",
+                "--revision",
+                revision.trim(),
+                "--yaml",
+                "modules: {todos: true}",
+            ],
+        )
+        .failure();
+    insta::assert_snapshot!(
+        "required-attachment-refused",
+        String::from_utf8_lossy(&refusal.get_output().stderr).replace(
+            crew.project
+                .env
+                .path("")
+                .to_str()
+                .unwrap()
+                .trim_end_matches('/'),
+            "[TMP]"
+        )
+    );
+    assert_eq!(
+        std::fs::read(crew.root().join("instrukt.yaml")).unwrap(),
+        before
+    );
+    assert_eq!(crew.runtime.calls().len(), 0);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
+#[test]
+fn disappearing_optional_native_project_metadata_still_recovers_the_same_reserved_thread() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("silent-start", true);
+    p.tick();
+    let key = fake.title("s1");
+    p.env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s1"],
+        )
+        .success();
+    fake.flag("hide-project-id", true);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.message_count("s1"), 1);
+    insta::assert_snapshot!(
+        "recovered-without-native-project-id",
+        support::redact(&p.todo(["show", "parser"]))
     );
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn a_t3_threads_status_is_observed_as_one_of_the_five_states() {
-    let mut env = TestEnv::new();
-    let t3 = FakeT3::install(&mut env);
-    chose_t3(&env, "events: true");
-    let cwd = env.path("");
-    let id = t3.developer_starts_thread();
-    let observe = |id: &str| {
-        let run = env
-            .run(&cwd, ["sessions", "alive", &format!("t3:{id}")])
-            .success();
-        stdout(&run).trim().to_owned()
-    };
+fn deliberate_entry_requires_native_recorded_placement_and_never_adopts_incidental_cwd() {
+    let crew = workflow::Crew::new();
+    let slug = "deliberate-placement";
+    crew.project
+        .create(slug, "change", "Bind the recorded native workspace.");
+    crew.write(
+        slug,
+        "implementation-plan",
+        "Use the same verified phase workspace.",
+    );
+    crew.write(slug, "plan-review-findings", "Approved.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    let runtime_calls = crew.runtime.calls().len();
+    let path = crew.workspace(slug);
+    let before = crew.todo(["show", slug]);
+    let denied = crew
+        .project
+        .env
+        .instrukt(&path)
+        .args(["todo", "work", slug])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "deliberate-native-placement-required",
+        String::from_utf8_lossy(&denied.get_output().stderr)
+    );
+    assert_eq!(before, crew.todo(["show", slug]));
+    let proof = runtime::placement_evidence(
+        &crew.project.env,
+        &runtime::NativePlacement {
+            cwd: &path,
+            slug,
+            role: "work-lead",
+            session: "lead-1",
+        },
+    );
+    let mut wrong: serde_json::Value = serde_json::from_str(&proof).unwrap();
+    wrong["worktree"] = crew.root().to_string_lossy().into_owned().into();
+    crew.project
+        .env
+        .instrukt(&path)
+        .args(["todo", "work", slug, "--placement-evidence", "-"])
+        .write_stdin(wrong.to_string())
+        .assert()
+        .failure();
+    assert_eq!(before, crew.todo(["show", slug]));
+    crew.project
+        .env
+        .instrukt(&path)
+        .args(["todo", "work", slug, "--placement-evidence", "-"])
+        .write_stdin(proof)
+        .assert()
+        .success();
+    assert_eq!(crew.runtime.calls().len(), runtime_calls);
+}
 
-    let mut observed = Vec::new();
-    for status in [
-        "preparing",
-        "queued",
-        "starting",
-        "running",
-        "waiting",
-        "idle",
-        "completed",
-        "failed",
-        "interrupted",
-        "cancelled",
-        "rolled_back",
-    ] {
-        t3.set_status(&id, status);
-        observed.push((status.to_owned(), observe(&id)));
-    }
-    t3.set_status(&id, "running");
-    t3.set_pending(&id, 1);
-    observed.push(("running, a pending request".into(), observe(&id)));
-    t3.archive(&id);
-    observed.push(("archived".into(), observe(&id)));
-    observed.push(("unknown thread".into(), observe("thread:404")));
-
-    let expected: Vec<(String, String)> = [
-        ("preparing", "running"),
-        ("queued", "running"),
-        ("starting", "running"),
-        ("running", "running"),
-        ("waiting", "needs-input"),
-        ("idle", "ended ok"),
-        ("completed", "ended ok"),
-        ("failed", "ended failed"),
-        ("interrupted", "ended failed"),
-        ("cancelled", "ended failed"),
-        ("rolled_back", "ended failed"),
-        ("running, a pending request", "needs-input"),
-        ("archived", "gone"),
-        ("unknown thread", "gone"),
-    ]
-    .into_iter()
-    .map(|(a, b)| (a.to_owned(), b.to_owned()))
-    .collect();
-    assert_eq!(observed, expected);
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17
+#[test]
+fn renaming_during_a_lost_start_preserves_the_original_key_branch_and_opening_input() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("silent-start", true);
+    p.tick();
+    let key = fake.title("s1");
+    let opening = fake.message("s1", 0);
+    p.todo(["update", "parser", "--slug", "parser-depth"]);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.title("s1"), key);
+    assert_eq!(fake.message("s1", 0), opening);
+    assert_eq!(fake.message_count("s1"), 1);
+    insta::assert_snapshot!(
+        "renamed-start-recovered",
+        support::redact(&p.todo(["show", "parser-depth"]))
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn a_t3_server_that_cannot_be_reached_yields_no_state_rather_than_gone() {
-    let mut env = TestEnv::new();
-    let t3 = FakeT3::install(&mut env);
-    chose_t3(&env, "events: true");
-    let id = t3.developer_starts_thread();
-    t3.server_down();
-
-    let run = env
-        .run(&env.path(""), ["sessions", "alive", &format!("t3:{id}")])
-        .failure();
-
-    assert_eq!(stdout(&run), "unobservable\n");
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS4
-#[test]
-fn an_agent_in_a_t3_thread_is_told_how_to_search_with_its_own_tools() {
-    let mut env = TestEnv::new();
-    let t3 = FakeT3::install(&mut env);
-    chose_t3(&env, "events: true");
-    let caller = t3.developer_starts_thread();
-    env.set_env("T3CODE_THREAD_ID", &caller);
-    let before = t3.calls().len();
-
-    let run = env
-        .run(
-            &env.path(""),
-            ["sessions", "history", "search", "flaky test"],
-        )
-        .code(YOURS_TO_DO);
-
-    insta::assert_snapshot!("t3-history-search", stdout(&run));
-    assert_eq!(t3.calls().len(), before, "instrukt ran nothing");
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS4
-#[test]
-fn an_agent_in_a_t3_thread_reads_a_conversation_the_search_named() {
-    let mut env = TestEnv::new();
-    let t3 = FakeT3::install(&mut env);
-    chose_t3(&env, "events: true");
-    let earlier = t3.developer_starts_thread();
-    let caller = t3.developer_starts_thread();
-    env.set_env("T3CODE_THREAD_ID", &caller);
-
-    let run = env
-        .run(&env.path(""), ["sessions", "history", "show", &earlier])
-        .success();
-
-    assert_eq!(stdout(&run), t3.messages(&earlier));
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS4
-#[test]
-fn a_runtime_whose_search_is_a_command_is_searched_by_instrukt() {
-    let mut env = TestEnv::new();
-    let rt = FakeRuntime::new(&env, "rt", false).with_history();
-    global_layer(&env, "events: true", &[&rt]);
-    rt.open_session("s1");
-    rt.open_session("s2");
-    rt.developer_types("s1", "the flaky test fails on CI");
-    rt.developer_types("s2", "rename the parser");
-    env.set_env("RT_SESSION", "s3");
-
-    let run = env
-        .run(&env.path(""), ["sessions", "history", "search", "flaky"])
-        .success();
-
-    assert_eq!(stdout(&run), "s1\n");
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS4
-#[test]
-fn a_runtime_leaving_history_search_empty_refuses_naming_the_verb() {
-    let mut env = TestEnv::new();
-    let rt = FakeRuntime::new(&env, "rt", false);
-    global_layer(&env, "events: true", &[&rt]);
-    env.set_env("RT_SESSION", "s1");
-
-    let run = env
-        .run(&env.path(""), ["sessions", "history", "search", "flaky"])
-        .failure();
-
-    insta::assert_snapshot!("history-search-missing", stderr(&env, &run));
-    assert!(rt.calls().is_empty(), "no search was made");
-}
-
-/// A machine whose only runtime starts, reads and observes sessions but
-/// cannot send to them.
-const CANNOT_SEND: &str = "schema_version: 1\nruntimes:\n  - name: rt\n    session_id_env: RT_SESSION\n    start: rt start\n    alive: rt alive\n    conversation: rt show\n";
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
-#[test]
-fn switching_on_work_the_runtime_cannot_carry_is_refused_and_changes_nothing() {
-    let env = TestEnv::new();
-    write_global(&env, CANNOT_SEND);
-    let cwd = env.path("");
-
-    let run = patch_global(&env, &cwd, "modules: {todos: true}").failure();
-
-    insta::assert_snapshot!("feature-refused-missing-verb", stderr(&env, &run));
-    assert_eq!(global_text(&env), CANNOT_SEND);
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
-#[test]
-fn switching_on_work_a_runtime_fully_carries_is_accepted() {
-    let env = TestEnv::new();
-    let rt = FakeRuntime::new(&env, "rt", false);
-    global_layer(&env, "", &[&rt]);
-    let cwd = env.path("");
-
-    patch_global(&env, &cwd, "modules: {todos: true, events: true}").success();
-
-    let on = env
-        .run(&cwd, ["config", "get", "--global", "modules.todos"])
-        .success();
-    assert_eq!(stdout(&on).trim(), "true");
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS6
-#[test]
-fn with_t3_installed_and_no_runtime_chosen_switching_on_work_is_refused_and_none_is_picked() {
-    let mut env = TestEnv::new();
-    let t3 = FakeT3::install(&mut env);
-    write_global(&env, "schema_version: 1\n");
-    let cwd = env.path("");
-
-    let run = patch_global(&env, &cwd, "modules: {todos: true, events: true}").failure();
-
-    insta::assert_snapshot!("feature-refused-no-runtime", stderr(&env, &run));
-    assert_eq!(global_text(&env), "schema_version: 1\n");
-    env.run(&cwd, ["config", "get", "--global", "runtimes"])
-        .failure();
-    assert!(t3.calls().is_empty(), "T3 was never consulted");
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS7
-#[test]
-fn on_t3_ending_the_todos_sessions_and_its_own_is_handed_to_the_agent() {
-    let (mut project, t3) = tracked_on_t3(false);
-    create_change(&project);
-    let cwd = project.repo.path().to_path_buf();
-    for procedure in ["acme/procedure/prepare-overview", "acme/procedure/plan"] {
-        project
-            .env
-            .run(
-                &cwd,
-                [
-                    "sessions",
-                    "run",
-                    "--procedure",
-                    procedure,
-                    "--args",
-                    "tidy-imports",
-                    "--todo",
-                    "tidy-imports",
-                ],
-            )
-            .success();
-    }
-    // The orchestrator, in thread 1, ends what the todo bound, then itself.
-    project.env.set_env("T3CODE_THREAD_ID", "thread:1");
-    let before = t3.calls().len();
-
-    let children = project
+fn deliberate_phase_placement_fetches_remote_main_while_local_main_lags() {
+    let p = Tracked::new(false);
+    change(&p, "fresh-base");
+    let old = p.repo.head();
+    let other = p
         .env
-        .run(&cwd, ["sessions", "end", "--todo", "tidy-imports"])
-        .code(YOURS_TO_DO);
-    let own = project
+        .clone_repo(&p.env.path("demo-origin.git"), "integrator");
+    other.write("integrated.txt", "reviewed green delivery");
+    let delivered = other.commit("integrator: promote verified candidate");
+    other.git(["push", "--quiet", "origin", "main"]);
+    assert_eq!(p.repo.git(["rev-parse", "origin/main"]), old);
+    let out = p
         .env
-        .run(&cwd, ["sessions", "end", "self"])
-        .code(YOURS_TO_DO);
-
-    insta::assert_snapshot!("t3-end-todo", stdout(&children));
-    insta::assert_snapshot!("t3-end-self", stdout(&own));
-    assert_eq!(t3.calls().len(), before, "instrukt ran nothing in T3");
+        .run(p.repo.path(), ["todo", "prepare", "fresh-base"])
+        .success();
+    let value: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(value["placement"]["from"], "origin/main");
+    assert_eq!(value["placement"]["base"], delivered);
+    assert_eq!(p.repo.head(), old);
+    assert_eq!(p.rt.started_count(), 0);
 }
 
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS7
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn a_runtime_that_needs_no_ending_is_said_so_and_nothing_more_is_owed() {
-    let mut env = TestEnv::new();
-    let rt = FakeRuntime::new(&env, "rt", false);
-    global_layer(&env, "events: true", &[&rt]);
-    rt.open_session("s1");
-    env.set_env("RT_SESSION", "s1");
-
-    let run = env
-        .run(&env.path(""), ["sessions", "end", "self"])
-        .success();
-
-    insta::assert_snapshot!("end-not-needed", stdout(&run));
-    assert!(rt.calls().is_empty(), "nothing was done");
+fn a_failed_phase_fetch_never_uses_the_stale_local_base() {
+    let p = Tracked::new(false);
+    change(&p, "no-fetch");
+    p.repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        p.env.path("missing-origin.git").to_str().unwrap(),
+    ]);
+    p.env
+        .run(p.repo.path(), ["todo", "prepare", "no-fetch"])
+        .failure();
+    assert_eq!(p.rt.started_count(), 0);
+    let branches = p.repo.git([
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads/no-fetch/prepare",
+    ]);
+    assert_eq!(branches.lines().count(), 0);
 }

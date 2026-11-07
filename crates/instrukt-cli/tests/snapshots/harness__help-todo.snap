@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/harness.rs
+assertion_line: 36
 expression: help
 ---
 The work record and workflow (todos module)
@@ -17,6 +18,8 @@ Commands:
   remove      Withdraw a todo, retained for recovery
   reactivate  Restore withdrawn work
   deliver     Record the confirmed delivered commit
+  attempt     Reserve a native role assignment, or record no-start/failure evidence
+  bind        Bind a reserved assignment to its native shared child
   stamp       Record an attributed fact bound to evidence
   artifacts   List, read, write and diff a todo's artifacts
   prepare     A todo's next preparation obligation (deliberate pickup)

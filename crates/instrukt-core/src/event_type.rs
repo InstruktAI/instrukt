@@ -117,3 +117,11 @@ mod tests {
         assert!(TypePattern::parse("*").unwrap().matches("erp.invoice_paid"));
     }
 }
+
+/// Whether undelivered facts may be replaced by a newer state of one subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeliveryKind {
+    Occurrence,
+    State,
+}

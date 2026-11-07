@@ -18,6 +18,7 @@ mod _agents;
 mod _editor;
 mod _fingerprint;
 mod _patch;
+pub(crate) use _patch::target_entries;
 mod _render;
 mod _source;
 mod _sync;

@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
+assertion_line: 1005
+expression: "String::from_utf8_lossy(&shown.get_output().stdout)"
+---
+{
+  "erp": {
+    "secret": "${HOOK_KEY}",
+    "state": [
+      "updated"
+    ],
+    "subject_from": "customer.id"
+  }
+}

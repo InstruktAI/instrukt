@@ -44,12 +44,10 @@ impl Pickup for Work {
             .items
             .iter()
             .filter(|it| {
-                it.record.bindings.is_empty()
-                    && it
-                        .record
-                        .claim
-                        .as_ref()
-                        .is_some_and(|c| c.machine == machine && c.session.is_none())
+                it.record
+                    .claim
+                    .as_ref()
+                    .is_some_and(|c| c.machine == machine && c.session.is_none())
             })
             .map(|it| it.record.id.clone())
             .collect();
@@ -134,7 +132,10 @@ impl Claims for Work {
                 None => claim.session.is_none(),
                 Some(session) => {
                     claim.session.as_ref() == Some(session)
-                        || record.bindings.iter().any(|b| &b.session == session)
+                        || record
+                            .bindings
+                            .iter()
+                            .any(|b| b.session.as_ref() == Some(session))
                 }
             };
             if !holds {
@@ -196,7 +197,10 @@ impl Claims for Work {
                 Claimant::Runner => claim.session.is_none(),
                 Claimant::Session(session) => {
                     claim.session.as_ref() == Some(session)
-                        || record.bindings.iter().any(|b| &b.session == session)
+                        || record
+                            .bindings
+                            .iter()
+                            .any(|b| b.session.as_ref() == Some(session))
                 }
             };
         if !holds {
@@ -286,6 +290,207 @@ fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
 }
 
 impl SessionBindings for Work {
+    fn reserve_dispatch(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoSlug,
+        role: &RoleName,
+        occurrence: Option<Timestamp>,
+        lane: &instrukt_runner::interfaces::Lane,
+    ) -> Result<instrukt_runner::interfaces::DispatchReservation, WorkInterfaceError> {
+        use instrukt_runner::interfaces::{AssignmentKind, DispatchReservation};
+        use instrukt_runner::runtime::CreationPermit;
+        let mut s = Session::open(self, project)?;
+        let index = s.enter(todo)?;
+        let machine = s.machine()?;
+        let record = &s.items[index].record;
+        if record.status != TodoStatus::Active
+            || record.hold.is_some()
+            || !record
+                .claim
+                .as_ref()
+                .is_some_and(|c| c.machine == machine && c.session.is_none())
+        {
+            return Err(WorkError::refused(
+                "dispatch needs this computer's reflected, unassigned execution claim",
+            )
+            .into());
+        }
+        let placement =
+            (|| -> Result<_, WorkError> {
+                if *lane == instrukt_runner::interfaces::Lane::TaskRun {
+                    return Ok(None);
+                }
+                let branch = format!(
+                    "{}/{}",
+                    record.slug,
+                    if *lane == instrukt_runner::interfaces::Lane::Prepare {
+                        "prepare"
+                    } else {
+                        "work"
+                    }
+                );
+                if let Some(pending) = record
+                    .bindings
+                    .iter()
+                    .rev()
+                    .find(|b| b.role == *role && b.attempt.released_at.is_none())
+                {
+                    return Ok(Some(instrukt_runner::runtime::WorktreeRequest {
+                        branch: pending.attempt.branch.clone().ok_or_else(|| {
+                            WorkError::refused("retained phase branch is missing")
+                        })?,
+                        from: pending
+                            .attempt
+                            .start_from
+                            .clone()
+                            .ok_or_else(|| WorkError::refused("retained start base is missing"))?,
+                        base: pending
+                            .attempt
+                            .base_head
+                            .as_ref()
+                            .ok_or_else(|| WorkError::refused("retained starting head is missing"))?
+                            .to_string(),
+                    }));
+                }
+                if instrukt_core::git::succeeds(
+                    &project.root,
+                    [
+                        "show-ref",
+                        "--verify",
+                        "--quiet",
+                        &format!("refs/heads/{branch}"),
+                    ],
+                )? {
+                    return Err(WorkError::refused(format!(
+                        "phase branch `{branch}` already exists; no replacement worktree is created"
+                    )));
+                }
+                let (from, base) = super::_attempts::phase_base(
+                    &project.root,
+                    &branch,
+                    *lane == instrukt_runner::interfaces::Lane::Prepare,
+                )?;
+                if *lane == instrukt_runner::interfaces::Lane::Work {
+                    super::_attempts::preparation_integrated(record, &project.root)?;
+                }
+                Ok(Some(instrukt_runner::runtime::WorktreeRequest {
+                    branch,
+                    base: base.to_string(),
+                    from,
+                }))
+            })()?;
+        let selected_runtime = s
+            .config
+            .runner_runtime()
+            .map_err(WorkError::from)?
+            .ok_or_else(|| WorkError::refused("no runtime selected"))?;
+        if record.bindings.iter().any(|b| {
+            b.role == *role
+                && b.attempt.released_at.is_none()
+                && b.attempt
+                    .runtime
+                    .is_some_and(|runtime| runtime != selected_runtime)
+        }) {
+            return Err(WorkError::refused("retained dispatch belongs to another runtime; reconcile that assignment before retrying").into());
+        }
+        let task_key = occurrence.map(|at| {
+            instrukt_runner::keyed::task_key(project.slug.as_str(), record.id.as_str(), at)
+        });
+        if let Some(pending) = record
+            .bindings
+            .iter()
+            .find(|b| b.attempt.released_at.is_none() && b.session.is_none())
+        {
+            if &pending.role != role || pending.attempt.occurrence != occurrence {
+                return Err(WorkError::refused(format!(
+                    "unresolved assignment `{}` must be reconciled first",
+                    pending.attempt.semantic_key
+                ))
+                .into());
+            }
+            return Ok(DispatchReservation::Start {
+                key: pending.attempt.semantic_key.clone(),
+                creation: CreationPermit::Reconcile,
+                worktree: placement,
+            });
+        }
+        if let Some(active) = record.bindings.iter().rev().find(|b| {
+            &b.role == role
+                && b.attempt.released_at.is_none()
+                && (occurrence.is_none() || Some(&b.attempt.semantic_key) == task_key.as_ref())
+        }) && let Some(session) = &active.session
+        {
+            return Ok(DispatchReservation::Existing(SessionBinding {
+                key: active.attempt.semantic_key.clone(),
+                session: session.clone(),
+                worktree: active.worktree.clone(),
+            }));
+        }
+        let number = record
+            .bindings
+            .iter()
+            .filter(|b| &b.role == role)
+            .map(|b| b.attempt.number)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| WorkError::refused("role attempt counter is exhausted"))?;
+        let key = task_key.unwrap_or_else(|| {
+            instrukt_runner::keyed::todo_key(
+                project.slug.as_str(),
+                record.id.as_str(),
+                role.as_str(),
+                number,
+            )
+        });
+        let binding = Binding {
+            role: role.clone(),
+            session: None,
+            worktree: None,
+            attempt: super::_model::Attempt {
+                number,
+                semantic_key: key.clone(),
+                occurrence,
+                runtime: Some(selected_runtime),
+                lane: Some(*lane),
+                branch: placement.as_ref().map(|p| p.branch.clone()),
+                base_head: placement
+                    .as_ref()
+                    .map(|p| {
+                        instrukt_core::ids::CommitSha::parse(&p.base)
+                            .map_err(|e| WorkError::refused(e.to_string()))
+                    })
+                    .transpose()?,
+                start_from: placement.as_ref().map(|p| p.from.clone()),
+                assignment: if occurrence.is_some() {
+                    AssignmentKind::Task
+                } else {
+                    AssignmentKind::Driver
+                },
+                ..Default::default()
+            },
+        };
+        s.commit("dispatch reserved", |s| {
+            if let Some(placement) = &placement
+                && *lane == instrukt_runner::interfaces::Lane::Work
+            {
+                s.items[index].record.branch = Some(placement.branch.clone());
+            }
+            s.items[index].record.bindings.push(binding);
+            Ok(())
+        })?;
+        s.flush()?;
+        if s.items[index].reflection.pending || s.items[index].reflection.conflicted {
+            return Err(WorkError::refused("the dispatch reservation remains pending GitHub reflection; no runtime start was attempted").into());
+        }
+        Ok(DispatchReservation::Start {
+            key,
+            creation: CreationPermit::Initial,
+            worktree: placement,
+        })
+    }
+
     fn session_binding(
         &self,
         project: &ProjectRef,
@@ -301,27 +506,70 @@ impl SessionBindings for Work {
         Ok(evidence
             .bindings
             .into_iter()
+            .rev()
             .find(|b| &b.role == role)
             .map(|b| b.binding))
     }
 
-    fn bind_session(
+    fn record_dispatch(
         &self,
         project: &ProjectRef,
         todo: &TodoSlug,
-        role: &RoleName,
-        binding: &SessionBinding,
+        dispatch: &instrukt_runner::interfaces::AcceptedDispatch,
     ) -> Result<(), WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
-        s.commit("session bound", |s| {
+        let machine = s.machine()?;
+        let actor = Actor::Session(dispatch.binding.session.clone());
+        let (model, model_provenance) = s.model_of(&actor);
+        let now = s.now;
+        let fingerprint = instrukt_core::publication::EvalFingerprint::current(self.home())
+            .map_err(WorkError::from)?
+            .map(|f| f.fingerprint);
+        s.commit("dispatch accepted", |s| {
             let record = &mut s.items[index].record;
-            record.bindings.retain(|b| &b.role != role);
-            record.bindings.push(Binding {
-                role: role.clone(),
-                session: binding.session.clone(),
-                worktree: binding.worktree.clone(),
-            });
+            let binding = record
+                .bindings
+                .iter_mut()
+                .find(|b| b.attempt.semantic_key == dispatch.key)
+                .ok_or_else(|| WorkError::refused("the runtime result has no reserved assignment"))?;
+            if binding.attempt.runtime.is_some_and(|runtime|runtime.name()!=dispatch.binding.session.runtime.as_str()) || binding.role != dispatch.role
+                || binding.attempt.occurrence != dispatch.occurrence
+                || binding.attempt.released_at.is_some()
+                || binding.session.as_ref().is_some_and(|id| id != &dispatch.binding.session)
+            {
+                return Err(WorkError::refused("the reserved assignment was released or bound elsewhere"));
+            }
+            binding.session = Some(dispatch.binding.session.clone());
+            binding.worktree = dispatch.binding.worktree.clone();
+            let claim = record.claim.as_mut().ok_or_else(|| {
+                WorkError::refused("the execution claim was released during dispatch")
+            })?;
+            if claim.machine != machine
+                || claim.session.as_ref().is_some_and(|id| id != &dispatch.binding.session)
+            {
+                return Err(WorkError::refused("claimed elsewhere during runtime acceptance"));
+            }
+            claim.session = Some(dispatch.binding.session.clone());
+            if let Some(occurrence) = dispatch.occurrence
+                && !record.stamps.iter().any(|s| {
+                    matches!(s.fact, StampFact::TaskFiringStarted { occurrence: at } if at == occurrence)
+                })
+            {
+                let sequence = record.next_sequence();
+                record.stamps.push(StampRecord {
+            source_comment:None,
+                    fact: StampFact::TaskFiringStarted { occurrence },
+                    at: now,
+                    actor,
+                    role: Some(dispatch.role.clone()),
+                    model,
+                    model_provenance,
+                    eval_fingerprint: fingerprint,
+                    human_involved: None,
+                    sequence,
+                });
+            }
             Ok(())
         })?;
         s.flush()?;
@@ -385,10 +633,11 @@ impl TaskFirings for Work {
             let role = record
                 .bindings
                 .iter()
-                .find(|b| &b.session == session)
+                .find(|b| b.session.as_ref() == Some(session))
                 .map(|b| b.role.clone());
             let sequence = record.next_sequence();
             record.stamps.push(StampRecord {
+                source_comment: None,
                 fact: StampFact::TaskFiringStarted { occurrence },
                 at: now,
                 actor,
@@ -634,9 +883,10 @@ fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
     out
 }
 
-fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
+pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
     let implementation_plan_seeded = seeded(&record);
     TodoEvidence {
+        branch: record.branch.clone(),
         timing: timing(&record),
         id: record.id,
         project: record.project,
@@ -670,12 +920,16 @@ fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvid
         bindings: record
             .bindings
             .into_iter()
-            .map(|b| RoleBinding {
-                role: b.role,
-                binding: SessionBinding {
-                    session: b.session,
-                    worktree: b.worktree,
-                },
+            .filter_map(|b| {
+                Some(RoleBinding {
+                    role: b.role,
+                    binding: SessionBinding {
+                        key: b.attempt.semantic_key.clone(),
+                        session: b.session?,
+                        worktree: b.worktree,
+                    },
+                    attempt: b.attempt,
+                })
             })
             .collect(),
         hold: record.hold,
@@ -823,6 +1077,7 @@ mod tests {
     fn a_plan_first_written_after_a_plan_review_is_not_seeded() {
         let mut record = with_plan(filer(), 5);
         record.stamps.push(StampRecord {
+            source_comment: None,
             fact: StampFact::PreparationVerdict {
                 phase: PreparationReview::PlanReview,
                 verdict: ReviewVerdict::NeedsWork,

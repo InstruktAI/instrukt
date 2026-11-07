@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/session-continuity.rs
-expression: "stderr(&env, &run)"
----
-instrukt: refused; nothing was written:
-[TMP]/home/.instrukt/instrukt.yaml: modules.events: standing agents need a runtime, and no runtime is chosen; choose one with `runner.runtime` or map one under `runtimes`
-[TMP]/home/.instrukt/instrukt.yaml: modules.todos: todo dispatch and recurring tasks need a runtime, and no runtime is chosen; choose one with `runner.runtime` or map one under `runtimes`

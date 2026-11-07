@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/pending-documentation.rs
+assertion_line: 206
 expression: "stdout(&env, &not_mine)"
 ---
 # instrukt docs get --target build-it: acme/spec/later
@@ -10,7 +11,7 @@ type: spec
 domain: acme
 scope: global
 description: A new contract other-work delivers.
-source: [TMP]/demo/docs/domain/acme/spec/later.md
+source: [TMP]/build-it-prepare/docs/domain/acme/spec/later.md
 ---
 # NOTE: This snippet is pending; its body is withheld until it is delivered by: other-work.
 # Read it as that todo will deliver it: instrukt docs get acme/spec/later --target <slug>

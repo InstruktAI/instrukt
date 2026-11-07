@@ -246,26 +246,27 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 - **Evidence available:** `INTEGRATION COMPLETE`, empty candidate queue, synced main,
   and Integrator lease (`sdlc/procedure/lifecycle/integrate`).
 - **Ownership:** completion is mechanically determined by the Integration state
-  machine; Integrator executes departure; the Integration state machine owns delivery
-  state.
+  machine; Integrator reconciles delivery and cleanup, then parks in its standing
+  session; the Integration state machine owns delivery state.
 - **Coordinator:** no intervention and no log line.
-- **Stop and settlement:** settle when the Integrator performs its departure reminder
-  and ends cleanly.
+- **Stop and settlement:** settle when the Integrator records delivery and any owed cleanup,
+  then parks under its standing binding. A later integration event continues
+  that session under `sdlc/procedure/lifecycle/integrate`.
 
 ##### NC-11 — Integrator transient dirty-root block
 
 - **Evidence available:** `REPO ROOT SYNC REQUIRED`, exact dirty paths and authorship
-  evidence, continuous-block duration, Integrator reminder/lease, and delivery state.
-- **Ownership:** Integrator judges retry/escalation under its contract. The authoring
-  role identified by evidence alone clears substantive foreign work; Integrator may
-  commit only the contract's trivial hygiene exception and resumes integration. The
-  Integration state machine owns delivery state.
-- **Coordinator:** reflect valid reminder-driven retry without interference. After the
-  contract window, Integrator—not Coordinator—owns escalation. Point only on positive
-  evidence that Integrator skipped that act or its delivery path failed.
+  evidence, the retained unresolved sync operation, standing-session binding, and delivery state.
+- **Ownership:** Integrator retains the failed sync and routes clearance to the
+  owner of the blocking work under `sdlc/procedure/lifecycle/integrate`. Once
+  clearance is evidenced, the integrator rechecks ancestry and continues the
+  owed fast-forward; the Integration state machine owns delivery state.
+- **Coordinator:** leave the retained recovery with the standing integrator. Event-driven
+  continuation rechecks the unresolved operation; human-owned questions stay
+  in that session. Point only on positive evidence that the integrator
+  omitted its recovery obligation or its delivery path failed.
 - **Stop and settlement:** stop after leaving the valid retry alone or sending one
-  pointer. Settle when main clears and integration advances, or when the ordered human
-  beacon is delivered.
+  pointer. Settle when main clears and integration advances, or when a human-owned question reaches the integrator's waiting thread.
 
 ##### NC-12 — Integrator unrecoverable human beacon
 

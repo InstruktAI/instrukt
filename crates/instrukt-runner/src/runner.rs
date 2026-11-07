@@ -16,7 +16,6 @@ use instrukt_core::fsx::{FsError, LockGuard};
 use instrukt_core::github;
 use instrukt_core::home::Home;
 use instrukt_core::ids::CommitSha;
-use instrukt_core::index::GlobalIndex;
 use instrukt_core::publication::PublishedRecord;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -41,6 +40,8 @@ const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 pub enum RunnerError {
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
+    #[error("the activation wake channel failed; accepted work remains pending")]
+    ActivationWakeFailed,
     #[error(transparent)]
     Consumer(#[from] ConsumerError),
     #[error(transparent)]
@@ -120,13 +121,24 @@ pub enum TickOutcome {
 /// One wake-up at `now`; exits at once when the runner lock is held.
 pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, RunnerError> {
     let state = RunnerState::new(cx.home);
-    let Some(_lock) = LockGuard::try_acquire(&state.runner_lock())? else {
+    let Some(_runner) = LockGuard::try_acquire(&cx.home.runner_lock_file())? else {
+        return Ok(TickOutcome::Busy);
+    };
+    let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
         tracing::info!(event = "tick_runner_busy");
         return Ok(TickOutcome::Busy);
     };
     let considered = considered_projects(cx.home)?;
     let platform = event_platform(cx, &state, &considered)?;
-    wake(cx, &state, now, &considered, platform.as_ref(), true)?;
+    wake(
+        cx,
+        &state,
+        now,
+        &considered,
+        platform.as_ref(),
+        true,
+        &invocation,
+    )?;
     Ok(TickOutcome::Done)
 }
 
@@ -138,7 +150,7 @@ pub fn run(
     interval: Duration,
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
-    let _lock = LockGuard::acquire(&state.runner_lock(), RUN_LOCK_WAIT)?;
+    let _runner = LockGuard::acquire(&cx.home.runner_lock_file(), RUN_LOCK_WAIT)?;
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);
     let mut platform: Option<EventPlatform> = None;
     let mut _readers = None;
@@ -151,19 +163,43 @@ pub fn run(
             _readers = Some(prepared.runtime.start(Arc::clone(&clock))?);
             platform = Some(prepared);
         }
-        let enabled_platform = platform
-            .as_ref()
-            .filter(|_| considered.iter().any(|project| project.events));
-        if let Err(err) = wake(cx, &state, clock(), &considered, enabled_platform, false) {
+        let events_enabled = Configuration::load_global(cx.home)?.module_enabled(Module::Events)?
+            || considered.iter().any(|project| project.events);
+        let enabled_platform = platform.as_ref().filter(|_| events_enabled);
+        let invocation = crate::keyed::RuntimeInvocation::acquire(cx.home, RUN_LOCK_WAIT)?;
+        if let Err(err) = wake(
+            cx,
+            &state,
+            clock(),
+            &considered,
+            enabled_platform,
+            false,
+            &invocation,
+        ) {
             tracing::error!(event = "runner_wakeup_failed", error = %err);
         }
-        std::thread::sleep(interval);
+        drop(invocation);
+        if let Some(platform) = &platform {
+            let receiver = platform
+                .wakeups
+                .lock()
+                .map_err(|_| RunnerError::ActivationWakeFailed)?;
+            match receiver.recv_timeout(interval) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RunnerError::ActivationWakeFailed);
+                }
+            }
+        } else {
+            std::thread::sleep(interval);
+        }
     }
 }
 
 struct EventPlatform {
     transport: ScopedTransport,
     runtime: ConsumerRuntime,
+    wakeups: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
 fn event_platform(
@@ -171,19 +207,26 @@ fn event_platform(
     state: &RunnerState,
     projects: &[Considered],
 ) -> Result<Option<EventPlatform>, RunnerError> {
-    if !projects.iter().any(|project| project.events) {
+    if !Configuration::load_global(cx.home)?.module_enabled(Module::Events)?
+        && !projects.iter().any(|project| project.events)
+    {
         return Ok(None);
     }
     let transport =
         ScopedTransport::from_config(&Configuration::load_global(cx.home)?, cx.env, state)?;
     let computer = instrukt_core::machine::machine_id(cx.home)?;
+    let (wakeup, wakeups) = std::sync::mpsc::sync_channel(1);
     let runtime = ConsumerRuntime::new(
         state.clone(),
         transport.clone(),
         computer.as_str(),
-        vec![consumers::activation_consumer(cx.home, state)?],
+        vec![consumers::activation_consumer(cx.home, state, wakeup)?],
     )?;
-    Ok(Some(EventPlatform { transport, runtime }))
+    Ok(Some(EventPlatform {
+        transport,
+        runtime,
+        wakeups: std::sync::Mutex::new(wakeups),
+    }))
 }
 
 fn wake(
@@ -193,10 +236,12 @@ fn wake(
     considered: &[Considered],
     platform: Option<&EventPlatform>,
     drain: bool,
+    invocation: &crate::keyed::RuntimeInvocation,
 ) -> Result<(), RunnerError> {
     let previous = ticks::last_wakeup(state)?;
     ticks::record_wakeup(state, now)?;
     let dispatch_cx = DispatchContext {
+        invocation,
         home: cx.home,
         env: cx.env,
         now,
@@ -204,6 +249,23 @@ fn wake(
         previous_wake: previous,
         state,
     };
+    // Observe once before dispatch so all local readers see an integrated revision.
+    // Synchronization is independent of event-module enablement and emits no main-ahead event.
+    let mut mains = std::collections::BTreeMap::new();
+    for considered in considered {
+        let project = &considered.project;
+        match sources::observe_main(&project.root) {
+            Ok(observed) => {
+                if let Err(error) = sources::synchronize_main(&project.root, &observed) {
+                    tracing::warn!(event = "canonical_checkout_sync_failed", project = %project.slug, error = %error);
+                }
+                mains.insert(project.slug.clone(), observed);
+            }
+            Err(error) => {
+                tracing::warn!(event = "main_unobservable", project = %project.slug, error = %error)
+            }
+        }
+    }
     std::thread::scope(|threads| -> Result<(), RunnerError> {
         let events = threads.spawn(|| {
             EventWake {
@@ -211,6 +273,7 @@ fn wake(
                 state,
                 now,
                 considered,
+                mains: &mains,
                 platform,
                 drain,
             }
@@ -226,6 +289,24 @@ fn wake(
             .join()
             .map_err(|_| RunnerError::EventWorkerPanicked)?
     })?;
+    if let Err(error) = standing::deliver_pending(invocation, now) {
+        tracing::warn!(event="standing_delivery_failed",error=%error);
+    }
+    if let Some(runtime) = Configuration::load_global(cx.home)?.runner_runtime()? {
+        let adapter = crate::runtime::adapter(runtime);
+        if let Err(error) = crate::_attention::approvals(invocation, adapter.as_ref(), now) {
+            tracing::warn!(event="approval_attention_failed",error=%error);
+        }
+        if let Err(error) = crate::inputs::pump_all(invocation, adapter.as_ref(), now) {
+            tracing::warn!(event="pending_input_failed",error=%error);
+        }
+        if let Err(error) = crate::_attention::settle_approvals(state) {
+            tracing::warn!(event="approval_settlement_failed",error=%error);
+        }
+        if let Err(error) = standing::settle(state) {
+            tracing::warn!(event="standing_settlement_failed",error=%error);
+        }
+    }
     tracing::debug!(event = "runner_wakeup_done", at = %now);
     Ok(())
 }
@@ -235,6 +316,8 @@ struct EventWake<'a, 'cx> {
     state: &'a RunnerState,
     now: Timestamp,
     considered: &'a [Considered],
+    mains:
+        &'a std::collections::BTreeMap<instrukt_core::ids::ProjectSlug, sources::MainObservation>,
     platform: Option<&'a EventPlatform>,
     drain: bool,
 }
@@ -246,21 +329,22 @@ impl EventWake<'_, '_> {
             state,
             now,
             considered,
+            mains,
             platform,
             drain,
         } = self;
         let log = DbEventLog::new(state.clone(), now);
-        let index = match GlobalIndex::load(cx.home) {
-            Ok(index) => index.unwrap_or_default(),
-            Err(error) => {
-                tracing::warn!(event = "index_unreadable", error = %error);
-                GlobalIndex::default()
-            }
-        };
         let ready =
             platform.is_none_or(|platform| platform.runtime.prepare_scope(EventScope::Local));
         for project in considered.iter().filter(|project| project.events) {
-            read_sources(cx, state, &log, project, now);
+            read_sources(
+                cx,
+                state,
+                &log,
+                project,
+                mains.get(&project.project.slug),
+                now,
+            );
         }
         if let Some(platform) = platform {
             if ready {
@@ -268,21 +352,6 @@ impl EventWake<'_, '_> {
             }
             if drain {
                 platform.runtime.drain(now);
-            }
-        }
-        for project in considered.iter().filter(|project| project.events) {
-            for procedure in standing::subscribers(&index, &project.project.slug) {
-                if let Err(error) = standing::deliver(
-                    state,
-                    &log,
-                    &project.config,
-                    cx.env,
-                    procedure,
-                    &project.project.slug,
-                    &project.project.root,
-                ) {
-                    tracing::warn!(event = "standing_delivery_failed", project = %project.project.slug, procedure = %procedure.id, error = %error);
-                }
             }
         }
         Ok(())
@@ -324,6 +393,7 @@ fn read_sources(
     state: &RunnerState,
     log: &DbEventLog,
     considered: &Considered,
+    observed: Option<&sources::MainObservation>,
     now: Timestamp,
 ) {
     let project = &considered.project;
@@ -347,16 +417,10 @@ fn read_sources(
             tracing::warn!(event = "events_watch_unreadable", project = %project.slug, error = %err)
         }
     }
-    let observed = match sources::observe_main(&project.root) {
-        Ok(observed) => observed,
-        Err(err) => {
-            tracing::debug!(event = "main_unobservable", project = %project.slug, error = %err);
-            return;
-        }
+    let Some(observed) = observed else {
+        return;
     };
-    if let Some(event) = observed.main_ahead(&project.slug) {
-        append(&event);
-    }
+
     // CI is read for the active candidate and for remote canonical main's
     // head, in one conditional pass.
     let candidate = observed.candidate.clone();

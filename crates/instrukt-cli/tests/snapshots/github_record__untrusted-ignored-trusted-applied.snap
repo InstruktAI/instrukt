@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/github-record.rs
+assertion_line: 381
 expression: "redact(&format!(\"{unchanged}---\\n{applied}\"))"
 ---
 nested-lists · feature · active
@@ -26,7 +27,7 @@ created: <time> by Test Developer
 revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 issue: #1
 claim: not held
 hold: waiting for the renderer rewrite (manual, by Other Developer, <time>)

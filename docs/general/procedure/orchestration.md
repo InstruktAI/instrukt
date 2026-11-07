@@ -9,6 +9,7 @@ visibility: 'public'
 ## Required reads
 
 - [sdlc/procedure/lifecycle/overview](../../domain/sdlc/procedure/lifecycle/overview.md)
+- [general/procedure/ai-to-ai-operations](ai-to-ai-operations.md)
 
 ## Goal
 
@@ -63,14 +64,17 @@ actually did the work recorded there.
    idempotent. An effect remains owed while its optional `done_when` condition
    is absent or does not hold; the next call re-derives what is still owed.
    Record failures and their recovery rather than treating a silent skip as success.
-4. Dispatch or continue workers through the sessions facade. Preserve the
-   session binding per todo and role. Observe with `instrukt sessions alive`,
-   use `instrukt sessions send` to continue the assignment, and use
-   `instrukt sessions run` when a new session is required. Selection walks
-   procedure `dispatch` or global `agents.order`, including thinking mode,
-   taking the first available agent where the adapter supports selection.
-   Only a rejection proven to precede creation permits fallback; an ambiguous
-   start remains pending for reconciliation. Exhaustion is an anomaly.
+4. Reserve a new worker through the selected `instrukt todo attempt` action.
+   Use its rendered brief, role, attempt, semantic key, display title and captured shared head with the
+   configured runtime delegation instruction under
+   `general/procedure/ai-to-ai-operations`; immediately record `todo bind` with
+   the native child id and matching shared workspace evidence. Continue active attempts
+   with native child messaging. The runtime supplies parent linkage and result
+   attention. Yield while valid work continues; read the native result and current
+   record before choosing the next contribution. Selection follows procedure
+   `dispatch` or `agents.order` where natively supported. A proven rejection
+   before creation permits fallback; ambiguous native starts retain their attempt.
+
 5. Assess current session and work evidence under the sections below. A step
    is complete only when the record carries its required artifact and stamp,
    with current target bindings. A reply or ended run alone supplies neither.
@@ -78,9 +82,12 @@ actually did the work recorded there.
    closes this assignment; remaining session obligations follow
    `general/principle/session-lifecycle`.
 
-The orchestrator executes worktree preparation, upstream merges, publication,
-stale checks, findings relay, kickback and lane release through configured
-commands. The runtime adapter supplies capabilities rather than workflow policy.
+The orchestrator routes workspace preparation, upstream merges and publication
+to the admitted shared child. It coordinates stale evidence, findings relay,
+kickback and lane release through configured record commands. A work team shares
+its orchestrator's one todo worktree and branch; preparation children share the
+preparation orchestrator's `<slug>/prepare` worktree. Completion stamps release workspace attempts
+atomically before the next role is admitted. The runtime adapter supplies capabilities rather than workflow policy.
 The record supplies facts rather than a second stored phase.
 
 ### Terminal Child Cleanup
@@ -94,7 +101,7 @@ never the claim. A refused release remains unresolved.
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
 conversation needs the child, record the contribution and handoff. Close
-supported discussion links with `instrukt sessions link --remove <a> <b>`.
+discussion through the configured runtime discussion instruction.
 Session ending and cleanup belong to the runtime. Preserve any unresolved
 cleanup with its responsible owner.
 
@@ -109,7 +116,7 @@ cleanup with its responsible owner.
 
 ### Conversation and Status Discipline
 
-Read the recorded conversation with `instrukt sessions conversation <id>`
+Read the recorded conversation through the configured runtime read instruction
 when the observation needs it. Keep evidence already read distinct from new
 input, without assuming incremental-tail options. Silence establishes only
 that no new conversation evidence was observed.
@@ -124,23 +131,27 @@ departure in the todo `log`. A status or a worker's justification widens no brie
 | `needs-input` | Read the question in its thread and classify the required input. |
 | `ended ok` | Check the artifact and stamp; a successful run is not completion by itself. |
 | `ended failed` | Read the failure and record evidence; keep the step pending unless its evidence establishes completion. |
-| `gone` | Keep the step pending and follow the runner's one-send recovery. |
+| `gone` | Keep the step pending, inspect confirmed absence and select recovery under the retained attempt. |
 
-A failed status observation is unknown, never `gone`; the runner retries on a
-later tick. For an ended run lacking either artifact or stamp, or a gone
-session, the runner sends once to that same session. Continued absence is an
-anomaly, not permission for duplicate production.
+A failed native status observation remains unknown; the governing parent
+retains its unresolved attempt. For a child ending without required evidence, read the
+reported closing message and current record, then send the bounded recovery
+to its retained session when it can continue. Preserve an unavailable attempt
+and route its grounded failure under the recovery contract. The runtime delivers
+child endings to this parent; this parent owns the recovery decision.
 
 ### When Attention Arrives
 
-1. Read later human input before using the observation. Apply current steering
+1. Read the native result's child id, then its role/attempt binding and report.
+   Keep finished-turn, failed-turn and input-wait accounts distinct; a missing
+   message is an evidence gap. Read later human input before using the observation. Apply current steering
    and preserve any explicit boundary; stale dispatch assumptions supply no authority.
 2. Read native evidence, the session conversation and work artifacts under
    `general/procedure/ai-to-ai-operations`. Distinguish reported-time evidence
    from current evidence. An unchanged conversation does not dismiss a failure.
 3. For an obstruction, use When Worker Needs Help. For apparent completion,
    verify the required report and stamp before re-deriving the next action.
-4. Yield while valid work continues. Runner ticks own continued observation;
+4. Yield while valid work continues. Native results restore parent attention;
    this procedure adds no timer or terminal polling loop.
 5. Send substantive next work or recovery, never acknowledgement-only guidance.
 
@@ -152,7 +163,10 @@ anomaly, not permission for duplicate production.
 2. Record the next contribution and its owner. A plan defect returns through
    the work kickback path; an unresolved technical question returns to evidence.
 3. The responsible session asks a human-owned question in its own thread.
-   Ordinary approval waits are visible as `needs-input`, with no notification.
+   A child's native input-wait result reaches its parent for assessment; read that
+   question and apply the existing mandate. A recorded approval or request-changes
+   decision reaches the live claim-holding orchestrator as direct attention;
+   re-derive the obligation from the updated record.
 4. An unattended failure is an anomaly. The runner decides notification;
    only a reference to the anomaly session or dispatch hold may be delivered.
 
@@ -163,13 +177,13 @@ step. Read the failure evidence before selecting recovery. A failed send proves
 only a delivery failure; silence proves neither failed startup nor an unusable
 session. Preserve the recorded session and any work already produced.
 
-Inspect through `alive`, `conversation` and work-record reads. Recover an
-executing worker within its brief through `send`. Availability selection belongs
+Inspect through configured runtime status/conversation reads and work records.
+Recover an executing worker within its brief through native child messaging. Availability selection belongs
 to the runtime checks and ordered dispatch contract; it supplies no manual
 provider-status mutation, restart or quota timer. Distinguish a start failure
 from a failed observation and from execution that began and remains incomplete.
 When evidence establishes rejection before any session was created, retry
-through the adapter's supported availability selection. An ambiguous start
+through the native runtime's supported availability selection. An ambiguous start
 retains its identity and pending work for reconciliation; session ending and
 cleanup belong to the runtime. If recovery cannot complete, preserve the pending
 step and report the anomaly.
@@ -205,8 +219,9 @@ lifecycle execution and state mutation.
 
 The orchestrator never stamps an outcome on a worker's behalf. The responsible
 worker writes the complete phase-specific report and stamps its own verdict.
-If the stamp is missing, the runner sends one retry to that same session;
-continued absence is an anomaly, not authority for an orchestrator stamp.
+If the stamp is missing, read the child's ending and current evidence, then
+return that obligation to the retained worker through a bounded follow-up.
+Preserve unresolved absence through the recovery path.
 
 The orchestrator must not rebrand Requirement-Violation, Critical, or Important
 findings as "non-blocking", "follow-up", "suggestion", or any other reduced
@@ -222,7 +237,7 @@ tier blocks the verdict — there is no fourth tier and no deferral path.
 ## Steps
 
 1. Derive the current obligation and execute its configured action and effects.
-2. Observe workers through the facade and inspect their record-backed outputs.
+2. Observe workers through configured runtime operations and inspect their record-backed outputs.
 3. Route recovery to the owning role and re-derive after material outcomes.
 4. Confirm terminal handoff and claim release; retain other live obligations.
 

@@ -81,10 +81,10 @@ impl<'a> Values<'a> {
     /// paths resolve for the reader's own session. A refusal replaces the
     /// directive with a notice and is listed in
     /// [`Rendered::config_refusals`].
-    pub fn read(configuration: &'a Configuration) -> Self {
+    pub fn read(configuration: &'a Configuration, env: &Env) -> Self {
         Self {
             configuration,
-            env: Env::from_process(),
+            env: env.clone(),
             moment: Moment::Read,
         }
     }
@@ -93,16 +93,16 @@ impl<'a> Values<'a> {
     /// runtime session. A `runtime.*` path is refused (validation reports
     /// it first), and so is any value interpolating a session; any refusal
     /// fails the rendering ([`DocsError::ConfigUnresolved`]).
-    pub fn publish(configuration: &'a Configuration) -> Self {
-        let sessions: Vec<&str> = configuration
-            .runtimes()
-            .iter()
-            .map(|r| r.session_id_env.as_str())
-            .collect();
-        let env = Env::from_pairs(std::env::vars_os().filter_map(|(k, v)| {
-            let k = k.into_string().ok()?;
-            (!sessions.contains(&k.as_str())).then_some((k, v.into_string().ok()?))
-        }));
+    pub fn publish(
+        configuration: &'a Configuration,
+        lookup: Option<&dyn crate::interfaces::CallerIdentityLookup>,
+    ) -> Self {
+        let env = Env::from_process();
+        let env = match lookup {
+            Some(lookup) => env.with_caller(lookup),
+            None => env,
+        }
+        .without_caller();
         Self {
             configuration,
             env,

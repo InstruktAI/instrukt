@@ -10,7 +10,6 @@
 
 use std::process::ExitCode;
 
-use instrukt_core::config::Env;
 use instrukt_core::ids::TodoSlug;
 use instrukt_todos::evidence::TodoStatus;
 use instrukt_todos::workflow::{Flow, Next, Pickup, Rendering, Responsible, Workflow};
@@ -23,6 +22,9 @@ use crate::wiring::{work_evidence, work_ports};
 pub struct FlowArgs {
     /// The todo to pick up and derive the next obligation of.
     slug: TodoSlug,
+    /// Native recorded-workspace evidence as JSON, from a file or - for stdin.
+    #[arg(long)]
+    placement_evidence: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -46,7 +48,40 @@ pub fn run(command: FlowCommand, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let (Some(evidence), Some(ports)) = (work_evidence(ctx)?, work_ports(ctx)?) else {
         return not_built(name);
     };
-    let workflow = Workflow::new(ctx.home.clone(), evidence, Env::from_process());
+    let workflow = Workflow::new(ctx.home.clone(), evidence, crate::wiring::environment(ctx)?);
+    let config = instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
+    let env = crate::wiring::environment(ctx)?;
+    let work = instrukt_todos::work::Work::new(ctx.home.clone(), env.clone(), ctx.clock.shared());
+    let project = work.project_at(&ctx.cwd)?;
+    let domain = config.workflow_domain()?;
+    let flavor = instrukt_todos::workflow::Flavor::load(
+        &ctx.home.docs_dir().join(domain.as_str()).join("workflow"),
+    )?;
+    let role = flavor
+        .orchestrator(flow.as_str())
+        .ok_or_else(|| anyhow::anyhow!("flow has no orchestrator"))?;
+    let placement_evidence = args
+        .placement_evidence
+        .as_deref()
+        .map(crate::commands::todo::native_input)
+        .transpose()?
+        .map(|text| serde_json::from_str::<instrukt_todos::work::DriverPlacement>(&text))
+        .transpose()?;
+    if let Some(placement) = work.workspace_entry(
+        &project,
+        &instrukt_todos::work::WorkspaceRequest {
+            todo: &args.slug,
+            role,
+            cwd: &ctx.cwd,
+            preparation: flow == Flow::Prepare,
+            evidence: placement_evidence.as_ref(),
+        },
+    )? && !placement.admitted
+    {
+        let instruction = config.get_str("runtime.start_thread", &env)?;
+        ctx.out.json(&serde_json::json!({"placement":placement,"instruction":instruction,"continuation":format!("instrukt todo {} {} --placement-evidence <file|->",flow.as_str(),args.slug)}))?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let next = workflow.next(&ctx.cwd, flow, &args.slug, ports.claims.as_ref())?;
     let (text, executable) = render(&next);
     ctx.out.text(&text)?;
@@ -84,6 +119,7 @@ fn render(next: &Next) -> (String, bool) {
     );
     line(&mut out, "action", obligation.action.as_str());
     let party = match &obligation.responsible {
+        Responsible::Role(role) => format!("{role} (native shared assignment)"),
         Responsible::Orchestrator(role) => format!("{role} (orchestrator step)"),
         Responsible::Procedure(procedure) => match &next.responsible_role {
             Some(role) => format!("{role} ({procedure})"),
@@ -92,6 +128,9 @@ fn render(next: &Next) -> (String, bool) {
     };
     line(&mut out, "responsible", &party);
     executable &= rendered(&mut out, "command", &obligation.command);
+    if let Some(instruction) = &obligation.dispatch_instruction {
+        executable &= rendered(&mut out, "native dispatch (orchestrator)", instruction);
+    }
     if obligation.effects.is_empty() {
         line(&mut out, "effects", "none");
     } else {

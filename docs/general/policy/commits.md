@@ -9,7 +9,7 @@ visibility: public
 
 ## Rules
 
-Direct commits land on local main. Only the integrator pushes main, carrying settled direct commits through `integrate`, CI and exact-commit fast-forward; there is no CI-exempt route. A direct-commit review records its verdict and report digest with `instrukt repo stamp <sha…> --verdict approve|needs_work --report <file>` as a git note on each commit. Notes travel with push and need no separate work record; the integrator reads them.
+Main has one writer: the integrator. Every other agent authors and commits in a worktree: a todo's separate preparation and work worktrees, or a short-lived one-off worktree for ad hoc work. Independent review binds the exact worktree head before integration. Reviewed preparation docs are integrated as soon as possible before build; work later starts from that updated main. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
 
 This is the canonical source of commit behavior. Other docs may reference it, but must not redefine commit policy.
 
@@ -27,10 +27,7 @@ type(scope): subject
 
 **Todo association:**
 
-For documentation prepared for a future todo, choose the fitting slug before
-committing and supply it through `instrukt repo commit --todo <slug>`. Choosing the
-slug creates and reserves no todo. Work associated with an existing todo uses
-the same flag. Work outside a todo keeps its ordinary commit path.
+Create the todo before its first committing preparation step and associate its worktree commits through `instrukt repo commit --todo <slug>`. Ad hoc work retains its one-off worktree and reviewed head until integration.
 
 **Valid types:**
 
@@ -67,8 +64,7 @@ All Committizen types are allowed.
   with git first, or name its paths with `--only <path>...` to commit just
   those.
 
-- Post-commit review is routed by the committed diff, not by pre-commit
-  permission. Functional code/tests are committed first. The authoring session
+- Review is routed by the committed worktree diff and binds its head before merge. Functional code/tests are committed in that worktree first. The authoring session
   decides for each commit whether independent review is owed, by what a wrong change would
   cost. Review is owed when the change carries a consequence its author cannot
   establish alone: new or changed logic, a state or data shape, a contract
@@ -84,10 +80,7 @@ All Committizen types are allowed.
   intent does not establish its effect on the rest of the system. Which paths
   the diff touches never decides that review is owed. Review is technical
   stewardship, never a human ratification step.
-  For a commit in the own-stamp class that owes no independent review, its
-  author records `instrukt repo stamp <sha> --verdict exempt --reason <text>`.
-  Direct commits settle with either an independent `approve` note and report
-  binding or an author's `exempt` note and reason; `needs_work` settles neither.
+  A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 
 - A `REQUEST CHANGES` verdict stays with the authoring session for
   evidence-based rejection or in-scope remediation and re-review. Before

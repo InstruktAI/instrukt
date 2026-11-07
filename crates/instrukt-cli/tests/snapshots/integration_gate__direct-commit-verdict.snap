@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/integration-gate.rs
-expression: note
----
-at: 2030-01-06T09:00:00.000000000Z; verdict: exempt; reason: a typo fix

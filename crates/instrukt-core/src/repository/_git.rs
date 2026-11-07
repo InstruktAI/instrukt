@@ -15,7 +15,7 @@ pub(crate) fn root(cwd: &Path) -> Result<PathBuf, RepositoryError> {
 
 /// The repository's primary worktree (the first `git worktree list`
 /// names).
-pub(crate) fn primary_worktree(root: &Path) -> Result<PathBuf, RepositoryError> {
+pub fn primary_worktree(root: &Path) -> Result<PathBuf, RepositoryError> {
     let listing = git::run(root, ["worktree", "list", "--porcelain"])?;
     Ok(listing
         .lines()

@@ -31,7 +31,7 @@ same runner, not separate services per module.
 | Capability | Runner responsibility |
 | --- | --- |
 | `core` | Always available; documentation, configuration and publication do not require background work. |
-| `todos` enabled | Dispatch eligible todos through the configured workflow and sessions facade. |
+| `todos` enabled | Start eligible todo orchestrators through the compiled adapter; they delegate workers natively. |
 | `events` enabled | Resolve event subscriptions and start or wake standing agents independently of todo pickup mode. |
 | `blueprint` enabled | Its pushed-revision generation follows its own hook contract; enabling it does not create another runner. |
 
@@ -87,6 +87,19 @@ next effective-config evaluation; explicit convergence withdraws only unneeded
 instrukt-owned units across all projects, retaining data and pending work.
 A receiver or wake-up another enabled project needs stays installed.
 
+### Canonical checkout synchronization
+
+Before dispatch on each tick, the runner observes and fetches remote canonical
+main and fast-forwards a clean canonical project checkout when it is behind.
+Its post-merge hook publishes docs and hands the revision to enabled blueprint.
+Dirty or non-fast-forward checkouts are reported and preserved; no force, stash
+or branch switch is used. The operation runs for considered todo/event projects
+with events independently switchable and consumes no GitHub API quota.
+Every new phase branch starts only after a fresh origin fetch, from origin/main;
+local main is never its base. An outstanding runner.main_failing event wakes
+the integrator for the existing revert-first obligation, and creates no new
+runner admission predicate or todo hold.
+
 ### Todo pickup
 
 `runner.autostart` controls todos only. It is a boolean or a map
@@ -120,34 +133,47 @@ the existing dispatch for recovery. Exhausting a supported selection order is an
 anomaly: the runner releases its own claim through work's command contract and
 sends the anomaly through `runner.notify`; it sets no hold.
 
-The runner on the computer holding the conversation dispatches its intent
-check, where that conversation is readable; it is not copied to the remote
-work store.
+The responsible orchestrator delegates the intent checker natively on the
+computer where the originating conversation is readable, using the configured
+native instruction. Work records the attempt and native child id through
+`todo attempt` and `todo bind`. The runtime delivers its result to its parent;
+GitHub carries the checked record and stamp, not the conversation.
 
 ### Dispatch evidence
 
-The runner starts or reuses a session through
-`project/instrukt/spec/feature/runner/session-continuity`. The workflow
-record's artifact and stamp establish completion of a step. A runtime reply,
-successful process exit, or turn-completion event does not establish that
-completion on its own.
+The runner starts or reuses lane orchestrators and due tasks through the adapter
+selected by `runner.runtime`. Event activation, keyed singleton discovery and
+instrukt event/approval delivery use that same selection.
 
-Todo roles use the durable title key and start marker defined by
-`project/instrukt/spec/feature/runner/session-continuity`. Allocate an attempt
-once and retain it across retries. An unresolved marker is reconciled by exact
-key discovery after restart; an empty listing leaves it pending for
-`resolve-start`. T3 dispatches each role attempt into a new worktree from the
-captured todo head. Roles of one todo run sequentially; completion is admitted
-for the next role only after the fast-forward handoff defined by
-`project/instrukt/spec/feature/workflow/delivery-cycle` is recorded. A review
-releases its attempt without moving the todo branch.
+instrukt derives the separate phase branches; T3 creates and owns their worktrees.
+Preparation starts with `t3 thread start <project> - --worktree origin/main
+--branch <slug>/prepare --title <key>`. After reviewed preparation integrates and
+its local and origin branch are deleted, work starts from updated main with
+`--worktree origin/main --branch <slug>/work`. Another computer uses
+`--worktree origin/<slug>/work --branch <slug>/work`. Creation refuses an existing
+local phase branch. Recorded native placement is verified before binding.
+
+The orchestrator delegates workers through `runtime.dispatch` with shared
+isolation. Work children inherit the work orchestrator's `<slug>/work` worktree; preparation
+children inherit the preparation orchestrator's `<slug>/prepare` worktree. Reserve before native dispatch and bind
+the native id and matching placement before work. One outstanding workspace-role
+attempt is the work workflow's single admission. Completion and release commit
+together; the next role reviews or writes the current shared todo head. The
+orchestrator coordinates only and keeps that worktree clean between roles.
+
+The runtime owns native parent linkage and results. Ambiguous child starts stay
+outstanding for recovery from native task evidence. Tick and run never observe
+children, compose their ending notices or turn stamps/verdicts into dispatch events.
 
 ### Deliberate pickup and switched-off modules
 
 With `runner.autostart` false, a session picks up work deliberately with
-`instrukt todo prepare <slug>` or `instrukt todo work <slug>`, which records the
-claim as automatic dispatch does and makes that session the orchestrator; a due
-task is picked up the same way.
+`instrukt todo prepare <slug>` or `instrukt todo work <slug>`, which records the claim as automatic dispatch does. Preparation retains the
+project-folder orchestrator. Deliberate work entry ensures the todo branch and
+uses configured `runtime.start_thread` to place its orchestrator in the todo's
+one managed worktree, or wakes its existing bound orchestrator; invoking the
+record command from an unrelated checkout does not place a workspace. A due task
+keeps its own task execution placement.
 
 A command of a switched-off module refuses and names the door: `todo` names
 `modules.todos`; `sessions`, `run` and `tick` refuse only
@@ -182,9 +208,10 @@ Then the command refuses and names both switches that would enable it
 
 ## Known caveats
 
-- T3 supports worktree creation but not attachment. The shipped sdlc workflow
-  uses per-role worktrees; a workflow requiring attachment is refused at
-  enablement with that capability named.
+- Re-creating a deleted orchestrator while its todo worktree remains requires
+  safe worktree removal first or the runtime's existing-worktree start where
+  available (T3 MCP); T3's CLI cannot bind it. Waking a settled retained thread
+  uses its existing workspace.
 - Preferred-agent selection on T3 has the limitation recorded in
   `project/instrukt/spec/feature/runner/session-continuity`.
 
