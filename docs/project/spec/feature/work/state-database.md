@@ -118,7 +118,7 @@ bindings) only through work's command contract.
 | `group_slug` | The holder's last-known slug, for a holder not stored on this computer, or `NULL`. |
 | `schedule` | A task's schedule: an ISO-8601 instant with offset, or `cron:<five fields>`; `NULL` for none. |
 | `catch_up` | `once` or `skip`. |
-| `agent`, `thinking` | A task's agent preference and thinking mode, or `NULL`. |
+| `agent`, `tier` | A task's agent preference and tier, or `NULL`. |
 | `claim_machine`, `claim_session`, `claim_at` | The execution claim: holding computer, claiming session, time; `NULL` when unclaimed. `claim.held` is `claim_machine IS NOT NULL`. |
 | `branch` | The work branch recorded at build start. |
 | `delivered_commit`, `delivered_at`, `delivered_by` | Completion evidence. |
@@ -485,6 +485,15 @@ remain as identity caches, including completed occurrences and standalone runs.
 Local events and settled cursors are retained as operational accounting. Redis
 stream retention separately bounds replay; occurrence duplicate marks expire
 after seven days. Local history does not backfill a newly created Redis group.
+
+### Agent capacity
+
+The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases travel in the reflected todo record. The internal `agent_availability` table holds family/model subjects, typed
+available/unavailable/degraded status, optional absolute expiry and reason.
+Migration moves the prior todo preference column and its fast/med/slow values
+to tier light/standard/strong. Absence of capacity marks means available;
+expired marks lapse at the command clock. These are internal storage details;
+agents use `instrukt agents availability|status`, never direct database queries.
 
 ## Use cases
 

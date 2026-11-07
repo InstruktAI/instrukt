@@ -110,17 +110,15 @@ never blesses a diff its own change produced.
    earns its own named test (rules 13-14). A binding to a non-existent scenario is an orphan; it too
    fails the check.
 
-   Every scenario a plan will bind is reserved in the preparation worktree and integrated to main before the build-time binding
-   act — the claim is that the scenario is enclosed by a pending marker owning the binding for the
-   drafting todo. A newly authored scenario carries the claim as its own `planned:<slug>` block; an
-   existing live-and-unbound scenario is claimed by wrapping its `### UC-…` block in a
-   `planned-change:<slug>` that restates the scenario unchanged, which the delivery fold clears so the
-   scenario stays live and the test binding becomes its permanent record. A scenario enclosed by no
-   pending marker is unclaimed. Because prepare authors directly to `main`, a concurrent prepare reads
-   the existing claim and either reuses the scenario by reference — adding no second binding — or
-   authors a distinct scenario; markers never nest, so two todos claiming the same region serialize
-   via `instrukt todo update <later> --after <earlier>`. The duplicate this rule forbids is prevented at
-   its source rather than only caught once both tests have landed.
+   Every scenario a plan will bind is reserved in its preparation worktree, then integrated
+   to main before build. Pending markers initially carry ownership. Preparation folding
+   activates the contract and preserves unbound ownership as feature-spec frontmatter
+   `binding_reservations: {UC-id: todo-slug}`. `instrukt specs reserve` reads both carriers.
+   Work-delivery folding clears a reservation only when the candidate carries its attached
+   test binding. A concurrent preparer reads published reservations and reuses a scenario
+   by reference without adding a binding, or authors a distinct scenario. Prepare never
+   writes directly to main. Overlapping reservations serialize through prerequisites;
+   markers never nest.
 
 9. **A changed scenario forces its bound test to be revisited.** When a scenario's Gherkin changes,
    the bound test is re-derived from the new contract before the change is done (rule 10) — the

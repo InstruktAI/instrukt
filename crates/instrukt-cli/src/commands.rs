@@ -2,6 +2,7 @@
 //! `run` functions, and translates between the command line and its
 //! context's library API; behavior lives in the libraries.
 
+pub mod agents;
 pub mod blueprint;
 pub mod config;
 pub mod docs;

@@ -4,8 +4,8 @@ description: Bring a project's toolchain, quality configuration, and instrukt de
 visibility: 'public'
 role: config-assessor
 dispatch:
-  agent: [claude, codex, gemini, deepseek]
-  thinking_mode: med
+  agent: [claude, codex, gemini]
+  tier: standard
 ---
 
 # Code Config Assessment — Procedure

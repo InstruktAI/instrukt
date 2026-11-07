@@ -7,8 +7,8 @@ parameters:
   - name: slug
     required: true
 dispatch:
-  agent: [gemini, claude, codex, deepseek]
-  thinking_mode: fast
+  agent: [gemini, claude, codex]
+  tier: light
 ---
 
 # Finalize — Procedure

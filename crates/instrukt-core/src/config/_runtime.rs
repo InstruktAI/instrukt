@@ -78,9 +78,11 @@ impl Runtime {
             Self::T3 => "t3",
         }
     }
-    /// T3's CLI supplies no mapping from instrukt agent names to provider/model pairs.
+    /// Families in the compiled T3 catalogue; provider ids remain runtime facts.
     pub fn startable_agents(self) -> Option<&'static [&'static str]> {
-        None
+        match self {
+            Self::T3 => Some(&["claude", "codex", "gemini"]),
+        }
     }
     pub fn caller(self, env: &Env) -> Option<crate::ids::SessionRef> {
         env.caller_identity(self.name())

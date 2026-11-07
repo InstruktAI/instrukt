@@ -185,3 +185,7 @@ review-preparation-head:
 await-preparation-integration:
   command: instrukt todo show {slug}
   template: templates/await-preparation-integration.md
+
+revise-preparation-head:
+  command: instrukt todo attempt {slug} --role planner --procedure sdlc/procedure/lifecycle/prepare/plan-draft --args {slug} --brief -
+  template: templates/revise-preparation-head.md

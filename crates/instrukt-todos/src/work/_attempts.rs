@@ -172,8 +172,37 @@ pub(super) fn preparation_integrated(record: &TodoRecord, root: &Path) -> Result
     }
     Ok(())
 }
+fn native_selection(
+    s: &Session<'_>,
+    record: &TodoRecord,
+    procedure: Option<&str>,
+) -> Result<Option<instrukt_core::config::AgentSelection>, WorkError> {
+    let dispatch = procedure
+        .map(|id| id.parse::<instrukt_core::ids::SnippetId>())
+        .transpose()
+        .map_err(|e| WorkError::refused(e.to_string()))?
+        .as_ref()
+        .map(|id| instrukt_runner::launch::procedure(s.home(), id))
+        .transpose()
+        .map_err(|e| WorkError::refused(e.to_string()))?;
+    let (global, tier) = instrukt_runner::agents::global_order(&s.config);
+    let order = instrukt_runner::agents::agent_order(
+        record.agent.as_ref(),
+        dispatch.as_ref().and_then(|p| p.dispatch.as_ref()),
+        &global,
+        tier,
+    );
+    let selection = instrukt_runner::agents::selections(&s.config, s.home(), &order, s.now)
+        .map_err(|e| WorkError::refused(e.to_string()))?
+        .into_iter()
+        .next();
+    Ok(selection)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeAssignment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<instrukt_core::config::AgentSelection>,
     pub runtime: instrukt_core::config::Runtime,
     pub dispatch_allowed: bool,
     pub brief: String,
@@ -292,6 +321,7 @@ impl Work {
             let mut result = assignment.clone();
             result.dispatch_allowed = active.attempt.no_start_reason.is_some();
             if result.dispatch_allowed {
+                result.selection = native_selection(&s, record, procedure)?;
                 let key = result.semantic_key.clone();
                 s.commit("native dispatch retry admitted", |s| {
                     if let Some(b) = s.items[index]
@@ -301,6 +331,7 @@ impl Work {
                         .find(|b| b.attempt.semantic_key == key)
                     {
                         b.attempt.no_start_reason = None;
+                        b.attempt.native_assignment = Some(result.clone());
                     }
                     Ok(())
                 })?;
@@ -375,7 +406,9 @@ impl Work {
             role.as_str(),
             number,
         );
+        let selection = native_selection(&s, record, procedure)?;
         let assignment = NativeAssignment {
+            selection,
             runtime,
             dispatch_allowed: true,
             brief: brief.into(),
@@ -776,6 +809,8 @@ pub(super) fn readiness(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<instrukt_core::config::AgentSelection>,
     pub key: String,
     pub from: String,
     pub branch: String,
@@ -988,7 +1023,26 @@ impl Work {
             })?;
             s.flush()?;
         }
+        let selection = if admitted {
+            None
+        } else {
+            let domain = s.config.workflow_domain()?;
+            let procedure = instrukt_core::index::GlobalIndex::load(s.home())
+                .map_err(|error| WorkError::refused(error.to_string()))?
+                .and_then(|index| {
+                    index
+                        .snippets
+                        .into_iter()
+                        .find(|entry| {
+                            entry.role.as_deref() == Some(role.as_str())
+                                && entry.domain == domain.as_str()
+                        })
+                        .map(|entry| entry.id.to_string())
+                });
+            native_selection(&s, &s.items[index].record, procedure.as_deref())?
+        };
         Ok(Some(WorkspaceEntry {
+            selection,
             key,
             from,
             branch,

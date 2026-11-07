@@ -79,6 +79,16 @@ impl Pickup for Work {
                 && (r.claim.is_none() || pending_here.contains(&r.id))
                 && kinds.contains(&r.kind)
         });
+        records.retain(|record| {
+            let handed_off = record.claim.is_none()
+                && record.bindings.iter().rev().find(|binding|binding.attempt.assignment==instrukt_runner::interfaces::AssignmentKind::Driver && binding.attempt.lane==Some(instrukt_runner::interfaces::Lane::Prepare)).is_some_and(|binding|binding.attempt.released_at.is_some())
+                && record.stamps.iter().rev().find(|stamp|matches!(stamp.fact,StampFact::PreparationHeadReviewed {..})).is_some_and(|stamp|matches!(&stamp.fact,StampFact::PreparationHeadReviewed {verdict:crate::evidence::ReviewVerdict::Approve,report,..} if record.current_digest("preparation-review-findings")==Some(report)));
+            if handed_off && let Err(error)=super::_attempts::preparation_integrated(record,&project.root) {
+                tracing::info!(event="preparation_handoff_pending",todo=%record.slug,reason=%error);
+                return false;
+            }
+            true
+        });
         records.sort_by_key(|r| r.created);
         let mut ordered: Vec<TodoRecord> = Vec::with_capacity(records.len());
         while !records.is_empty() {
@@ -290,6 +300,57 @@ fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
 }
 
 impl SessionBindings for Work {
+    fn release_unstarted(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoSlug,
+        key: &str,
+    ) -> Result<(), WorkInterfaceError> {
+        let mut s = Session::open(self, project)?;
+        let index = s.enter(todo)?;
+        let machine = s.machine()?;
+        if !s.items[index]
+            .record
+            .claim
+            .as_ref()
+            .is_some_and(|claim| claim.machine == machine && claim.session.is_none())
+        {
+            return Err(WorkError::refused(
+                "unstarted release needs this runner's unassigned claim",
+            )
+            .into());
+        }
+        let state = instrukt_core::state_db::StateRead::open(s.home())
+            .map_err(WorkError::from)?
+            .ok_or_else(|| WorkError::refused("missing reservation database"))?;
+        let attempted:bool=state.conn().query_row("SELECT EXISTS(SELECT 1 FROM runtime_starts WHERE semantic_key=?1) OR EXISTS(SELECT 1 FROM runtime_bindings WHERE semantic_key=?1)",[key],|row|row.get(0)).map_err(instrukt_core::state_db::StateDbError::sqlite(state.path())).map_err(WorkError::from)?;
+        if attempted {
+            return Err(WorkError::refused(
+                "runtime start evidence exists; preserve this assignment for reconciliation",
+            )
+            .into());
+        }
+        let now = s.now;
+        s.commit("selection exhausted before start", |s| {
+            let binding = s.items[index]
+                .record
+                .bindings
+                .iter_mut()
+                .find(|binding| {
+                    binding.attempt.semantic_key == key
+                        && binding.session.is_none()
+                        && binding.attempt.released_at.is_none()
+                })
+                .ok_or_else(|| WorkError::refused("no fresh unbound reservation"))?;
+            binding.attempt.released_at = Some(now);
+            binding.attempt.no_start_reason =
+                Some("No eligible configured model; runtime creation was not attempted.".into());
+            Ok(())
+        })?;
+        s.flush()?;
+        Ok(())
+    }
+
     fn reserve_dispatch(
         &self,
         project: &ProjectRef,
@@ -315,6 +376,48 @@ impl SessionBindings for Work {
                 "dispatch needs this computer's reflected, unassigned execution claim",
             )
             .into());
+        }
+        if occurrence.is_none()
+            && let Some(retained) = record
+                .bindings
+                .iter()
+                .rev()
+                .find(|b| {
+                    b.role == *role
+                        && b.attempt.assignment == AssignmentKind::Driver
+                        && b.attempt.lane == Some(*lane)
+                        && b.session.is_some()
+                        && b.worktree.as_ref().is_some_and(|tree| tree.is_dir())
+                        && b.attempt.failed_at.is_none()
+                })
+                .cloned()
+        {
+            if retained.attempt.runtime != s.config.runner_runtime().map_err(WorkError::from)? {
+                return Err(WorkError::refused("retained phase belongs to another runtime").into());
+            }
+            if retained.attempt.released_at.is_some() {
+                s.commit("resume retained driver", |s| {
+                    let binding = s.items[index]
+                        .record
+                        .bindings
+                        .iter_mut()
+                        .find(|b| b.attempt.semantic_key == retained.attempt.semantic_key)
+                        .ok_or_else(|| WorkError::refused("retained phase disappeared"))?;
+                    binding.attempt.released_at = None;
+                    Ok(())
+                })?;
+                s.flush()?;
+                if s.items[index].reflection.pending || s.items[index].reflection.conflicted {
+                    return Err(WorkError::refused("resumed assignment awaits reflection").into());
+                }
+            }
+            return Ok(DispatchReservation::Existing(SessionBinding {
+                key: retained.attempt.semantic_key,
+                session: retained
+                    .session
+                    .ok_or_else(|| WorkError::refused("retained phase has no native session"))?,
+                worktree: retained.worktree,
+            }));
         }
         let placement =
             (|| -> Result<_, WorkError> {
@@ -1023,6 +1126,7 @@ mod tests {
             id: TodoId::parse(&"ef".repeat(16)).unwrap(),
             project: ProjectSlug::parse("demo").unwrap(),
             slug: TodoSlug::parse("depth").unwrap(),
+            prior_slugs: Vec::new(),
             kind: TodoKind::Change,
             status: TodoStatus::Active,
             created: at(0),
@@ -1049,6 +1153,7 @@ mod tests {
             bindings: Vec::new(),
             hold: None,
             hold_history: Vec::new(),
+            label_actions: Vec::new(),
             after: Vec::new(),
             group: None,
             schedule: None,

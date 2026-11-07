@@ -121,7 +121,16 @@ impl Inventory {
             });
         }
         for (id, lines) in scan.use_cases {
-            let claim = if ambiguous {
+            let explicit = version
+                .frontmatter()
+                .raw
+                .get("binding_reservations")
+                .and_then(|v| v.get(id.as_str()))
+                .and_then(|v| v.as_str())
+                .and_then(|owner| TodoSlug::parse(owner).ok());
+            let claim = if let Some(owner) = explicit {
+                Claim::Held(owner)
+            } else if ambiguous {
                 Claim::Ambiguous(delivered_by.to_vec())
             } else {
                 claim_for(&lines, &blocks, delivered_by)

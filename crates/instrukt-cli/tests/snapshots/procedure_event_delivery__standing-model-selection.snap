@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/procedure-event-delivery.rs
+assertion_line: 752
+expression: "work::redact(&String::from_utf8_lossy(&result.get_output().stdout))"
+---
+[
+  {
+    "provider": "antigravity",
+    "model": "gemini-pro-agent",
+    "session": "t3:s1",
+    "title": "instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork",
+    "state": "running",
+    "settled": false,
+    "semantic_key": "instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork",
+    "last_activity": "<time>",
+    "activity_source": "t3 updatedAt/settledAt: native latest activity or settling"
+  }
+]

@@ -184,6 +184,7 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
             agent_order(value, &effective, &mut found);
+            found.extend(super::_agents::check_chains(value));
         }
     }
     feature_capabilities(value, &effective, &mut found);
@@ -288,17 +289,17 @@ fn runner_runtime(value: &Value, _effective: &Value, out: &mut Vec<KeyFinding>) 
 /// entries that carry `agent:`. Without a mapping no agent can be started,
 /// so every name is a finding.
 ///
-/// The order carries one thinking mode for the whole list, with no
-/// default: `agents.thinking_mode` is required whenever `agents.order` is
+/// The order carries one tier mode for the whole list, with no
+/// default: `agents.tier` is required whenever `agents.order` is
 /// set.
 fn agent_order(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
     let agents = value.get("agents");
     let Some(order) = agents.and_then(|a| a.get("order")) else {
         return;
     };
-    if agents.and_then(|a| a.get("thinking_mode")).is_none() {
+    if agents.and_then(|a| a.get("tier")).is_none() {
         out.push(KeyFinding::new(
-            "agents.thinking_mode",
+            "agents.tier",
             FindingKind::Missing,
             "required whenever agents.order is set",
         ));
@@ -308,7 +309,18 @@ fn agent_order(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
     };
     // T3 uses project provider/model defaults. Preferences remain data and
     // dispatch reports that explicit selection is unsupported.
-    let _ = (order, effective);
+    let _ = effective;
+    if let Ok(catalog) = super::agent_catalog() {
+        for name in order.iter().filter_map(Value::as_str) {
+            if !catalog.contains_key(name) {
+                out.push(KeyFinding::new(
+                    "agents.order",
+                    FindingKind::InvalidValue,
+                    format!("unknown agent family `{name}`"),
+                ));
+            }
+        }
+    }
 }
 
 /// Every reference resolves and none leads back to itself. Webhook secret

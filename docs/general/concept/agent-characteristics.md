@@ -9,7 +9,7 @@ visibility: public
 
 This is the baseline knowledge an agent uses to choose which agent CLI runs
 which work and to compose ordered preferences. The global `agents.order` holds
-the default order and thinking mode; a procedure's `dispatch` frontmatter
+the default order and tier; a procedure's `dispatch` frontmatter
 overrides those defaults where its work needs a different choice. Valid agent
 names come from the configured runtime adapter, rather than a fixed catalog. The
 agents a runtime can start are a separate set from those to which instructions
@@ -162,25 +162,25 @@ does not establish strengths, weaknesses or billing, that gap remains explicit.
 - Typical order: after the characterized frontier pair pending evidence;
   API-billed entries go in the tail, with DeepSeek last.
 
-### Thinking modes
+### Dispatch tiers
 
-A thinking mode sets the depth a dispatched session brings, whichever agent runs
-it. Each procedure's dispatch declaration carries the mode its work earns.
+A tier selects the ordered model chain for each agent family. Provider-native effort is a separate chain-entry setting, not the tier itself. Each procedure declares the tier its work earns; shipped chains use high effort throughout.
 
-- **slow**: work whose error is costly and hard to see — novel design, analysis,
+- **strong**: work whose error is costly and hard to see — novel design, analysis,
   planning, root-cause diagnosis, and every review except one of a
   documentation-only scope that directs no agent differently.
-- **med**: routine work against a settled plan — implementation, fixes,
+- **standard**: routine work against a settled plan — implementation, fixes,
   refactoring — and review of a documentation-only scope that directs no agent
   differently (`general/procedure/orchestration`).
-- **fast**: mechanical, clerical work whose result is checked at a glance.
+- **light**: mechanical, clerical work whose result is checked at a glance.
+- **premium**: an explicit higher-cost model chain, ending with the strong model as fallback. No shipped procedure selects it.
 
 ### Collaboration selection
 
 When an agent needs a partner for collaborative discovery or sparring:
 
 1. Select the complementary agent — the one whose cognitive profile covers your blind spots.
-2. Run the collaboration in **slow** thinking mode.
+2. Run the collaboration in **strong** tier.
 
 Default collaboration pairs:
 

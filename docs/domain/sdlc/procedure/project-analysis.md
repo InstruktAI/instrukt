@@ -4,8 +4,8 @@ description: 'AI-driven project analysis procedure. Guides the analysis session 
 visibility: 'public'
 role: project-analyst
 dispatch:
-  agent: [claude, codex, gemini, deepseek]
-  thinking_mode: med
+  agent: [claude, codex, gemini]
+  tier: standard
 ---
 
 # Project Analysis — Procedure

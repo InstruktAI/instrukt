@@ -194,8 +194,7 @@ I/O; failed observation or delivery retains its cause and retries under
 `project/instrukt/spec/feature/runner/session-continuity`. With no live
 orchestrator it is only a state update: next pickup or a deliberate start
 continues from it. No approval event or second stamp-driven wake is emitted.
-Re-reading an already applied comment neither reapplies the decision nor
-creates another notice. The decision stamp retains its source comment identity
+The claim-hosting computer recovers attention for imported decisions exactly once locally. A foreign computer never classifies a claimant absent from its local runtime as gone. Re-reading an already applied comment neither reapplies the decision nor creates another notice on that computer. The decision stamp retains its source comment identity
 through reflection, claim movement and local database reconstruction. Its confirmation reply is retained with acceptance and
 retried separately. A source-comment marker reconciles a reply whose posting
 acknowledgement was lost, so confirmation retry changes no work fact.
@@ -214,7 +213,7 @@ need no membership in `github.approvers`.
 
 Interest-driven refresh reads attributable label changes and applies each
 accepted change once, in source order, retaining its GitHub action identity.
-Retrying a refresh cannot reapply a processed action. instrukt's own reflection
+Applied action identities travel in the reflected record and are reconciled on every computer and database reconstruction. Retrying a refresh cannot reapply a processed action against a later manual hold. instrukt's own reflection
 writes are reconciled as output, not interpreted as fresh human commands.
 A label snapshot lacking its action and author is insufficient to attribute a
 new hold or release. Inability to verify the actor or read changes is reported

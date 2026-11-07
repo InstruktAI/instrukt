@@ -136,3 +136,45 @@ fn a_marker_around_only_an_inheriting_scenario_does_not_reserve_its_use_case() {
     clear: project/demo/spec/feature/things/thing UC-TH1
     ");
 }
+
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
+#[test]
+fn preparation_activation_keeps_reservations_until_the_binding_tests_deliver() {
+    let env = TestEnv::new();
+    let repo = project(&env, &spec("", &restated("todo-a", "UC-TH1")));
+    env.run(repo.path(), ["docs", "fold", "todo-a"]).success();
+    let before = reserve(&env, &repo, "todo-b", &["UC-TH1"]);
+    // The candidate now contains the test bound by the owning work phase.
+    repo.write(
+        "tests/thing.rs",
+        &format!("// spec: {SPEC} UC-TH1\n#[test]\nfn the_thing_works() {{}}\n"),
+    );
+    env.run(repo.path(), ["docs", "fold", "todo-a"]).success();
+    let after = reserve(&env, &repo, "todo-b", &["UC-TH1"]);
+    insta::assert_snapshot!(
+        "reservation-survives-activation",
+        format!("{before}---\n{after}")
+    );
+}
+
+// spec: project/instrukt/spec/feature/specs/binding-reservation UC-SR1
+#[test]
+fn a_preparation_companion_cannot_drop_another_todos_published_binding_reservation() {
+    let env = TestEnv::new();
+    let repo = project(
+        &env,
+        &spec(
+            "binding_reservations: {UC-TH1: todo-a}\n",
+            &use_case("UC-TH1"),
+        ),
+    );
+    repo.write(
+        "docs/project/spec/feature/things/thing.todo-b.md",
+        &spec("", &use_case("UC-TH1")),
+    );
+    let result = env.run(repo.path(), ["docs", "fold", "todo-b"]).failure();
+    insta::assert_snapshot!(
+        "foreign-binding-reservation-preserved",
+        String::from_utf8_lossy(&result.get_output().stderr)
+    );
+}

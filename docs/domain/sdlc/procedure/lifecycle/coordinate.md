@@ -3,8 +3,8 @@ description: Observe project work by its records and sessions, challenge unsuppo
 visibility: internal
 role: coordinator
 dispatch:
-  agent: [claude, codex, gemini, deepseek]
-  thinking_mode: slow
+  agent: [claude, codex, gemini]
+  tier: strong
 ---
 
 # Coordinate — Procedure

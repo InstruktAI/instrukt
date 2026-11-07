@@ -844,7 +844,7 @@ fn lane_resources(
     )?;
     if let Some(head) = &observed.preparation_head {
         facts.insert("preparation.head", FactValue::Sha(head.clone()))?;
-        let approved = evidence
+        let reviewed = evidence
             .stamps
             .iter()
             .rev()
@@ -853,16 +853,28 @@ fn lane_resources(
                     head: reviewed,
                     report,
                     verdict,
-                } => Some(
-                    reviewed == head
-                        && *verdict == ReviewVerdict::Approve
-                        && Ledger { evidence }.current("preparation-review-findings")
-                            == Some(report),
-                ),
+                } if reviewed == head
+                    && Ledger { evidence }.current("preparation-review-findings")
+                        == Some(report) =>
+                {
+                    Some(verdict)
+                }
+                StampFact::PreparationHeadReviewed { .. } => None,
                 _ => None,
-            })
-            .unwrap_or(false);
-        facts.insert("preparation.review_current", FactValue::Bool(approved))?;
+            });
+        facts.insert(
+            "preparation.review_current",
+            FactValue::Bool(reviewed == Some(&ReviewVerdict::Approve)),
+        )?;
+        if let Some(verdict) = reviewed {
+            facts.insert(
+                "preparation.review_verdict",
+                text(match verdict {
+                    ReviewVerdict::Approve => member::APPROVE,
+                    ReviewVerdict::NeedsWork => member::NEEDS_WORK,
+                }),
+            )?;
+        }
     }
 
     if let Some(path) = observed

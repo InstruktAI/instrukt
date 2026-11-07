@@ -146,6 +146,11 @@ fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_intr
     let id = "11111111111111111111111111111111";
     db.execute("INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence) VALUES (?1,'demo','legacy','change','active','2026-01-01T00:00:00Z','{\"person\":\"Test Developer\"}',1,'once',1)",[id]).unwrap();
     db.execute(
+        "UPDATE todos SET agent='codex',thinking='slow' WHERE id=?1",
+        [id],
+    )
+    .unwrap();
+    db.execute(
         "INSERT INTO artifacts(todo_id,name) VALUES (?1,'input')",
         [id],
     )

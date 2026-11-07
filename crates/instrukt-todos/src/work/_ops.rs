@@ -207,6 +207,7 @@ impl Work {
             id,
             project: project.slug.clone(),
             slug: request.slug.clone(),
+            prior_slugs: Vec::new(),
             kind: request.kind,
             status: if request.icebox {
                 TodoStatus::Iceboxed
@@ -237,6 +238,7 @@ impl Work {
             bindings: Vec::new(),
             hold: None,
             hold_history: Vec::new(),
+            label_actions: Vec::new(),
             after,
             group: None,
             schedule: request.schedule.clone(),
@@ -423,6 +425,7 @@ impl Work {
         project: &ProjectRef,
         slug: &TodoSlug,
         request: UpdateRequest,
+        events: Option<&dyn EventLog>,
     ) -> Result<Outcome<UpdateReport>, WorkError> {
         let preparation = match &request.group {
             Some(Some(parent)) => self.parent_preparation(project, parent)?,
@@ -432,7 +435,28 @@ impl Work {
         s.parent_preparation = preparation;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
-        let warnings = s.commit("updated", |s| apply_update(s, index, &request, &actor))?;
+        let record = &s.items[index].record;
+        let preparation_head = if request.unclaim {
+            preparation_release_head(record)?
+        } else {
+            None
+        };
+        let handoff = preparation_head.map(|revision| Event::PreparationReviewed {
+            project: project.slug.clone(),
+            todo: slug.clone(),
+            revision,
+        });
+        if handoff.is_some() && events.is_none() {
+            return Err(WorkError::refused(
+                "preparation release requires the integrator event log",
+            ));
+        }
+        let handoff_events: Vec<Event> = handoff.into_iter().collect();
+        let warnings = s.commit_with_events(
+            "updated",
+            events.map(|log| (log, handoff_events.as_slice())),
+            |s| apply_update(s, index, &request, &actor),
+        )?;
         s.flush()?;
         Ok(Outcome {
             value: UpdateReport {
@@ -733,23 +757,6 @@ impl Work {
         // The finalize-ready handoff commits with its `workflow.finalized`
         // event, in one transaction.
         let handoff = match &stamp.fact {
-            StampFact::PreparationHeadReviewed {
-                verdict: crate::evidence::ReviewVerdict::Approve,
-                head,
-                ..
-            } => {
-                let log = events.ok_or_else(|| {
-                    WorkError::refused("preparation approval requires the integrator event log")
-                })?;
-                Some((
-                    log,
-                    vec![Event::PreparationReviewed {
-                        project: project.slug.clone(),
-                        todo: slug.clone(),
-                        revision: head.clone(),
-                    }],
-                ))
-            }
             StampFact::FinalizeReady { commit } => {
                 let log = events.ok_or_else(|| {
                     WorkError::refused(
@@ -1029,7 +1036,11 @@ fn apply_update(
         }
         let id = s.items[index].record.id.clone();
         ensure_slug_free(s, new_slug, Some(&id))?;
-        s.items[index].record.slug = new_slug.clone();
+        let record = &mut s.items[index].record;
+        if &record.slug != new_slug && !record.prior_slugs.contains(&record.slug) {
+            record.prior_slugs.push(record.slug.clone());
+        }
+        record.slug = new_slug.clone();
         for item in &mut s.items {
             for reference in item
                 .record
@@ -1151,6 +1162,50 @@ fn apply_update(
         record.claim = None;
     }
     Ok(warnings)
+}
+
+/// Only the current approved preparation head can hand off to the integrator.
+fn preparation_release_head(record: &TodoRecord) -> Result<Option<CommitSha>, WorkError> {
+    let Some(session) = record
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.session.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Some(driver) = record.bindings.iter().rev().find(|binding| {
+        binding.session.as_ref() == Some(session)
+            && binding.attempt.lane == Some(instrukt_runner::interfaces::Lane::Prepare)
+    }) else {
+        return Ok(None);
+    };
+    let Some(stamp) = record
+        .stamps
+        .iter()
+        .rev()
+        .find(|stamp| matches!(stamp.fact, StampFact::PreparationHeadReviewed { .. }))
+    else {
+        return Ok(None);
+    };
+    let StampFact::PreparationHeadReviewed {
+        verdict: crate::evidence::ReviewVerdict::Approve,
+        head,
+        report,
+    } = &stamp.fact
+    else {
+        return Ok(None);
+    };
+    if record.current_digest("preparation-review-findings") != Some(report) {
+        return Ok(None);
+    }
+    let tree=driver.worktree.as_ref().ok_or_else(||WorkError::refused("approved preparation has no recorded workspace; preserve the claim until the handoff is reconciled"))?;
+    let current = git::run(tree, ["rev-parse", "HEAD"])?;
+    if current != head.as_str() {
+        return Err(WorkError::refused(
+            "preparation head changed after review; obtain current review before the integration handoff",
+        ));
+    }
+    Ok(Some(head.clone()))
 }
 
 /// Releases the working resources a withdrawn todo owns (`todos`,
@@ -1808,6 +1863,7 @@ mod tests {
             id: TodoId::parse(&format!("{n:02x}").repeat(16)).unwrap(),
             project: ProjectSlug::parse("demo").unwrap(),
             slug: TodoSlug::parse(slug).unwrap(),
+            prior_slugs: Vec::new(),
             kind: TodoKind::Change,
             status: TodoStatus::Active,
             created: jiff::Timestamp::from_second(i64::from(n)).unwrap(),
@@ -1821,6 +1877,7 @@ mod tests {
             bindings: Vec::new(),
             hold: None,
             hold_history: Vec::new(),
+            label_actions: Vec::new(),
             after: after.iter().map(|r| r.reference()).collect(),
             group: None,
             schedule: None,

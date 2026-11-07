@@ -1,0 +1,37 @@
+---
+source: crates/instrukt-cli/tests/preparation.rs
+assertion_line: 659
+expression: "redact(&format!(\"{rejected}---\\n{corrected}\"))"
+---
+todo: reject-head (demo)
+flow: prepare
+claim: held by this session
+state: preparation_head_revision
+transition: preparation_head_review -> preparation_head_revision (#23)
+action: revise-preparation-head
+responsible: planner (crew/procedure/plan)
+command: instrukt todo attempt reject-head --role planner --procedure crew/procedure/plan --args reject-head --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.family, selection.provider, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
+effects: none
+instructions:
+# Revise rejected preparation head — reject-head
+
+Read the complete `preparation-review-findings` through `instrukt todo artifacts read reject-head preparation-review-findings`. Return every finding to the responsible preparation author in this shared preparation worktree. Correct and commit the head, updating any affected derivations and their review evidence. Integration remains blocked. After corrections obtain a new independent preparation-head review of the resulting commit; never re-review the unchanged rejected head.
+
+---
+todo: reject-head (demo)
+flow: prepare
+claim: held by this session
+state: preparation_head_review
+transition: plan_review -> preparation_head_review (#22)
+action: review-preparation-head
+responsible: commit-reviewer (crew/procedure/review-commits)
+command: instrukt todo attempt reject-head --role commit-reviewer --procedure crew/procedure/review-commits --args reject-head --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.family, selection.provider, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
+effects: none
+instructions:
+# Review preparation head — reject-head
+
+Review the clean `<slug>/prepare` worktree head through the configured native shared dispatch. Write the complete `preparation-review-findings`, then record `instrukt todo stamp reject-head --verdict approve|needs_work --phase preparation_head`. Approval releases your reviewer attempt; the preparer then releases its own claim and hands off to the integrator for immediate documentation integration before build. Changes requested return to the preparation writer; they do not enter main.

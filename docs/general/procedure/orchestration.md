@@ -18,11 +18,11 @@ effects, and keep recovery with its responsible owner until a grounded handoff.
 
 ### Dispatch Rules
 
-- **Reviewer thinking mode follows the review's scope.**
-  - `slow` for commit reviews containing code, including mixed code-and-doc
+- **Reviewer tier follows the review's scope.**
+  - `strong` for commit reviews containing code, including mixed code-and-doc
     scope; for a documentation-only scope that changes what agents are directed
     to do, the process layer included; and for other reviews.
-  - `med` for a documentation-only scope that changes what a snippet
+  - `standard` for a documentation-only scope that changes what a snippet
     establishes and directs no agent differently.
 
   The session dispatching a documentation-only review classifies its scope by

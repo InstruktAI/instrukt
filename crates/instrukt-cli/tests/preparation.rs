@@ -371,8 +371,20 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         &["--verdict", "approve", "--phase", "preparation_head"],
     )
     .success();
+    let before_release = crew.runtime.started_count();
+    project.env.run(crew.root(), ["tick"]).success();
+    assert_eq!(crew.runtime.started_count(), before_release);
+    project
+        .env
+        .instrukt(prepare)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "update", slug, "--unclaim"])
+        .assert()
+        .success();
     project.env.run(crew.root(), ["tick"]).success();
     let before = crew.runtime.started_count();
+    assert_eq!(before, before_release + 1);
+    assert!(prepare.exists());
     assert!(before >= 3);
     let integration = project.env.path("integration-docs");
     project.repo.git([
@@ -454,7 +466,6 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
             ],
         )
         .success();
-    crew.todo(["update", slug, "--unclaim"]);
     let placement = project
         .env
         .instrukt(crew.root())
@@ -469,4 +480,184 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
     );
     assert!(!prepare.exists());
     assert_eq!(crew.runtime.started_count(), before);
+}
+
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR1
+#[test]
+fn rejected_preparation_head_routes_complete_findings_to_remediation_before_review() {
+    let crew = Crew::new();
+    let slug = "reject-head";
+    // Use the shipped transition graph, with this fixture's declared orchestrator.
+    let prepare = include_str!("../../../docs/domain/sdlc/workflow/prepare.yaml")
+        .replace("prepare-orchestrator", "prepare-lead");
+    crew.flavor
+        .repo
+        .write("docs/domain/crew/workflow/prepare.yaml", &prepare);
+    let actions = crew
+        .flavor
+        .repo
+        .read("docs/domain/crew/workflow/actions.yaml");
+    let mut actions: serde_yaml_ng::Value = serde_yaml_ng::from_str(&actions).unwrap();
+    let shipped: serde_yaml_ng::Value = serde_yaml_ng::from_str(include_str!(
+        "../../../docs/domain/sdlc/workflow/actions.yaml"
+    ))
+    .unwrap();
+    for (key, value) in shipped.as_mapping().unwrap() {
+        if !actions.as_mapping().unwrap().contains_key(key) && key.as_str() != Some("roles") {
+            let mut action = value.clone();
+            if let Some(command) = action.get_mut("command") {
+                let rewritten = match key.as_str() {
+                    Some("review-preparation-head") => {
+                        "instrukt todo attempt {slug} --role commit-reviewer --procedure crew/procedure/review-commits --args {slug} --brief -"
+                    }
+                    Some("revise-preparation-head") => {
+                        "instrukt todo attempt {slug} --role planner --procedure crew/procedure/plan --args {slug} --brief -"
+                    }
+                    _ => "instrukt todo show {slug}",
+                };
+                *command = serde_yaml_ng::Value::String(rewritten.into());
+            }
+            actions
+                .as_mapping_mut()
+                .unwrap()
+                .insert(key.clone(), action);
+        }
+    }
+    for role in shipped["roles"].as_sequence().unwrap() {
+        let roles = actions["roles"].as_sequence_mut().unwrap();
+        if !roles.contains(role) {
+            roles.push(role.clone());
+        }
+    }
+    crew.flavor.repo.write(
+        "docs/domain/crew/workflow/actions.yaml",
+        &serde_yaml_ng::to_string(&actions).unwrap(),
+    );
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/domain/sdlc/workflow/templates");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = format!(
+            "docs/domain/crew/workflow/templates/{}",
+            entry.file_name().to_str().unwrap()
+        );
+        if !crew.flavor.repo.path().join(&target).exists() {
+            crew.flavor
+                .repo
+                .write(&target, &std::fs::read_to_string(entry.path()).unwrap());
+        }
+    }
+    crew.flavor
+        .republish(&crew.project.env, "publish the shipped head review graph");
+    crew.project
+        .create(slug, "change", "Correct the rejected preparation.");
+    crew.next("prepare", slug);
+    let writer = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let writer_tree = std::path::Path::new(writer["worktree"].as_str().unwrap());
+    let writer_session = writer["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    std::fs::create_dir_all(writer_tree.join("docs/project/spec")).unwrap();
+    std::fs::write(writer_tree.join("docs/project/spec/preparation-note.md"),"---\ndescription: The grounded preparation decision.\n---\n# Preparation note — Spec\n\n## What it is\n\nA reviewed preparation decision.\n\n## Canonical fields\n\nPreserve reservation ownership.\n").unwrap();
+    crew.project.env.git(writer_tree, ["add", "docs"]);
+    crew.project.env.git(
+        writer_tree,
+        [
+            "commit",
+            "--quiet",
+            "-m",
+            "docs: ground the preparation head",
+        ],
+    );
+    crew.project
+        .env
+        .instrukt(writer_tree)
+        .env("T3CODE_THREAD_ID", writer_session)
+        .args([
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            "implementation-plan",
+            "The grounded plan derived by its bound planner.",
+        ])
+        .assert()
+        .success();
+    crew.project
+        .env
+        .instrukt(writer_tree)
+        .env("T3CODE_THREAD_ID", writer_session)
+        .args(["todo", "stamp", slug, "--role-complete"])
+        .assert()
+        .success();
+    crew.write(slug, "plan-review-findings", "Plan approved.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    let reviewer = crew.worker(
+        slug,
+        "commit-reviewer",
+        Some("crew/procedure/review-commits"),
+    );
+    let tree = std::path::Path::new(reviewer["worktree"].as_str().unwrap());
+    let session = reviewer["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    crew.project
+        .env
+        .instrukt(tree)
+        .env("T3CODE_THREAD_ID", session)
+        .args([
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            "preparation-review-findings",
+            "Correct the reservation ownership and retain every finding.",
+        ])
+        .assert()
+        .success();
+    crew.project
+        .env
+        .instrukt(tree)
+        .env("T3CODE_THREAD_ID", session)
+        .args([
+            "todo",
+            "stamp",
+            slug,
+            "--verdict",
+            "needs_work",
+            "--phase",
+            "preparation_head",
+        ])
+        .assert()
+        .success();
+    let rejected = crew.next("prepare", slug);
+    let correction = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let correction_tree = std::path::Path::new(correction["worktree"].as_str().unwrap());
+    let correction_session = correction["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    std::fs::write(correction_tree.join("docs/project/spec/preparation-note.md"),"---\ndescription: The corrected preparation decision.\n---\n# Preparation note — Spec\n\n## What it is\n\nThe corrected contract.\n\n## Canonical fields\n\nRetain every reservation until its tests deliver.\n").unwrap();
+    crew.project.env.git(correction_tree, ["add", "docs"]);
+    crew.project.env.git(
+        correction_tree,
+        ["commit", "--quiet", "-m", "docs: correct the rejected head"],
+    );
+    crew.project
+        .env
+        .instrukt(correction_tree)
+        .env("T3CODE_THREAD_ID", correction_session)
+        .args(["todo", "stamp", slug, "--role-complete"])
+        .assert()
+        .success();
+    let corrected = crew.next("prepare", slug);
+    insta::assert_snapshot!(
+        "rejected-head-remediation",
+        redact(&format!("{rejected}---\n{corrected}"))
+    );
 }

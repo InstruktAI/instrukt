@@ -99,6 +99,10 @@ const CATALOG: &[(&str, FactType)] = &[
     ("preparation.head", FactType::Sha),
     ("preparation.integrated", FactType::Bool),
     ("preparation.review_current", FactType::Bool),
+    (
+        "preparation.review_verdict",
+        FactType::Enum(REVIEW_VERDICTS),
+    ),
     ("deps.delivered", FactType::Bool),
     ("prd.digest", FactType::Text),
     ("architecture.digest", FactType::Text),

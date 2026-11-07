@@ -8,6 +8,7 @@
 //! [`Layer`]: [`init`], [`migrate`], [`patch`] against a [`revision`], and
 //! [`validate`].
 
+mod _agents;
 mod _effective;
 mod _error;
 mod _features;
@@ -24,9 +25,9 @@ mod _webhooks;
 
 use std::path::Path;
 
-pub use _effective::{
-    ApprovalGate, Approver, BoardRef, Configuration, Notify, ThinkingMode, WatchedRef,
-};
+pub use _agents::{AgentCatalog, AgentSelection, ModelEntry, agent_catalog, validate_model};
+
+pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable};
 pub use _layer::{

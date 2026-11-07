@@ -30,7 +30,7 @@ first input-artifact version in one transaction of the state database
 (`project/instrukt/spec/feature/work/state-database`). Invalid content,
 kind, dependency or grouping rejects creation before partial work is recorded.
 `--icebox` creates the todo in the icebox. For a task, `--agent <name>
-[--thinking slow|med|fast]` sets its optional agent preference, which
+[--tier light|standard|strong|premium]` sets its optional agent preference, which
 dispatch uses before `agents.order`. Admission is the agent's judgment;
 there is no machine proof gate.
 `instrukt todo create` accepts `--human-involved true|false` as an action-scoped,
@@ -168,7 +168,7 @@ The original build base remains unchanged. There is no failed-branch recovery ba
 `instrukt todo update <slug>` admits `--slug <new-slug>`, `--kind <kind>`,
 `--schedule <value>`, `--group <parent>`, `--after <dependencies>`,
 `--hold --reason <text>`, `--release`, `--unclaim` and, for a task,
-`--agent <name> [--thinking slow|med|fast]`. Relationship and hold
+`--agent <name> [--tier light|standard|strong|premium]`. Relationship and hold
 semantics remain in the dependencies-and-holds spec. `--force` permits
 permanent orphan-artifact handling during a kind migration; it grants no
 general bypass of claims, holds or review.
@@ -206,6 +206,8 @@ changes no delivered record. The integrator executes removal outside evaluation.
 Claim release belongs to the work lane before integration handoff. After delivery,
 the integrator removes the todo's one worktree from the project folder, retaining
 failed removal as owed work and preserving the runtime thread record.
+
+Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded phase assignment, preserving original preparation branches and ownership across successive renames.
 
 ## Use cases
 

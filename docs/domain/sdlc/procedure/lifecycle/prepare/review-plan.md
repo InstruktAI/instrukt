@@ -7,8 +7,8 @@ parameters:
   - name: slug
     required: true
 dispatch:
-  agent: [codex, claude, gemini, deepseek]
-  thinking_mode: slow
+  agent: [codex, claude, gemini]
+  tier: strong
 ---
 
 # Review Plan — Procedure

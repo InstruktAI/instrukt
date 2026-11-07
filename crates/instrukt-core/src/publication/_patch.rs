@@ -147,7 +147,7 @@ fn entry(
             .collect(),
         dispatch: procedure.dispatch.as_ref().map(|d| IndexDispatch {
             agent: d.agents.clone(),
-            thinking_mode: serde_plain(&d.thinking_mode),
+            tier: serde_plain(&d.tier),
         }),
         interruptible: procedure.interruptible,
     })

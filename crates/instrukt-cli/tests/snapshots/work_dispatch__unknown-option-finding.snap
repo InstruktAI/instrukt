@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/work-dispatch.rs
+assertion_line: 352
+expression: "String::from_utf8_lossy(&result.get_output().stdout).replace(p.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\")"
+---
+[TMP]/home/.instrukt/instrukt.yaml: agents.codex.light.0: `agents.codex` unsupported option `serviceTier` value `"imaginary"` for gpt-6.1-sol

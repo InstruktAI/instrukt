@@ -32,6 +32,7 @@ states:
 - drift_analysis
 - prepared_release_pending
 - preparation_head_review
+- preparation_head_revision
 - preparation_integration
 transitions:
 - from: start
@@ -273,6 +274,10 @@ transitions:
         - implementation_plan.seeded
         - true
   action: review-preparation-head
+- from: preparation_head_review
+  to: preparation_head_revision
+  when: {equals: [preparation.review_verdict, needs_work]}
+  action: revise-preparation-head
 - from: preparation_head_review
   to: preparation_integration
   when: {equals: [preparation.review_current, true]}

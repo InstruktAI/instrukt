@@ -114,7 +114,7 @@ pub struct IndexParameter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexDispatch {
     pub agent: Vec<String>,
-    pub thinking_mode: String,
+    pub tier: String,
 }
 
 /// One third-party doc.

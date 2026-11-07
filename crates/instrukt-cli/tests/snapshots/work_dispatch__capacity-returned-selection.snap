@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/work-dispatch.rs
+assertion_line: 411
+expression: chosen(&p)
+---
+[
+  {
+    "provider": "codex",
+    "model": "gpt-6.1-sol",
+    "session": "t3:s1",
+    "title": "instrukt:todo:demo/<id 1>:prepare-orchestrator:2",
+    "state": "running",
+    "settled": false,
+    "semantic_key": "instrukt:todo:demo/<id 1>:prepare-orchestrator:2",
+    "last_activity": "<time>",
+    "activity_source": "t3 updatedAt/settledAt: native latest activity or settling"
+  }
+]

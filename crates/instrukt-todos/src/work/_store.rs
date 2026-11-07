@@ -12,7 +12,7 @@ use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug}
 use instrukt_core::machine::MachineId;
 use instrukt_core::state_db::rusqlite::{self, Connection, OptionalExtension, Transaction, params};
 use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
-use instrukt_runner::interfaces::{AgentPreference, CatchUp, TaskSchedule, Thinking, TodoKind};
+use instrukt_runner::interfaces::{AgentPreference, CatchUp, TaskSchedule, Tier, TodoKind};
 use jiff::Timestamp;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -148,6 +148,19 @@ impl Store {
         })
     }
 
+    pub fn ignore_label(
+        &mut self,
+        issue: u64,
+        action: u64,
+        todo: &str,
+        kind: &str,
+        login: &str,
+        at: &str,
+    ) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        let project = &self.project;
+        self.db.write(|tx| {tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,todo,kind,login,at]).map_err(StateDbError::sqlite(&path))?;Ok(())})
+    }
     pub fn label_seen(&self, issue: u64, action: u64) -> Result<bool, WorkError> {
         self.db.conn().query_row("SELECT EXISTS(SELECT 1 FROM github_label_actions WHERE project=?1 AND issue_number=?2 AND action_id=?3)",params![self.project.as_str(),issue,action],|r|r.get(0)).map_err(StateDbError::sqlite(self.db.path())).map_err(Into::into)
     }
@@ -370,11 +383,8 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         )
         .map_err(&sql)?;
     }
-    let (agent, thinking) = match &r.agent {
-        Some(pref) => (
-            Some(pref.agent.clone()),
-            pref.thinking.as_ref().map(text_of),
-        ),
+    let (agent, tier) = match &r.agent {
+        Some(pref) => (Some(pref.agent.clone()), pref.tier.as_ref().map(text_of)),
         None => (None, None),
     };
     let removal = r
@@ -389,7 +399,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         .transpose()?;
     tx.execute(
         "INSERT INTO todos (id, project, slug, kind, status, created_at, created_by,
-            human_involved, revision, group_id, group_slug, schedule, catch_up, agent, thinking,
+            human_involved, revision, group_id, group_slug, schedule, catch_up, agent, tier,
             claim_machine, claim_session, claim_at, branch, delivered_commit, delivered_at,
             delivered_by, removed_at, removed_from, removal, sequence)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
@@ -399,7 +409,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
             created_by = excluded.created_by, human_involved = excluded.human_involved,
             revision = excluded.revision, group_id = excluded.group_id,
             group_slug = excluded.group_slug, schedule = excluded.schedule,
-            catch_up = excluded.catch_up, agent = excluded.agent, thinking = excluded.thinking,
+            catch_up = excluded.catch_up, agent = excluded.agent, tier = excluded.tier,
             claim_machine = excluded.claim_machine, claim_session = excluded.claim_session,
             claim_at = excluded.claim_at, branch = excluded.branch,
             delivered_commit = excluded.delivered_commit, delivered_at = excluded.delivered_at,
@@ -421,7 +431,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
             r.schedule.as_ref().map(schedule_text),
             text_of(&r.catch_up),
             agent,
-            thinking,
+            tier,
             r.claim.as_ref().map(|c| c.machine.to_string()),
             r.claim
                 .as_ref()
@@ -450,6 +460,34 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
             params![id],
         )
         .map_err(&sql)?;
+    }
+    for alias in &r.prior_slugs {
+        tx.execute(
+            "INSERT INTO todo_aliases(todo_id,slug) VALUES (?1,?2) ON CONFLICT DO NOTHING",
+            params![id, alias.as_str()],
+        )
+        .map_err(&sql)?;
+    }
+    for action in &r.label_actions {
+        tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT DO NOTHING", params![r.project.as_str(),action.issue,action.id,id,action.action,action.login,action.at,action.outcome]).map_err(&sql)?;
+    }
+    for stamp in &r.stamps {
+        if matches!(
+            stamp.fact,
+            StampFact::Approval { .. } | StampFact::ChangesRequested { .. }
+        ) {
+            let gate = match &stamp.fact {
+                StampFact::Approval { gate, .. } | StampFact::ChangesRequested { gate, .. } => {
+                    match gate {
+                        crate::evidence::ApprovalGate::Prd => "prd",
+                        crate::evidence::ApprovalGate::Task => "task",
+                    }
+                }
+                _ => unreachable!(),
+            };
+            let content = serde_json::json!({"gate":gate,"decision":stamp.fact,"actor":stamp.actor,"evidence":stamp.fact,"at":stamp.at.to_string(),"source_at":stamp.at.to_string(),"arrived_at":stamp.at.to_string(),"source_comment":stamp.source_comment}).to_string();
+            tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT DO NOTHING",params![id,stamp.sequence,content]).map_err(&sql)?;
+        }
     }
     for prerequisite in &r.after {
         tx.execute(
@@ -627,7 +665,7 @@ fn load_items(
     let mut statement = conn
         .prepare(
             "SELECT id, project, slug, kind, status, created_at, created_by, human_involved,
-                revision, group_id, group_slug, schedule, catch_up, agent, thinking,
+                revision, group_id, group_slug, schedule, catch_up, agent, tier,
                 claim_machine, claim_session, claim_at, branch, delivered_commit, delivered_at,
                 delivered_by, removed_at, removed_from, removal, sequence
              FROM todos WHERE project = ?1 ORDER BY id",
@@ -650,7 +688,7 @@ fn load_items(
                 schedule: row.get(11)?,
                 catch_up: row.get(12)?,
                 agent: row.get(13)?,
-                thinking: row.get(14)?,
+                tier: row.get(14)?,
                 claim_machine: row.get(15)?,
                 claim_session: row.get(16)?,
                 claim_at: row.get(17)?,
@@ -687,7 +725,7 @@ struct TodoRow {
     schedule: Option<String>,
     catch_up: String,
     agent: Option<String>,
-    thinking: Option<String>,
+    tier: Option<String>,
     claim_machine: Option<String>,
     claim_session: Option<String>,
     claim_at: Option<String>,
@@ -757,10 +795,7 @@ fn load_item(conn: &Connection, path: &Path, row: TodoRow) -> Result<LocalItem, 
         .map(|agent| {
             Ok::<_, WorkError>(AgentPreference {
                 agent,
-                thinking: row
-                    .thinking
-                    .map(|t| value_of::<Thinking>(path, &t))
-                    .transpose()?,
+                tier: row.tier.map(|t| value_of::<Tier>(path, &t)).transpose()?,
             })
         })
         .transpose()?;
@@ -779,6 +814,16 @@ fn load_item(conn: &Connection, path: &Path, row: TodoRow) -> Result<LocalItem, 
         id: todo_id,
         project: ProjectSlug::parse(&row.project).map_err(|e| invalid(path, e.to_string()))?,
         slug: TodoSlug::parse(&row.slug).map_err(|e| invalid(path, e.to_string()))?,
+        prior_slugs: query(
+            conn,
+            path,
+            "SELECT slug FROM todo_aliases WHERE todo_id=?1 ORDER BY rowid",
+            &id,
+            |r| r.get::<_, String>(0),
+        )?
+        .into_iter()
+        .map(|slug| TodoSlug::parse(&slug).map_err(|error| invalid(path, error.to_string())))
+        .collect::<Result<Vec<_>, _>>()?,
         kind: value_of::<TodoKind>(path, &row.kind)?,
         status: value_of::<TodoStatus>(path, &row.status)?,
         created: time(path, &row.created_at)?,
@@ -792,6 +837,22 @@ fn load_item(conn: &Connection, path: &Path, row: TodoRow) -> Result<LocalItem, 
         bindings: load_bindings(conn, path, &id)?,
         hold: None,
         hold_history: Vec::new(),
+        label_actions: query(
+            conn,
+            path,
+            "SELECT issue_number,action_id,action,login,at,outcome FROM github_label_actions WHERE todo_id=?1 AND outcome='accepted' ORDER BY action_id",
+            &id,
+            |r| {
+                Ok(super::_model::LabelAction {
+                    issue: r.get(0)?,
+                    id: r.get(1)?,
+                    action: r.get(2)?,
+                    login: r.get(3)?,
+                    at: r.get(4)?,
+                    outcome: r.get(5)?,
+                })
+            },
+        )?,
         after,
         group,
         schedule: row

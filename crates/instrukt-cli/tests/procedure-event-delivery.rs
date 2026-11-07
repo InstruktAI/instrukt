@@ -733,3 +733,24 @@ fn a_missing_retained_role_refuses_manual_and_automatic_entry_before_creation() 
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
 }
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA1
+#[test]
+fn a_standing_agent_starts_with_its_procedures_resolved_model_instead_of_project_defaults() {
+    let r = Responsibility::new("dispatch: {agent: [gemini, codex], tier: strong}\n");
+    r.append("explicit-selection");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    let result = r
+        .computer
+        .env
+        .run(
+            r.computer.project.path(),
+            ["sessions", "list", "--json", "--all"],
+        )
+        .success();
+    insta::assert_snapshot!(
+        "standing-model-selection",
+        work::redact(&String::from_utf8_lossy(&result.get_output().stdout))
+    );
+}

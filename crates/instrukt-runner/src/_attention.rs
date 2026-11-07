@@ -14,9 +14,11 @@ pub(crate) fn approvals(
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let state = RunnerState::new(invocation.home());
+    let machine = instrukt_core::machine::machine_id(invocation.home())
+        .map_err(|e| SessionsError::Refused(e.to_string()))?;
     let notices=state.read(|conn,path|{
-        let mut q=conn.prepare("SELECT a.todo_id,a.decision_sequence,a.content,CASE WHEN EXISTS (SELECT 1 FROM session_bindings b WHERE b.todo_id=t.id AND b.session=t.claim_session AND b.released_at IS NULL AND json_extract(b.evidence,'$.assignment')='task') THEN NULL ELSE t.claim_session END FROM approval_attention a LEFT JOIN todos t ON t.id=a.todo_id WHERE a.state='pending'").map_err(state::sql(path))?;
-        q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))
+        let mut q=conn.prepare("SELECT a.todo_id,a.decision_sequence,a.content,CASE WHEN (a.target IS NOT NULL AND a.target != t.claim_session) OR julianday(t.claim_at)>julianday(json_extract(a.content,'$.at')) OR EXISTS (SELECT 1 FROM session_bindings b WHERE b.todo_id=t.id AND b.session=t.claim_session AND b.released_at IS NULL AND json_extract(b.evidence,'$.assignment')='task') THEN NULL ELSE t.claim_session END FROM approval_attention a LEFT JOIN todos t ON t.id=a.todo_id WHERE a.state='pending' AND (t.claim_machine IS NULL OR t.claim_machine=?1)").map_err(state::sql(path))?;
+        q.query_map([machine.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))
     })?.unwrap_or_default();
     for (todo, seq, content, claim) in notices {
         let result = (|| -> Result<(), SessionsError> {
@@ -45,7 +47,7 @@ pub(crate) fn approvals(
                 .unwrap_or(now);
             state.write::<_,StateError>(|tx|{
                 // Revalidate the claim in the transaction that binds the queued input.
-                let current=tx.query_row("SELECT claim_session FROM todos WHERE id=?1",[&todo],|r|r.get::<_,Option<String>>(0)).optional().map_err(state::sql(&state::db_path(tx)))?.flatten();
+                let current=tx.query_row("SELECT t.claim_session FROM todos t JOIN approval_attention a ON a.todo_id=t.id WHERE t.id=?1 AND a.decision_sequence=?2 AND t.claim_machine=?3 AND (a.target IS NULL OR a.target=t.claim_session) AND julianday(t.claim_at)<=julianday(json_extract(a.content,'$.at'))",params![todo,seq,machine.to_string()],|r|r.get::<_,Option<String>>(0)).optional().map_err(state::sql(&state::db_path(tx)))?.flatten();
                 if current.as_deref()!=Some(&claim){return Ok(());}
                 inputs::retain(tx,&target,&Entry{id:&id,kind:InputKind::Approval, assignment:None,source_at:notice.get("source_at").or_else(||notice.get("at")).and_then(|v|v.as_str()),arrived_at,intent:Intent::Asap,content:&content})?;
                 tx.execute("UPDATE approval_attention SET target=?3,input_id=?4,failure=NULL WHERE todo_id=?1 AND decision_sequence=?2",params![todo,seq,claim,id]).map_err(state::sql(&state::db_path(tx)))?;Ok(())

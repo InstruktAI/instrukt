@@ -1269,3 +1269,108 @@ fn request_changes_wakes_the_live_claimant_once_without_a_worker_ending() {
     crew.todo(["show", slug]);
     assert_eq!(crew.runtime.message_count("lead-1"), 1);
 }
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR9
+#[test]
+fn replaying_label_history_on_another_computer_preserves_a_newer_manual_hold() {
+    let project = Project::new();
+    project.create(
+        "retained-hold",
+        "change",
+        "Keep the operator's later decision.",
+    );
+    let actions = serde_json::json!([
+        {"id":801,"event":"labeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:00:00Z"},
+        {"id":802,"event":"unlabeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:01:00Z"}
+    ]);
+    let history = || {
+        project.github.respond_once(
+            "GET",
+            "/issues/1/events",
+            CannedResponse {
+                status: 200,
+                headers: vec![],
+                body: actions.clone(),
+            },
+        )
+    };
+    project.github.respond_once(
+        "GET",
+        "/collaborators/maintainer/permission",
+        CannedResponse {
+            status: 200,
+            headers: vec![],
+            body: serde_json::json!({"permission":"write"}),
+        },
+    );
+    project.github.respond_once(
+        "GET",
+        "/collaborators/maintainer/permission",
+        CannedResponse {
+            status: 200,
+            headers: vec![],
+            body: serde_json::json!({"permission":"write"}),
+        },
+    );
+    history();
+    project.ok(["show", "retained-hold"]);
+    project.ok([
+        "update",
+        "retained-hold",
+        "--hold",
+        "--reason",
+        "Await operator decision.",
+    ]);
+    let other = project.other_computer();
+    history();
+    other.ok(["update", "retained-hold"]);
+    let first = other.ok(["show", "retained-hold"]);
+    history();
+    let replay = other.ok(["show", "retained-hold"]);
+    insta::assert_snapshot!(
+        "cross-computer-label-history",
+        redact(&format!("{first}---\n{replay}"))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR8
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
+#[test]
+fn a_decision_imported_by_another_computer_reaches_the_claim_host_once() {
+    let crew = workflow::Crew::new();
+    let project = &crew.project;
+    let slug = "remote-decision";
+    project.create(slug, "feature", "Retain the remote decision.");
+    crew.next("prepare", slug);
+    crew.write(slug, "prd", "The current audience.");
+    crew.runtime.open_session("lead-1");
+    crew.runtime.set_status("lead-1", "ended ok");
+    let other = project.other_computer();
+    let source = other
+        .repo
+        .read("instrukt.yaml")
+        .replace("github:\n", "github:\n  approvers: [maintainer]\n");
+    other.repo.write("instrukt.yaml", &source);
+    let fake = runtime::FakeRuntime::new(&other.env, "other", false);
+    let global = other.env.instrukt_home().join("instrukt.yaml");
+    let mut config = std::fs::read_to_string(&global).unwrap();
+    config.push_str("runner: {runtime: t3}\n");
+    std::fs::write(global, config).unwrap();
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        "/instrukt request-changes prd Explain the intended audience.",
+    );
+    other.ok(["update", slug]);
+    assert_eq!(fake.calls().len(), 0);
+    crew.todo(["show", slug]);
+    assert_eq!(crew.runtime.message_count("lead-1"), 1);
+    crew.todo(["show", slug]);
+    assert_eq!(crew.runtime.message_count("lead-1"), 1);
+    insta::assert_snapshot!(
+        "imported-decision-attention",
+        redact(&crew.runtime.input_log("lead-1"))
+    );
+}

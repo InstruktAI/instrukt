@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/binding-reservation.rs
+assertion_line: 154
+expression: "format!(\"{before}---\\n{after}\")"
+---
+exit: 3
+reserved: project/demo/spec/feature/things/thing UC-TH1 is held by todo-a, requested by todo-b
+---
+exit: 0
+clear: project/demo/spec/feature/things/thing UC-TH1

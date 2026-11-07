@@ -541,6 +541,11 @@ impl<'w> Session<'w> {
                 continue;
             };
             if !matches!(kind, "labeled" | "unlabeled")
+                || self.items[index]
+                    .record
+                    .label_actions
+                    .iter()
+                    .any(|a| a.issue == issue.number && a.id == id)
                 || self.store.label_seen(issue.number, id)?
             {
                 continue;
@@ -565,20 +570,46 @@ impl<'w> Session<'w> {
             };
             let admitted =
                 allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
-            let todo = self.items[index].record.id.to_string();
-            let project = self.project.slug.to_string();
+            if !admitted {
+                self.store.ignore_label(
+                    issue.number,
+                    id,
+                    self.items[index].record.id.as_str(),
+                    kind,
+                    login,
+                    at,
+                )?;
+                continue;
+            }
             let actor = Actor::GitHub {
                 login: login.to_owned(),
             };
-            self.commit_with("github hold label",|s|{
-                if admitted {
-                    let record=&mut s.items[index].record;
-                    if let Some(previous)=record.hold.take(){record.hold_history.push(super::_model::ReleasedHold{hold:previous,released:source_at,by:actor.clone()});}
-                    if kind=="labeled"{record.hold=Some(crate::evidence::HoldRecord{source:crate::evidence::HoldSource::GitHub,reason:format!("held from GitHub by {login}"),by:actor,at:source_at});}
+            self.commit("github hold label", |s| {
+                let record = &mut s.items[index].record;
+                if let Some(previous) = record.hold.take() {
+                    record.hold_history.push(super::_model::ReleasedHold {
+                        hold: previous,
+                        released: source_at,
+                        by: actor.clone(),
+                    });
                 }
+                if kind == "labeled" {
+                    record.hold = Some(crate::evidence::HoldRecord {
+                        source: crate::evidence::HoldSource::GitHub,
+                        reason: format!("held from GitHub by {login}"),
+                        by: actor,
+                        at: source_at,
+                    });
+                }
+                record.label_actions.push(super::_model::LabelAction {
+                    issue: issue.number,
+                    id,
+                    action: kind.into(),
+                    login: login.into(),
+                    at: at.into(),
+                    outcome: "accepted".into(),
+                });
                 Ok(())
-            },|tx|{
-                tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",instrukt_core::state_db::rusqlite::params![project,issue.number,id,todo,kind,login,at,if admitted{"accepted"}else{"ignored"}]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;Ok(())
             })?;
         }
         Ok(())
@@ -674,7 +705,7 @@ impl<'w> Session<'w> {
             });
             Ok(())
         },|tx| {
-            tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT DO NOTHING",instrukt_core::state_db::rusqlite::params![todo_id,sequence,notice]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;
+            tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT(todo_id,decision_sequence) DO UPDATE SET content=excluded.content WHERE approval_attention.state='pending' AND approval_attention.input_id IS NULL",instrukt_core::state_db::rusqlite::params![todo_id,sequence,notice]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;
             _store::retain_reply(tx,std::path::Path::new(tx.path().unwrap_or("")),&todo_id,comment_id,&answer)?;
             Ok(())
         })?;

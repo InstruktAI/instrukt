@@ -273,6 +273,43 @@ fn rewrite(path: &str, text: &str, from: &TodoSlug, to: &TodoSlug) -> Result<Str
             ),
         }
     })?;
+    let mut mapping = super::_frontmatter::parse_mapping(split.frontmatter).ok_or_else(|| {
+        DocsError::TransferRefused {
+            path: PathBuf::from(path),
+            reason: "frontmatter is not a mapping".into(),
+        }
+    })?;
+    let mut changed = false;
+    if let Some(serde_yaml_ng::Value::Mapping(reservations)) =
+        mapping.get_mut("binding_reservations")
+    {
+        for owner in reservations.values_mut() {
+            if owner.as_str() == Some(from.as_str()) {
+                *owner = serde_yaml_ng::Value::String(to.to_string());
+                changed = true;
+            }
+        }
+    }
+    let head = if changed {
+        // Reparse the delivered_by rewrite so both independent carriers survive.
+        let rewritten = split_frontmatter(&head);
+        if let Some(delivered) = super::_frontmatter::parse_mapping(rewritten.frontmatter)
+            .and_then(|map| map.get("delivered_by").cloned())
+        {
+            mapping.insert(
+                serde_yaml_ng::Value::String("delivered_by".into()),
+                delivered,
+            );
+        }
+        let yaml =
+            serde_yaml_ng::to_string(&mapping).map_err(|error| DocsError::TransferRefused {
+                path: PathBuf::from(path),
+                reason: error.to_string(),
+            })?;
+        format!("---\n{yaml}---\n")
+    } else {
+        head
+    };
     Ok(format!("{head}{}", _markers::rename(split.body, from, to)))
 }
 

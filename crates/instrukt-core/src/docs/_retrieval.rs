@@ -76,11 +76,39 @@ pub struct Reading {
     pub unresolved: bool,
 }
 
+/// A retained phase belongs to the immutable todo, even when its slug changed.
+struct TargetWorkspace {
+    project: ProjectSlug,
+    root: PathBuf,
+    prior_slugs: Vec<TodoSlug>,
+    slug: TodoSlug,
+}
+impl TargetWorkspace {
+    fn sources(&self, mut sources: Vec<SourceFile>) -> Result<Vec<SourceFile>, DocsError> {
+        // Project ownership names through the immutable todo's rename history for
+        // this read only. Authored files and the native phase branch stay untouched.
+        for from in self.prior_slugs.iter().filter(|from| *from != &self.slug) {
+            let changes = super::_transfer::plan(sources.clone(), from, &self.slug)?;
+            sources = sources
+                .into_iter()
+                .map(|file| match changes.get(&file.path) {
+                    Some(change) => SourceFile {
+                        path: change.moved_to.clone().unwrap_or(file.path),
+                        text: change.text.clone(),
+                    },
+                    None => file,
+                })
+                .collect();
+        }
+        Ok(sources)
+    }
+}
+
 fn target_workspace(
     home: &Home,
     caller: &Caller,
     target: Option<&TodoSlug>,
-) -> Result<Option<(ProjectSlug, PathBuf)>, DocsError> {
+) -> Result<Option<TargetWorkspace>, DocsError> {
     use crate::state_db::{
         StateDbError, StateRead,
         rusqlite::{OptionalExtension, params},
@@ -113,7 +141,11 @@ fn target_workspace(
             reason: "target todo has no work record".into(),
         });
     }
-    let branch = format!("{target}/prepare");
+    let branch: Option<String> = state.conn().query_row(
+        "SELECT json_extract(b.evidence,'$.branch') FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE t.project=?1 AND t.slug=?2 AND json_extract(b.evidence,'$.assignment')='driver' AND json_extract(b.evidence,'$.lane')='prepare' ORDER BY b.attempt DESC LIMIT 1",
+        params![project.as_str(),target.as_str()], |r|r.get(0)
+    ).optional().map_err(StateDbError::sqlite(state.path()))?.flatten();
+    let branch = branch.unwrap_or_else(|| format!("{target}/prepare"));
     let root = caller
         .repo_root
         .as_ref()
@@ -147,15 +179,33 @@ fn target_workspace(
         }
         return Err(DocsError::ConfigUnresolved{path:target.to_string(),reason:"preparation worktree is missing and its integration is unconfirmed; no main-checkout fallback".into()});
     };
-    Ok(Some((project.clone(), path)))
+    let mut prior_slugs=state.conn().prepare("SELECT a.slug FROM todo_aliases a JOIN todos t ON t.id=a.todo_id WHERE t.project=?1 AND t.slug=?2 ORDER BY a.rowid").map_err(StateDbError::sqlite(state.path()))?.query_map(params![project.as_str(),target.as_str()],|r|r.get::<_,String>(0)).map_err(StateDbError::sqlite(state.path()))?.collect::<Result<Vec<_>,_>>().map_err(StateDbError::sqlite(state.path()))?.into_iter().map(|slug|TodoSlug::parse(&slug).map_err(|error|DocsError::ConfigUnresolved {path:target.to_string(),reason:error.to_string()})).collect::<Result<Vec<_>,_>>()?;
+    if let Some(original) = branch
+        .strip_suffix("/prepare")
+        .and_then(|slug| TodoSlug::parse(slug).ok())
+        && !prior_slugs.contains(&original)
+    {
+        prior_slugs.push(original);
+    }
+    Ok(Some(TargetWorkspace {
+        project: project.clone(),
+        root: path,
+        prior_slugs,
+        slug: target.clone(),
+    }))
 }
 fn target_index(
     index: &mut GlobalIndex,
-    target: Option<&(ProjectSlug, PathBuf)>,
+    target: Option<&TargetWorkspace>,
     home: &Home,
 ) -> Result<(), DocsError> {
-    if let Some((project, root)) = target {
-        let corpus = Corpus::load(root, home)?;
+    if let Some(target) = target {
+        let (project, root) = (&target.project, &target.root);
+        let corpus = Corpus::from_sources(
+            Some(project.clone()),
+            home,
+            target.sources(super::_corpus::read_tree(root)?)?,
+        );
         index.snippets.retain(|e| &e.source_project != project);
         index
             .snippets
@@ -193,7 +243,8 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
                 .join("|")
         ),
     ];
-    if let Some((_, root)) = &target {
+    if let Some(target) = &target {
+        let root = &target.root;
         out.push(format!(
             "# Pending source: preparation worktree {}",
             root.display()
@@ -821,7 +872,7 @@ struct Reader<'i> {
     index: &'i GlobalIndex,
     values: Values<'i>,
     lens: Lens<'i>,
-    target: Option<&'i (ProjectSlug, PathBuf)>,
+    target: Option<&'i TargetWorkspace>,
 }
 
 impl<'i> Reader<'i> {
@@ -836,9 +887,9 @@ impl<'i> Reader<'i> {
         };
         let targeted = self
             .target
-            .filter(|(project, _)| project == &entry.source_project);
-        if let Some((_, worktree)) = targeted {
-            root = worktree.clone();
+            .filter(|target| target.project == entry.source_project);
+        if let Some(target) = targeted {
+            root = target.root.clone();
         }
         let outside: fn(PathBuf) -> DocsError = match entry.scope {
             IndexScope::Global => outside_home,
@@ -904,6 +955,10 @@ impl<'i> Reader<'i> {
                 });
             }
         }
+        let sources = match targeted {
+            Some(target) => target.sources(sources)?,
+            None => sources,
+        };
         let corpus = Corpus::from_sources(project, self.home, sources);
         let snippet =
             corpus
@@ -1126,9 +1181,10 @@ impl<'i> Reader<'i> {
     /// Where `entry`'s snippet is authored: its file in the checkout its
     /// owner published from, or in its project.
     fn source(&self, entry: &IndexEntry) -> Result<String, DocsError> {
-        if let Some((project, root)) = self.target
-            && project == &entry.source_project
+        if let Some(target) = self.target
+            && target.project == entry.source_project
         {
+            let root = &target.root;
             let rel = match entry.scope {
                 IndexScope::Global => global_rel(entry)?,
                 IndexScope::Local => local_root(entry)?.1,

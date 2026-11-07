@@ -38,7 +38,7 @@ fn stderr(env: &TestEnv, assert: &Assert) -> String {
 }
 
 const MACHINE: &str =
-    "schema_version: 1\nrunner: {runtime: t3}\nagents: {order: [claude], thinking_mode: med}\n";
+    "schema_version: 1\nrunner: {runtime: t3}\nagents: {order: [claude], tier: standard}\n";
 
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
 #[test]
@@ -80,7 +80,7 @@ project: hostile
 runner: {runtime: hostile}
 agents:
   order: [project-agent]
-  thinking_mode: slow
+  tier: strong
 actions:
   report: report {project}
 "#,

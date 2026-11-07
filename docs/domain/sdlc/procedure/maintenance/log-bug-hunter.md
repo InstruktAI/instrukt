@@ -4,7 +4,7 @@ visibility: 'public'
 role: bug-hunter
 dispatch:
   agent: [codex, claude, gemini]
-  thinking_mode: med
+  tier: standard
 ---
 
 # Log Bug Hunter — Procedure

@@ -281,6 +281,26 @@ wait for a runtime send. Input delivery is at least once across a lost acknowled
 or crash between send and commit. Handlers reconcile their subject idempotently;
 one keyed thread does not imply exactly-once execution of its brief.
 
+### Agent-selection catalogue
+
+T3's `thread start` pairs `--provider <instance-id>` with `--model <slug>`.
+The compiled catalogue maps claude to `claudeAgent`, codex to `codex`, and
+gemini to `antigravity`, the runtime's default instance ids. Model slugs come
+from its published model manifest. Native effort ids are `effort`,
+`reasoningEffort`, and Antigravity's reported `thinking_level`, respectively;
+model selection retains the requested provider-native options. The host CLI
+exposes no catalogue endpoint, so custom provider instances and new models need
+updated adapter facts rather than user-authored catalogue configuration.
+
+The grounding sources are T3's [provider instance contract](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/providerInstance.ts),
+[model manifest](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/model-manifest.json),
+[Codex provider options](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/CodexProvider.ts),
+and [Antigravity model options](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/AntigravityProvider.test.ts).
+No effort flag exists in `t3 thread start -h`; unattended start evidence records
+that limit. Its unstructured launch failure does not prove that no thread was
+created, even when it mentions quota. Preserve its key for recovery rather than
+inferring a pre-creation rejection. Explicit no-start confirmation and an unavailable model mark allow a retry to resolve the next eligible chain entry on either start path. Retained requests carry their original family/tier preferences; only proven no-start retry may refresh the resolved model choice. Ambiguous or accepted starts preserve it.
+
 ### T3 command translation
 
 Commands run on the computer hosting T3 and instrukt. `start` has no
@@ -311,7 +331,7 @@ surface reports only the threads the runtime exposes.
 
 Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
-Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer releases its claim before cleanup; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
 After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
@@ -578,8 +598,7 @@ Retired: the runtime owns session ending; its test bindings have been removed.
   explicit identity reconciliation, never a replacement start from a lost match.
 - T3's list JSON carries no worktree path. `show` decoder fields require verified
   runtime evidence; a fixture alone establishes no native response guarantee.
-- T3 accepts `--provider` only with `--model`. Until requested preferences resolve
-  to that pair, starts use project defaults and report that limitation.
+- T3 receives the resolved provider/model pair. Its CLI has no effort/options flag; start evidence records that realization limit. Native dispatch receives all resolved inputs.
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; no archive or history service is introduced.
 

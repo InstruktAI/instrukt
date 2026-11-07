@@ -31,7 +31,7 @@ command=args[1]; args=args[2:]
 flags={}; operands=[]
 i=0
 while i<len(args):
-    if args[i] in ['--title','--worktree','--branch','--project','--messages']:
+    if args[i] in ['--title','--worktree','--branch','--project','--messages','--provider','--model']:
         flags[args[i]]=args[i+1]; i+=2
     elif args[i]=='--': operands.extend(args[i+1:]); break
     elif args[i]=='--json': flags['--json']=True; i+=1
@@ -61,7 +61,7 @@ elif command=='start':
     id='s'+str(n)
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
-    t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run1','activeRunId':'run1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':'codex','model':'gpt-test','settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run1'}]}
+    t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run1','activeRunId':'run1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run1'}]}
     if '--worktree' in flags:
         folder=root/'worktrees'/id
         folder.parent.mkdir(exist_ok=True)

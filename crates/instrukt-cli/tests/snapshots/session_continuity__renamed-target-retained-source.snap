@@ -1,0 +1,37 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+assertion_line: 642
+expression: "shown(&p,\n&[index.get_output().stdout.clone(),\nread.get_output().stdout.clone()].concat())"
+---
+# instrukt docs index: snippet ids with their descriptions
+# Filter with --domain <acme> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Pending source: preparation worktree [TMP]/t3-state/worktrees/s1
+# WARNING: publication is behind main: main is at <commit 1>, the published commit is <commit 2>. Run `instrukt sync` in this project to publish it.
+# Source of project demo: [TMP]/demo/docs/project/ — published commit <commit 2> — remote none
+
+project/demo/spec/feature/parser: The retained parser contract. (delivered by: final-parser) (superseded by: final-parser)
+
+# Read the snippets you need: instrukt docs get <id> [<id>…]
+# Pending documentation is flagged, never hidden: `(delivered by: <slugs>)` marks a snippet not yet delivered, `(superseded by: <slugs>)` a live snippet with pending changes. `instrukt docs get` reads the current contract; `--target <slug>` on `index` and `get` shows the documentation as that todo will deliver it.
+# instrukt docs get --target final-parser: project/demo/spec/feature/parser
+# WARNING: publication is behind main: main is at <commit 1>, the published commit is <commit 2>. Run `instrukt sync` in this project to publish it.
+
+---
+id: project/demo/spec/feature/parser
+type: spec
+domain: project
+scope: project
+description: The retained parser contract.
+source: [TMP]/t3-state/worktrees/s1/docs/project/spec/feature/parser.md
+---
+# Parser — Spec
+
+## What it is
+
+The parser.
+
+## Canonical fields
+
+Keep this contract in its retained tree.
+
+A refinement authored under the intermediate name.

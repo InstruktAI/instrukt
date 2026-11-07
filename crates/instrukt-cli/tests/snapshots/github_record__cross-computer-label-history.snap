@@ -1,0 +1,42 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+assertion_line: 1330
+expression: "redact(&format!(\"{first}---\\n{replay}\"))"
+---
+retained-hold · change · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the operator's later decision.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: Await operator decision. (manual, by Test Developer, <time>)
+released holds:
+  held from GitHub by maintainer (released <time> by @maintainer)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+retained-hold · change · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the operator's later decision.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: Await operator decision. (manual, by Test Developer, <time>)
+released holds:
+  held from GitHub by maintainer (released <time> by @maintainer)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

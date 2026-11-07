@@ -58,7 +58,7 @@ Apply these configured action values to the identified assignment and session.
      grounded is listed as such. The section inventories evidence; it proves
      nothing about the reasoning built on it.
    - **Participants** — one row per session: session id, agent with model and
-     thinking mode, role (author, peer, reviewer, dispatcher). Session ids are
+     tier, role (author, peer, reviewer, dispatcher). Session ids are
      the attribution evidence (`general/concept/lineage-vs-authorship`); the
      reasoning behind a participant's files is in that session's conversation,
      read with the configured runtime conversation read instruction. That read supplies

@@ -12,7 +12,7 @@ dispatch:
     - codex
     - gemini
     - deepseek
-  thinking_mode: med
+  tier: standard
 ---
 
 # Knowledge Authoring — Procedure

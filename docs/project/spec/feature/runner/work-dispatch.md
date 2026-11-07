@@ -110,7 +110,7 @@ In automatic mode the runner dispatches eligible work: for a todo's lane it
 starts the procedure that declares the orchestrator role of the lane's flow
 (`project/instrukt/spec/feature/workflow/workflow-definition`), and that
 session holds the claim and executes the flow's own steps. In manual mode a todo
-awaits deliberate dispatch. The workflow supplies eligibility and the next
+awaits deliberate dispatch. A released approved preparation handoff awaits integration and preparation-resource cleanup without reclaiming its preparer. After those obligations are confirmed, ordinary work pickup resumes. The workflow supplies eligibility and the next
 assignment; the runner does not replace derived workflow state with a second
 state machine. A project executes through either instrukt's workflow engine
 or another engine, never both.
@@ -121,17 +121,15 @@ the todo pickup policy. Task timing belongs to
 
 ### Agent selection and intent checks
 
-Dispatch walks the task's optional agent/model preference first, then the
-procedure's `dispatch` order, or global `agents.order`, including the chosen
-thinking mode, and takes the first agent the configured adapter reports
-available when it supports explicit selection. Availability checks are adapter
-code. T3's CLI uses its project's defaults until the adapter can resolve a
-provider/model pair; it reports that limitation rather than claiming to honour
-agent order or thinking mode. Only a rejection proven to precede creation
-permits fallback to another agent; an ambiguous start or failed send preserves
-the existing dispatch for recovery. Exhausting a supported selection order is an
-anomaly: the runner releases its own claim through work's command contract and
-sends the anomaly through `runner.notify`; it sets no hold.
+Dispatch resolves task preference, procedure `dispatch` and global family/tier
+preferences under layered-configuration. Walk one family's ordered tier chain
+before the next family. Skip unavailable/degraded agent or model marks until
+expiry. Both runner starts and native assignment facts carry resolved family,
+provider, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
+effort/options cannot be expressed there and remain explicit start evidence.
+A rejection proven before creation permits the next chain entry; ambiguous
+starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
+releases the runner's own claim and reports an anomaly, setting no hold.
 
 The responsible orchestrator delegates the intent checker natively on the
 computer where the originating conversation is readable, using the configured
@@ -212,8 +210,7 @@ Then the command refuses and names both switches that would enable it
   safe worktree removal first or the runtime's existing-worktree start where
   available (T3 MCP); T3's CLI cannot bind it. Waking a settled retained thread
   uses its existing workspace.
-- Preferred-agent selection on T3 has the limitation recorded in
-  `project/instrukt/spec/feature/runner/session-continuity`.
+- T3 host CLI cannot express effort/options; native delegation receives them as resolved facts.
 
 ## See Also
 

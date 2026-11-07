@@ -42,8 +42,7 @@ per `project/instrukt/spec/feature/work/approvals`.
 ### Review and revision obligations
 
 The flavor's actions and templates distinguish drafting, review, revision and
-substantive re-derivation at each layer. A current needs-work verdict returns
-the findings to that layer's author. It is a remediation obligation rather
+substantive re-derivation at each layer. A current needs-work verdict, including an exact preparation-head verdict, returns the complete findings to that layer's author. A corrected head requires a new independent review. It is a remediation obligation rather
 than a generic blocked state on the first review result.
 
 Planning distinguishes fresh derivation, seeded derivation and substantive
@@ -104,7 +103,7 @@ an automatic worker dispatch. GitHub intake is specified by github-record.
 
 Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
-Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer then releases its own claim through the normal update operation while its worktree still exists; that release atomically appends `workflow.preparation_reviewed` for the approved current head. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
 After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
@@ -112,14 +111,12 @@ After confirmed preparation integration, the integrator removes the clean prepar
 
 Prepared means every requirement of the selected kind's flow is satisfied,
 required review and approval bindings are current, drift obligations are
-settled, required independent review binds the current preparation head, and
-that reviewed documentation has integrated and published before build.
+settled, required independent review binds the current preparation head. The preparer releases and hands off then; work remains gated on integration and publication.
 
-The orchestrator releases the claim with `instrukt todo update <slug>
+After an approving current head review, before integration or cleanup, the orchestrator releases the claim with `instrukt todo update <slug>
 --unclaim`, confirms `claim.held` is false and records the handoff. The
 dispatcher retains conversations needed for later review rounds or human
-questions; session ending and cleanup belong to the runtime. The runner owns
-subsequent execution dispatch. Manual preparation does not itself require
+questions; session ending and cleanup belong to the runtime. The runner owns subsequent execution dispatch and does not reclaim the released preparer while integration or preparation cleanup remains owed. Manual preparation does not itself require
 dependency delivery; work admission does. Entry claims and holds are work-record
 and runner concerns, distinct from the derived preparation state.
 

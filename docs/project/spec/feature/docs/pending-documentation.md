@@ -58,6 +58,8 @@ resolved as in a default read.
   (`project/instrukt/spec/feature/docs/position-index`); a named live
   snippet with pending material is rendered as its current contract.
 
+A renamed todo resolves its target source through its immutable phase assignment. The retained branch and authored files keep their names; target reads project that phase's original ownership slug through the todo's current name without rewriting the source.
+
 ### Delivery fold
 
 `instrukt docs fold <slug>` applies precisely that delivery's pending carriers:
@@ -65,7 +67,7 @@ clear its new-snippet delivery marker; replace a live parent with its non-empty
 companion and remove that companion; remove an empty retirement companion and
 its parent; unwrap its planned additions; apply its planned replacements or
 removals and clear their markers. Preserve unrelated current and pending material.
-The integrator folds in the integration candidate before verification and
+Before clearing pending carriers, folding retains unbound scenario ownership as `binding_reservations: {UC-id: todo-slug}` on the feature spec. A later fold removes that todo's entries only for scenarios with attached test bindings present in the candidate. Activation changes current documentation without surrendering binding ownership. The integrator folds in the integration candidate before verification and
 includes the folded content in the exact commit verified.
 
 ## Use cases

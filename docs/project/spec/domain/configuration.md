@@ -93,7 +93,7 @@ be absent outside that runtime and does not change runtime selection.
 ## Canonical fields
 
 Global `agents.order` supplies the default ordered agent preferences with
-thinking mode. Dispatch preferences use the selected adapter's capabilities and
+tier. Dispatch preferences use the selected adapter's capabilities and
 availability metadata. Global runtime entries carry native agent-operation
 instructions, resolved by `@config`; instrukt executes no instruction prose. `get --revision` prints the layer revision; `get --json` renders
 JSON.

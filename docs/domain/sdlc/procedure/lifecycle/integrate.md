@@ -5,8 +5,8 @@ role: integrator
 parameters:
   - name: slug
 dispatch:
-  agent: [codex, claude, gemini, deepseek]
-  thinking_mode: slow
+  agent: [codex, claude, gemini]
+  tier: strong
 subscriptions:
   - workflow.finalized
   - workflow.preparation_reviewed
@@ -64,7 +64,7 @@ Apply these configured action values to the identified assignment and session.
 - **`workflow.finalized`:** read the todo's artifacts, approval and matching
   finalized commit. Reconcile the handoff against repository state. A replay
   of the same project, todo and commit is the same logical handoff.
-- **`workflow.preparation_reviewed`:** verify the exact reviewed preparation head and complete report, then integrate its docs as soon as possible before build. Fold its pending markers in the integration worktree before candidate verification. After confirmed integration remove the clean prepare worktree and delete `<slug>/prepare` locally and on origin; retain any failed cleanup as owed work.
+- **`workflow.preparation_reviewed`:** verify the exact reviewed preparation head and complete report, then integrate its docs as soon as possible before build. Confirm the preparer released its claim while its worktree existed. Fold its pending markers in the integration worktree before candidate verification. After confirmed integration remove the clean prepare worktree and delete `<slug>/prepare` locally and on origin; retain any failed cleanup as owed work.
 - **`runner.ci_completed`:** reconcile the result with the exact submitted
   candidate and current GitHub check state. Proceed under Step 3 only when
   the required result is complete for that commit.
@@ -88,7 +88,7 @@ or promote whatever commit now occupies the integration branch.
 3. Read the delivery context, diff and branch history. Where integration needs
    a commit, compose it around the delivery intent and record it through
    `instrukt repo commit` under `general/policy/commits`.
-4. Run `instrukt docs fold <slug>` to reconcile the todo's pending documentation at preparation integration (or work delivery for code-associated pending material) under the owning
+4. Preserve binding ownership: preparation folding activates docs but retains unbound `binding_reservations`; work-delivery folding clears them only after their attached tests are present. Run `instrukt docs fold <slug>` to reconcile the todo's pending documentation at preparation integration (or work delivery for code-associated pending material) under the owning
    documentation contract before freezing the candidate. The work lane authors
    no new doc contract here. Include the resulting content in the commit verified.
 5. The integrator may batch finalized candidates according to its judgment.
@@ -180,7 +180,7 @@ may deliver only a reference to the session, never its failure content.
 
 ### 6. Complete the handoff and park
 
-After preparation promotion, confirm the reviewed head is integrated on canonical
+The preparation occurrence is emitted by the preparer's claim release, after approving review. Confirm that release before touching its resources; never remove a claimed preparation workspace. After preparation promotion, confirm the reviewed head is integrated on canonical
 main and publication completed. Remove its clean worktree and delete `<slug>/prepare`
 locally and on origin; keep failed cleanup owed. This delivers documentation,
 not the implementation: do not mark the todo delivered. Work begins later from

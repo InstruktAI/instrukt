@@ -138,6 +138,7 @@ Absent or empty evidence is absent; false and zero remain typed values.
 | `diagnosis_settled.digest` | string |
 | `preparation.head` | SHA |
 | `preparation.review_current` | bool |
+| `preparation.review_verdict` | approve / needs_work, present only for a current head/report binding |
 | `preparation.integrated` | bool |
 | `drift.prd`, `drift.architecture`, `drift.implementation_plan` | fresh\|pending\|cosmetic\|substantive |
 | `build.start_base_sha` | string |
@@ -259,9 +260,7 @@ derived value, not another durable aggregate.
 #### Reviewed preparation
 
 - **Name:** `workflow.preparation_reviewed`.
-- **Emitted when:** an independent preparation-head review approves the exact
-  clean head with its complete findings digest. Work records the verdict,
-  releases the reviewer and appends this event atomically.
+- **Emitted when:** the preparer releases its claim after an independent review approved the current clean preparation head and complete findings digest, while its worktree still exists. The release and event append commit atomically.
 - **Payload:** project, todo and reviewed preparation commit.
 - **Consumer:** the standing integrator, for immediate documentation integration
   and publication before build, then preparation worktree and branch cleanup.

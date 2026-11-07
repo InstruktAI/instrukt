@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/snippet-validation.rs
+assertion_line: 378
 expression: run.out
 ---
 AGENTS.master.md: master-required-reads: the root master holds only `## Purpose`; `docs/project/index.yaml` selects what the root AGENTS.md includes
@@ -26,6 +27,7 @@ docs/domain/acme/principle/shape.md: structure-see-also-not-last
 docs/domain/acme/procedure/both.md: frontmatter-activation-conflict
 docs/domain/acme/procedure/both.md: frontmatter-subscriptions-without-role
 docs/domain/acme/procedure/both.md: frontmatter-parameters-without-role
+docs/domain/acme/procedure/ghostly.md: frontmatter-dispatch-agent-unknown: ghost
 docs/domain/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
 docs/domain/loose.md: identity-missing-domain: loose
 docs/project/adr/0001-choice.md: frontmatter-adr-date-invalid

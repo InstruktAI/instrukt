@@ -564,3 +564,379 @@ fn a_failed_phase_fetch_never_uses_the_stale_local_base() {
     ]);
     assert_eq!(branches.lines().count(), 0);
 }
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+#[test]
+fn releasing_a_driver_resumes_its_same_native_phase_and_tree_on_pickup() {
+    let p = Tracked::new(true);
+    change(&p, "resume-parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let worktree = fake.worktree("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", "s1")
+        .args(["todo", "update", "resume-parser", "--unclaim"])
+        .assert()
+        .success();
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert!(worktree.is_dir());
+    assert_eq!(fake.message_count("s1"), 2);
+    insta::assert_snapshot!(
+        "retained-driver-resumed",
+        support::redact(&p.todo(["show", "resume-parser"]))
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17
+// spec: project/instrukt/spec/feature/docs/pending-documentation UC-PD2
+#[test]
+fn renamed_target_retrieval_reads_the_retained_preparation_assignment() {
+    let p = Tracked::new(true);
+    change(&p, "old-parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let worktree = fake.worktree("s1");
+    let file = worktree.join("docs/project/spec/feature/parser.md");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file,"---\ndescription: The retained parser contract.\ndelivered_by: [old-parser]\n---\n# Parser — Spec\n\n## What it is\n\nThe parser.\n\n## Canonical fields\n\nKeep this contract in its retained tree.\n").unwrap();
+    p.env
+        .run(p.repo.path(), ["docs", "index", "--target", "old-parser"])
+        .success();
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "docs",
+                "get",
+                "project/demo/spec/feature/parser",
+                "--target",
+                "old-parser",
+            ],
+        )
+        .success();
+    p.todo(["update", "old-parser", "--slug", "new-parser"]);
+    let file = worktree.join("docs/project/spec/feature/parser.md");
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    text.push_str("\n<!-- planned:new-parser -->\nA refinement authored under the intermediate name.\n<!-- /planned:new-parser -->\n");
+    std::fs::write(file, text).unwrap();
+    p.todo(["update", "new-parser", "--slug", "final-parser"]);
+    let index = p
+        .env
+        .run(p.repo.path(), ["docs", "index", "--target", "final-parser"])
+        .success();
+    let read = p
+        .env
+        .run(
+            p.repo.path(),
+            [
+                "docs",
+                "get",
+                "project/demo/spec/feature/parser",
+                "--target",
+                "final-parser",
+            ],
+        )
+        .success();
+    insta::assert_snapshot!(
+        "renamed-target-retained-source",
+        shown(
+            &p,
+            &[
+                index.get_output().stdout.clone(),
+                read.get_output().stdout.clone()
+            ]
+            .concat()
+        )
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+// spec: project/instrukt/spec/feature/work/todos UC-TD7
+#[test]
+fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
+    let crew = workflow::Crew::new();
+    let slug = "native-selection";
+    let file = crew.project.env.instrukt_home().join("instrukt.yaml");
+    let mut config = std::fs::read_to_string(&file).unwrap();
+    config.push_str("agents:\n  order: [claude]\n  tier: standard\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high, options: {fastMode: false}}]\n");
+    std::fs::write(file, config).unwrap();
+    crew.project
+        .create(slug, "change", "Carry resolved native inputs.");
+    crew.next("prepare", slug);
+    let tree = crew.phase_workspace(slug, true);
+    let result = crew
+        .project
+        .env
+        .instrukt(&tree)
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "planner",
+            "--procedure",
+            "crew/procedure/plan",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+        ])
+        .write_stdin("Use the resolved native model inputs.")
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "native-selection-facts",
+        support::redact(
+            &String::from_utf8_lossy(&result.get_output().stdout).replace(
+                crew.project
+                    .env
+                    .path("")
+                    .to_str()
+                    .unwrap()
+                    .trim_end_matches('/'),
+                "[TMP]"
+            )
+        )
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/todos UC-TD8
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+#[test]
+fn proven_native_no_start_retries_with_the_next_available_model() {
+    let crew = workflow::Crew::new();
+    let slug = "native-fallback";
+    let file = crew.project.env.instrukt_home().join("instrukt.yaml");
+    let mut config = std::fs::read_to_string(&file).unwrap();
+    config.push_str("agents:\n  order: [codex, claude]\n  tier: strong\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n");
+    std::fs::write(file, config).unwrap();
+    crew.project
+        .create(slug, "change", "Retry only after proof of no native start.");
+    crew.next("prepare", slug);
+    let tree = crew.phase_workspace(slug, true);
+    let attempt = || {
+        crew.project
+            .env
+            .instrukt(&tree)
+            .args([
+                "todo",
+                "attempt",
+                slug,
+                "--role",
+                "planner",
+                "--procedure",
+                "crew/procedure/plan",
+                "--args",
+                slug,
+                "--brief",
+                "-",
+            ])
+            .write_stdin("Retain this original brief.")
+            .assert()
+            .success()
+    };
+    let first = attempt();
+    let first: serde_json::Value = serde_json::from_slice(&first.get_output().stdout).unwrap();
+    // This is explicit no-start evidence, never a timeout or empty listing.
+    crew.project
+        .env
+        .instrukt(&tree)
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "planner",
+            "--attempt",
+            "1",
+            "--not-started",
+            "--reason",
+            "Native rejection confirmed before child creation.",
+        ])
+        .assert()
+        .success();
+    crew.project
+        .env
+        .run(
+            &tree,
+            [
+                "agents",
+                "status",
+                "codex",
+                "unavailable",
+                "--model",
+                "gpt-6-astra",
+                "--until",
+                "2099-01-01T00:00:00Z",
+                "--reason",
+                "quota",
+            ],
+        )
+        .success();
+    let retry = attempt();
+    let second: serde_json::Value = serde_json::from_slice(&retry.get_output().stdout).unwrap();
+    assert_eq!(first["attempt"].as_u64(), second["attempt"].as_u64());
+    insta::assert_snapshot!(
+        "native-model-chain-fallback",
+        support::redact(
+            &String::from_utf8_lossy(&retry.get_output().stdout).replace(
+                crew.project
+                    .env
+                    .path("")
+                    .to_str()
+                    .unwrap()
+                    .trim_end_matches('/'),
+                "[TMP]"
+            )
+        )
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC1
+#[test]
+fn a_kickback_round_trip_resumes_the_retained_work_driver_without_resetting_its_tree() {
+    let p = Tracked::new(true);
+    let slug = "round-trip";
+    let prepare = "docs/domain/acme/workflow/prepare.yaml";
+    p.repo.write(
+        prepare,
+        &p.repo.read(prepare).replace(
+            "when: {not: {exists: implementation_plan.digest}}",
+            "when: {not: {equals: [plan_review.verdict, approve]}}",
+        ),
+    );
+    let work = "docs/domain/acme/workflow/work.yaml";
+    p.repo.write(
+        work,
+        &p.repo.read(work).replace(
+            "when: {exists: implementation_plan.digest}",
+            "when: {equals: [plan_review.verdict, approve]}",
+        ),
+    );
+    p.repo.commit("publish kickback-aware fixture lanes");
+    p.repo.git(["push", "--quiet", "origin", "main"]);
+    p.env.run(p.repo.path(), ["sync"]).success();
+    change(&p, slug);
+    p.todo([
+        "artifacts",
+        "write",
+        slug,
+        "implementation-plan",
+        "The initial plan.",
+    ]);
+    p.todo([
+        "artifacts",
+        "write",
+        slug,
+        "plan-review-findings",
+        "Approved initial plan.",
+    ]);
+    p.todo([
+        "stamp",
+        slug,
+        "--verdict",
+        "approve",
+        "--phase",
+        "plan_review",
+    ]);
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let retained = fake.worktree("s1");
+    std::fs::write(
+        retained.join("retained.txt"),
+        "Committed work from before kickback.",
+    )
+    .unwrap();
+    p.env.git(&retained, ["add", "retained.txt"]);
+    p.env.git(
+        &retained,
+        ["commit", "--quiet", "-m", "retain partial implementation"],
+    );
+    let head = p.env.git(&retained, ["rev-parse", "HEAD"]);
+    p.github
+        .set_branch(flavor::REPOSITORY, "round-trip/work", &head);
+    p.env
+        .instrukt(&retained)
+        .env("T3CODE_THREAD_ID", "s1")
+        .args([
+            "todo",
+            "stamp",
+            slug,
+            "--kickback",
+            "--reason",
+            "Revise the plan while preserving implementation.",
+        ])
+        .assert()
+        .success();
+    p.env
+        .instrukt(&retained)
+        .env("T3CODE_THREAD_ID", "s1")
+        .args(["todo", "update", slug, "--unclaim"])
+        .assert()
+        .success();
+    p.tick();
+    assert_eq!(fake.threads().len(), 2, "{}", p.todo(["show", slug]));
+    let preparation = fake.worktree("s2");
+    p.env
+        .instrukt(&preparation)
+        .env("T3CODE_THREAD_ID", "s2")
+        .args([
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            "implementation-plan",
+            "The corrected plan.",
+        ])
+        .assert()
+        .success();
+    p.env
+        .instrukt(&preparation)
+        .env("T3CODE_THREAD_ID", "s2")
+        .args([
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            "plan-review-findings",
+            "Approved corrected plan.",
+        ])
+        .assert()
+        .success();
+    p.env
+        .instrukt(&preparation)
+        .env("T3CODE_THREAD_ID", "s2")
+        .args([
+            "todo",
+            "stamp",
+            slug,
+            "--verdict",
+            "approve",
+            "--phase",
+            "plan_review",
+        ])
+        .assert()
+        .success();
+    p.env
+        .instrukt(&preparation)
+        .env("T3CODE_THREAD_ID", "s2")
+        .args(["todo", "update", slug, "--unclaim"])
+        .assert()
+        .success();
+    // This preparation changed only work-record artifacts; its Git head is already on main.
+    p.repo
+        .git(["worktree", "remove", preparation.to_str().unwrap()]);
+    p.repo.git(["branch", "-d", "round-trip/prepare"]);
+    p.tick();
+    assert_eq!(fake.threads().len(), 2);
+    assert_eq!(fake.message_count("s1"), 2);
+    assert!(retained.join("retained.txt").is_file());
+    assert_eq!(p.env.git(&retained, ["rev-parse", "HEAD"]), head);
+    insta::assert_snapshot!(
+        "kickback-retained-driver",
+        support::redact(&p.todo(["show", slug]))
+    );
+}

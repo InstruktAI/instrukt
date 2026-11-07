@@ -26,13 +26,14 @@ pub struct Parameter {
     pub rest: bool,
 }
 
-/// A thinking mode a procedure's dispatch defaults may name.
+/// A tier mode a procedure's dispatch defaults may name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ThinkingMode {
-    Fast,
-    Med,
-    Slow,
+pub enum Tier {
+    Light,
+    Standard,
+    Strong,
+    Premium,
 }
 
 /// A procedure's launch defaults.
@@ -41,7 +42,7 @@ pub struct Dispatch {
     /// Ordered agent preference; names are checked against the runtime
     /// mapping by configuration, not here.
     pub agents: Vec<String>,
-    pub thinking_mode: ThinkingMode,
+    pub tier: Tier,
 }
 
 /// What a procedure declares about how a session is started into it. Empty
@@ -255,7 +256,7 @@ fn parse_dispatch(value: &Value) -> Result<Dispatch, String> {
         .ok_or_else(|| "not a mapping".to_owned())?;
     if let Some(key) = map
         .keys()
-        .find(|k| !matches!(k.as_str(), Some("agent" | "thinking_mode")))
+        .find(|k| !matches!(k.as_str(), Some("agent" | "tier")))
     {
         return Err(format!("unknown key {}", yaml_text(key)));
     }
@@ -266,21 +267,19 @@ fn parse_dispatch(value: &Value) -> Result<Dispatch, String> {
             .collect::<Result<_, _>>()?,
         _ => return Err("agent is not a non-empty list".to_owned()),
     };
-    let thinking_mode = match map.get("thinking_mode").and_then(Value::as_str) {
-        Some("fast") => ThinkingMode::Fast,
-        Some("med") => ThinkingMode::Med,
-        Some("slow") => ThinkingMode::Slow,
+    let tier = match map.get("tier").and_then(Value::as_str) {
+        Some("light") => Tier::Light,
+        Some("standard") => Tier::Standard,
+        Some("strong") => Tier::Strong,
+        Some("premium") => Tier::Premium,
         other => {
             return Err(format!(
-                "thinking_mode {}",
+                "tier {}",
                 other.map_or_else(|| "missing".to_owned(), str::to_owned)
             ));
         }
     };
-    Ok(Dispatch {
-        agents,
-        thinking_mode,
-    })
+    Ok(Dispatch { agents, tier })
 }
 
 fn yaml_text(value: &Value) -> String {
@@ -329,6 +328,25 @@ pub(super) fn check(
         issues.push((FindingCode::EvalInvalid, Some(yaml_text(value))));
     }
     check_delivered_by(raw, &mut issues);
+    if let Some(value) = get(raw, "binding_reservations")
+        && (taxonomy != Some(Taxonomy::Spec)
+            || !value.as_mapping().is_some_and(|map| {
+                map.iter().all(|(id, slug)| {
+                    id.as_str()
+                        .and_then(|id| crate::ids::UseCaseId::parse(id).ok())
+                        .is_some()
+                        && slug
+                            .as_str()
+                            .and_then(|slug| TodoSlug::parse(slug).ok())
+                            .is_some()
+                })
+            }))
+    {
+        issues.push((
+            FindingCode::BindingReservationsInvalid,
+            Some(yaml_text(value)),
+        ));
+    }
     match taxonomy {
         Some(Taxonomy::Procedure) => check_procedure(raw, &mut issues),
         Some(_) => {
@@ -553,7 +571,7 @@ mod tests {
     fn procedure_entry_rules_hold() {
         let found = codes(
             "description: d\nactivation_trigger: t\nsubscriptions: ['a.b.*', 'a*b']\n\
-             parameters: []\ndispatch: {agent: [x], thinking_mode: med}\ninterruptible: 3\n",
+             parameters: []\ndispatch: {agent: [x], tier: standard}\ninterruptible: 3\n",
             Taxonomy::Procedure,
         );
         assert_eq!(
@@ -575,15 +593,12 @@ mod tests {
         let fm = Frontmatter::read(
             map(
                 "description: d\nrole: builder\nparameters: [{name: slug, required: true}, {name: rest, rest: true}]\n\
-                 dispatch: {agent: [claude], thinking_mode: slow}\n",
+                 dispatch: {agent: [claude], tier: strong}\n",
             ),
             Some(Taxonomy::Procedure),
         );
         assert_eq!(fm.entry.parameters.len(), 2);
-        assert_eq!(
-            fm.entry.dispatch.map(|d| d.thinking_mode),
-            Some(ThinkingMode::Slow)
-        );
+        assert_eq!(fm.entry.dispatch.map(|d| d.tier), Some(Tier::Strong));
         assert!(
             codes(
                 "description: d\nrole: r\nparameters: [{name: a, rest: true}, {name: b}]\n",

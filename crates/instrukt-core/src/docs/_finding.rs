@@ -45,6 +45,7 @@ codes! {
     FrontmatterInvalid => "frontmatter-invalid",
     DescriptionMissing => "frontmatter-description-missing",
     VisibilityInvalid => "frontmatter-visibility-invalid",
+    BindingReservationsInvalid => "frontmatter-binding-reservations-invalid",
     EvalInvalid => "frontmatter-eval-invalid",
     /// A procedure-only field on another type.
     ProcedureFieldMisplaced => "frontmatter-procedure-field-misplaced",

@@ -299,6 +299,14 @@ fn dispatch_one(
     let started = match started {
         Ok(started) => started,
         Err(SessionsError::OrderExhausted { tried }) => {
+            if creation == crate::runtime::CreationPermit::Initial
+                && let Err(error) = work
+                    .bindings
+                    .release_unstarted(project, todo, &dispatch_key)
+            {
+                tracing::warn!(event="unstarted_reservation_retained",todo=%todo,error=%error);
+                return Some(Dispatched::StartUncertain { todo: todo.clone() });
+            }
             tracing::warn!(event = "dispatch_order_exhausted", project = %project.slug, todo = %todo, tried = ?tried);
             match work.claims.release_claim(project, todo, &Claimant::Runner) {
                 Ok(()) => {

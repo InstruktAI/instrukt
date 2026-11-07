@@ -53,7 +53,43 @@ pub fn fold(repo_root: &Path, slug: &TodoSlug) -> Result<FoldOutcome, DocsError>
         source,
     })?;
     let sources = super::_corpus::read_tree(&root)?;
-    let plan = plan(sources, slug)?;
+    let corpus = super::_corpus::Corpus::from_sources(
+        crate::config::project_slug(&root)?,
+        &crate::home::Home::at_user_home(root.clone()),
+        sources.clone(),
+    );
+    let inventory = crate::specs::Inventory::read(&corpus);
+    let bindings = if inventory
+        .use_cases()
+        .iter()
+        .any(|case| case.claim() == &crate::specs::Claim::Held(slug.clone()))
+    {
+        crate::specs::BindingSet::read(&root).map_err(|error| DocsError::FoldRefused {
+            path: root.clone(),
+            reason: error.to_string(),
+        })?
+    } else {
+        crate::specs::BindingSet::default()
+    };
+    let originals: BTreeMap<String, String> = sources
+        .iter()
+        .map(|file| (file.path.clone(), file.text.clone()))
+        .collect();
+    let mut plan = plan(sources, slug)?;
+    for snippet in corpus.snippets() {
+        let file = snippet.path().to_string_lossy().to_string();
+        let text = match plan.get(&file) {
+            Some(Some(text)) => text,
+            Some(None) => continue,
+            None => match originals.get(&file) {
+                Some(text) => text,
+                None => continue,
+            },
+        };
+        if let Some(text) = reserve_bindings(&file, text, slug, &inventory, &bindings)? {
+            plan.insert(file, Some(text));
+        }
+    }
     let targets = plan
         .iter()
         .map(|(path, next)| Ok((confined(&root, path)?, path, next)))
@@ -83,6 +119,62 @@ pub fn fold(repo_root: &Path, slug: &TodoSlug) -> Result<FoldOutcome, DocsError>
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
     Ok(outcome)
+}
+
+/// Activation removes visibility markers; binding ownership has an independent lifetime.
+fn reserve_bindings(
+    file: &str,
+    text: &str,
+    slug: &TodoSlug,
+    inventory: &crate::specs::Inventory,
+    bindings: &crate::specs::BindingSet,
+) -> Result<Option<String>, DocsError> {
+    let split = split_frontmatter(text);
+    let mut mapping = parse_mapping(split.frontmatter).ok_or_else(|| DocsError::FoldRefused {
+        path: PathBuf::from(file),
+        reason: "frontmatter is not a mapping".into(),
+    })?;
+    let original = mapping.get("binding_reservations").cloned();
+    let mut reservations = match &original {
+        Some(Value::Mapping(map)) => map.clone(),
+        None => serde_yaml_ng::Mapping::new(),
+        Some(_) => {
+            return Err(DocsError::FoldRefused {
+                path: PathBuf::from(file),
+                reason: "binding_reservations must map use-case ids to todo slugs".into(),
+            });
+        }
+    };
+    for case in inventory.use_cases().iter().filter(|case| {
+        case.file() == Path::new(file) && case.claim() == &crate::specs::Claim::Held(slug.clone())
+    }) {
+        let key = Value::String(case.reference().use_case.to_string());
+        let bound = bindings
+            .bindings()
+            .iter()
+            .any(|binding| binding.is_attached() && binding.use_case() == Some(case.reference()));
+        if bound {
+            reservations.remove(&key);
+        } else {
+            reservations.insert(key, Value::String(slug.to_string()));
+        }
+    }
+    if reservations.is_empty() {
+        mapping.remove("binding_reservations");
+    } else {
+        mapping.insert(
+            Value::String("binding_reservations".into()),
+            Value::Mapping(reservations),
+        );
+    }
+    if mapping.get("binding_reservations") == original.as_ref() {
+        return Ok(None);
+    }
+    let yaml = serde_yaml_ng::to_string(&mapping).map_err(|error| DocsError::FoldRefused {
+        path: PathBuf::from(file),
+        reason: error.to_string(),
+    })?;
+    Ok(Some(format!("---\n{yaml}---\n{}", split.body)))
 }
 
 /// The absolute path of repository-relative `rel`, refused unless its
@@ -173,6 +265,7 @@ pub(super) fn plan(
 
 /// Other todos' pending carriers in one file.
 struct Foreign {
+    reservations: BTreeMap<String, String>,
     delivered_by: Vec<String>,
     /// Each foreign planned block, marker lines included, with its slug.
     blocks: Vec<(String, String)>,
@@ -184,6 +277,10 @@ struct Foreign {
 impl Foreign {
     fn of(text: &str, slug: &TodoSlug) -> Self {
         let split = split_frontmatter(text);
+        let reservations = reservation_owners(split.frontmatter)
+            .into_iter()
+            .filter(|(_, owner)| owner != slug.as_str())
+            .collect();
         let delivered_by = delivered_by(split.frontmatter)
             .into_iter()
             .filter(|s| s != slug.as_str())
@@ -206,6 +303,7 @@ impl Foreign {
             .map(ToString::to_string)
             .collect();
         Self {
+            reservations,
             delivered_by,
             blocks,
             marker_slugs,
@@ -214,19 +312,33 @@ impl Foreign {
 
     /// The first foreign carrier, for a retirement that would delete it.
     fn first(&self) -> Option<(String, &'static str)> {
-        self.delivered_by
-            .first()
-            .map(|s| (s.clone(), "delivered_by entry"))
+        self.reservations
+            .values()
+            .next()
+            .map(|owner| (owner.clone(), "binding reservation"))
             .or_else(|| {
-                self.marker_slugs
+                self.delivered_by
                     .first()
-                    .map(|s| (s.clone(), "planned material"))
+                    .map(|s| (s.clone(), "delivered_by entry"))
+                    .or_else(|| {
+                        self.marker_slugs
+                            .first()
+                            .map(|s| (s.clone(), "planned material"))
+                    })
             })
     }
 
     /// The first foreign carrier `replacement` does not carry over.
     fn lost_in(&self, replacement: &str) -> Option<(String, &'static str)> {
         let split = split_frontmatter(replacement);
+        let kept = reservation_owners(split.frontmatter);
+        if let Some((_, owner)) = self
+            .reservations
+            .iter()
+            .find(|(id, owner)| kept.get(*id) != Some(*owner))
+        {
+            return Some((owner.clone(), "binding reservation"));
+        }
         let kept_by = delivered_by(split.frontmatter);
         if let Some(other) = self.delivered_by.iter().find(|s| !kept_by.contains(s)) {
             return Some((other.clone(), "delivered_by entry"));
@@ -244,6 +356,21 @@ impl Foreign {
             .find(|s| !kept_slugs.iter().any(|k| k.as_str() == s.as_str()))
             .map(|s| (s.clone(), "planned material"))
     }
+}
+
+fn reservation_owners(yaml: Option<&str>) -> BTreeMap<String, String> {
+    parse_mapping(yaml)
+        .and_then(|map| map.get("binding_reservations").cloned())
+        .and_then(|value| {
+            value.as_mapping().map(|map| {
+                map.iter()
+                    .filter_map(|(id, owner)| {
+                        Some((id.as_str()?.to_owned(), owner.as_str()?.to_owned()))
+                    })
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
 }
 
 /// The slugs of a frontmatter's `delivered_by` list.

@@ -1810,7 +1810,7 @@ mod tests {
         let c = corpus(&[(
             "docs/project/procedure/p.md",
             &procedure(
-                "role: r\nactivation_trigger: t\ndispatch: {agent: [claude, ghost], thinking_mode: med}\n",
+                "role: r\nactivation_trigger: t\ndispatch: {agent: [claude, ghost], tier: standard}\n",
             ),
         )]);
         let found = run(&c, &CoreWiring::default(), &["claude"]);

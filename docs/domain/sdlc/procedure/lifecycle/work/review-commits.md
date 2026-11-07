@@ -6,8 +6,8 @@ parameters:
   - name: slug
     required: false
 dispatch:
-  agent: [codex, claude, gemini, deepseek]
-  thinking_mode: slow
+  agent: [codex, claude, gemini]
+  tier: strong
 ---
 
 # Review Commits — Procedure

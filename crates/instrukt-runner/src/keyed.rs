@@ -141,6 +141,7 @@ impl Drop for KeyGuard {
 struct Recorded {
     request: Option<RuntimeStart>,
     unresolved: bool,
+    retry_allowed: bool,
     bound: Option<SessionRef>,
     accepted: bool,
     project: Option<String>,
@@ -154,6 +155,7 @@ fn record(state: &RunnerState, runtime: &str, key: &str) -> Result<Recorded, Sta
         Ok(Recorded {
             request:encoded.map(|s|serde_json::from_str(s).map_err(|e|state::invalid(path,e))).transpose()?,
             unresolved:start.as_ref().is_some_and(|r|r.1=="unresolved"),
+            retry_allowed:start.as_ref().is_some_and(|r|r.1=="retry_allowed"),
             bound:bound.as_ref().map(|r|SessionRef::parse(&r.0).map_err(|e|state::invalid(path,e))).transpose()?,
             accepted:bound.as_ref().is_some_and(|r|r.1),
             project:start.and_then(|r|r.2).or_else(||bound.as_ref().and_then(|r|r.3.clone())),
@@ -202,9 +204,29 @@ pub(crate) fn start(
 ) -> Result<Thread, SessionsError> {
     let guard = KeyGuard::claim(invocation, adapter, &input.key, project, now)?;
     let mut recorded = record(&guard.state, &guard.runtime, &input.key)?;
-    if recorded.request.as_ref().is_some_and(|r| r != input) {
-        return Err(SessionsError::ChangedRequest(input.key.clone()));
+    let mut resolved = input.clone();
+    if let Some(retained) = &recorded.request {
+        // The retained model choice stays authoritative through ambiguous or
+        // accepted starts, including a caller holding an earlier request copy.
+        resolved.selection = retained.selection.clone();
+        resolved.selection_evidence = retained.selection_evidence.clone();
+        if &resolved != retained {
+            return Err(SessionsError::ChangedRequest(input.key.clone()));
+        }
     }
+    if recorded.retry_allowed && recorded.bound.is_none() && !resolved.preferences.is_empty() {
+        let config =
+            instrukt_core::config::Configuration::load_at(invocation.home(), &resolved.checkout)?;
+        resolved.selection =
+            crate::agents::selections(&config, invocation.home(), &resolved.preferences, now)?
+                .into_iter()
+                .next();
+        let request = serde_json::to_string(&resolved)
+            .map_err(|error| SessionsError::Refused(error.to_string()))?;
+        guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET request=?3 WHERE runtime=?1 AND semantic_key=?2 AND state='retry_allowed'",params![guard.runtime,resolved.key,request]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
+        recorded.request = Some(resolved.clone());
+    }
+    let input = &resolved;
     let fresh = recorded.request.is_none()
         && recorded.bound.is_none()
         && creation == crate::runtime::CreationPermit::Initial;

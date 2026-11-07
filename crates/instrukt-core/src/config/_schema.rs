@@ -90,7 +90,8 @@ enum Shape {
     ModuleList,
     Actions,
     AgentOrder,
-    ThinkingMode,
+    ModelChain,
+    Tier,
     Identity,
 }
 
@@ -183,12 +184,15 @@ fn schema() -> Node {
             Node::Map {
                 children: vec![
                     ("order", Leaf(GlobalOnly, Shape::AgentOrder)),
-                    ("thinking_mode", Leaf(GlobalOnly, Shape::ThinkingMode)),
+                    ("tier", Leaf(GlobalOnly, Shape::Tier)),
                 ],
-                open: Some(Box::new(map(vec![(
-                    "git_author",
-                    Leaf(GlobalOnly, Shape::Identity),
-                )]))),
+                open: Some(Box::new(map(vec![
+                    ("git_author", Leaf(GlobalOnly, Shape::Identity)),
+                    ("light", Leaf(GlobalOnly, Shape::ModelChain)),
+                    ("standard", Leaf(GlobalOnly, Shape::ModelChain)),
+                    ("strong", Leaf(GlobalOnly, Shape::ModelChain)),
+                    ("premium", Leaf(GlobalOnly, Shape::ModelChain)),
+                ]))),
             },
         ),
     ])
@@ -448,9 +452,19 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                 out.push(invalid("expected `human` or `peer`"));
             }
         }
-        Shape::ThinkingMode => {
-            if !matches!(value.as_str(), Some("fast" | "med" | "slow")) {
-                out.push(invalid("expected `fast`, `med` or `slow`"));
+        Shape::ModelChain => {
+            if !value.as_sequence().is_some_and(|v| !v.is_empty()) {
+                out.push(invalid("expected a nonempty model chain"));
+            }
+        }
+        Shape::Tier => {
+            if !matches!(
+                value.as_str(),
+                Some("light" | "standard" | "strong" | "premium")
+            ) {
+                out.push(invalid(
+                    "expected `light`, `standard`, `strong` or `premium`",
+                ));
             }
         }
         Shape::Identity => match value.as_str() {
@@ -749,7 +763,7 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         }),
         Shape::OnOff => json!({ "enum": ["on", "off"] }),
         Shape::Approver => json!({ "enum": ["human", "peer"] }),
-        Shape::ThinkingMode => json!({ "enum": ["fast", "med", "slow"] }),
+        Shape::Tier => json!({ "enum": ["light", "standard", "strong", "premium"] }),
         Shape::Autostart => json!({
             "anyOf": [
                 { "type": "boolean" },
@@ -760,6 +774,9 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         Shape::ModuleList => {
             let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
             strings(&names)
+        }
+        Shape::ModelChain => {
+            json!({"type":"array","minItems":1,"items":{"type":"object","required":["model","effort"],"properties":{"model":{"type":"string"},"effort":{"type":"string"},"options":{"type":"object"}},"additionalProperties":false}})
         }
         Shape::AgentOrder => {
             json!({ "type": "array", "minItems": 1, "items": { "type": "string" } })
@@ -831,7 +848,7 @@ mod tests {
         findings.iter().map(|f| (f.key.as_str(), f.kind)).collect()
     }
 
-    const GLOBAL_ONLY: &str = "agents: {order: [a], thinking_mode: slow, claude: {git_author: 'A <a@x>'}}\n\
+    const GLOBAL_ONLY: &str = "agents: {order: [a], tier: strong, claude: {git_author: 'A <a@x>'}}\n\
         ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
@@ -958,7 +975,7 @@ mod tests {
             judged(&findings),
             [
                 ("agents.order", N),
-                ("agents.thinking_mode", N),
+                ("agents.tier", N),
                 ("agents.claude.git_author", N),
                 ("ticks", N),
                 ("runner.notify", N),
@@ -1005,7 +1022,7 @@ mod tests {
             &yaml(
                 "modules: {core: true, todos: 'yes'}\nticks: true\nrunner: {autostart: 3}\n\
                  runtimes: [{name: a, session_id_env: A, start: s, send: s, alive: a, bogus: x}]\n\
-                 agents: {thinking_mode: deep, order: [claude, true, {a: b}]}\nnope: 1\n",
+                 agents: {tier: deep, order: [claude, true, {a: b}]}\nnope: 1\n",
             ),
             LayerKind::Global,
         );
@@ -1019,7 +1036,7 @@ mod tests {
                 ("ticks", I),
                 ("runner.autostart", I),
                 ("runtimes", I),
-                ("agents.thinking_mode", I),
+                ("agents.tier", I),
                 ("agents.order.1", I),
                 ("agents.order.2", I),
                 ("nope", U),
@@ -1033,11 +1050,9 @@ mod tests {
     }
 
     #[test]
-    fn every_thinking_mode_is_accepted() {
-        for mode in ["fast", "med", "slow"] {
-            let doc = yaml(&format!(
-                "schema_version: 1\nagents: {{thinking_mode: {mode}}}\n"
-            ));
+    fn every_tier_is_accepted() {
+        for mode in ["light", "standard", "strong", "premium"] {
+            let doc = yaml(&format!("schema_version: 1\nagents: {{tier: {mode}}}\n"));
             assert_eq!(check(&doc, LayerKind::Global), []);
         }
     }

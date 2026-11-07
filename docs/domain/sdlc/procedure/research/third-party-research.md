@@ -11,8 +11,8 @@ parameters:
     required: true
     rest: true
 dispatch:
-  agent: [claude, codex, gemini, deepseek]
-  thinking_mode: slow
+  agent: [claude, codex, gemini]
+  tier: strong
 ---
 
 # Third-Party Research — Procedure

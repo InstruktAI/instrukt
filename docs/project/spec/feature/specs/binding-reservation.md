@@ -6,8 +6,7 @@ delivered_by: [instrukt-first-build]
 
 ## What it is
 
-Before a build binds a use case, the todo that will bind it claims it on main
-with a pending marker, so a concurrent todo sees the claim and reuses or
+Before a build binds a use case, its todo reserves it in the preparation worktree. Integration publishes that ownership on main, preserving it independently of pending visibility, so a concurrent todo sees the claim and reuses or
 authors a distinct use case instead of adding a second binding
 (`sdlc/policy/testing`). `instrukt specs reserve` is the check: given the
 requesting todo's slug and the bindings its plan declares, it reports every
@@ -18,10 +17,10 @@ marker the todo authors.
 
 ### The claim
 
-- A use case is claimed by the slug of the pending marker that encloses its
+- An explicit `binding_reservations` entry claims its use case; otherwise a use case is claimed by the slug of the pending marker that encloses its
   definition line: a `planned:<slug>` block (a newly authored use case) or a
   `planned-change:<slug>` block (an existing use case restated unchanged, or
-  changed). The marker grammar is owned by docs
+  changed). Preparation folding activates documentation while preserving each unbound use case's ownership in frontmatter `binding_reservations: {UC-id: todo-slug}`. This metadata is independent of pending visibility. Work-delivery folding clears an owned reservation only when an attached test binding exists in the candidate. The marker grammar is owned by docs
   (`project/instrukt/spec/domain/docs`).
 - Whole-file `delivered_by` claims all use cases only when it names exactly
   one delivering slug. With several slugs, claims come from in-body pending

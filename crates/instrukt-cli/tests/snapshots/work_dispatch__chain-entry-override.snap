@@ -1,0 +1,19 @@
+---
+source: crates/instrukt-cli/tests/work-dispatch.rs
+assertion_line: 316
+expression: "String::from_utf8_lossy(&result.get_output().stdout)"
+---
+light:
+- model: gpt-6.1-sol
+  effort: xhigh
+standard:
+- model: gpt-6-sol
+  effort: high
+strong:
+- model: gpt-6.1-sol
+  effort: high
+premium:
+- model: gpt-6-astra
+  effort: high
+- model: gpt-6.1-sol
+  effort: high

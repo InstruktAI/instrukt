@@ -32,6 +32,14 @@ impl T3 {
                 worktree.branch.as_str(),
             ]);
         }
+        if let Some(selection) = &request.selection {
+            args.extend([
+                "--provider",
+                &selection.provider,
+                "--model",
+                &selection.model,
+            ]);
+        }
         args.extend(["--", &checkout, "-"]);
         let out = self.call(&args, Some(&request.brief))?;
         let id = out.trim();
@@ -141,6 +149,7 @@ impl RuntimeAdapter for T3 {
         matches!(
             capability,
             Capability::CreateWorktree
+                | Capability::AgentSelection
                 | Capability::InputConsumption
                 | Capability::AssignmentEvidence
         )

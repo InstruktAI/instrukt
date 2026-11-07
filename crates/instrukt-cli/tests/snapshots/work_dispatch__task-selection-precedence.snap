@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/work-dispatch.rs
+assertion_line: 277
+expression: chosen(&p)
+---
+[
+  {
+    "provider": "antigravity",
+    "model": "gemini-pro-agent",
+    "session": "t3:s1",
+    "title": "instrukt:task:demo/<id 1>:2030-01-06T09%3A00%3A00Z",
+    "state": "running",
+    "settled": false,
+    "semantic_key": "instrukt:task:demo/<id 1>:2030-01-06T09%3A00%3A00Z",
+    "last_activity": "<time>",
+    "activity_source": "t3 updatedAt/settledAt: native latest activity or settling"
+  }
+]

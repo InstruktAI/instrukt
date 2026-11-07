@@ -17,7 +17,7 @@ use instrukt_core::config::{self, Module};
 use instrukt_core::git;
 use instrukt_core::ids::{CommitSha, RoleName, SessionRef, SnippetId, TodoSlug};
 use instrukt_runner::interfaces::{
-    AgentPreference, CatchUp, ProjectRef, TaskSchedule, Thinking, TodoKind,
+    AgentPreference, CatchUp, ProjectRef, TaskSchedule, Tier, TodoKind,
 };
 use instrukt_todos::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, DriftClass, HoldSource,
@@ -173,9 +173,9 @@ struct CreateArgs {
     /// A task's preferred agent.
     #[arg(long, value_name = "NAME")]
     agent: Option<String>,
-    /// The preferred agent's thinking mode.
-    #[arg(long, value_name = "slow|med|fast", requires = "agent")]
-    thinking: Option<ThinkingArg>,
+    /// The preferred agent family's model-chain tier.
+    #[arg(long, value_name = "light|standard|strong|premium", requires = "agent")]
+    tier: Option<TierArg>,
     /// Audit-only: whether a human was involved in filing.
     #[arg(
         long,
@@ -234,9 +234,9 @@ struct UpdateArgs {
     /// A task's preferred agent.
     #[arg(long, value_name = "NAME")]
     agent: Option<String>,
-    /// The preferred agent's thinking mode.
-    #[arg(long, value_name = "slow|med|fast", requires = "agent")]
-    thinking: Option<ThinkingArg>,
+    /// The preferred agent family's model-chain tier.
+    #[arg(long, value_name = "light|standard|strong|premium", requires = "agent")]
+    tier: Option<TierArg>,
     /// Permit orphaning artifacts in a kind change.
     #[arg(long)]
     force: bool,
@@ -372,10 +372,11 @@ enum CatchUpArg {
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 #[value(rename_all = "snake_case")]
-enum ThinkingArg {
-    Slow,
-    Med,
-    Fast,
+enum TierArg {
+    Strong,
+    Premium,
+    Standard,
+    Light,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -649,7 +650,7 @@ impl Session<'_> {
             }),
             agent: args.agent.map(|agent| AgentPreference {
                 agent,
-                thinking: args.thinking.map(thinking),
+                tier: args.tier.map(tier),
             }),
             human_involved: args.human_involved,
         };
@@ -703,11 +704,14 @@ impl Session<'_> {
             unclaim: args.unclaim,
             agent: args.agent.map(|agent| AgentPreference {
                 agent,
-                thinking: args.thinking.map(thinking),
+                tier: args.tier.map(tier),
             }),
             force: args.force,
         };
-        let outcome = self.work.update(self.project, &args.slug, request)?;
+        let events = crate::wiring::event_log(ctx)?;
+        let outcome = self
+            .work
+            .update(self.project, &args.slug, request, events.as_deref())?;
         ctx.out
             .line(&format!("updated {}", outcome.value.record.slug))?;
         for warning in &outcome.value.warnings {
@@ -948,11 +952,12 @@ fn slugs(list: Option<&str>) -> anyhow::Result<Vec<TodoSlug>> {
         .collect()
 }
 
-fn thinking(arg: ThinkingArg) -> Thinking {
+fn tier(arg: TierArg) -> Tier {
     match arg {
-        ThinkingArg::Slow => Thinking::Slow,
-        ThinkingArg::Med => Thinking::Med,
-        ThinkingArg::Fast => Thinking::Fast,
+        TierArg::Strong => Tier::Strong,
+        TierArg::Premium => Tier::Premium,
+        TierArg::Standard => Tier::Standard,
+        TierArg::Light => Tier::Light,
     }
 }
 
@@ -1154,13 +1159,14 @@ fn render_view(view: &TodoView) -> String {
             "agent: {}{}",
             agent.agent,
             agent
-                .thinking
+                .tier
                 .map(|t| format!(
                     " ({})",
                     match t {
-                        Thinking::Slow => "slow",
-                        Thinking::Med => "med",
-                        Thinking::Fast => "fast",
+                        Tier::Strong => "strong",
+                        Tier::Premium => "premium",
+                        Tier::Standard => "standard",
+                        Tier::Light => "light",
                     }
                 ))
                 .unwrap_or_default()

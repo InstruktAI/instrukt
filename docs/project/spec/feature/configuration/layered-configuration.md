@@ -37,7 +37,8 @@ enable events. Installation and withdrawal are owned by
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
-| `agents.order`, `agents.thinking_mode` (ordered agent preferences and their thinking mode) | global only | dispatch |
+| `agents.order`, `agents.tier` (ordered families and tier) | global only | dispatch |
+| `agents.<family>.<tier>` (ordered model/effort/options chains) | global only, over shipped tier entries | dispatch |
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
@@ -182,7 +183,7 @@ agent-facing consumers retrieve the value through its alias.
 | `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
 | `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
 | `discuss` | Use a supported native discussion capability for the requested collaboration, preserving each participant's attribution. Report an unavailable capability; the linked-conversation mechanism remains unsettled and no instrukt forwarding route is supplied. |
-| `start_thread` | For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
+| `start_thread` | Use supplied placement.selection family/provider/model/effort/options for native startup. The host CLI passes --provider and --model and records its effort/options flag gap. For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
 | `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
 | `finish_thread` | Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling. |
 | `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
@@ -202,23 +203,43 @@ reads and documentation remain usable without a runtime.
 
 ### Agent preferences and availability
 
-The global layer supplies a non-empty ordered agent preference list,
-`agents.order: [<agent>, …]`, and one thinking mode for the whole list,
-`agents.thinking_mode` (`fast`, `med` or `slow`) — the same shape as a
-procedure's `dispatch` (`agent: [<agent>, …]`, `thinking_mode`). Precedence,
-first to last: a task's own preference (`--agent <name> [--thinking …]`, one
-agent with its own mode), then the procedure's `dispatch`, then `agents.order`
-with `agents.thinking_mode`. `agents.thinking_mode` has no default: it is
-required whenever `agents.order` is set, and a missing mode is a validation
-finding, as for `dispatch`. Agent names validate against the agents the selected
-runtime adapter can start, rather than a fixed set or the shorter set of agents
-receiving deployed instructions.
+Procedure frontmatter is `dispatch: {agent: [<family>, …], tier: light|standard|strong|premium}`.
+Task `--agent` and optional `--tier` precede the procedure's ordered families;
+otherwise dispatch uses global `agents.order` and `agents.tier`. An explicitly authored global order carries its tier too; a missing tier is a validation finding. An omitted task
+tier inherits the procedure tier, then the global tier. The procedure order
+replaces the global order; a task family appears once at its first position.
 
-Configuration supplies preferences; the adapter supplies supported selection and
-availability metadata. It exposes unsupported selection explicitly; no command
-template is configured. Dispatch execution belongs to
-`project/instrukt/spec/feature/runner/work-dispatch`. Composing the order is
-agent judgment informed by `general/concept/agent-characteristics`.
+Global `agents.<family>.<tier>` is a nonempty ordered chain of
+`{model, effort, options?}`. Options map provider-native option ids to string or
+boolean values. Global chains override the corresponding shipped tier entry;
+other families and tiers retain shipped defaults. Shipped heuristics use high
+effort throughout, and premium ends with the strong tier's model/effort. These
+choices are data, never validation rules. No shipped procedure uses premium.
+
+The runtime catalogue supplies family/provider/model/option identities, never
+configuration. T3's host CLI has no catalogue listing, so its adapter carries a
+catalogue grounded in T3's published manifest and option descriptors. `instrukt
+agents catalog` returns it. Unknown model, effort, option id or option value is
+a configuration finding; project layers cannot replace machine selection.
+
+`instrukt agents status <family> <available|unavailable|degraded> [--model <slug>]
+[--until <RFC3339>] [--reason <text>]` records local capacity in SQLite;
+`instrukt agents availability` reads normalized marks. An agent mark applies to
+all its models; model marks apply only to that model. Expired marks lapse at the
+command clock, including equality. Non-available model marks require expiry;
+unavailable marks require a reason. Available clears the effective restriction.
+Automated starts skip unavailable and degraded capacity, preserving TeleClaude's
+reservation of degraded capacity for human launches. This marks no configuration
+and changes no existing conversation.
+
+Selection walks families sequentially, then each family's tier chain, taking
+the first eligible entry. Only after exhausting that chain does it try another
+family. Both unattended runner starts and native worker attempt facts carry the
+resolved family, provider, model, effort and options. Resolved options include the effort under its native option id, plus configured extra options, ready for native delegation. T3 CLI receives explicit
+`--provider` and `--model`; its lack of effort/options flags is recorded in start
+evidence. Native dispatch passes all resolved inputs through `runtime.dispatch`.
+Ambiguous creation or failed sends retain the existing assignment; only a
+rejection proven before creation permits chain fallback.
 
 ### Locating the layers
 
@@ -337,6 +358,7 @@ And the configuration is unchanged
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; no runtime is chosen |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
+| `agents.<family>.<tier>` (ordered model/effort/options chains) | global only, over shipped tier entries | dispatch |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | `false` or `<owner>/<number>`; `true` is a finding asking for the project reference | `false` (todos are always issues; the board is opt-in). |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |

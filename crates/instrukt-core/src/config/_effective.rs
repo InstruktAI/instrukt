@@ -17,13 +17,33 @@ use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 
-/// One thinking mode for the whole agent preference list
-/// (`agents.thinking_mode`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThinkingMode {
-    Fast,
-    Med,
-    Slow,
+/// One tier mode for the whole agent preference list
+/// (`agents.tier`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Light,
+    Standard,
+    Strong,
+    Premium,
+}
+
+impl Tier {
+    /// `strong`, `standard` or `light`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Strong => "strong",
+            Tier::Premium => "premium",
+            Tier::Standard => "standard",
+            Tier::Light => "light",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        [Tier::Strong, Tier::Standard, Tier::Light, Tier::Premium]
+            .into_iter()
+            .find(|mode| mode.as_str() == text)
+    }
 }
 
 /// A gate whose approver the project configures (`approvals.<gate>`).
@@ -220,16 +240,17 @@ impl Configuration {
             .collect()
     }
 
-    /// `agents.thinking_mode`, the mode of the whole `agents.order` list.
-    pub fn agents_thinking_mode(&self) -> Result<Option<ThinkingMode>, ConfigError> {
-        match self.str_at(&["agents", "thinking_mode"])? {
+    /// `agents.tier`, the mode of the whole `agents.order` list.
+    pub fn agents_tier(&self) -> Result<Option<Tier>, ConfigError> {
+        match self.str_at(&["agents", "tier"])? {
             None => Ok(None),
-            Some("fast") => Ok(Some(ThinkingMode::Fast)),
-            Some("med") => Ok(Some(ThinkingMode::Med)),
-            Some("slow") => Ok(Some(ThinkingMode::Slow)),
+            Some("light") => Ok(Some(Tier::Light)),
+            Some("standard") => Ok(Some(Tier::Standard)),
+            Some("strong") => Ok(Some(Tier::Strong)),
+            Some("premium") => Ok(Some(Tier::Premium)),
             Some(_) => Err(invalid(
-                "agents.thinking_mode",
-                "is not `fast`, `med` or `slow`",
+                "agents.tier",
+                "is not `light`, `standard`, `strong` or `premium`",
             )),
         }
     }
@@ -475,7 +496,7 @@ mod tests {
         runner: {autostart: true, runtime: t3, notify: 'notify-me'}\n\
         github: {api_url: 'http://github.local'}\n\
         runtimes: [{name: a, session_id_env: A}, {name: b, session_id_env: B, agent: claude}]\n\
-        agents: {order: [claude], thinking_mode: slow, claude: {git_author: 'C <c@x>'}}\n";
+        agents: {order: [claude], tier: strong, claude: {git_author: 'C <c@x>'}}\n";
 
     #[test]
     fn the_project_overrides_where_permitted_and_never_the_machines_keys() {
@@ -528,13 +549,10 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_preferences_carry_one_thinking_mode() {
+    fn the_agent_preferences_carry_one_tier() {
         let cfg = config(GLOBAL, None);
         assert_eq!(cfg.agents_order().unwrap().len(), 1);
-        assert_eq!(
-            cfg.agents_thinking_mode().unwrap(),
-            Some(ThinkingMode::Slow)
-        );
+        assert_eq!(cfg.agents_tier().unwrap(), Some(Tier::Strong));
     }
 
     #[test]

@@ -19,6 +19,12 @@ pub struct WorktreeRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeStart {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preferences: Vec<crate::agents::AgentChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<instrukt_core::config::AgentSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_evidence: Option<String>,
     pub checkout: PathBuf,
     pub key: String,
     pub brief: String,

@@ -86,6 +86,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 let result = instrukt_runner::standing::reserve_manual(
                     &invocation,
                     &instrukt_runner::standing::ManualEntry {
+                        now: ctx.clock.now(),
                         config: &config,
                         env: &env,
                         entry: &entry,

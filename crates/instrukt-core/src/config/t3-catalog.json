@@ -1,0 +1,421 @@
+{
+  "codex": {
+    "provider": "codex",
+    "effort_option": "reasoningEffort",
+    "models": {
+      "gpt-6.1-sol": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-6-astra": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-6-luna": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-6-sol": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-5.6-sol": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-5.6-terra": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-5.6-luna": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-5.5": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-5.4-mini": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      },
+      "gpt-5.3-codex-spark": {
+        "reasoningEffort": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "serviceTier": [
+          "default",
+          "priority",
+          "flex"
+        ]
+      }
+    }
+  },
+  "claude": {
+    "provider": "claudeAgent",
+    "effort_option": "effort",
+    "models": {
+      "claude-opus-5-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ],
+        "fastMode": [
+          true,
+          false
+        ]
+      },
+      "claude-sonnet-5-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ]
+      },
+      "claude-fable-5-1": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ]
+      },
+      "claude-fable-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ]
+      },
+      "claude-opus-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ],
+        "fastMode": [
+          true,
+          false
+        ]
+      },
+      "claude-opus-4-8": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ],
+        "fastMode": [
+          true,
+          false
+        ]
+      },
+      "claude-opus-4-7": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ],
+        "fastMode": [
+          true,
+          false
+        ]
+      },
+      "claude-opus-4-6": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "max",
+          "ultrathink"
+        ],
+        "fastMode": [
+          true,
+          false
+        ],
+        "contextWindow": [
+          "200k",
+          "1m"
+        ]
+      },
+      "claude-opus-4-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
+        "fastMode": [
+          true,
+          false
+        ]
+      },
+      "claude-sonnet-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ]
+      },
+      "claude-sonnet-4-6": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "max",
+          "ultrathink"
+        ],
+        "contextWindow": [
+          "200k",
+          "1m"
+        ]
+      },
+      "claude-haiku-5-5": {
+        "effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultrathink"
+        ]
+      },
+      "claude-haiku-4-5": {
+        "thinking": [
+          true,
+          false
+        ]
+      }
+    }
+  },
+  "gemini": {
+    "provider": "antigravity",
+    "effort_option": "thinking_level",
+    "models": {
+      "gemini-3.8-flash-high": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.8-flash-medium": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.8-flash-low": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.7-flash-high": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.7-flash-medium": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.7-flash-low": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.6-flash-high": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.6-flash-medium": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.6-flash-low": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-pro-agent": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "gemini-3.1-pro-low": {
+        "thinking_level": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    }
+  }
+}

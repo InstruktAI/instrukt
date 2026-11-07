@@ -1,0 +1,31 @@
+---
+source: crates/instrukt-cli/tests/session-continuity.rs
+assertion_line: 689
+expression: "support::redact(&String::from_utf8_lossy(&result.get_output().stdout).replace(crew.project.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
+---
+{
+  "selection": {
+    "family": "claude",
+    "provider": "claudeAgent",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "options": {
+      "effort": "high",
+      "fastMode": false
+    }
+  },
+  "runtime": "t3",
+  "dispatch_allowed": true,
+  "brief": "Run `instrukt docs get crew/procedure/plan --closure` and execute that procedure.\n\nslug: native-selection\n$ARGUMENTS: native-selection\n\nUse the resolved native model inputs.\n",
+  "procedure": "crew/procedure/plan",
+  "args": "native-selection",
+  "role": "planner",
+  "attempt": 1,
+  "semantic_key": "instrukt:todo:demo/<id 1>:planner:1",
+  "title": "instrukt:todo:demo/<id 1>:planner:1",
+  "worktree": "[TMP]/team-native-selection-prepare",
+  "branch": "native-selection/prepare",
+  "base": "<commit 1>",
+  "dispatch_instruction": "Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.family, selection.provider, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.",
+  "continuation_instruction": "Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation."
+}

@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/state-database.rs
-assertion_line: 158
+assertion_line: 163
 expression: "support::redact(&shown)"
 ---
 legacy · change · active
@@ -13,6 +13,7 @@ intent:
 reflection: reflected to GitHub
 claim: not held
 hold: none
+agent: codex (strong)
 sessions:
   prepare-orchestrator/1: t3:legacy-driver
     key: legacy:<id 1>:prepare-orchestrator

@@ -8,8 +8,8 @@ parameters:
   - name: slug
     required: true
 dispatch:
-  agent: [claude, codex, gemini, deepseek]
-  thinking_mode: slow
+  agent: [claude, codex, gemini]
+  tier: strong
 ---
 
 # Work Overview — Procedure
@@ -73,7 +73,7 @@ a routing instruction.
 
 Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Fetch origin before starting a new phase through the configured runtime start action, using `origin/main` and the derived phase branch. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree.
 
-Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer and appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer then releases its claim while the worktree exists; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
 After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from freshly fetched `origin/main` on `<slug>/work`; another computer continues an existing published phase from `origin/<slug>/work` on that same local branch. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
@@ -116,8 +116,8 @@ verdicts and dispositions release read-only attempts. Reuse only active,
 unreleased attempts. A released session retains evidence, not workspace admission.
 
 Select workers from procedure dispatch preferences or `agents.order`, availability
-first, and report runtime project defaults when selection is unsupported. Use
-`med` for builder/fixer, `slow` for independent review and `fast` for finalizer.
+first. Pass resolved family/model/effort/options through runtime.dispatch; do not substitute runtime project defaults. Use
+`standard` for builder/fixer, `strong` for independent review and `light` for finalizer.
 Inspect native task evidence and current bindings before follow-up. A stopped
 worker follows the todo-attempt failure contract: clean shared tree and native
 stop evidence precede failed release; dirty or conflicted work remains outstanding

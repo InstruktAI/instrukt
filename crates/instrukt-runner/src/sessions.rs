@@ -151,6 +151,8 @@ pub struct Started {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ListedSession {
+    pub provider: Option<String>,
+    pub model: Option<String>,
     pub session: SessionRef,
     pub title: Option<String>,
     pub state: String,
@@ -183,13 +185,6 @@ impl<'c> Sessions<'c> {
         request: &StartRequest<'_>,
     ) -> Result<Started, SessionsError> {
         let adapter = self.adapter()?;
-        if !order.is_empty() {
-            tracing::warn!(
-                event = "runtime_selection_unsupported",
-                runtime = adapter.runtime().name(),
-                "agent/model preferences and thinking mode are unsupported; using runtime project defaults"
-            );
-        }
         let (mut input, project) = self.input(request)?;
         if request.creation == crate::runtime::CreationPermit::Reconcile
             && let Some(retained) =
@@ -199,6 +194,14 @@ impl<'c> Sessions<'c> {
                 return Err(SessionsError::ChangedRequest(input.key.clone()));
             }
             input = retained;
+        }
+        if input.selection.is_none() {
+            input.preferences = order.to_vec();
+            input.selection =
+                crate::agents::selections(self.config, self.home, order, request.now)?
+                    .into_iter()
+                    .next();
+            input.selection_evidence=Some("T3 CLI receives provider/model; effort and options cannot be expressed by thread start and remain requested native facts.".into());
         }
         let thread = adapter.start(&crate::runtime::RuntimeAssignment {
             creation: request.creation,
@@ -295,6 +298,9 @@ impl<'c> Sessions<'c> {
             })
             .transpose()?;
         let input = RuntimeStart {
+            preferences: Vec::new(),
+            selection: None,
+            selection_evidence: None,
             checkout,
             key,
             brief: request.message.into(),
@@ -387,6 +393,8 @@ impl<'c> Sessions<'c> {
                 thread.state.as_str().into()
             };
             listed.push(ListedSession {
+                provider: thread.provider,
+                model: thread.model,
                 session: thread.session,
                 title: thread.title,
                 semantic_key: thread.semantic_key,

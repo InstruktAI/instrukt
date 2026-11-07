@@ -52,7 +52,7 @@ fn snippet(taxonomy: &str, extra: &str, body: &str) -> String {
 /// The machine's runtime mapping: one agent CLI, `claude`, that dispatch
 /// defaults may name.
 const MACHINE: &str =
-    "schema_version: 1\nrunner: {runtime: t3}\nagents: {order: [claude], thinking_mode: med}\n";
+    "schema_version: 1\nrunner: {runtime: t3}\nagents: {order: [claude], tier: standard}\n";
 
 /// A repository declaring project `demo` that publishes the `acme` domain,
 /// on a machine whose runtime mapping can start `claude`.
@@ -98,7 +98,7 @@ fn valid_tree(repo: &Repo) {
             "procedure",
             "role: worker\nactivation_trigger: When work arrives.\n\
                  parameters:\n  - name: slug\n    required: true\n\
-                 dispatch:\n  agent: [claude]\n  thinking_mode: med\n",
+                 dispatch:\n  agent: [claude]\n  tier: standard\n",
             "",
         ),
     )
@@ -295,7 +295,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             &snippet(
                 "procedure",
                 "role: haunter\nactivation_trigger: At night.\n\
-                 dispatch:\n  agent: [claude, ghost]\n  thinking_mode: slow\n",
+                 dispatch:\n  agent: [claude, ghost]\n  tier: strong\n",
                 "",
             ),
         )

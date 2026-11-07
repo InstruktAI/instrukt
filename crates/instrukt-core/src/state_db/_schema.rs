@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"
@@ -405,5 +405,16 @@ CREATE TABLE github_label_actions (
  project TEXT NOT NULL, issue_number INTEGER NOT NULL, action_id INTEGER NOT NULL,
  todo_id TEXT NOT NULL, action TEXT NOT NULL, login TEXT NOT NULL,
  at TEXT NOT NULL, outcome TEXT NOT NULL, PRIMARY KEY(project,issue_number,action_id)
+);
+"#;
+
+/// Version 4: dispatch tiers and scoped, expiring availability.
+const V4: &str = r#"
+ALTER TABLE todos RENAME COLUMN thinking TO tier;
+UPDATE todos SET tier=CASE tier WHEN 'fast' THEN 'light' WHEN 'med' THEN 'standard' WHEN 'slow' THEN 'strong' ELSE tier END;
+CREATE TABLE todo_aliases (todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE, slug TEXT NOT NULL, PRIMARY KEY(todo_id,slug));
+CREATE TABLE agent_availability (
+ agent TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+ status_until TEXT, reason TEXT, PRIMARY KEY(agent,model)
 );
 "#;

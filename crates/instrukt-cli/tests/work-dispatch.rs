@@ -155,3 +155,305 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
     }
     assert!(rt.calls().is_empty(), "{:?}", rt.calls());
 }
+
+fn selection_config(project: &Tracked, settings: &str) {
+    let file = project.env.instrukt_home().join("instrukt.yaml");
+    let mut config = std::fs::read_to_string(&file).unwrap();
+    config.push_str(settings);
+    std::fs::write(file, config).unwrap();
+}
+fn chosen(project: &Tracked) -> String {
+    let result = project
+        .env
+        .run(project.repo.path(), ["sessions", "list", "--all", "--json"])
+        .success();
+    work::redact(
+        &String::from_utf8(result.get_output().stdout.clone())
+            .unwrap()
+            .replace(
+                project.env.path("").to_str().unwrap().trim_end_matches('/'),
+                "[TMP]",
+            ),
+    )
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn sequential_selection_exhausts_the_first_family_chain_before_trying_another_family() {
+    let p = Tracked::new(true);
+    selection_config(
+        &p,
+        "agents:\n  order: [claude, codex]\n  tier: strong\n  claude:\n    strong: [{model: claude-sonnet-5-5, effort: high}, {model: claude-opus-5-5, effort: high}]\n",
+    );
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "claude",
+                "unavailable",
+                "--model",
+                "claude-sonnet-5-5",
+                "--until",
+                "2099-01-01T00:00:00Z",
+                "--reason",
+                "quota",
+            ],
+        )
+        .success();
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("sequential-family-chain", chosen(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn exhausted_family_capacity_falls_back_to_the_next_family() {
+    let p = Tracked::new(true);
+    selection_config(&p, "agents: {order: [claude, codex], tier: strong}\n");
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "claude",
+                "unavailable",
+                "--reason",
+                "capacity",
+            ],
+        )
+        .success();
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("next-family-selection", chosen(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn an_expired_model_mark_lapses_before_dispatch() {
+    let mut p = Tracked::new(true);
+    selection_config(&p, "agents: {order: [claude, codex], tier: strong}\n");
+    p.env.set_env("INSTRUKT_NOW", "2030-01-01T00:00:00Z");
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "claude",
+                "unavailable",
+                "--model",
+                "claude-opus-5-5",
+                "--until",
+                "2030-01-02T00:00:00Z",
+                "--reason",
+                "quota",
+            ],
+        )
+        .success();
+    p.env.set_env("INSTRUKT_NOW", "2030-01-02T00:00:00Z");
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("expired-model-selection", chosen(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn a_task_preference_and_tier_override_the_procedure_and_global_preferences() {
+    let mut p = Tracked::new(true);
+    selection_config(&p, "agents: {order: [claude], tier: light}\n");
+    p.authorized_task(
+        "selected-task",
+        "2030-01-06T09:00:00Z",
+        &["--agent", "gemini", "--tier", "strong"],
+    );
+    p.tick_at("2030-01-06T09:00:01Z");
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("task-selection-precedence", chosen(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn runner_start_passes_the_resolved_provider_and_model_as_cli_arguments() {
+    let p = Tracked::new(true);
+    selection_config(&p, "agents: {order: [claude], tier: standard}\n");
+    create_change(&p);
+    p.tick();
+    let command =
+        p.rt.calls()
+            .into_iter()
+            .find(|line| line.starts_with("thread start "))
+            .unwrap();
+    insta::assert_snapshot!(
+        "explicit-native-start-arguments",
+        work::redact(&command.replace(
+            p.env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]"
+        ))
+    );
+}
+
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn a_global_tier_override_replaces_that_chain_and_retains_other_shipped_tiers() {
+    let p = Tracked::new(false);
+    selection_config(
+        &p,
+        "agents:\n  codex:\n    light: [{model: gpt-6.1-sol, effort: xhigh}]\n",
+    );
+    p.env
+        .run(p.repo.path(), ["config", "validate", "--global"])
+        .success();
+    let result = p
+        .env
+        .run(p.repo.path(), ["config", "get", "agents.codex"])
+        .success();
+    insta::assert_snapshot!(
+        "chain-entry-override",
+        String::from_utf8_lossy(&result.get_output().stdout)
+    );
+}
+
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn configured_unknown_models_are_reported_as_validation_findings() {
+    let p = Tracked::new(false);
+    selection_config(
+        &p,
+        "agents:\n  codex:\n    light: [{model: nonexistent-model, effort: high}]\n",
+    );
+    let result = p
+        .env
+        .run(p.repo.path(), ["config", "validate", "--global"])
+        .failure();
+    insta::assert_snapshot!(
+        "unknown-model-finding",
+        String::from_utf8_lossy(&result.get_output().stdout).replace(
+            p.env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]"
+        )
+    );
+}
+
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn configured_unknown_option_values_are_reported_as_validation_findings() {
+    let p = Tracked::new(false);
+    selection_config(
+        &p,
+        "agents:\n  codex:\n    light: [{model: gpt-6.1-sol, effort: high, options: {serviceTier: imaginary}}]\n",
+    );
+    let result = p
+        .env
+        .run(p.repo.path(), ["config", "validate", "--global"])
+        .failure();
+    insta::assert_snapshot!(
+        "unknown-option-finding",
+        String::from_utf8_lossy(&result.get_output().stdout).replace(
+            p.env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]"
+        )
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn the_procedure_family_order_and_tier_replace_the_global_preferences() {
+    let p = Tracked::new(true);
+    selection_config(&p, "agents: {order: [claude], tier: light}\n");
+    let file = "docs/domain/acme/procedure/prepare-overview.md";
+    p.repo.write(
+        file,
+        &p.repo.read(file).replace(
+            "role: prepare-orchestrator",
+            "role: prepare-orchestrator\ndispatch: {agent: [gemini], tier: strong}",
+        ),
+    );
+    p.repo.commit("publish the procedure preference");
+    p.env.run(p.repo.path(), ["sync"]).success();
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("procedure-selection-precedence", chosen(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn capacity_returning_after_total_exhaustion_starts_without_a_phantom_pending_request() {
+    let p = Tracked::new(true);
+    selection_config(&p, "agents: {order: [codex], tier: strong}\n");
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "codex",
+                "unavailable",
+                "--reason",
+                "capacity",
+            ],
+        )
+        .success();
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 0);
+    p.env
+        .run(p.repo.path(), ["agents", "status", "codex", "available"])
+        .success();
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("capacity-returned-selection", chosen(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
+#[test]
+fn confirmed_no_creation_allows_the_runner_to_retry_the_next_available_model() {
+    let p = Tracked::new(true);
+    selection_config(
+        &p,
+        "agents:\n  order: [codex, claude]\n  tier: strong\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
+    );
+    let fake = runtime::FakeT3::create(&p.env);
+    fake.flag("empty-start", true);
+    create_change(&p);
+    p.tick();
+    let key = p
+        .todo(["show", "tidy-imports"])
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("key: "))
+        .unwrap()
+        .to_owned();
+    fake.flag("empty-start", false);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 0);
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "codex",
+                "unavailable",
+                "--model",
+                "gpt-6-astra",
+                "--until",
+                "2099-01-01T00:00:00Z",
+                "--reason",
+                "quota",
+            ],
+        )
+        .success();
+    p.env
+        .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
+        .success();
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    insta::assert_snapshot!("confirmed-no-start-model-fallback", chosen(&p));
+}

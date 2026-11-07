@@ -7,8 +7,8 @@ parameters:
   - name: slug
     required: true
 dispatch:
-  agent: [claude, codex, gemini, deepseek]
-  thinking_mode: med
+  agent: [claude, codex, gemini]
+  tier: standard
 ---
 
 # Build — Procedure

@@ -144,21 +144,14 @@ pub struct PickupCandidate {
     pub claimed_here: bool,
 }
 
-/// The agent a task prefers, set with `--agent <name> [--thinking …]`.
+/// The agent a task prefers, set with `--agent <name> [--tier …]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentPreference {
     pub agent: String,
-    pub thinking: Option<Thinking>,
+    pub tier: Option<Tier>,
 }
 
-/// The thinking mode of an agent preference (`--thinking slow|med|fast`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Thinking {
-    Slow,
-    Med,
-    Fast,
-}
+pub use instrukt_core::config::Tier;
 
 /// Which todos work offers for pickup.
 pub trait Pickup: Send + Sync {
@@ -280,6 +273,14 @@ pub struct AcceptedDispatch {
 /// (`session-continuity`, "Identity and reuse"). Reuse is a lookup of the
 /// binding followed by `alive`; brief similarity is not identity.
 pub trait SessionBindings: Send + Sync {
+    /// Retire a freshly reserved assignment after selection exhausted before runtime I/O.
+    fn release_unstarted(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoSlug,
+        key: &str,
+    ) -> Result<(), WorkInterfaceError>;
+
     /// Allocate and retain the assignment before any runtime command.
     fn reserve_dispatch(
         &self,

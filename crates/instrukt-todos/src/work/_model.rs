@@ -134,6 +134,8 @@ pub struct TodoRecord {
     pub id: TodoId,
     pub project: ProjectSlug,
     pub slug: TodoSlug,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prior_slugs: Vec<TodoSlug>,
     pub kind: TodoKind,
     pub status: TodoStatus,
     pub created: Timestamp,
@@ -160,6 +162,9 @@ pub struct TodoRecord {
     /// Released holds, oldest first: the hold audit.
     #[serde(default)]
     pub hold_history: Vec<ReleasedHold>,
+    /// Attributable GitHub label actions, shared through reflection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub label_actions: Vec<LabelAction>,
     /// Prerequisites.
     #[serde(default)]
     pub after: Vec<TodoRef>,
@@ -181,6 +186,17 @@ pub struct TodoRecord {
     /// window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removal: Option<Removal>,
+}
+
+/// A processed inbound action; identity survives reconstruction on another computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelAction {
+    pub issue: u64,
+    pub id: u64,
+    pub action: String,
+    pub login: String,
+    pub at: String,
+    pub outcome: String,
 }
 
 /// A withdrawal: when, and the status restoration returns to.
