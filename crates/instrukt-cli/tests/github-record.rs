@@ -1374,3 +1374,74 @@ fn a_decision_imported_by_another_computer_reaches_the_claim_host_once() {
         redact(&crew.runtime.input_log("lead-1"))
     );
 }
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR9
+#[test]
+fn imported_accepted_label_identity_supersedes_local_ignored_bookkeeping_through_reconstruction() {
+    let project = Project::new();
+    let slug = "reconciled-action";
+    project.create(slug, "change", "Preserve the accepted action identity.");
+    let other = project.other_computer();
+    let action = serde_json::json!({"id":901,"event":"labeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:00:00Z"});
+    let history = || {
+        project.github.respond_once(
+            "GET",
+            "/issues/1/events",
+            CannedResponse {
+                status: 200,
+                headers: vec![],
+                body: serde_json::json!([action.clone()]),
+            },
+        )
+    };
+    let permission = |value: &str| {
+        project.github.respond_once(
+            "GET",
+            "/collaborators/maintainer/permission",
+            CannedResponse {
+                status: 200,
+                headers: vec![],
+                body: serde_json::json!({"permission":value}),
+            },
+        )
+    };
+    // B observed the historical action while its actor could not be admitted.
+    history();
+    permission("read");
+    other.ok(["update", slug]);
+    // A subsequently accepts and reflects that same action, then records a later hold.
+    history();
+    permission("write");
+    project.ok(["show", slug]);
+    project.ok(["update", slug, "--release"]);
+    project.ok([
+        "update",
+        slug,
+        "--hold",
+        "--reason",
+        "Await the later operator decision.",
+    ]);
+    history();
+    other.ok(["update", slug]);
+    other.ok([
+        "artifacts",
+        "write",
+        slug,
+        "log",
+        "Continue from the imported accepted record.",
+    ]);
+    // Replace B's local database after all writes reflected, as on machine recovery.
+    for name in ["instrukt.db", "instrukt.db-wal", "instrukt.db-shm"] {
+        let file = other.env.instrukt_home().join("state").join(name);
+        if file.exists() {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
+    history();
+    permission("write");
+    other.ok(["update", slug]);
+    insta::assert_snapshot!(
+        "accepted-label-identity-reconstructed",
+        redact(&other.ok(["show", slug]))
+    );
+}

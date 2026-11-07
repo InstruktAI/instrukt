@@ -469,7 +469,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         .map_err(&sql)?;
     }
     for action in &r.label_actions {
-        tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT DO NOTHING", params![r.project.as_str(),action.issue,action.id,id,action.action,action.login,action.at,action.outcome]).map_err(&sql)?;
+        tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(project,issue_number,action_id) DO UPDATE SET todo_id=excluded.todo_id,action=excluded.action,login=excluded.login,at=excluded.at,outcome=excluded.outcome", params![r.project.as_str(),action.issue,action.id,id,action.action,action.login,action.at,action.outcome]).map_err(&sql)?;
     }
     for stamp in &r.stamps {
         if matches!(
