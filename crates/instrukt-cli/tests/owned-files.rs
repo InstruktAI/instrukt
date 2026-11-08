@@ -149,30 +149,109 @@ fn failed_selection_conversion_preserves_the_old_configuration() {
 
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF3
 #[test]
-fn commands_use_an_explicit_isolated_home_and_the_normal_machine_secret_file() {
+fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_machine() {
+    use assert_cmd::assert::OutputAssertExt;
     let mut env = TestEnv::new();
+    let repo = env.git_repo("development");
+    repo.write("instrukt.yaml","schema_version: 2\nproject: development\n")
+        .write("docs/general/index.yaml","expanded: []\n")
+        .write("docs/general/concept/sample.md","---\ndescription: Development source.\n---\n# Sample — Concept\n\n## What\n\nFirst source.\n\n## Why\n\nIsolation.\n")
+        .write("scripts/dev-instrukt",include_str!("../../../scripts/dev-instrukt"))
+        .write("scripts/with-build-lock.sh",include_str!("../../../scripts/with-build-lock.sh"));
+    for name in ["scripts/dev-instrukt", "scripts/with-build-lock.sh"] {
+        std::fs::set_permissions(
+            repo.path().join(name),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    repo.commit("first development source");
+    let two = env.path("development-two");
+    repo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "second",
+        two.to_str().unwrap(),
+    ]);
+    env.git(&two, ["config", "user.name", "Test Developer"]);
+    env.git(&two, ["config", "user.email", "developer@example.test"]);
+    std::fs::write(two.join("docs/general/concept/sample.md"),"---\ndescription: Development source.\n---\n# Sample — Concept\n\n## What\n\nSecond source.\n\n## Why\n\nIsolation.\n").unwrap();
+    env.git(&two, ["add", "docs/general/concept/sample.md"]);
+    env.git(
+        &two,
+        ["commit", "--quiet", "-m", "second development source"],
+    );
+    let cargo = env.path("runtime-bin/cargo");
+    std::fs::write(&cargo,"#!/usr/bin/env python3\nimport os,pathlib,shutil,sys\nif sys.argv[1]=='build':\n p=pathlib.Path(os.environ['CARGO_TARGET_DIR'])/'debug/instrukt'; p.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(os.environ['TEST_INSTRUKT_BINARY'],p)\n").unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    env.set_env("TEST_INSTRUKT_BINARY", env!("CARGO_BIN_EXE_instrukt"));
+    env.set_env(
+        "CARGO_TARGET_DIR",
+        env.path("build-target").to_str().unwrap(),
+    );
+    let normal = env.instrukt_home();
+    std::fs::create_dir_all(&normal).unwrap();
+    std::fs::write(
+        normal.join("instrukt.yaml"),
+        "schema_version: 2\nticks: off\n",
+    )
+    .unwrap();
     env.instrukt(env.home())
         .args(["secrets", "set", "SHARED"])
-        .write_stdin("protected")
+        .write_stdin("machine-only")
         .assert()
         .success();
-    let one = env.path("worktree-one/.instrukt/home");
-    let two = env.path("worktree-two/.instrukt/home");
-    env.set_env("INSTRUKT_HOME", one.to_str().unwrap());
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    env.set_env("INSTRUKT_HOME", two.to_str().unwrap());
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    assert!(one.join("instrukt.yaml").exists());
-    assert!(two.join("instrukt.yaml").exists());
-    assert!(!env.instrukt_home().join("instrukt.yaml").exists());
-    env.instrukt(env.home())
-        .args(["secrets", "set", "OTHER"])
-        .write_stdin("also-protected")
+    let machine_config = std::fs::read(normal.join("instrukt.yaml")).unwrap();
+    for root in [repo.path(), two.as_path()] {
+        env.command(&root.join("scripts/dev-instrukt"), root)
+            .args(["config", "get", "ticks", "--global"])
+            .output()
+            .unwrap()
+            .assert()
+            .success();
+        assert!(root.join(".instrukt-home/state/index.yaml").exists());
+        assert!(root.join(".instrukt-home/bin/instrukt").exists());
+        assert!(!root.join(".instrukt-home/secrets.env").exists());
+    }
+    assert_ne!(
+        std::fs::read(
+            repo.path()
+                .join(".instrukt-home/docs/general/concept/sample.md")
+        )
+        .unwrap(),
+        std::fs::read(two.join(".instrukt-home/docs/general/concept/sample.md")).unwrap()
+    );
+    env.command(&repo.path().join("scripts/dev-instrukt"), repo.path())
+        .args([
+            "config",
+            "patch",
+            "--global",
+            "--revision",
+            "stale",
+            "--yaml",
+            "ticks: off",
+        ])
+        .output()
+        .unwrap()
+        .assert()
+        .failure();
+    let second = std::fs::read(two.join(".instrukt-home/instrukt.yaml")).unwrap();
+    env.command(&repo.path().join("scripts/dev-instrukt"), repo.path())
+        .args(["secrets", "generate", "GENERATED"])
+        .output()
+        .unwrap()
         .assert()
         .success();
-    assert!(env.instrukt_home().join("secrets.env").exists());
-    assert!(!one.join("secrets.env").exists());
-    assert!(!two.join("secrets.env").exists());
+    assert_eq!(
+        std::fs::read(two.join(".instrukt-home/instrukt.yaml")).unwrap(),
+        second
+    );
+    assert_eq!(
+        std::fs::read(normal.join("instrukt.yaml")).unwrap(),
+        machine_config
+    );
+    assert!(!normal.join("state/index.yaml").exists());
+    assert!(normal.join("secrets.env").exists());
 }

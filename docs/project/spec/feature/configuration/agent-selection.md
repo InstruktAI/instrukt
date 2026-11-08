@@ -79,21 +79,38 @@ not change an existing conversation.
 
 ### Readiness, skips and quota
 
-Before each instrukt-owned start the runner checks that the selected harness
-is installed, its instance enabled and logged in, and its models reported.
-This check precedes invoking startup, which can create a T3 thread before
-finding a missing harness. Selection reports each skipped profile/model and
-why, including readiness and local capacity restrictions. Exhaustion leaves
-the work pending and uses the existing anomaly route.
+Before each instrukt-owned start, the T3 adapter reads the local server's
+`server.getConfig` WebSocket RPC and its `providers: ServerProvider[]` snapshot.
+It issues a five-minute `orchestration:read` session through `t3 auth session
+issue --scope orchestration:read --ttl 5m --token-only --label instrukt-readiness`,
+uses the bearer token only in memory, and revokes that session after the read.
+Server discovery, the token envelope and RPC framing follow T3's source contract.
+This is an internal T3 protocol: the adapter gates its supported CLI/server and
+protocol versions and refuses startup visibly for an unknown version, unknown
+shape, failed read or failed token cleanup. It never treats missing readiness
+evidence as permission to start.
+
+A missing instance, disabled instance, missing installation, unauthenticated
+instance or unavailable provider is skipped with its reason. A configured model
+not reported by that instance is skipped; native `auto` and `default` picks are
+exempt from model-list membership. Selection reports each skipped profile/model
+and its readiness or local capacity cause. Exhaustion leaves work pending and
+uses the existing anomaly route. This check precedes startup; an existing keyed
+conversation remains recoverable without a new-start readiness check.
 
 `instrukt agents availability` reads local expiring capacity marks;
 `instrukt agents status` changes them. Profile marks apply to that profile;
-model marks apply to the selected model within its profile. Existing
-available/unavailable/degraded semantics remain: automatic starts skip
-unavailable and degraded capacity, expiry lapses at the command clock, and
-available clears the restriction. A quota rejection marks the selected model
-itself unavailable with expiry, without disabling its other models or another
-profile. A capacity mark never proves that startup created no thread.
+model marks apply to the selected model within its profile. Automatic starts
+skip unavailable and degraded capacity; expiry lapses at the command clock and
+available clears the restriction.
+
+The same snapshot supplies quota evidence. A usage window with `usedPercent`
+at 100 marks that profile's models unavailable until its `resetsAt`. Without a
+reset time, the restriction lasts one hour and records that default in its cause.
+Marks retain cause and expiry in availability and skip diagnostics. Overlapping
+exhausted windows restrict until all have reset; a reported reset already past
+has lapsed. Independent manual restrictions are preserved. Quota is never inferred
+from launch-error text, and a capacity mark proves nothing about thread creation.
 
 Ambiguous startup retains its key and selected inputs for recovery. Chain
 fallback after invocation requires rejection proven before creation or explicit
@@ -122,7 +139,9 @@ And a role absent from roles uses default
 And a per-task override takes precedence
 ```
 
-### UC-AS2: Exhaust one ready profile before trying the next
+### UC-AS2: Exhaust one ready profile before trying the next (retired)
+
+Retired: sequential selection is part of the prose contract above.
 
 ### UC-AS3: Configure a new model name within the harness shape
 
@@ -143,9 +162,14 @@ Then the file receives the new defaults
 But an edited deployed file is kept and the new defaults are announced
 ```
 
-### UC-AS5: Check a harness before creating a thread and contain quota marking
+### UC-AS5: Check a harness before creating a thread and contain quota marking (retired)
+
+Retired: readiness and quota are parts of the prose contract above.
 
 ## Known caveats
+
+- A hard process stop before token revocation leaves the issued session bounded
+  by its short TTL. Its token material is never saved in instrukt state.
 
 - `t3 thread start` has no effort/options flag. Until upstream supports it,
   instrukt's own starts receive effort only from the T3 project default.

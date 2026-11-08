@@ -317,10 +317,18 @@ pub(crate) fn start(
             key: input.key.clone(),
         });
     }
+    let prepared = match adapter.prepare_start(invocation.home(), input, now) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='instrukt',resolution='readiness_refused_before_creation' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,input.key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
+            return Err(error);
+        }
+    };
+    let input = &prepared;
     guard.state.write::<_,StateError>(|tx| {
         let path=state::db_path(tx);
         let request=serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?;
-        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',reported=0,resolved_at=NULL,resolved_by=NULL,resolution=NULL",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
+        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=NULL",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
         Ok(())
     })?;
     let thread = adapter

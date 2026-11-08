@@ -1,0 +1,40 @@
+#!/bin/sh
+# Keep the executable and all development publication/state in this checkout.
+set -eu
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+cd "$root"
+if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+    common=$(git rev-parse --path-format=absolute --git-common-dir)
+    CARGO_TARGET_DIR="$(dirname -- "$common")/target"
+    export CARGO_TARGET_DIR
+fi
+# Copy under the shared build lock. The private executable can then run while
+# another checkout builds, without holding the build lock for its lifetime.
+scripts/with-build-lock.sh python3 - "$root" <<'PY'
+import os, pathlib, shutil, subprocess, sys, tempfile
+root = pathlib.Path(sys.argv[1])
+home = root / '.instrukt-home'
+bins = home / 'bin'
+for folder in (home, bins):
+    if folder.is_symlink():
+        raise SystemExit('development home and binary directory must not be symlinks')
+    folder.mkdir(exist_ok=True)
+subprocess.run(['cargo', 'build', '--locked', '--bin', 'instrukt'], check=True)
+source = pathlib.Path(os.environ['CARGO_TARGET_DIR']) / 'debug' / 'instrukt'
+with tempfile.NamedTemporaryFile(dir=bins, delete=False) as temporary:
+    copied = pathlib.Path(temporary.name)
+try:
+    shutil.copy2(source, copied)
+    os.replace(copied, bins / 'instrukt')
+finally:
+    copied.unlink(missing_ok=True)
+PY
+INSTRUKT_HOME="$root/.instrukt-home"
+INSTRUKT_DEVELOPMENT=1
+XDG_STATE_HOME="$INSTRUKT_HOME/logs"
+export INSTRUKT_HOME INSTRUKT_DEVELOPMENT XDG_STATE_HOME
+binary="$INSTRUKT_HOME/bin/instrukt"
+if [ ! -f "$INSTRUKT_HOME/.seeded-v1" ]; then
+    "$binary" dev-seed
+fi
+exec "$binary" "$@"

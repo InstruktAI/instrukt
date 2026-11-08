@@ -62,7 +62,7 @@ pub fn availability(
     use crate::state::{self, RunnerState};
     let state = RunnerState::new(home);
     let rows=state.read(|conn,path| {
-        let mut q=conn.prepare("SELECT agent,model,status,status_until,reason FROM agent_availability ORDER BY agent,model").map_err(state::sql(path))?;
+        let mut q=conn.prepare("SELECT agent,model,status,status_until,reason FROM agent_availability UNION ALL SELECT agent,model,status,status_until,reason FROM agent_quota ORDER BY agent,model").map_err(state::sql(path))?;
         q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))
     })?.unwrap_or_default();
     rows.into_iter()
@@ -115,6 +115,11 @@ pub fn mark_availability(
         RunnerState::new(home).write::<_, StateError>(|tx| {
             tx.execute(
                 "DELETE FROM agent_availability WHERE agent=?1 AND model=?2",
+                params![mark.profile, mark.model.as_deref().unwrap_or("")],
+            )
+            .map_err(state::sql(&state::db_path(tx)))?;
+            tx.execute(
+                "DELETE FROM agent_quota WHERE agent=?1 AND model=?2",
                 params![mark.profile, mark.model.as_deref().unwrap_or("")],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
@@ -188,4 +193,27 @@ pub fn selections(
         });
     }
     Ok(result)
+}
+
+pub(crate) struct QuotaMark {
+    pub profile: String,
+    pub models: std::collections::BTreeSet<String>,
+    pub until: jiff::Timestamp,
+    pub cause: String,
+}
+
+pub(crate) fn mark_quota(
+    home: &instrukt_core::home::Home,
+    mark: &QuotaMark,
+) -> Result<(), crate::sessions::SessionsError> {
+    use crate::state::{self, RunnerState, StateError};
+    use instrukt_core::state_db::rusqlite::params;
+    RunnerState::new(home).write::<_,StateError>(|tx| {
+        for model in &mark.models {
+            tx.execute("INSERT INTO agent_quota(agent,model,status,status_until,reason) VALUES(?1,?2,'unavailable',?3,?4) ON CONFLICT(agent,model) DO UPDATE SET status_until=excluded.status_until,reason=excluded.reason",params![mark.profile,model,mark.until.to_string(),mark.cause]).map_err(state::sql(&state::db_path(tx)))?;
+        }
+        Ok(())
+    })?;
+    tracing::warn!(event="agent_quota_marked",profile=%mark.profile,models=mark.models.len(),until=%mark.until,reason=%mark.cause);
+    Ok(())
 }

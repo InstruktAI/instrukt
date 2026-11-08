@@ -125,9 +125,10 @@ Dispatch resolves the procedure's role through `agents.yaml`, with per-task
 overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
 Walk each ready profile's tier chain before moving to the next profile. Report
 skipped profiles/models and reasons; skip unavailable/degraded marks until
-expiry. Before instrukt's own starts, check installation, enablement, login and
-reported models. Runner starts and native assignment facts carry the resolved
-profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
+expiry. Before instrukt's own starts, use the adapter's version-gated local T3
+provider snapshot to check installation, enablement, login, reported models and
+quota windows; failed or unknown readiness evidence refuses the start. Runner
+starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
 effort/options cannot be expressed there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion

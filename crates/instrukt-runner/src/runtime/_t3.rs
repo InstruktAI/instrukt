@@ -12,11 +12,13 @@ use crate::sessions::{RUNTIME_COMMAND_TIMEOUT, SessionState, SessionsError};
 
 pub struct T3 {
     timeout: Duration,
+    env: instrukt_core::config::Env,
 }
 impl Default for T3 {
     fn default() -> Self {
         Self {
             timeout: RUNTIME_COMMAND_TIMEOUT,
+            env: instrukt_core::config::Env::from_process(),
         }
     }
 }
@@ -119,6 +121,14 @@ impl instrukt_core::interfaces::CallerIdentityLookup for T3 {
 }
 
 impl RuntimeAdapter for T3 {
+    fn prepare_start(
+        &self,
+        home: &instrukt_core::home::Home,
+        request: &RuntimeStart,
+        now: jiff::Timestamp,
+    ) -> Result<RuntimeStart, SessionsError> {
+        super::_t3_readiness::prepare(home, &self.env, request, now)
+    }
     fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
         T3::create_thread(self, request)
     }

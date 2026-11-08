@@ -30,6 +30,25 @@ and tier in `agents.yaml`. Model names are open; use `instrukt config show agent
 to inspect effective mappings and `instrukt agents availability` for local
 capacity restrictions. T3 retains model-provider credentials.
 
-An explicitly selected `INSTRUKT_HOME` isolates publication and operational state.
-Use a distinct absolute path for each isolated worktree. Its secrets still come
-from the normal machine home's protected file; do not copy them into a worktree.
+Development of instrukt itself uses `scripts/dev-instrukt <arguments>` or
+`make dev ARGS='<arguments>'`. The wrapper builds this checkout, copies its binary
+under the shared build lock, then runs it from `.instrukt-home/bin/` with a private
+`.instrukt-home`. First use initializes default configuration and publishes this
+worktree's committed HEAD there. Subsequent configuration edits are retained;
+`sync` through the wrapper refreshes from the development worktree's HEAD.
+Generated user-scope files and logs remain within the development home. The
+normal protected secrets file is shared; secrets commands still deliberately
+write that one machine file.
+
+Installed instrukt in ordinary project worktrees uses the shared machine home.
+Entering a linked project worktree does not redirect claims or todos. This
+repository has no worktree-removal hook: remove its ignored `.instrukt-home`
+when cleaning up a development worktree (before removing that worktree). No
+machine home needs removal or reseeding.
+
+Unattended starts require the adapter's verified T3 CLI/server and WebSocket
+protocol versions. Unknown versions or readiness response shapes refuse startup
+with a repair reason. The adapter obtains and revokes a five-minute read-scoped
+session for each new start's provider snapshot. Quota restrictions now come from
+reported usage windows, with a recorded one-hour expiry when no reset is reported;
+launch-error text supplies no quota or no-start evidence.

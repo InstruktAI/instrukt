@@ -82,10 +82,11 @@ noreply author. Neither introduces person/company identity bands.
 
 ### The home
 
-`~/.instrukt` is the normal machine home and is not a git repository. An
-isolated instrukt home per worktree separates its publication and operational
-state under `project/instrukt/spec/feature/configuration/owned-files`. Committed
-sources recreate publication. User-owned configuration and secrets, local
+`~/.instrukt` is the normal machine home and is not a git repository. The
+development wrapper for instrukt itself uses an isolated home per development
+worktree; installed instrukt keeps shared machine state in ordinary project
+worktrees under `project/instrukt/spec/feature/configuration/owned-files`.
+Committed sources recreate publication. User-owned configuration and secrets, local
 history and work-record writes not yet reflected to GitHub need preservation;
 deleting the home is not a lossless reset.
 

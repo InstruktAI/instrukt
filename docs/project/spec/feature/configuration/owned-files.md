@@ -53,11 +53,20 @@ a mandatory shape conversion is distinct from replacing default choices.
 
 ### Worktree isolation
 
-Worktree-scoped execution uses an isolated instrukt home per worktree, keeping
-that worktree's owned publication and operational state separate from other
-worktrees and the normal machine home. It reads the same machine-local secret source instead of copying
-secrets into worktrees. The home contents are indexed in
-`project/instrukt/design/architecture/overview`.
+Worktree isolation serves development of instrukt itself. The repository's
+`scripts/dev-instrukt` (also exposed by `make dev`) builds that worktree's binary
+and runs its private copy with `INSTRUKT_HOME=<worktree>/.instrukt-home`. The home
+is gitignored. First use seeds default configuration and publication from that
+worktree's committed HEAD, keeping development state and user-scope outputs out
+of the normal machine home. Later development syncs use that same worktree
+source, and first-use initialization does not overwrite later configuration edits.
+Secrets continue resolving from the one normal machine protected file.
+
+An installed instrukt in ordinary project worktrees retains the machine home;
+claims and todos remain shared there. Merely entering a linked worktree redirects
+nothing. The repository's worktree cleanup integration removes the development
+home where such a hook exists; otherwise its cleanup is documented. The home
+contents are indexed in `project/instrukt/design/architecture/overview`.
 
 ## Use cases
 
@@ -86,7 +95,8 @@ And a failed conversion preserves the source and reports the failure
 ### UC-OF3: Keep worktree homes separate
 
 ```gherkin
-Given two worktrees use isolated instrukt homes
+Given a developer runs scripts/dev-instrukt in two instrukt development worktrees
+And each script has seeded its isolated home from that worktree
 When one changes its owned publication or operational state
 Then the other's home and the normal machine home are unchanged
 And both resolve required secrets from the one machine-local protected file

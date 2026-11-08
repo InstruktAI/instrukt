@@ -26,6 +26,18 @@ root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
 with (root/'calls').open('a') as f: f.write(' '.join(args)+'\n')
+if args==['--version']:
+    print('t3 v0.1.7'); sys.exit(0)
+if args[:3]==['auth','session','issue']:
+    import base64
+    claims={'v':1,'kind':'session','sid':'00000000-0000-4000-8000-000000000001','method':'bearer-access-token','scopes':['orchestration:read']}
+    import hashlib
+    token=base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')+'.test-signature'
+    (root.parent/'t3-readiness/token-digest').write_text(hashlib.sha256(token.encode()).hexdigest())
+    print(token); sys.exit(0)
+if args[:3]==['auth','session','revoke']:
+    if (root/'revoke-failure').exists(): sys.exit(1)
+    print('Revoked session.'); sys.exit(0)
 if len(args)<2 or args[0]!='thread': sys.exit(2)
 command=args[1]; args=args[2:]
 flags={}; operands=[]
@@ -110,6 +122,7 @@ impl FakeT3 {
         Self::create(env)
     }
     pub fn create(env: &TestEnv) -> Self {
+        env.readiness_server();
         let bin = env.path("runtime-bin");
         let state = env.path("t3-state");
         std::fs::create_dir_all(&bin).unwrap();

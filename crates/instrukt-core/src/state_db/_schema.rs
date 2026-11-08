@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"
@@ -467,4 +467,12 @@ UPDATE standing_deliveries SET declaration=json_remove(declaration,'$.dispatch')
 UPDATE manual_standing_reservations SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
 UPDATE todos SET agent='antigravity' WHERE agent='gemini';
 UPDATE agent_availability SET agent='antigravity' WHERE agent='gemini';
+"#;
+
+/// Version 6: observed quotas coexist with independent manual restrictions.
+const V6: &str = r#"
+CREATE TABLE agent_quota (
+ agent TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL,
+ status_until TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(agent,model)
+);
 "#;

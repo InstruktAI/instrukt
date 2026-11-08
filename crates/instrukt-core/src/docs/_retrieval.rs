@@ -1399,18 +1399,30 @@ fn behind_warning(home: &Home, caller: &Caller) -> Result<Option<String>, DocsEr
     let Some(record) = PublishedRecord::load(home, project)? else {
         return Ok(None);
     };
-    let branch = git::default_branch(root, "origin")?;
-    let reference = format!("refs/heads/{branch}");
-    let main = git::run(
-        root,
-        ["for-each-ref", "--format=%(objectname)", reference.as_str()],
-    )?;
+    let (source, main) = if home.is_development() {
+        ("development HEAD", git::run(root, ["rev-parse", "HEAD"])?)
+    } else {
+        let branch = git::default_branch(root, "origin")?;
+        let reference = format!("refs/heads/{branch}");
+        (
+            "main",
+            git::run(
+                root,
+                ["for-each-ref", "--format=%(objectname)", reference.as_str()],
+            )?,
+        )
+    };
     if main.is_empty() || main == record.commit.as_str() {
         return Ok(None);
     }
+    let repair = if home.is_development() {
+        "scripts/dev-instrukt sync"
+    } else {
+        "instrukt sync"
+    };
     Ok(Some(format!(
-        "# WARNING: publication is behind main: main is at {main}, the published commit is {}. \
-         Run `instrukt sync` in this project to publish it.",
+        "# WARNING: publication is behind {source}: {source} is at {main}, the published commit is {}. \
+         Run `{repair}` in this project to publish it.",
         record.commit.as_str()
     )))
 }

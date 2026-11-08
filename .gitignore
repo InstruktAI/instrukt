@@ -4,3 +4,5 @@ AGENTS.md
 *.pending-snap
 *.snap.new
 .instrukt/
+
+/.instrukt-home/

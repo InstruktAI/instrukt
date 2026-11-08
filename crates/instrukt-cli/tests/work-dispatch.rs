@@ -426,3 +426,185 @@ fn confirmed_no_creation_allows_the_runner_to_retry_the_next_available_model() {
     assert_eq!(p.rt.started_count(), 1);
     insta::assert_snapshot!("confirmed-no-start-model-fallback", chosen(&p));
 }
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn an_unready_profile_is_skipped_before_any_thread_is_created() {
+    let p = Tracked::new(true);
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "claudeAgent" {
+                provider["installed"] = false.into();
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    let threads: serde_json::Value = serde_json::from_str(&chosen(&p)).unwrap();
+    assert_eq!(threads.as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!("ready-profile-fallback", threads[0]["provider"]);
+    assert!(p.env.path("t3-readiness/request.json").exists());
+    assert!(
+        p.rt.calls()
+            .iter()
+            .any(|line| line.starts_with("auth session revoke "))
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn a_full_usage_window_marks_that_profiles_models_with_expiry() {
+    let p = Tracked::new(true);
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "claudeAgent" {
+                provider["usageLimits"] = serde_json::json!({"checkedAt":"2030-01-01T00:00:00Z","windows":[{"id":"weekly","kind":"weekly","label":"Weekly","usedPercent":100,"resetsAt":"2099-01-01T00:00:00Z"}]});
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    let marks = p
+        .env
+        .run(p.repo.path(), ["agents", "availability"])
+        .success();
+    let marks: serde_json::Value = serde_json::from_slice(&marks.get_output().stdout).unwrap();
+    assert!(!marks.as_array().unwrap().is_empty());
+    insta::assert_json_snapshot!("snapshot-quota-marks", marks);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn an_unknown_readiness_version_refuses_start_without_creating_a_thread() {
+    let p = Tracked::new(true);
+    let file = common::t3_readiness::state_file(&p.env);
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    state["serverVersion"] = "99.0.0".into();
+    std::fs::write(file, state.to_string()).unwrap();
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 0);
+    assert!(
+        !p.rt
+            .calls()
+            .iter()
+            .any(|line| line.starts_with("thread start "))
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn unreported_models_fall_through_the_same_ready_profiles_chain() {
+    let p = Tracked::new(true);
+    selection_config(
+        &p,
+        "default: {order: [claude, codex], tier: strong}\nprofiles:\n  claude:\n    strong: [{model: not-reported, effort: high}, {model: claude-opus-5-5, effort: high}]\n",
+    );
+    create_change(&p);
+    p.tick();
+    let threads: serde_json::Value = serde_json::from_str(&chosen(&p)).unwrap();
+    assert_eq!(threads.as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!("reported-chain-fallback", threads[0]["model"]);
+    let calls =
+        p.rt.calls()
+            .into_iter()
+            .filter(|line| line.starts_with("auth ") || line == "--version")
+            .collect::<Vec<_>>();
+    insta::assert_json_snapshot!("readiness-command-contract", calls);
+    let request: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(p.env.path("t3-readiness/request.json")).unwrap(),
+    )
+    .unwrap();
+    insta::assert_json_snapshot!("readiness-rpc-envelope", request);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn native_auto_selection_does_not_require_a_reported_model_slug() {
+    let p = Tracked::new(true);
+    selection_config(
+        &p,
+        "default: {order: [claude], tier: strong}\nprofiles:\n  claude:\n    strong: [{model: auto, effort: high}]\n",
+    );
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "claudeAgent" {
+                provider["models"] = serde_json::json!([]);
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    let threads: serde_json::Value = serde_json::from_str(&chosen(&p)).unwrap();
+    assert_eq!(threads.as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!("native-auto-model", threads[0]["model"]);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn quota_without_a_reset_records_one_hour_and_preserves_a_manual_restriction() {
+    let mut p = Tracked::new(true);
+    p.env.set_env("INSTRUKT_NOW", "2030-01-01T00:00:00Z");
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "claude",
+                "unavailable",
+                "--model",
+                "claude-opus-5-5",
+                "--until",
+                "2099-01-01T00:00:00Z",
+                "--reason",
+                "operator restriction",
+            ],
+        )
+        .success();
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "claudeAgent" {
+                provider["usageLimits"] = serde_json::json!({"checkedAt":"2030-01-01T00:00:00Z","windows":[{"id":"session","kind":"session","label":"Session","usedPercent":100}]});
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    let marks = p
+        .env
+        .run(p.repo.path(), ["agents", "availability"])
+        .success();
+    let marks: serde_json::Value = serde_json::from_slice(&marks.get_output().stdout).unwrap();
+    assert_eq!(marks.as_array().unwrap().len(), 5);
+    insta::assert_json_snapshot!("quota-default-and-manual", marks);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn malformed_readiness_is_refused_and_its_token_is_revoked() {
+    let p = Tracked::new(true);
+    std::fs::write(p.env.path("t3-readiness/malformed"), "").unwrap();
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 0);
+    assert!(
+        p.rt.calls()
+            .iter()
+            .any(|line| line.starts_with("auth session revoke "))
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn failed_readiness_token_revocation_refuses_thread_creation() {
+    let p = Tracked::new(true);
+    runtime::FakeT3::create(&p.env).flag("revoke-failure", true);
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 0);
+}

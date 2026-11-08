@@ -217,7 +217,9 @@ selects a bot actor.
 
 ### Locating the layers
 
-- The global layer is always `~/.instrukt/instrukt.yaml`.
+- Installed instrukt uses `~/.instrukt/instrukt.yaml` for the global layer, including
+  in ordinary project worktrees. The repository development wrapper uses its
+  isolated home under `project/instrukt/spec/feature/configuration/owned-files`.
 - The project layer is the `instrukt.yaml` at the root of the repository
   containing the working directory. Outside a repository, or in one without
   that file, there is no project layer.

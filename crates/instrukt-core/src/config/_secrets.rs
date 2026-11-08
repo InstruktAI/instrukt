@@ -73,7 +73,7 @@ pub fn set_secret(home: &Home, name: &str, value: &str) -> Result<(), ConfigErro
     if !valid_name(name) || value.trim().is_empty() || value.contains('\0') {
         return Err(error("secret", "requires a valid name and nonblank value"));
     }
-    let machine = Home::at_user_home(home.user_home().into());
+    let machine = Home::at_user_home(home.machine_user_home().into());
     let _lock = LockGuard::acquire(
         &machine.locks_dir().join("secrets.lock"),
         Duration::from_secs(10),

@@ -134,7 +134,8 @@ pub enum PublicationStateError {
 }
 
 /// What publication records per project under `state/publication/`: the
-/// commit of canonical main last published, the project's checkout path and
+/// selected source commit last published (canonical main in installed use),
+/// the project's checkout path and
 /// its repository's remote. Docs compares it with main for the behind-main
 /// warning and names it as the source of what the project publishes; the
 /// runner finds projects through it.

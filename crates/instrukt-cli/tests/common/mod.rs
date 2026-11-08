@@ -28,6 +28,7 @@
 pub mod github;
 pub mod redis;
 pub mod redis_proxy;
+pub mod t3_readiness;
 
 /// `text` with every published commit a source line names
 /// (`published commit <sha>`) shown as `[SHA]`: commits made in a test
@@ -87,6 +88,7 @@ pub struct TestEnv {
     vars: BTreeMap<String, String>,
     guard: LiveGuard,
     redis: std::sync::Mutex<Option<redis::RedisServer>>,
+    readiness: std::sync::Mutex<Option<t3_readiness::Server>>,
 }
 
 impl TestEnv {
@@ -150,7 +152,13 @@ impl TestEnv {
             vars,
             guard,
             redis: std::sync::Mutex::new(None),
+            readiness: std::sync::Mutex::new(None),
         }
+    }
+
+    pub fn readiness_server(&self) {
+        let mut server = self.readiness.lock().unwrap();
+        server.get_or_insert_with(|| t3_readiness::Server::new(self));
     }
 
     /// Lazily start this temporary computer's Redis; it dies with the test.
@@ -241,6 +249,12 @@ impl TestEnv {
             path,
             vars: self.vars.clone(),
         }
+    }
+
+    pub fn command(&self, program: &Path, cwd: &Path) -> StdCommand {
+        let mut command = StdCommand::new(program);
+        command.env_clear().envs(&self.vars).current_dir(cwd);
+        command
     }
 
     /// The built `instrukt` binary, ready to run in `cwd` with this test's

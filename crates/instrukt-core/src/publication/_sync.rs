@@ -1,4 +1,4 @@
-//! `instrukt sync`: one project's publication from its canonical main.
+//! Publication from canonical main, or an explicit development worktree HEAD.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -113,7 +113,7 @@ pub enum SyncOutcome {
         project: ProjectSlug,
         commit: CommitSha,
     },
-    /// Main equals the published commit; nothing changed.
+    /// The selected source equals the published commit; nothing changed.
     Unchanged {
         project: ProjectSlug,
         commit: CommitSha,
@@ -173,7 +173,10 @@ impl From<PublicationError> for SyncError {
 pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let started = Instant::now();
     config::migrate(request.home, &Layer::Global).map_err(PublicationError::from)?;
-    let project = _source::locate(request.cwd)?;
+    let mut project = _source::locate(request.cwd)?;
+    if request.home.is_development() {
+        project.primary = project.worktree.clone();
+    }
     config::migrate(request.home, &Layer::Project(project.worktree.clone()))
         .map_err(PublicationError::from)?;
     let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)
@@ -183,7 +186,18 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let mut notices = Vec::new();
     let mut kept = Vec::new();
     let attempt = (|| {
-        let (branch, commit) = _source::canonical_main(&project.primary)?;
+        let (branch, commit) = if request.home.is_development() {
+            let branch = git::run(&project.worktree, ["rev-parse", "--abbrev-ref", "HEAD"])?;
+            let sha = git::run(&project.worktree, ["rev-parse", "HEAD"])?;
+            let commit =
+                CommitSha::parse(sha.trim()).map_err(|_| PublicationError::MainHasNoCommit {
+                    dir: project.worktree.clone(),
+                    branch: branch.clone(),
+                })?;
+            (branch, commit)
+        } else {
+            _source::canonical_main(&project.primary)?
+        };
         let previous = PublishedRecord::load(request.home, &project.slug)?;
         let outcome = if !request.force && previous.is_some_and(|r| r.commit == commit) {
             SyncOutcome::Unchanged {
@@ -349,7 +363,11 @@ fn publish(
         values: &values,
     };
     let mut agents = Vec::new();
-    for master in committed.masters() {
+    for master in committed
+        .masters()
+        .into_iter()
+        .filter(|_| !home.is_development())
+    {
         let text = String::from_utf8_lossy(committed.file(master).unwrap_or_default()).into_owned();
         let dir = Path::new(master).parent().unwrap_or(Path::new(""));
         let rendered = if master == MASTER_FILE_NAME {
@@ -371,9 +389,10 @@ fn publish(
         };
         agents.push((dir.join(AGENTS_FILE), rendered));
     }
-    let (entrypoints, settings) = if held
-        .iter()
-        .any(|d| Position::of_domain(d) == Position::General)
+    let (entrypoints, settings) = if !home.is_development()
+        && held
+            .iter()
+            .any(|d| Position::of_domain(d) == Position::General)
     {
         global_files(home, &renderer)?
     } else {
@@ -402,7 +421,9 @@ fn publish(
     preflight(home, project, commit, &prepared)?;
     // Before anything is published: a refresh that cannot write fails the
     // sync, and no commit is recorded.
-    *report.editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
+    if !home.is_development() {
+        *report.editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
+    }
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, request.now, &prepared, &mut tx) {
         Ok(kept) => {

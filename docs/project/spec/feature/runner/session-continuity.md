@@ -296,18 +296,18 @@ role order or tier chains. Every T3 built-in harness has shipped defaults.
 ACP discovery and configuration remain with the configuration skill; instrukt
 creates no T3 provider instance and implements no ACP protocol.
 
-Before each instrukt-owned start the runner checks installation, enablement,
-login and reported models. It reports skipped profiles/models and their reasons.
-Native delegation passes resolved model and typed options when supported.
-T3's host CLI passes the selected instance with `--provider` and the model
-with `--model`; its effort limit is recorded under Known caveats.
+Before each instrukt-owned start, the adapter obtains the version-gated local T3
+provider snapshot through a short-lived read-scoped token and revokes it after
+use. Missing readiness, unreported models, capacity skips and quota windows follow
+`project/instrukt/spec/feature/configuration/agent-selection`; an unknown protocol
+or failed read refuses startup visibly. Native delegation retains its resolved
+model and typed options. The host CLI passes instance/model; its effort/options
+limit remains under Known caveats.
 
-A quota rejection marks the selected model itself unavailable with expiry.
-That capacity mark alone never proves no thread was created. An unstructured
-launch failure, including one mentioning quota, retains the start key for
+Quota restrictions come from snapshot usage windows, never launch-error text.
+An unstructured launch failure retains its start key and selected inputs for
 recovery. Only proven pre-creation rejection or explicit no-start resolution
-permits chain fallback. Retry retains the role/order/tier inputs; ambiguous or
-accepted starts retain their resolved selection.
+permits chain fallback; a quota mark alone supplies no such proof.
 
 ### Owned child-command cleanup
 
@@ -586,7 +586,9 @@ And the existing conversation wakes without a new thread
 And the listing window has no part in that decision
 ```
 
-### UC-SS21: Leave no instrukt-owned child processes behind
+### UC-SS21: Leave no instrukt-owned child processes behind (retired)
+
+Retired: owned child-command cleanup is part of the prose contract above.
 
 ### UC-SS4: Conversation archive lookup (retired)
 

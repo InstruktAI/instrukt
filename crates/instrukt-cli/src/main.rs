@@ -30,6 +30,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    DevSeed,
     /// Configured profiles and expiring profile/model availability.
     Agents(agents::AgentsArgs),
     /// Store or generate protected machine-local secrets.
@@ -80,6 +82,7 @@ fn main() -> ExitCode {
         Err(err) => return report(&err),
     };
     let outcome = match cli.command {
+        Command::DevSeed => seed_development(&mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
         Command::Secrets(args) => secrets::run(args, &mut ctx),
         Command::Config(args) => config::run(args, &mut ctx),
@@ -116,6 +119,7 @@ fn report(err: &anyhow::Error) -> ExitCode {
 /// Initialise the contract writer before constructing the invocation context.
 fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let source = match command {
+        Command::DevSeed => "dev-seed",
         Command::Agents(_) => "agents",
         Command::Secrets(_) => "secrets",
         Command::Config(_) => "config",
@@ -145,4 +149,25 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         .app_prefix("instrukt_todos")
         .init()?;
     Ok(())
+}
+
+fn seed_development(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    use instrukt_core::{config, publication};
+    if !ctx.home.is_development() {
+        anyhow::bail!("dev-seed requires the repository development wrapper");
+    }
+    config::init(&ctx.home, &config::Layer::Global, None)?;
+    config::Agents::load(&ctx.home)?;
+    let report = publication::sync(&publication::SyncRequest {
+        home: &ctx.home,
+        cwd: &ctx.cwd,
+        force: false,
+        wiring: &instrukt_core::interfaces::CoreWiring::default(),
+        now: ctx.clock.now(),
+    })?;
+    if let publication::SyncOutcome::Refused { refusal, .. } = report.outcome {
+        anyhow::bail!("development publication refused: {refusal}");
+    }
+    instrukt_core::fsx::atomic_write(&ctx.home.root().join(".seeded-v1"), b"1\n")?;
+    Ok(ExitCode::SUCCESS)
 }

@@ -17,6 +17,8 @@ pub const HOME_DIR_NAME: &str = ".instrukt";
 pub enum HomeError {
     #[error("HOME is not set; instrukt locates its home at $HOME/{HOME_DIR_NAME}")]
     HomeUnset,
+    #[error("development execution requires a distinct INSTRUKT_HOME")]
+    DevelopmentNeedsIsolation,
 }
 
 /// Paths into one home. Holds no open resources; creating one touches
@@ -25,6 +27,8 @@ pub enum HomeError {
 pub struct Home {
     user_home: PathBuf,
     root: PathBuf,
+    machine_user_home: PathBuf,
+    development: bool,
 }
 
 impl Home {
@@ -36,6 +40,15 @@ impl Home {
                 if let Some(root) = std::env::var_os("INSTRUKT_HOME").filter(|s| !s.is_empty()) {
                     selected.root = PathBuf::from(root);
                 }
+                if std::env::var_os("INSTRUKT_DEVELOPMENT").as_deref()
+                    == Some(std::ffi::OsStr::new("1"))
+                {
+                    if selected.root == selected.machine_user_home.join(HOME_DIR_NAME) {
+                        return Err(HomeError::DevelopmentNeedsIsolation);
+                    }
+                    selected.user_home = selected.root.join("user");
+                    selected.development = true;
+                }
                 Ok(selected)
             }
             _ => Err(HomeError::HomeUnset),
@@ -45,11 +58,25 @@ impl Home {
     /// The home below an explicit user home directory.
     pub fn at_user_home(user_home: PathBuf) -> Self {
         let root = user_home.join(HOME_DIR_NAME);
-        Self { user_home, root }
+        Self {
+            machine_user_home: user_home.clone(),
+            user_home,
+            root,
+            development: false,
+        }
+    }
+
+    pub fn machine_user_home(&self) -> &Path {
+        &self.machine_user_home
+    }
+    pub fn is_development(&self) -> bool {
+        self.development
     }
 
     pub fn secrets_file(&self) -> PathBuf {
-        self.user_home.join(HOME_DIR_NAME).join("secrets.env")
+        self.machine_user_home
+            .join(HOME_DIR_NAME)
+            .join("secrets.env")
     }
 
     pub fn agents_file(&self) -> PathBuf {
@@ -60,8 +87,8 @@ impl Home {
         self.state_dir().join("agents-deployment.json")
     }
 
-    /// The user's home directory (`$HOME`), where agent CLIs keep their
-    /// user-scope entrypoints and settings.
+    /// The user-scope output root: the machine user's home in installed use,
+    /// or the private user directory inside the development home.
     pub fn user_home(&self) -> &Path {
         &self.user_home
     }

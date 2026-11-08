@@ -1,5 +1,6 @@
 //! Structured runtime primitives; the selected runtime owns conversations and workspaces.
 mod _t3;
+mod _t3_readiness;
 
 use std::path::{Path, PathBuf};
 
@@ -154,6 +155,12 @@ pub struct AssignmentEvidence {
 
 pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     fn runtime(&self) -> Runtime;
+    fn prepare_start(
+        &self,
+        home: &instrukt_core::home::Home,
+        request: &RuntimeStart,
+        now: jiff::Timestamp,
+    ) -> Result<RuntimeStart, SessionsError>;
     fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError>;
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;
