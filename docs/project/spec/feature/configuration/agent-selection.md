@@ -124,15 +124,6 @@ And a per-task override takes precedence
 
 ### UC-AS2: Exhaust one ready profile before trying the next
 
-```gherkin
-Given a role orders two ready profiles with ordered chains for its tier
-When selection skips an unavailable model in the first profile
-Then it tries the remaining entries there before the second profile
-And reports each skipped profile or model and its reason
-But when an invoked start has an uncertain outcome
-Then that assignment remains under recovery rather than falling through to another start
-```
-
 ### UC-AS3: Configure a new model name within the harness shape
 
 ```gherkin
@@ -153,14 +144,6 @@ But an edited deployed file is kept and the new defaults are announced
 ```
 
 ### UC-AS5: Check a harness before creating a thread and contain quota marking
-
-```gherkin
-Given an instrukt-owned start needs a profile
-When that harness is not installed, enabled, logged in or reporting models
-Then it is skipped with a reason before thread startup is invoked
-But when a selected model is rejected for quota
-Then that model receives an expiring unavailable mark without marking the whole profile
-```
 
 ## Known caveats
 

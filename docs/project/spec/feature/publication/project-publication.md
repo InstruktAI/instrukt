@@ -84,7 +84,8 @@ refuse publication and preserve the previous publication.
 - Rendering never inlines a pending snippet and drops planned material, so
   rendered outputs carry the current contract only.
 - Project snippets are copied from committed main into the project store;
-  working-tree edits do not alter retrieval.
+  retrieval of that copy belongs to
+  `project/instrukt/spec/feature/docs/progressive-retrieval`.
 - Pending snippets and their companions are published and indexed with their
   pending ownership; retrieval decides what a reader sees
   (`project/instrukt/spec/domain/docs`).
@@ -283,20 +284,10 @@ And it says that general and project are reserved and no domain may take them
 And the previously published documentation is unchanged
 ```
 
-### UC-PUB10: Read committed project docs independently of source edits
-
-```gherkin
-Given a developer has published a project's committed main
-When its primary worktree snippet is edited without another main publication
-Then docs get still reads the committed copy under the project's home store
-And reading that project's id from another project needs no source checkout file
-```
-
 ## Known caveats
 
-- Project retrieval reads the last committed-main publication. Uncommitted or
-  unmerged project edits remain outside that store; a failed sync retains the
-  previous project publication with its index.
+- Uncommitted or unmerged project edits remain outside the project store;
+  a failed sync retains the previous project publication with its index.
 - The default branch is the remote's default (`origin/HEAD`); without a
   remote, it is the local repository's current main line as git reports its
   default.

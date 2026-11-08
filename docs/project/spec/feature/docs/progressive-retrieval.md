@@ -111,8 +111,8 @@ snippet, every transitive required read once, and, for each bare-domain read,
 that domain's `expanded` set with its own closure, listing the included ids in
 its header; a domain read is listed by its domain name. Transitive reads are
 listed depth-first in declaration order, each once, at its first occurrence.
-For a procedure carrying root frontmatter (`role`, `subscriptions`,
-`activation_trigger` or `dispatch`), a required read that is pending,
+For a procedure carrying root frontmatter (`role`, `subscriptions` or
+`activation_trigger`), a required read that is pending,
 resolves to no readable published snippet, or names a domain without an
 `index.yaml` refuses the closure, naming it. For any other snippet such a read
 is left out. Triggered-procedure listing lines direct to this form.

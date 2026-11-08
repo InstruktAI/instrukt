@@ -588,14 +588,6 @@ And the listing window has no part in that decision
 
 ### UC-SS21: Leave no instrukt-owned child processes behind
 
-```gherkin
-Given an instrukt invocation launches a child command that starts descendants
-When that command succeeds, fails, times out or is interrupted
-Then instrukt cleans the process group of its own child command
-And no descendant of that command remains orphaned by the invocation
-And runtime-managed standing agent lifecycle remains with the runtime
-```
-
 ### UC-SS4: Conversation archive lookup (retired)
 
 Retired on this operational session surface. Searchable history belongs to

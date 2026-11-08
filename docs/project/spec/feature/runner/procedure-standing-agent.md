@@ -132,8 +132,12 @@ or explicit confirmation that no thread exists and no start remains in flight
 uses `events bind <procedure> --reservation <token> --not-started --reason <text>`
 before retry of those same assignment facts. Automatic activation waits for this
 reservation's resolution rather than starting another generation.
-Subject-bound manual entry remains unavailable; module, usable-role and runtime
-gates apply before reservation. No history lookup is introduced.
+Subject-bound manual entry remains unavailable; module and runtime gates apply
+before reservation. Both automatic activation and manual entry reservation use
+the declared role or, for an otherwise valid subscription that omits it,
+`event-handler`. Omission alone never refuses entry. Malformed entry metadata
+that cannot supply a usable effective role refuses before session creation or
+reservation. No history lookup is introduced.
 
 ### Activation outcome
 
@@ -350,12 +354,12 @@ Then its standing thread remains unsettled in the sidebar
 And a human may settle it without preventing later messages from waking it
 ```
 
-### UC-PSA29: Refuse an assignment without a declared role
+### UC-PSA29: Refuse an assignment with an unusable effective role
 
 ```gherkin
-Given a procedure has no usable declared role
+Given a developer's procedure has malformed entry metadata that cannot supply a usable effective role even after the subscribed-role default applies
 When automatic activation or manual entry reservation is requested for it
-Then entry refuses before creating a session and identifies the missing role
+Then entry refuses before creating a session and identifies the unusable effective role
 ```
 
 ## Known caveats

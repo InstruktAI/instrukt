@@ -103,13 +103,9 @@ envelope processing; it bypasses neither schema-version checks, digests,
 revision history nor approval attribution. Bot trust grants no human approval
 or hold-control authority.
 
-For bot roles, `instrukt repo commit` uses the selected App's bot login and
-GitHub noreply author address `<bot-account-id>+<bot-login>@users.noreply.github.com`.
-The verified bot account id is distinct from the App id. This role-based author
-resolution works when T3 recognizes a session without reporting a provider
-agent identity. Missing App identity is a repairable refusal, not a fallback
-to the human git author. Outside bot roles, the existing attributed-commit
-resolution and trailer rules remain authoritative.
+The App boundary supplies verified bot actor facts; commit-author resolution,
+precedence and refusal belong to
+`project/instrukt/spec/feature/repository/attributed-commit`.
 
 ## Use cases
 
@@ -119,7 +115,6 @@ resolution and trailer rules remain authoritative.
 Given a developer has configured distinct project, author and reviewer Apps
 When an author role opens its implementation pull request and a reviewer role approves it
 Then GitHub shows the author bot and the different reviewer bot
-And bot-role commits carry that role's bot noreply author
 And shared record, issue and board maintenance shows the project bot
 ```
 

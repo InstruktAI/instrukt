@@ -23,11 +23,18 @@ A repository holds documentation in up to three positions:
 | `docs/domain/<x>/`  | on demand: one line in each global agent file; rendered in full by `instrukt docs get --domain <x>` | `<x>/<taxonomy>/<rest>`          |
 | `docs/project/`     | the project: rendered into its root `AGENTS.md`                                                      | `project/<slug>/<taxonomy>/<rest>` |
 
+<!-- planned-change:instrukt-first-build -->
+General and domain snippets are published from the repository's committed
+main. Project snippets are indexed from committed main, but retrieval reads
+their files in the registered primary checkout; source edits affect that read.
+<!-- change:instrukt-first-build -->
 Every position is published from the repository's committed main. Project
 snippets are copied to `~/.instrukt/docs/project/<slug>/…` and read from that
 store, like general and domain snippets. The source checkout remains the
-authoring location; uncommitted edits are not retrieval content. `<slug>` is the
-slug the project declares in its
+authoring location; uncommitted edits are not retrieval content.
+<!-- /planned-change:instrukt-first-build -->
+
+`<slug>` is the slug the project declares in its
 `instrukt.yaml` (`project`), never a directory name. An id is a name, not a
 copy of the path: a domain snippet's id carries no `domain/` prefix.
 
@@ -137,7 +144,7 @@ Frontmatter (optional, authored):
 - `subscriptions` — procedures only. A non-empty list of event type patterns whose arrival activates the procedure through the runner, which resolves subscribed procedures from frontmatter. A pattern is an exact event type name, a prefix of whole name segments followed by `.*` (`a.b.*` selects every event under `a.b`), or `*`; any other form is rejected. A procedure declares `subscriptions` or `activation_trigger`, never both, because each names who is responsible for starting the work; a procedure used only as supporting knowledge declares neither. A procedure declaring `subscriptions` is never listed among triggered procedures. Validation rejects this field on non-procedure snippet types and on a procedure declaring both activation fields.
 
 <!-- planned-change:instrukt-first-build -->
-- `role` — procedures only. The session role an agent carries when this procedure is its launch root: the procedure a dispatcher or a subscription names. Required on a procedure declaring `subscriptions` and on every procedure a dispatcher names. A procedure may be both a launch root and a dependency or hat another session reads: the entry declarations are interpreted only when the procedure is the launch root, and reading a procedure inside a session interprets none of them and changes nothing about that session. Role supplies the selection key in `~/.instrukt/agents.yaml`. Workflow role-list membership is checked only for procedures that workflow dispatches; subscribed procedures keep their declared role independently of todos. Validation rejects the field on any non-procedure snippet.
+- `role` — procedures only. The session role an agent carries when this procedure is its launch root: the procedure a dispatcher or a subscription names. Required on a procedure declaring `subscriptions` and on every procedure a dispatcher names. A procedure may be both a launch root and a dependency or hat another session reads: the entry declarations are interpreted only when the procedure is the launch root, and reading a procedure inside a session interprets none of them and changes nothing about that session. Role is free text in core; with todos enabled it is validated against the roles declared under `roles:` in the selected published domain's `workflow/actions.yaml`. Validation rejects the field on any non-procedure snippet.
 <!-- change:instrukt-first-build -->
 - `role` — procedures only. The session role an agent carries when this procedure is its launch root: the procedure a dispatcher or a subscription names. Required on every procedure a workflow dispatcher names. A subscribed procedure may omit it and receives the effective role `event-handler`. An unknown configured mapping uses `default` without losing the explicit role name. A procedure may be both a launch root and a dependency or hat another session reads: the entry declarations are interpreted only when the procedure is the launch root, and reading a procedure inside a session interprets none of them and changes nothing about that session. Role supplies the single key for class, scoped capability bundles, model selection and optional GitHub App identity in `~/.instrukt/agents.yaml`. A reading of supporting knowledge changes none of these assignment facts. Workflow role-list membership is checked only for procedures that workflow dispatches; subscribed procedures keep their declared role independently of todos. Validation rejects the field on any non-procedure snippet.
 <!-- /planned-change:instrukt-first-build -->

@@ -7,13 +7,20 @@ visibility: public
 
 ## What
 
-These observations inform role-mapping judgment. Model selection is configured
-in `~/.instrukt/agents.yaml`: `roles` selects an order and tier for each procedure
-role, with `default` for an unlisted role. Profiles identify existing T3 provider
-instances and typed per-tier model chains. The owner is
-`project/instrukt/spec/feature/configuration/agent-selection`; procedures carry
-no model-selection frontmatter. Runtime startable profiles are distinct from
-the agent CLIs receiving deployed instructions.
+<!-- planned-change:instrukt-first-build -->
+These observations inform ordered agent preferences. The global
+`agents.order` and `agents.tier` supply the defaults; a procedure's `dispatch`
+can override them, and a per-task preference takes precedence. Valid agent
+names come from the configured runtime adapter. Runtime startable agents are
+distinct from the agent CLIs receiving deployed instructions.
+<!-- change:instrukt-first-build -->
+These observations inform role-mapping judgment. Model choice is configured
+by role, with a default for unlisted roles, independently of procedure content.
+Profiles identify existing runtime provider instances and typed per-tier model
+chains. Procedures supply their role rather than model-selection settings.
+Runtime startable profiles are distinct from the agent CLIs receiving deployed
+instructions.
+<!-- /planned-change:instrukt-first-build -->
 
 ### Selection paradigm
 
@@ -29,10 +36,16 @@ that is available; how availability is established is the configuration's and
 the runner's concern. Composing and maintaining the order is judgment: the
 profiles inform that judgment, rather than supplying a scoring algorithm.
 
+<!-- planned-change:instrukt-first-build -->
+The default order is configured globally; a procedure can override it for
+its work. Composing that order uses the capability and billing observations
+below.
+<!-- change:instrukt-first-build -->
 The shipped role map preserves a cross-model pattern: authors prefer Claude,
 reviewers prefer Codex. Defaults cover every harness T3 builds in, including
 capable inexpensive and open-model routes. Orders are heuristics the user owns;
 DeepSeek has no special fallback position in instrukt's defaults.
+<!-- /planned-change:instrukt-first-build -->
 
 ### Profiles
 
@@ -164,7 +177,11 @@ does not establish strengths, weaknesses or billing, that gap remains explicit.
 
 ### Dispatch tiers
 
-A tier selects the ordered model chain within each configured profile. Provider-native effort is a separate chain-entry setting, not the tier itself. Role mappings in `agents.yaml` supply the tier; procedures declare only their role. Shipped chains use high effort throughout.
+<!-- planned-change:instrukt-first-build -->
+A tier selects the ordered model chain for each agent family. Provider-native effort is a separate chain-entry setting, not the tier itself. The global tier supplies the default, a procedure's dispatch can override it, and a per-task tier takes precedence. Shipped chains use high effort throughout.
+<!-- change:instrukt-first-build -->
+A tier selects the ordered model chain within each configured profile. Provider-native effort is a separate chain-entry setting, not the tier itself. Role mappings supply the tier; procedures declare only their role. Shipped chains use high effort throughout.
+<!-- /planned-change:instrukt-first-build -->
 
 - **strong**: work whose error is costly and hard to see — novel design, analysis,
   planning, root-cause diagnosis, and every review except one of a
