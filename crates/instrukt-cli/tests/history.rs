@@ -104,8 +104,29 @@ fn runner_database_notifications_keep_history_current_without_a_search_or_tick()
     let source_id = found["matches"][0]["source"].as_str().unwrap();
     let redis = common::redis::RedisServer::new(&env);
     fixture::configure_cluster(&env, &redis.url);
+    source.message(
+        "child",
+        "startup-marker",
+        "Startup marker.",
+        "2026-11-08T10:30:00.000Z",
+        false,
+    );
     let _runner = fixture::runner(&env);
-    // The responder readiness marker is published after the runner installs history watching.
+    let startup_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let out = env
+            .run(env.home(), ["history", "show", source_id, "child"])
+            .success();
+        let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+        if document["messages"].as_array().unwrap().len() == 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < startup_deadline,
+            "startup marker was not retained"
+        );
+        std::thread::yield_now();
+    }
     source.complete();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -113,7 +134,7 @@ fn runner_database_notifications_keep_history_current_without_a_search_or_tick()
             .run(env.home(), ["history", "show", source_id, "child"])
             .success();
         let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-        if document["messages"].as_array().unwrap().len() == 2 {
+        if document["messages"].as_array().unwrap().len() == 3 {
             break;
         }
         assert!(Instant::now() < deadline, "completion was not extracted");
@@ -313,8 +334,8 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
     let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
     db.execute_batch(include_str!("fixtures/history-v7.sql"))
         .unwrap();
-    let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"messages":[{"id":"pre-upgrade","threadId":"child","role":"assistant","text":"Upgradetoken retained only in history."}]});
-    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Upgradetoken retained only in history.','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
+    let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"messages":[{"id":"pre-upgrade","threadId":"child","role":"assistant","text":"Upgradetoken retained only in history."}],"turnItems":[{"id":"retained-tool","threadId":"child","type":"command_execution","text":"Textonlytoken","input":"Inputonlytoken","output":"Outputonlytoken","markdown":"Markdownonlytoken","diffStr":"Diffonlytoken"}]});
+    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Upgradetoken retained only in history. Textonlytoken Inputonlytoken Outputonlytoken Markdownonlytoken Diffonlytoken','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
     drop(db);
     assert_eq!(
         search(&env, "Upgradetoken")["matches"]
@@ -324,7 +345,236 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
         1
     );
     assert_eq!(
+        search(&env, "Textonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Inputonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Outputonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Markdownonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Diffonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
         search(&env, "jewels")["matches"].as_array().unwrap().len(),
         2
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn later_hydrated_older_messages_and_tied_pages_are_discovered() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    search(&env, "jewels");
+    for index in 0..259 {
+        source.message(
+            "child",
+            &format!("late-{index:03}"),
+            &format!("Latetoken{index:03} hydrated."),
+            "2025-01-01T00:00:00.000Z",
+            false,
+        );
+    }
+    assert_eq!(
+        search(&env, "Latetoken000")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Latetoken258")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn same_time_lower_ids_and_in_place_edits_change_the_conversation_fingerprint() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    let at = "2026-11-08T12:00:00.000Z";
+    source.message("child", "z-seen", "Firsttoken value.", at, false);
+    search(&env, "Firsttoken");
+    source.message("child", "a-late", "Tiedtoken value.", at, false);
+    assert_eq!(
+        search(&env, "Tiedtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    source.message("child", "z-seen", "Editedtoken value.", at, false);
+    assert_eq!(
+        search(&env, "Editedtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn conforming_turn_items_runs_and_subagents_are_retained_without_message_roles() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    source.native_records();
+    assert_eq!(
+        search(&env, "Useritemtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Assistantitemtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Toolitemtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Reasonitemtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let result = search(&env, "Subagenttoken");
+    assert_eq!(result["matches"].as_array().unwrap().len(), 1);
+    let source_id = result["matches"][0]["source"].as_str().unwrap();
+    let out = env
+        .run(env.home(), ["history", "show", source_id, "child"])
+        .success();
+    let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(document["turnItems"].as_array().unwrap().len(), 4);
+    assert_eq!(document["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(document["subagents"].as_array().unwrap().len(), 1);
+    source.complete();
+    assert_eq!(
+        search(&env, "Finished")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn repairing_v8_recovers_retained_only_output_and_diff_without_source_refresh() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    let found = search(&env, "jewels");
+    let source_id = found["matches"][0]["source"].as_str().unwrap();
+    let file = env.instrukt_home().join("state/instrukt.db");
+    std::fs::remove_file(&file).unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
+    db.execute_batch(include_str!("fixtures/history-v7.sql"))
+        .unwrap();
+    let native = serde_json::json!({"id":"retained-output","threadId":"child","type":"command_execution","text":"Textonlytoken","input":"Inputonlytoken","output":"Outputonlytoken","markdown":"Markdownonlytoken","diffStr":"Diffonlytoken"});
+    let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"turnItems":[native]});
+    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Textonlytoken','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
+    db.execute_batch(include_str!("fixtures/history-v8.sql"))
+        .unwrap();
+    drop(db);
+    source.remove_threads();
+    assert_eq!(
+        search(&env, "Textonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Inputonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Outputonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Markdownonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Diffonlytoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn a_delivered_timestamp_position_migrates_to_complete_conversation_detection() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    let found = search(&env, "jewels");
+    let source_id = found["matches"][0]["source"].as_str().unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute("UPDATE history_source_positions SET position_json=?2 WHERE source=?1",instrukt_core::state_db::rusqlite::params![source_id,serde_json::json!({"version":1,"cursors":{"messages":{"updated_at":"2099-01-01T00:00:00.000Z","native_id":"z-seen"}},"pending":[],"pending_after":null}).to_string()]).unwrap();
+    drop(db);
+    source.message(
+        "child",
+        "hydrated-after-upgrade",
+        "Checkpointtoken restored.",
+        "2025-01-01T00:00:00.000Z",
+        false,
+    );
+    assert_eq!(
+        search(&env, "Checkpointtoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
 }

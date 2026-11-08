@@ -55,8 +55,65 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         self.db.execute("INSERT OR REPLACE INTO orchestration_v2_projection_threads VALUES(?1,'project','Local jewels',?2,?2,?3,NULL,?4)",params![id,at,archive,payload.to_string()]).unwrap();
     }
     pub fn message(&self, thread: &str, id: &str, text: &str, at: &str, streaming: bool) {
-        let payload = json!({"id":id,"threadId":thread,"role":"assistant","text":text,"createdAt":at,"updatedAt":at,"streaming":streaming});
-        self.db.execute("INSERT OR REPLACE INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',?3,?4,?4,?5)",params![id,thread,streaming,at,payload.to_string()]).unwrap();
+        let payload = json!({"id":id,"threadId":thread,"role":"assistant","text":text,"createdAt":at,"updatedAt":at,"streaming":streaming,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
+        self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',?3,?4,?4,?5) ON CONFLICT(message_id) DO UPDATE SET streaming=excluded.streaming,updated_at=excluded.updated_at,payload_json=excluded.payload_json",params![id,thread,streaming,at,payload.to_string()]).unwrap();
+    }
+    pub fn native_records(&self) {
+        let at = "2026-11-08T10:00:00.000Z";
+        for (id, role, text, actor, origin) in [
+            (
+                "native-user-message",
+                "user",
+                "Useritemtoken text.",
+                "user",
+                "web",
+            ),
+            (
+                "native-assistant-message",
+                "assistant",
+                "Assistantitemtoken text.",
+                "agent",
+                "provider",
+            ),
+        ] {
+            let payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child',?2,0,?3,?3,?4)",params![id,role,at,payload.to_string()]).unwrap();
+        }
+        let run = json!({"id":"native-run","threadId":"child","ordinal":1,"providerInstanceId":"fixture","modelSelection":{"instanceId":"fixture","model":"fixture"},"providerThreadId":null,"userMessageId":"native-user-message","rootNodeId":null,"activeAttemptId":null,"status":"completed","requestedAt":at,"startedAt":at,"completedAt":at,"checkpointId":null,"contextHandoffId":null});
+        self.db.execute("INSERT INTO orchestration_v2_projection_runs VALUES('native-run','child','completed',?1,?1,?2)",params![at,run.to_string()]).unwrap();
+        let subagent = json!({"id":"native-subagent","threadId":"child","runId":"native-run","parentNodeId":"root","origin":"provider_native","createdBy":"agent","driver":"codex","providerInstanceId":"fixture","providerThreadId":null,"childThreadId":null,"nativeTaskRef":null,"prompt":"Fixture work","title":null,"model":null,"status":"completed","result":"Subagenttoken result.","startedAt":at,"completedAt":at,"updatedAt":at});
+        self.db.execute("INSERT INTO orchestration_v2_projection_subagents VALUES('native-subagent','child',NULL,?1,?2)",params![at,subagent.to_string()]).unwrap();
+        for (ordinal, kind, text) in [
+            (0, "user_message", "Useritemtoken text."),
+            (1, "assistant_message", "Assistantitemtoken text."),
+            (2, "command_execution", "Toolitemtoken output."),
+            (3, "reasoning", "Reasonitemtoken text."),
+        ] {
+            let id = format!("native-item-{ordinal}");
+            let mut item = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"providerThreadId":null,"providerTurnId":null,"nativeItemRef":null,"parentItemId":null,"ordinal":ordinal,"status":"completed","title":null,"startedAt":at,"completedAt":at,"updatedAt":at,"type":kind});
+            if kind == "command_execution" {
+                item["input"] = json!("fixture command");
+                item["output"] = json!(text);
+                item["exitCode"] = json!(0);
+            } else {
+                item["text"] = json!(text);
+            }
+            if kind == "user_message" {
+                item["messageId"] = json!("native-user-message");
+                item["createdBy"] = json!("user");
+                item["creationSource"] = json!("web");
+                item["inputIntent"] = json!("turn_start");
+                item["attachments"] = json!([]);
+            }
+            if kind == "assistant_message" {
+                item["messageId"] = json!("native-assistant-message");
+                item["streaming"] = json!(false);
+            }
+            if kind == "reasoning" {
+                item["streaming"] = json!(false);
+            }
+            self.db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,'child',?2,'completed',?3,?4)",params![id,kind,at,item.to_string()]).unwrap();
+        }
     }
     pub fn remove_threads(&self) {
         self.db.execute_batch("DELETE FROM orchestration_v2_projection_messages;DELETE FROM orchestration_v2_projection_threads;").unwrap();

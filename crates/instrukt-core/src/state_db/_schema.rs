@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
 const V7: &str = r#"
@@ -568,4 +568,27 @@ SELECT c.source,'turn_item',json_extract(v.value,'$.id'),coalesce(json_extract(v
  'text',coalesce(json_extract(v.value,'$.text'),json_extract(v.value,'$.markdown'),json_extract(v.value,'$.input'),'') , 'native',json(v.value))
 FROM history_conversations c,json_each(c.document,'$.turnItems') v
 WHERE c.source LIKE 't3:%' AND json_type(v.value,'$.id')='text';
+"#;
+
+/// Version 9: repair the complete retained text contribution of prior normalized records.
+const V9: &str = r#"
+UPDATE history_projection_records
+SET payload_json=json_set(payload_json,'$.text',
+ coalesce(json_extract(payload_json,'$.text'),'') || char(10) || char(10) ||
+ coalesce((SELECT group_concat(value,char(10)||char(10)) FROM (
+  SELECT value FROM json_each(json_extract(history_projection_records.payload_json,'$.native'))
+  WHERE type='text' AND key IN ('text','input','output','markdown','diffStr','result','progress')
+  ORDER BY CASE key WHEN 'text' THEN 0 WHEN 'input' THEN 1 WHEN 'output' THEN 2 WHEN 'markdown' THEN 3 WHEN 'diffStr' THEN 4 WHEN 'result' THEN 5 ELSE 6 END
+ )),''))
+WHERE source LIKE 't3:%';
+UPDATE history_conversations AS c
+SET body=body || char(10) || char(10) || coalesce((
+ SELECT group_concat(json_extract(r.payload_json,'$.text'),char(10)||char(10))
+ FROM history_projection_records r
+ WHERE r.source=c.source AND r.thread_id=c.native_id AND r.projection<>'conversation'
+),'')
+WHERE c.source LIKE 't3:%' AND EXISTS(
+ SELECT 1 FROM history_projection_records r WHERE r.source=c.source AND r.thread_id=c.native_id
+);
+
 "#;

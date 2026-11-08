@@ -1,6 +1,7 @@
 //! Structured runtime primitives; the selected runtime owns conversations and workspaces.
 mod _t3;
 mod _t3_conversations;
+mod _t3_fingerprint;
 pub(crate) mod _t3_home;
 mod _t3_notifications;
 mod _t3_readiness;

@@ -46,16 +46,18 @@ or migrates it, and does not authenticate to T3 or use its WebSocket API for
 history. Retained older messages and archived threads are projection rows and
 are included independently of event-log retention or a recent UI window.
 
-The adapter processes short, bounded reads in each projection's timestamp/native-id
-order. T3 projections with `updated_at` use that value; runs have no such column
-and use their retained completion/request timestamps. These per-projection
-positions remain internal to T3's opaque source position. Rows still streaming
-are deferred with durable pending identities and revisited on the next catch-up,
-even if other rows have advanced the position. The adapter yields only completed
-message text, normalized native records and the next position. History commits
-those changes, its FTS index and the opaque position atomically; a failed batch
-advances no progress. Source reads never retain a read transaction across local
-history writes.
+The adapter owns source discovery and conversation change accounting. Catch-up
+recognizes newly durable identities and in-place changes independently of native
+timestamps, including later hydration of older records and equal-time updates.
+It fully reads changed conversations in bounded read scopes. Streaming content
+remains deferred until complete. A conversation's loaded-source fingerprint and
+its retained normalized records, searchable body and index commit atomically;
+failed or inconsistent reads do not mark that source state as loaded. Source
+reads never retain a read transaction across local history writes.
+
+History stores the source position opaquely. The T3 adapter is the authoritative
+owner of vendor-table selection, fingerprint inputs and read mechanics; its
+verified vendor contract is the [T3 projection writer](https://github.com/pingdotgg/t3code/blob/6417151c093e54dbba0e6c824c69d03983793b9a/apps/server/src/orchestration-v2/ProjectionStore.ts).
 
 ### Freshness and participation
 

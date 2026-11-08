@@ -1,9 +1,11 @@
 //! Short read-only projection batches from T3's durable SQLite state.
+use super::_t3_fingerprint::{self, Fingerprint};
 use super::conversations::{
     ConversationChanges, ConversationNotifications, ConversationRecord, ConversationSource,
     RecordKind, Role, SourceError, SourcePosition,
 };
 use crate::runtime::_t3_home::T3Home;
+use instrukt_core::state_db::rusqlite::types::ValueRef;
 use instrukt_core::{
     config::Env,
     home::Home,
@@ -12,7 +14,7 @@ use instrukt_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::cell::RefCell;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -20,7 +22,7 @@ use std::{
 };
 
 const BATCH_SIZE: usize = 128;
-const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -65,6 +67,21 @@ impl Projection {
             "coalesce(completed_at,requested_at)"
         } else {
             "updated_at"
+        }
+    }
+    fn streaming_column(self) -> &'static str {
+        if matches!(self, Self::Messages) {
+            "streaming"
+        } else {
+            "0"
+        }
+    }
+    fn extra_column(self) -> &'static str {
+        match self {
+            Self::Messages => "role",
+            Self::TurnItems => "type",
+            Self::Runs => "status",
+            _ => "''",
         }
     }
     fn columns(self) -> Vec<(&'static str, &'static str)> {
@@ -174,40 +191,22 @@ fn validate(path: &Path, location: &T3Home) -> Result<(), SourceError> {
 fn batch(
     path: &Path,
     projection: Projection,
-    cursor: &Cursor,
-    selected: Option<&str>,
+    thread: &str,
+    after: &str,
 ) -> Result<Vec<Row>, SourceError> {
     let db = open(path)?;
-    let streaming = if matches!(projection, Projection::Messages) {
-        "streaming"
-    } else {
-        "0"
-    };
-    let extra = match projection {
-        Projection::Messages => "role",
-        Projection::TurnItems => "type",
-        Projection::Runs => "status",
-        _ => "''",
-    };
-    let predicate = if selected.is_some() {
-        format!("{}=?1", projection.id())
-    } else {
-        format!("({}, {})>(?1,?2)", projection.clock(), projection.id())
-    };
+    let streaming = projection.streaming_column();
+    let extra = projection.extra_column();
     let sql = format!(
-        "SELECT {},thread_id,{},payload_json,{streaming},{extra} FROM {} WHERE {predicate} ORDER BY {},{} LIMIT {BATCH_SIZE}",
+        "SELECT {},thread_id,{},payload_json,{streaming},{extra},rowid FROM {} WHERE thread_id=?1 AND {}>?2 ORDER BY {} LIMIT {BATCH_SIZE}",
         projection.id(),
         projection.clock(),
         projection.table(),
-        projection.clock(),
+        projection.id(),
         projection.id()
     );
     let mut stmt = db.prepare(&sql)?;
-    let mut rows = if let Some(id) = selected {
-        stmt.query([id])?
-    } else {
-        stmt.query(params![cursor.updated_at, cursor.native_id])?
-    };
+    let mut rows = stmt.query(params![thread, after])?;
     let mut values = Vec::new();
     let mut bytes = 0;
     while let Some(row) = rows.next()? {
@@ -229,6 +228,17 @@ fn batch(
         {
             return Err(source_error("invalid or oversized projection row"));
         }
+        let rowid: i64 = row.get(6)?;
+        let fingerprint = Fingerprint::row([
+            ValueRef::Text(projection.name().as_bytes()),
+            ValueRef::Integer(rowid),
+            ValueRef::Text(native_id.as_bytes()),
+            ValueRef::Text(thread_id.as_bytes()),
+            ValueRef::Text(updated_at.as_bytes()),
+            ValueRef::Text(raw.as_bytes()),
+            ValueRef::Integer(streaming),
+            ValueRef::Text(extra.as_bytes()),
+        ]);
         let payload: Value = serde_json::from_str(&raw)?;
         if payload["id"] != native_id
             || (!matches!(projection, Projection::Threads) && payload["threadId"] != thread_id)
@@ -273,51 +283,53 @@ fn batch(
             updated_at,
             payload,
             streaming: still_streaming,
+            fingerprint,
         });
     }
     Ok(values)
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-struct Cursor {
-    updated_at: String,
-    native_id: String,
-}
 struct Row {
     native_id: String,
     thread_id: String,
     updated_at: String,
     payload: Value,
     streaming: bool,
+    fingerprint: Fingerprint,
 }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-struct Pending {
-    projection: Projection,
-    id: String,
-}
-
 #[derive(Serialize, Deserialize)]
 struct Position {
     version: u8,
-    cursors: BTreeMap<String, Cursor>,
-    pending: BTreeSet<Pending>,
-    pending_after: Option<Pending>,
+    loaded: BTreeMap<String, Fingerprint>,
+    after: Option<String>,
 }
 impl Default for Position {
     fn default() -> Self {
         Self {
-            version: 1,
-            cursors: BTreeMap::new(),
-            pending: BTreeSet::new(),
-            pending_after: None,
+            version: 2,
+            loaded: BTreeMap::new(),
+            after: None,
         }
     }
 }
-
+/// Known timestamp checkpoints become an empty fingerprint inventory before source use.
+fn migrate_position(position: Option<&SourcePosition>) -> Result<Position, SourceError> {
+    match position {
+        None => Ok(Position::default()),
+        Some(p) if p.0["version"] == 1 => Ok(Position::default()),
+        Some(p) if p.0["version"] == 2 => Ok(serde_json::from_value(p.0.clone())?),
+        _ => Err(source_error("unknown source-position version")),
+    }
+}
+struct Pass {
+    fingerprints: BTreeMap<String, Fingerprint>,
+    expected: Option<SourcePosition>,
+}
 pub(super) struct T3Conversations {
     location: T3Home,
     path: PathBuf,
     identity: String,
+    pass: RefCell<Option<Pass>>,
 }
 impl T3Conversations {
     pub(super) fn new(home: &Home, env: &Env) -> Self {
@@ -333,8 +345,48 @@ impl T3Conversations {
             location,
             path,
             identity,
+            pass: RefCell::new(None),
         }
     }
+}
+/// Each aggregate visits only one bounded rowid scope; no read transaction spans scopes.
+fn discover(path: &Path) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
+    let mut fingerprints = BTreeMap::new();
+    for projection in PROJECTIONS {
+        let mut after = 0_i64;
+        loop {
+            let db = open(path)?;
+            _t3_fingerprint::register(&db)?;
+            let sql = format!(
+                "SELECT thread_id,max(source_rowid),{}('{}',source_rowid,native_id,thread_id,native_clock,payload_json,streaming,extra) FROM (SELECT rowid source_rowid,{} native_id,thread_id,{} native_clock,payload_json,{} streaming,{} extra FROM {} WHERE rowid>?1 ORDER BY rowid LIMIT {BATCH_SIZE}) GROUP BY thread_id",
+                _t3_fingerprint::FUNCTION,
+                projection.name(),
+                projection.id(),
+                projection.clock(),
+                projection.streaming_column(),
+                projection.extra_column(),
+                projection.table()
+            );
+            let mut statement = db.prepare(&sql)?;
+            let rows = statement
+                .query_map([after], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            if rows.is_empty() {
+                break;
+            }
+            for (thread, rowid, value) in rows {
+                after = after.max(rowid);
+                _t3_fingerprint::merge(&mut fingerprints, thread, serde_json::from_str(&value)?);
+            }
+        }
+    }
+    Ok(fingerprints)
 }
 fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, SourceError> {
     let value = &row.payload;
@@ -359,7 +411,7 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
         Projection::Subagents => RecordKind::Subagent,
         Projection::TurnItems => RecordKind::TurnItem,
     };
-    let role = if matches!(projection, Projection::Messages | Projection::TurnItems) {
+    let role = if matches!(projection, Projection::Messages) {
         Some(serde_json::from_value::<Role>(value["role"].clone())?)
     } else {
         None
@@ -417,84 +469,75 @@ impl ConversationSource for T3Conversations {
         position: Option<&SourcePosition>,
     ) -> Result<ConversationChanges, SourceError> {
         validate(&self.path, &self.location)?;
-        let mut state = match position {
-            Some(position) => serde_json::from_value::<Position>(position.0.clone())?,
-            None => Position::default(),
-        };
-        if state.version != 1 {
-            return Err(source_error("unknown source-position version"));
+        let mut state = migrate_position(position)?;
+        let mut cache = self.pass.borrow_mut();
+        if cache
+            .as_ref()
+            .is_none_or(|pass| pass.expected.as_ref() != position)
+        {
+            *cache = Some(Pass {
+                fingerprints: discover(&self.path)?,
+                expected: None,
+            });
+            state.after = None;
         }
-        for projection in PROJECTIONS {
-            let cursor = state
-                .cursors
-                .get(projection.name())
-                .cloned()
-                .unwrap_or_default();
-            let rows = batch(&self.path, projection, &cursor, None)?;
-            if let Some(last) = rows.last() {
-                let next = Cursor {
-                    updated_at: last.updated_at.clone(),
-                    native_id: last.native_id.clone(),
-                };
-                let mut records = Vec::new();
-                for row in rows {
-                    if row.streaming {
-                        state.pending.insert(Pending {
-                            projection,
-                            id: row.native_id,
-                        });
-                        continue;
-                    }
-                    if matches!(projection, Projection::Messages | Projection::TurnItems) {
-                        state.pending.remove(&Pending {
-                            projection,
-                            id: row.native_id.clone(),
-                        });
-                    }
-                    records.push(normalized(projection, row)?);
-                }
-                state.cursors.insert(projection.name().into(), next);
-                state.pending_after = None;
-                return Ok(ConversationChanges {
-                    records,
-                    position: SourcePosition(serde_json::to_value(state)?),
-                    has_more: true,
-                });
-            }
-        }
-        let ids: Vec<Pending> = state
-            .pending
+        let pass = cache
+            .as_mut()
+            .ok_or_else(|| source_error("missing source fingerprint pass"))?;
+        let next = pass
+            .fingerprints
             .iter()
-            .filter(|id| state.pending_after.as_ref().is_none_or(|after| *id > after))
-            .take(BATCH_SIZE)
-            .cloned()
-            .collect();
-        let mut records = Vec::new();
-        for pending in &ids {
-            let rows = batch(
-                &self.path,
-                pending.projection,
-                &Cursor::default(),
-                Some(&pending.id),
-            )?;
-            if rows.is_empty() {
-                state.pending.remove(pending);
-            }
-            for row in rows {
-                if !row.streaming {
-                    state.pending.remove(pending);
-                    records.push(normalized(pending.projection, row)?);
+            .find(|(thread, fingerprint)| {
+                state.after.as_ref().is_none_or(|after| *thread > after)
+                    && state.loaded.get(*thread) != Some(*fingerprint)
+            })
+            .map(|(id, fp)| (id.clone(), fp.clone()));
+        if let Some((thread, expected)) = next {
+            let mut fingerprint = Fingerprint::default();
+            let mut records = Vec::new();
+            let mut streaming = false;
+            for projection in PROJECTIONS {
+                let mut after = String::new();
+                loop {
+                    let rows = batch(&self.path, projection, &thread, &after)?;
+                    let Some(last) = rows.last() else {
+                        break;
+                    };
+                    after = last.native_id.clone();
+                    for row in rows {
+                        fingerprint.add(&row.fingerprint);
+                        if row.streaming {
+                            streaming = true;
+                        } else {
+                            records.push(normalized(projection, row)?);
+                        }
+                    }
                 }
             }
+            if fingerprint != expected {
+                *cache = None;
+                return Err(source_error(
+                    "conversation changed during its read; retry catch-up",
+                ));
+            }
+            if !streaming {
+                state.loaded.insert(thread.clone(), fingerprint);
+            }
+            state.after = Some(thread);
+            let position = SourcePosition(serde_json::to_value(state)?);
+            pass.expected = Some(position.clone());
+            return Ok(ConversationChanges {
+                records,
+                position,
+                has_more: true,
+            });
         }
-        let more = ids
-            .last()
-            .is_some_and(|last| state.pending.iter().any(|id| id > last));
-        state.pending_after = if more { ids.last().cloned() } else { None };
+        state.after = None;
+        *cache = None;
         Ok(ConversationChanges {
-            records,
+            records: Vec::new(),
             position: SourcePosition(serde_json::to_value(state)?),
-            has_more: more,
+            has_more: false,
         })
     }
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError> {
