@@ -151,7 +151,7 @@ adapter verb templates.
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
-| Linked-session input | Optional `link`. |
+| Conversation links | `subscribe_thread` and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Enabling a module without a selected runtime, or with its native/adapter path
@@ -162,9 +162,9 @@ never a reason to select another adapter or create a replacement session.
 Enablement reads the selected workflow's typed `requires` declaration under
 `project/instrukt/spec/feature/workflow/workflow-definition`; it does not infer
 requirements from action prose. Missing steering is a supported degradation,
-not an enablement failure. Linked-session input and notification remain
-unavailable on T3's published CLI;
-instrukt does not rebuild them.
+not an enablement failure. Conversation links rely on T3's thread stream and
+native input delivery, not on a CLI link command. Notification remains
+unavailable on T3's published CLI; instrukt does not rebuild it.
 
 ### Start keys and locks
 
