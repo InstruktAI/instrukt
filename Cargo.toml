@@ -20,7 +20,7 @@ instrukt-core = { path = "crates/instrukt-core" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint" }
 instrukt-runner = { path = "crates/instrukt-runner" }
 instrukt-todos = { path = "crates/instrukt-todos" }
-instrukt-ai-logging = "=0.9.0"
+instrukt-ai-logging = "=0.10.0"
 
 anyhow = "1"
 base64 = "0.23"

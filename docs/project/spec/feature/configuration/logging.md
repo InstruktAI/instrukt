@@ -34,7 +34,7 @@ like any command, and their diagnostics would otherwise be gone with them.
   for (`sdlc/policy/observability`) — go to the log, in the contract's line
   format, from the logging crate the contract ships for Rust
   (`instrukt-ai-logging`), pinned to the released crates.io version
-  `=0.9.0`. instrukt does not format log lines itself.
+  `=0.10.0`. instrukt does not format log lines itself.
 - What a command reports to its caller stays on standard output and standard
   error as each command's spec says; a refusal or failure is still printed
   to the caller, and is also logged.
