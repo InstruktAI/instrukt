@@ -13,6 +13,7 @@ expanded:
   - general/policy/documentation-discipline
   - general/policy/commits
   - general/policy/conflict-resolution
+  - general/policy/message-identity-headers
   - general/policy/no-output-turn
 listed:
   - general/principle/evolution

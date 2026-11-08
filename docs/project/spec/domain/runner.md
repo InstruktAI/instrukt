@@ -8,12 +8,15 @@ delivered_by: [instrukt-first-build]
 ## What it is
 
 The runner bounded context connects eligible work, received events and due
-times to agent sessions. It owns dispatch, the runtime adapter, operational session inspection, event-source
-translation and time eligibility, including anomaly reporting. It executes
-the enabled modules' work in one process, entered through `instrukt run` or
-`instrukt tick` and woken by the OS scheduler. It has no consumer daemon. A separate opt-in loopback webhook receiver accepts signed external events on the designated ingress computer. The work
-context owns work content, artifacts and stamps; workflow owns
-authorization and derived workflow state.
+times to agent sessions. It owns dispatch, the runtime adapter, operational
+session inspection, event-source translation, conversation links and time
+eligibility, including anomaly reporting. It executes the enabled modules' work
+in one process, entered through `instrukt run` or `instrukt tick` and woken by
+the OS scheduler. The long-lived `instrukt run` also hosts turn-end conversation
+relay; scheduled `tick` does not relay conversations. It has no consumer daemon.
+A separate opt-in loopback webhook receiver accepts signed external events on
+the designated ingress computer. The work context owns work content, artifacts
+and stamps; workflow owns authorization and derived workflow state.
 
 ## Ubiquitous language
 
@@ -41,7 +44,7 @@ authorization and derived workflow state.
 
 **Runtime adapter**
 : A Rust trait implemented in code, selected explicitly by global
-`runner.runtime`. T3 is shipped first over its published host CLI. The
+`runner.runtime`. T3 is shipped first over its published host CLI and native thread stream. The
 adapter translates start-or-wake, start, send, state and conversation reads,
 recognises caller identity without runtime I/O,
 and reports optional capabilities. Its recognized native session is the key to
@@ -52,9 +55,14 @@ Native agent-operation prose is supplied by configuration and rendered through `
 : The standing procedure, exact home and optional subject identity carried as a discoverable semantic key, separate from display title; the database binding is a cache. A per-key database lock admits one
  starter or deliverer at a time.
 
-**Linked-session input**
-: Human words typed in one session also reaching a linked session with their
-  human attribution, when the runtime adapter supports that capability.
+**Conversation link**
+: A runner-owned relationship between two agent threads in which the human
+  participates from either thread and finished conversational turns reach the
+  peer with their original authorship.
+
+**Relay position**
+: Per-link directional source-stream and completed-delivery progress, retained
+  across ordinary runner restarts.
 
 **Due task**
 : A prepared, authorized task whose recorded schedule makes it eligible for
@@ -76,13 +84,14 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
-  runtime capability translation, including optional linked-session input;
+  runtime capability translation, conversation-link membership, identity-envelope
+  vocabulary and deterministic turn-end relay;
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
-  held task failures and the last wake-up), whose schema is published in
+  conversation links and directional relay positions, held task failures and the last wake-up), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -98,7 +107,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
   operational `instrukt sessions list|resolve-start` surface,
   `instrukt ticks status`, and wake-up registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
-  reads and explicit delivery/assignment evidence capabilities, optional linked input and notification; instrukt-owned start semantic-key discovery
+  reads and explicit delivery/assignment evidence capabilities, linked-thread
+  streams and optional notification; instrukt-owned start semantic-key discovery
   and database locking. Every operational sessions command accepts `--json`.
   Agents use configured native operations in their own conversation and
   record native child attempts through work. The adapter starts only without
@@ -161,8 +171,8 @@ responsibility is distinct from its configured role class.
 - **Invariants:** Activation acceptance is distinct from runtime resolution and
   event delivery. Exact runtime semantic-key discovery repairs the cached binding
   under its per-key database lock; status observation determines reuse. Domain
-  completion requires its owning work record's evidence. Linked input is an
-  optional adapter capability.
+  completion requires its owning work record's evidence. Conversation links are
+  a separate runner-owned aggregate.
 - **Identifier:** Procedure and exact home, plus subject when declared; todo-role
   bindings remain work-owned. The adapter key carries the exact home and optional subject;
   confirmed successors retain separate generation keys.
@@ -170,6 +180,19 @@ responsibility is distinct from its configured role class.
   and ambiguous-start recovery. List/send failure leaves work pending and starts
   no replacement. The standing-agent and procedure-event-delivery contracts own continuing
   home/subject responsibility and eligible event delivery; routing itself resolves no session.
+
+#### Conversation link
+
+- **Root entity:** One link between two runtime-scoped native threads.
+- **Contains:** Its two members, active/closed state, opening positions and
+  per-direction pending handover and accepted-delivery evidence.
+- **Invariants:** Admission, attribution, closure and turn eligibility are
+  owned by `project/instrukt/spec/feature/runner/conversation-links`. T3
+  transcripts supply content; transport positions confer no speaker authority.
+- **Lifecycle:** Opening establishes both directions; the long-lived runner
+  follows native completions, resumes retained progress on startup and stops
+  both directions when a member closes the link. State remains runner-owned
+  in the existing state database.
 
 #### Event activation
 
@@ -215,7 +238,11 @@ preserves instrukt's project-local reach as an adaptation of TeleClaude's tiers.
 
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
-A scheduled-only computer reacts on its next wake, within stream retention.
+A scheduled-only computer reacts to retained instrukt events on its next wake,
+within stream retention. Conversation relay is a separate native-thread reader
+in `instrukt run`, governed by
+`project/instrukt/spec/feature/runner/conversation-links`. Redis is transport
+only; it owns no conversation turns or link decisions.
 One consumer's slow handler or unavailable Redis does not block unrelated readers
 or local work. SQLite writer-lock ownership is limited to local write sections;
 network waits and reactions run outside it.
@@ -306,11 +333,13 @@ has no origin, as declared in Canonical fields.
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
-  — session reuse, five-state observation, sharing a human clarification
-  with linked collaborators where supported, working on T3 Code once it is
+  — session reuse, five-state observation, working on T3 Code once it is
   chosen, refusing a feature the chosen runtime cannot carry, and native
   delegation with record-backed attempts. Archive search and agent-owned
   session ending are retired goals.
+- **Conversation links** — `project/instrukt/spec/feature/runner/conversation-links`
+  — hold a three-way conversation across two agent threads and close it for
+  everyone; includes the runner-owned identity-envelope vocabulary.
 - **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
@@ -351,7 +380,8 @@ has no origin, as declared in Canonical fields.
 The runtime adapter and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are
 external boundaries, not additional bounded contexts. The runtime side is a Rust
-trait and code implementations; T3 is the first, over its host CLI. The explicit
+trait and code implementations; T3 is the first, over its host CLI and
+read-scoped `subscribeThread` stream. The explicit
 configuration name selects the implementation
 (`project/instrukt/spec/feature/runner/session-continuity`).
 

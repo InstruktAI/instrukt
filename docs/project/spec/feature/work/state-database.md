@@ -381,6 +381,23 @@ absent claimant records `no-live-claim`; observation failure stays pending.
 Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
 
+**`conversation_links`** — runner-owned links between two runtime-scoped native
+threads, with active/closed state, member references and the opening positions.
+An active member belongs to at most one link. Closure updates the whole link;
+it preserves delivery evidence rather than deleting progress.
+
+**`conversation_relay_positions`** — one record per link and source direction,
+retaining the source stream position, completed-turn delivery position, fixed
+native target, pending range/content identity, native acceptance evidence and
+last stream/handover failure. The source observation position is distinct from
+accepted delivery progress. Link creation initializes both directions; target
+acceptance or a recorded empty disposition advances delivery. Source occurrence
+times are attribution, never cursors. Pending evidence survives runner restart.
+These tables realize the runner's contract in
+`project/instrukt/spec/feature/runner/conversation-links`; work owns their file,
+migration and writer boundary, not the relay decision. Native stream and send
+operations run outside local writer transactions.
+
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
 unchanged `304` reuses).

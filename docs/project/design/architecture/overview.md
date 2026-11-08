@@ -11,7 +11,8 @@ instrukt is a context-engineering module: a single
 CLI that makes documentation the way agents are instructed and, when switched
 on, runs the work those docs describe. It has no consumer daemon. Core operations are commands; enabled events also
 have a narrow standalone loopback webhook receiver on the designated ingress.
-Commands and independent event readers work against files, git, GitHub, scoped
+Commands, independent event readers and the conversation-link stream reader
+work against files, git, GitHub, scoped
 Redis and the chosen runtime. Later work is triggered by git hooks, the OS
 scheduler or retained events. Doctrine
 comes from adopted docs repositories, not from instrukt.
@@ -99,7 +100,7 @@ deleting the home is not a lossless reset.
 | `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
 | `state/hooks/<project>/` | each hook section's last run outcome, shown by `instrukt hooks status` | the next hook run |
-| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent binding caches, pending delivery targets, start markers and per-key locks, held task failures, the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); the runner's state starts empty |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent binding caches, pending delivery targets, start markers and per-key locks, conversation links and directional relay positions, held task failures, the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); the runner's state starts empty |
 | `state/writer.lock` | the per-computer writer lock, held only for each local state-database write transaction (the database's write-isolation unit); network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and local readers take neither lock | taken again by the next reflection |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
@@ -143,7 +144,7 @@ commands. Docs name `-h`.
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
 | Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
-| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, and read-scoped `orchestration.subscribeThread`; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
@@ -152,7 +153,9 @@ commands. Docs name `-h`.
 ## Invariants
 
 - **Explicit execution lifetimes.** `run` hosts long-lived independent readers;
-  scheduled `tick` drains pending then new entries within a bounded invocation.
+  scheduled `tick` drains pending then new instrukt-event entries within a
+  bounded invocation. Conversation links have a native-thread stream reader
+  in `run`, with ordinary restart from durable per-link positions.
   The separately installed ingress receiver outlives runner downtime. There is
   no additional consumer daemon; scheduled-only reactions wait for the next wake.
 - **Each project publishes only its own part.** Publication never reads
@@ -299,6 +302,24 @@ only-at-entry delivery waits for observed idleness. Standing T3 threads remain
 unsettled under automation; a human-settled thread stays reachable and wakes
 on its next message.
 
+### Conversation links
+
+The runner's conversation aggregate and identity-envelope vocabulary live in
+`project/instrukt/spec/feature/runner/conversation-links`, indexed by its domain
+spec. General reading discipline is `general/policy/message-identity-headers`.
+The runtime adapter supplies source thread streams and target input; work owns
+only the existing state database's file, migrations and writer boundary. No
+additional bounded context or process is introduced.
+
+An independent reader in long-lived `instrukt run` follows each linked T3
+thread through read-scoped `subscribeThread`. Runner admission and delivery use
+recorded assignments and native identities. Native turn completion releases
+recorded conversational content to the peer in identity envelopes. Link and
+per-direction progress commit in the existing database, outside native network
+waits; ordinary startup resumes retained positions. Relay failure is visible in
+`instrukt events status` and logs. This reader has no scheduled tick path or
+periodic fallback. Redis remains transport only.
+
 ### Event platform
 
 ```mermaid
@@ -366,6 +387,9 @@ session-fixed timing through A3's bounded batch log.
 - **Runtime identity or delivery is uncertain:** preserve the event, key and
   any start marker; recover through listing or explicit resolution. A failed
   observation or send never requests a replacement session.
+- **Conversation stream or relay fails:** the runner retains its link, position
+  and pending handover evidence and exposes the failure through
+  `instrukt events status` and logs under the conversation-link contract.
 - **A deleted orchestrator left its todo branch checked out:** T3's host CLI
   cannot bind an existing worktree. Safely remove the retained worktree first,
   or use the runtime's existing-worktree start where available (T3 MCP). A

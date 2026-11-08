@@ -10,7 +10,7 @@ delivered_by: [instrukt-first-build]
 The runner defines a Rust runtime-adapter trait and ships T3 first, explicitly
 selected with global `runner.runtime`. It acts where instrukt has no agent:
 todo orchestrator pickup, event-driven standing agents, recurring tasks,
-keyed singleton discovery and event/approval delivery. Its implementation is code.
+keyed singleton discovery, event/approval delivery and conversation-link relay. Its implementation is code.
 
 An agent operating in its own conversation uses runtime-native operations via
 read-time `@config` instructions for delegation, child messages, peer messages,
@@ -37,12 +37,14 @@ creates no replacement session identity.
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
-| `link` | Two session ids and add/remove; returns acknowledgement or unsupported. Optional capability. | Fallback only where native shared-input linking is absent and the adapter supports it. |
+| `subscribe_thread` | Native thread reference and retained source position; yields recorded thread updates with native completion and replay/snapshot evidence, or reports unsupported. | Long-lived runner conversation-link reader; link membership and relay decisions remain runner-owned. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended CLI adapter lacks attachment and effort/options flags. Agent workflow requirements use typed native capability metadata;
-unattended consumers use adapter capabilities. Linking, notification and
+unattended consumers use adapter capabilities. Conversation links use the
+runner-owned contract in `project/instrukt/spec/feature/runner/conversation-links`
+and require supported thread streams and native input delivery. Notification and
 agent/model selection retain their optional capability contracts.
 Availability information, when the runtime supplies it, is adapter metadata;
 there are no configurable `available` or `model` commands. A
@@ -334,7 +336,8 @@ instruction prose is a separate configuration surface.
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search. |
 | Recover keyed identity | `t3 thread list --project <checkout> --json`; top-level array entries carry `threadId`, `projectId`, `title`, `status`, `link`, `providerInstanceId`, `model`, `settled`, `snoozed`, and timestamps. `settled` alone does not make a thread gone. |
-| Link and notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+| Linked-thread stream | The adapter uses T3's `orchestration.subscribeThread` under orchestration read scope for runner-owned relay, as specified in `project/instrukt/spec/feature/runner/conversation-links`; native CLI linking is not required. |
+| Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter matches their keys exactly. Sending to a settled thread
@@ -634,6 +637,7 @@ Retired: the runtime owns session ending; its test bindings have been removed.
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/conversation-links](conversation-links.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)
