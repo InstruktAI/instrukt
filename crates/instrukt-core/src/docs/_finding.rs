@@ -63,10 +63,7 @@ codes! {
     RoleInvalid => "frontmatter-role-invalid",
     ParametersWithoutRole => "frontmatter-parameters-without-role",
     ParametersInvalid => "frontmatter-parameters-invalid",
-    DispatchWithoutRole => "frontmatter-dispatch-without-role",
     DispatchInvalid => "frontmatter-dispatch-invalid",
-    /// A `dispatch` agent the configured runtime mapping cannot start.
-    DispatchAgentUnknown => "frontmatter-dispatch-agent-unknown",
     /// An `adr` without a well-formed `date`.
     AdrDateInvalid => "frontmatter-adr-date-invalid",
     /// An `adr` without a `number` matching its file name prefix.

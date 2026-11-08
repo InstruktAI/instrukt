@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/layered-configuration.rs
-assertion_line: 101
 expression: "read(&[\"config\", \"get\"])"
 ---
 modules:
@@ -15,7 +14,7 @@ runner:
   runtime: t3
 runtimes:
   t3:
-    dispatch: 'Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator''s phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.family, selection.provider, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.'
+    dispatch: 'Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator''s phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.'
     message_child: Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation.
     message_peer: Use native thread messaging for the supplied peer/coordinator thread id and text. Preserve its identity and the message's attribution.
     read_thread: Read the identified thread with native thread-read operations, including the relevant message range and attribution. Report pagination or unavailable evidence; read no archive/history service.
@@ -23,60 +22,14 @@ runtimes:
     look_around: Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child.
     steer: Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn.
     discuss: Use a supported native discussion capability for the requested collaboration, preserving each participant's attribution. Report an unavailable capability; the linked-conversation mechanism remains unsettled and no instrukt forwarding route is supplied.
-    start_thread: Use the supplied placement.selection family, provider, model, effort and options for native startup. A host CLI start passes --provider <provider> --model <model>; effort/options have no CLI flags and remain explicit start evidence. Fetch origin before each new phase branch, then for a preparation orchestrator start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Fetch origin again and start work later from origin/main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main.
+    start_thread: Use the supplied placement.selection profile, kind, instance, model, effort and options for native startup. A host CLI start passes --provider <provider> --model <model>; effort/options have no CLI flags and remain explicit start evidence. Fetch origin before each new phase branch, then for a preparation orchestrator start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Fetch origin again and start work later from origin/main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main.
     cancel_child: Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work.
     finish_thread: Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling.
     discover_environments: Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access.
     connect_environment: Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite.
     dispatch_remote: Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success.
-agents:
-  order:
-  - claude
-  tier: standard
-  codex:
-    light:
-    - model: gpt-6-luna
-      effort: high
-    standard:
-    - model: gpt-6-sol
-      effort: high
-    strong:
-    - model: gpt-6.1-sol
-      effort: high
-    premium:
-    - model: gpt-6-astra
-      effort: high
-    - model: gpt-6.1-sol
-      effort: high
-  claude:
-    light:
-    - model: claude-haiku-5-5
-      effort: high
-    standard:
-    - model: claude-sonnet-5-5
-      effort: high
-    strong:
-    - model: claude-opus-5-5
-      effort: high
-    premium:
-    - model: claude-fable-5-1
-      effort: high
-    - model: claude-opus-5-5
-      effort: high
-  gemini:
-    light:
-    - model: gemini-3.8-flash-high
-      effort: high
-    standard:
-    - model: gemini-3.8-flash-high
-      effort: high
-    strong:
-    - model: gemini-pro-agent
-      effort: high
-    premium:
-    - model: gemini-pro-agent
-      effort: high
-schema_version: 1
+schema_version: 2
+agents: {}
 board: false
 approvals:
   prd: human

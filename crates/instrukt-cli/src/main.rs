@@ -15,7 +15,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, config, docs, eval, events, repository, runner, specs, sync, todo, webhooks,
+    agents, blueprint, config, docs, eval, events, repository, runner, secrets, specs, sync, todo,
+    webhooks,
 };
 use crate::context::Ctx;
 
@@ -29,8 +30,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Runtime agent catalogue and expiring family/model availability.
+    /// Configured profiles and expiring profile/model availability.
     Agents(agents::AgentsArgs),
+    /// Store or generate protected machine-local secrets.
+    Secrets(secrets::SecretsArgs),
     /// Read, edit, initialize and validate `instrukt.yaml`.
     Config(config::ConfigArgs),
     /// Validate, list and read documentation snippets.
@@ -78,6 +81,7 @@ fn main() -> ExitCode {
     };
     let outcome = match cli.command {
         Command::Agents(args) => agents::run(args, &mut ctx),
+        Command::Secrets(args) => secrets::run(args, &mut ctx),
         Command::Config(args) => config::run(args, &mut ctx),
         Command::Docs(args) => docs::run(args, &mut ctx),
         Command::Sync(args) => sync::run(args, &mut ctx),
@@ -113,6 +117,7 @@ fn report(err: &anyhow::Error) -> ExitCode {
 fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let source = match command {
         Command::Agents(_) => "agents",
+        Command::Secrets(_) => "secrets",
         Command::Config(_) => "config",
         Command::Docs(_) => "docs",
         Command::Sync(_) => "sync",

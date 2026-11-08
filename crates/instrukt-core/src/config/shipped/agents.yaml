@@ -1,0 +1,109 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/InstruktAI/instrukt/main/schemas/agents.schema.json
+schema_version: 1
+default: {order: [claude, codex, antigravity], tier: standard}
+roles:
+  builder: {order: [claude, codex, antigravity], tier: strong}
+  finalizer: {order: [claude, codex, antigravity], tier: strong}
+  drift-analyzer: {order: [claude, codex, antigravity], tier: strong}
+  deferrer: {order: [claude, codex, antigravity], tier: strong}
+  diagnoser: {order: [claude, codex, antigravity], tier: strong}
+  knowledge-author: {order: [claude, codex, antigravity], tier: strong}
+  project-analyst: {order: [claude, codex, antigravity], tier: strong}
+  third-party-researcher: {order: [claude, codex, antigravity], tier: strong}
+  config-assessor: {order: [claude, codex, antigravity], tier: strong}
+  prepare-orchestrator: {order: [claude, codex, antigravity], tier: strong}
+  work-orchestrator: {order: [claude, codex, antigravity], tier: strong}
+  intaker: {order: [claude, codex, antigravity], tier: strong}
+  architect: {order: [claude, codex, antigravity], tier: strong}
+  planner: {order: [claude, codex, antigravity], tier: strong}
+  diagnosis-driver: {order: [claude, codex, antigravity], tier: strong}
+  task-preparer: {order: [claude, codex, antigravity], tier: strong}
+  task-runner: {order: [claude, codex, antigravity], tier: strong}
+  integrator: {order: [claude, codex, antigravity], tier: strong}
+  coordinator: {order: [claude, codex, antigravity], tier: strong}
+  bug-hunter: {order: [claude, codex, antigravity], tier: strong}
+  upstream-watcher: {order: [claude, codex, antigravity], tier: strong}
+  event-handler: {order: [claude, codex, antigravity], tier: strong}
+  prd-reviewer: {order: [codex, claude, antigravity], tier: strong}
+  architecture-reviewer: {order: [codex, claude, antigravity], tier: strong}
+  plan-reviewer: {order: [codex, claude, antigravity], tier: strong}
+  build-reviewer: {order: [codex, claude, antigravity], tier: strong}
+  commit-reviewer: {order: [codex, claude, antigravity], tier: strong}
+profiles:
+  codex:
+    instance: codex
+    kind: codex
+    light: [{model: gpt-6-luna, reasoningEffort: high}]
+    standard: [{model: gpt-6-sol, reasoningEffort: high}]
+    strong: [{model: gpt-6.1-sol, reasoningEffort: high}]
+    premium: [{model: gpt-6-astra, reasoningEffort: high}, {model: gpt-6.1-sol, reasoningEffort: high}]
+  claude:
+    instance: claudeAgent
+    kind: claude
+    light: [{model: claude-haiku-5-5, effort: high}]
+    standard: [{model: claude-sonnet-5-5, effort: high}]
+    strong: [{model: claude-opus-5-5, effort: high}]
+    premium: [{model: claude-fable-5-1, effort: high}, {model: claude-opus-5-5, effort: high}]
+  antigravity:
+    instance: antigravity
+    kind: antigravity
+    light: [{model: gemini-3.8-flash-high, thinking_level: high}]
+    standard: [{model: gemini-3.8-flash-high, thinking_level: high}]
+    strong: [{model: gemini-pro-agent, thinking_level: high}]
+    premium: [{model: gemini-pro-agent, thinking_level: high}]
+  cursor:
+    instance: cursor
+    kind: cursor
+    light: [{model: auto, effort: high}]
+    standard: [{model: auto, effort: high}]
+    strong: [{model: auto, effort: high}]
+    premium: [{model: auto, effort: high}]
+  grok:
+    instance: grok
+    kind: grok
+    light: [{model: grok-4.6, reasoningEffort: high}]
+    standard: [{model: grok-4.6, reasoningEffort: high}]
+    strong: [{model: grok-4.6, reasoningEffort: high}]
+    premium: [{model: grok-4.6, reasoningEffort: high}]
+  fx:
+    instance: fx
+    kind: fx
+    light: [{model: default, effort: high}]
+    standard: [{model: default, effort: high}]
+    strong: [{model: default, effort: high}]
+    premium: [{model: default, effort: high}]
+  opencode:
+    instance: opencode
+    kind: opencode
+    light: [{model: anthropic/claude-sonnet-5-5, variant: high}]
+    standard: [{model: anthropic/claude-sonnet-5-5, variant: high}]
+    strong: [{model: anthropic/claude-sonnet-5-5, variant: high}]
+    premium: [{model: anthropic/claude-sonnet-5-5, variant: high}]
+  kiro:
+    instance: kiro
+    kind: kiro
+    light: [{model: claude-opus-5.5, reasoningEffort: high}]
+    standard: [{model: claude-opus-5.5, reasoningEffort: high}]
+    strong: [{model: claude-opus-5.5, reasoningEffort: high}]
+    premium: [{model: claude-opus-5.5, reasoningEffort: high}]
+  pi:
+    instance: pi
+    kind: pi
+    light: [{model: default, thinking: high}]
+    standard: [{model: default, thinking: high}]
+    strong: [{model: default, thinking: high}]
+    premium: [{model: default, thinking: high}]
+  muse:
+    instance: muse
+    kind: muse
+    light: [{model: default, reasoningEffort: high}]
+    standard: [{model: default, reasoningEffort: high}]
+    strong: [{model: default, reasoningEffort: high}]
+    premium: [{model: default, reasoningEffort: high}]
+  acpRegistry:
+    instance: acpRegistry
+    kind: acpRegistry
+    light: [{model: default}]
+    standard: [{model: default}]
+    strong: [{model: default}]
+    premium: [{model: default}]

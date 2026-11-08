@@ -31,7 +31,7 @@ pub(crate) fn findings_for(
     if let Layer::Project(root) = layer {
         found.extend(code_on_github(root, value, global.as_ref())?);
     }
-    if let Layer::Project(root) = layer {
+    if let Layer::Project(_) = layer {
         let effective = effective_value(global.as_ref(), Some(value))?;
         if let Ok(ingress) = super::_webhooks::ingress(effective.get("ingress"))
             && std::fs::read_to_string(home.machine_id_file())
@@ -42,7 +42,7 @@ pub(crate) fn findings_for(
             && let Ok(sources) = super::_webhooks::parse(value.get("webhooks"))
         {
             for source in sources.values() {
-                if let Err(error) = source.resolve(root) {
+                if let Err(error) = source.resolve(home) {
                     found.push(KeyFinding::new(
                         "webhooks",
                         FindingKind::UnresolvedReference,
@@ -140,6 +140,7 @@ fn code_on_github(
 /// `instrukt config validate`: the findings of `layer`. A missing layer,
 /// or one of another schema version, is refused rather than judged.
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
+    super::_layer::migrate_if_needed(home, layer)?;
     let path = layer.path(home);
     let Some(doc) = read(&path)? else {
         return Err(ConfigError::NoLayer {
@@ -148,7 +149,18 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     };
     require_usable(layer, &path, &doc.value)?;
-    findings_for(home, layer, &path, &doc.value)
+    let mut findings = findings_for(home, layer, &path, &doc.value)?;
+    if layer.kind() == LayerKind::Global
+        && let Err(error) = super::Agents::load(home)
+    {
+        findings.push(Finding {
+            document: home.agents_file(),
+            key: "agents".into(),
+            kind: FindingKind::InvalidValue,
+            message: error.to_string(),
+        });
+    }
+    Ok(findings)
 }
 
 /// The findings of a layer document of kind `kind`; a project layer is
@@ -183,8 +195,6 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
         LayerKind::Project => required_modules(value, &effective, &mut found),
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
-            agent_order(value, &effective, &mut found);
-            found.extend(super::_agents::check_chains(value));
         }
     }
     feature_capabilities(value, &effective, &mut found);
@@ -282,44 +292,6 @@ fn runner_runtime(value: &Value, _effective: &Value, out: &mut Vec<KeyFinding>) 
             FindingKind::UnknownRuntime,
             format!("unknown compiled runtime adapter `{name}`; available: t3"),
         ));
-    }
-}
-
-/// `agents.order` names only agents the runtime mapping can start: the
-/// entries that carry `agent:`. Without a mapping no agent can be started,
-/// so every name is a finding.
-///
-/// The order carries one tier mode for the whole list, with no
-/// default: `agents.tier` is required whenever `agents.order` is
-/// set.
-fn agent_order(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
-    let agents = value.get("agents");
-    let Some(order) = agents.and_then(|a| a.get("order")) else {
-        return;
-    };
-    if agents.and_then(|a| a.get("tier")).is_none() {
-        out.push(KeyFinding::new(
-            "agents.tier",
-            FindingKind::Missing,
-            "required whenever agents.order is set",
-        ));
-    }
-    let Some(order) = order.as_sequence() else {
-        return;
-    };
-    // T3 uses project provider/model defaults. Preferences remain data and
-    // dispatch reports that explicit selection is unsupported.
-    let _ = effective;
-    if let Ok(catalog) = super::agent_catalog() {
-        for name in order.iter().filter_map(Value::as_str) {
-            if !catalog.contains_key(name) {
-                out.push(KeyFinding::new(
-                    "agents.order",
-                    FindingKind::InvalidValue,
-                    format!("unknown agent family `{name}`"),
-                ));
-            }
-        }
     }
 }
 
@@ -445,7 +417,7 @@ mod tests {
     use super::*;
     #[test]
     fn retired_runtime_configuration_is_unknown() {
-        let doc: Value = serde_yaml_ng::from_str("schema_version: 1\nruntimes: []").unwrap();
+        let doc: Value = serde_yaml_ng::from_str("schema_version: 2\nruntimes: []").unwrap();
         let found = judge(&doc, LayerKind::Global, None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, FindingKind::InvalidValue);
@@ -453,7 +425,7 @@ mod tests {
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
         let doc: Value = serde_yaml_ng::from_str(
-            "schema_version: 1\nrunner: {runtime: t3}\nmodules: {todos: true, events: true}",
+            "schema_version: 2\nrunner: {runtime: t3}\nmodules: {todos: true, events: true}",
         )
         .unwrap();
         let found = judge(&doc, LayerKind::Global, None);
@@ -462,7 +434,7 @@ mod tests {
     #[test]
     fn references_still_detect_cycles_and_missing_keys() {
         let doc: Value =
-            serde_yaml_ng::from_str("schema_version: 1\nrunner: {notify: '{runner.notify}'}")
+            serde_yaml_ng::from_str("schema_version: 2\nrunner: {notify: '{runner.notify}'}")
                 .unwrap();
         assert!(
             judge(&doc, LayerKind::Global, None)

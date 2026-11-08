@@ -144,7 +144,7 @@ pub struct PickupCandidate {
     pub claimed_here: bool,
 }
 
-/// The agent a task prefers, set with `--agent <name> [--tier …]`.
+/// The profile a task prefers, set with `--agent <name> [--tier …]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentPreference {
     pub agent: String,

@@ -26,25 +26,6 @@ pub struct Parameter {
     pub rest: bool,
 }
 
-/// A tier mode a procedure's dispatch defaults may name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Tier {
-    Light,
-    Standard,
-    Strong,
-    Premium,
-}
-
-/// A procedure's launch defaults.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Dispatch {
-    /// Ordered agent preference; names are checked against the runtime
-    /// mapping by configuration, not here.
-    pub agents: Vec<String>,
-    pub tier: Tier,
-}
-
 /// What a procedure declares about how a session is started into it. Empty
 /// for every other snippet. Fields hold only well-formed values; a
 /// malformed one is absent here and reported by validation.
@@ -57,19 +38,15 @@ pub struct ProcedureEntry {
     pub subscription_identity: SubscriptionIdentity,
     pub subscription_attendance: SubscriptionAttendance,
     pub parameters: Vec<Parameter>,
-    pub dispatch: Option<Dispatch>,
     pub interruptible: bool,
 }
 
 impl ProcedureEntry {
     /// Whether the procedure carries root frontmatter (`role`,
-    /// `subscriptions`, `activation_trigger` or `dispatch`): a session is
+    /// `subscriptions`, `activation_trigger`): a session is
     /// started into it.
     pub fn is_root(&self) -> bool {
-        self.role.is_some()
-            || !self.subscriptions.is_empty()
-            || self.activation_trigger.is_some()
-            || self.dispatch.is_some()
+        self.role.is_some() || !self.subscriptions.is_empty() || self.activation_trigger.is_some()
     }
 }
 
@@ -180,9 +157,6 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
         .filter(|_| role.is_some())
         .and_then(|v| parse_parameters(v).ok())
         .unwrap_or_default();
-    let dispatch = get(raw, "dispatch")
-        .filter(|_| role.is_some())
-        .and_then(|v| parse_dispatch(v).ok());
     let interruptible = get(raw, "interruptible")
         .and_then(Value::as_bool)
         .unwrap_or(true);
@@ -199,7 +173,6 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
             .and_then(|v| serde_yaml_ng::from_value(v.clone()).ok())
             .unwrap_or_default(),
         parameters,
-        dispatch,
         interruptible,
     }
 }
@@ -248,38 +221,6 @@ fn parse_parameters(value: &Value) -> Result<Vec<Parameter>, String> {
         return Err(format!("rest entry {} is not last", out[position].name));
     }
     Ok(out)
-}
-
-fn parse_dispatch(value: &Value) -> Result<Dispatch, String> {
-    let map = value
-        .as_mapping()
-        .ok_or_else(|| "not a mapping".to_owned())?;
-    if let Some(key) = map
-        .keys()
-        .find(|k| !matches!(k.as_str(), Some("agent" | "tier")))
-    {
-        return Err(format!("unknown key {}", yaml_text(key)));
-    }
-    let agents: Vec<String> = match map.get("agent").and_then(Value::as_sequence) {
-        Some(items) if !items.is_empty() => items
-            .iter()
-            .map(|v| non_empty_str(Some(v)).ok_or_else(|| format!("agent {}", yaml_text(v))))
-            .collect::<Result<_, _>>()?,
-        _ => return Err("agent is not a non-empty list".to_owned()),
-    };
-    let tier = match map.get("tier").and_then(Value::as_str) {
-        Some("light") => Tier::Light,
-        Some("standard") => Tier::Standard,
-        Some("strong") => Tier::Strong,
-        Some("premium") => Tier::Premium,
-        other => {
-            return Err(format!(
-                "tier {}",
-                other.map_or_else(|| "missing".to_owned(), str::to_owned)
-            ));
-        }
-    };
-    Ok(Dispatch { agents, tier })
 }
 
 fn yaml_text(value: &Value) -> String {
@@ -462,12 +403,11 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
             issues.push((FindingCode::ParametersInvalid, Some(why)));
         }
     }
-    if let Some(value) = get(raw, "dispatch") {
-        if role.is_none() {
-            issues.push((FindingCode::DispatchWithoutRole, None));
-        } else if let Err(why) = parse_dispatch(value) {
-            issues.push((FindingCode::DispatchInvalid, Some(why)));
-        }
+    if get(raw, "dispatch").is_some() {
+        issues.push((
+            FindingCode::DispatchInvalid,
+            Some("obsolete dispatch; use agents.yaml role selection".into()),
+        ));
     }
 }
 
@@ -583,13 +523,13 @@ mod tests {
                 FindingCode::SubscriptionHomeMissing,
                 FindingCode::DeliverySettingInvalid,
                 FindingCode::ParametersWithoutRole,
-                FindingCode::DispatchWithoutRole,
+                FindingCode::DispatchInvalid,
             ]
         );
     }
 
     #[test]
-    fn parameters_and_dispatch_are_read_with_a_role() {
+    fn parameters_are_read_with_a_role() {
         let fm = Frontmatter::read(
             map(
                 "description: d\nrole: builder\nparameters: [{name: slug, required: true}, {name: rest, rest: true}]\n\
@@ -598,7 +538,6 @@ mod tests {
             Some(Taxonomy::Procedure),
         );
         assert_eq!(fm.entry.parameters.len(), 2);
-        assert_eq!(fm.entry.dispatch.map(|d| d.tier), Some(Tier::Strong));
         assert!(
             codes(
                 "description: d\nrole: r\nparameters: [{name: a, rest: true}, {name: b}]\n",

@@ -32,7 +32,7 @@ pub struct RedisSettings {
     pub local: Option<RedisEndpoint>,
 }
 
-pub(super) fn settings(config: &Configuration, env: &Env) -> Result<RedisSettings, ConfigError> {
+pub(super) fn settings(config: &Configuration, _env: &Env) -> Result<RedisSettings, ConfigError> {
     let raw = config.redis_raw();
     if raw.is_some_and(|value| !value.is_mapping()) {
         return Err(ConfigError::InvalidValue {
@@ -62,7 +62,7 @@ pub(super) fn settings(config: &Configuration, env: &Env) -> Result<RedisSetting
             .as_str()
             .filter(|url| !url.trim().is_empty())
             .ok_or_else(|| invalid("url", "expected a nonempty Redis URL string"))?;
-        let expanded = config.expand(url, env)?;
+        let expanded = config.secret_template(url)?;
         if scope == "local" && !expanded.starts_with("unix://") {
             return Err(invalid("url", "local Redis requires a unix:// socket URL"));
         }
@@ -89,7 +89,7 @@ pub(super) fn settings(config: &Configuration, env: &Env) -> Result<RedisSetting
             let Some(text) = value.as_str().filter(|s| mask_references(s, "reference").1) else {
                 return Err(invalid(key, "credentials must be references"));
             };
-            let resolved = config.expand(text, env)?;
+            let resolved = config.secret(text)?;
             if resolved.trim().is_empty() {
                 return Err(invalid(key, "credential reference is empty"));
             }

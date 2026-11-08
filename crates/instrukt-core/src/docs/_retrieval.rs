@@ -1443,7 +1443,6 @@ mod tests {
             subscription_attendance: Default::default(),
             required_reads: Vec::new(),
             parameters: Vec::new(),
-            dispatch: None,
             interruptible: false,
         }
     }

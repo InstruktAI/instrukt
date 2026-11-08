@@ -21,7 +21,7 @@ use instrukt_core::state_db::rusqlite::{Transaction, params};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
-use crate::agents::{agent_order, global_order};
+use crate::agents::role_order;
 use crate::anomaly;
 use crate::executions::{Execution, Executions};
 use crate::interfaces::{
@@ -239,13 +239,17 @@ fn dispatch_one(
             return None;
         }
     };
-    let (global, thinking) = global_order(config);
-    let order = agent_order(
+    let order = match role_order(
+        config,
         candidate.agent.as_ref(),
-        prepared.dispatch.as_ref(),
-        &global,
-        thinking,
-    );
+        prepared.role.as_ref().map(|r| r.as_str()),
+    ) {
+        Ok(order) => order,
+        Err(error) => {
+            tracing::warn!(event="selection_invalid",error=%error);
+            return None;
+        }
+    };
     let sessions = Sessions::new(cx.home, config, cx.env);
     let runtime = match sessions.runner_runtime() {
         Ok(runtime) => runtime,

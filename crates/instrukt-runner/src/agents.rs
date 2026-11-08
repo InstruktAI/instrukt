@@ -1,107 +1,32 @@
-//! The dispatch agent order (`work-dispatch`, "Agent selection and intent
-//! checks"; `layered-configuration`, "Agent preferences and
-//! availability"): a task's own preference first, then the procedure's
-//! `dispatch`, or else the global `agents.order` with
-//! `agents.tier`.
-
+//! Ordered role/profile selection and expiring local capacity marks.
+use crate::interfaces::{AgentPreference, Tier};
 use instrukt_core::config::Configuration;
-use instrukt_core::index::IndexDispatch;
 use serde::{Deserialize, Serialize};
 
-use crate::interfaces::{AgentPreference, Tier};
-
-/// One agent to try, with the tier mode it starts in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentChoice {
     pub agent: String,
     pub tier: Option<Tier>,
 }
 
-/// The global `agents.order` and its tier mode; a malformed value
-/// (a validation finding) is logged and read as unset.
-pub fn global_order(config: &Configuration) -> (Vec<&str>, Option<Tier>) {
-    let order = config.agents_order().unwrap_or_else(|err| {
-        tracing::warn!(event = "agents_order_unreadable", error = %err);
-        Vec::new()
-    });
-    let tier = config.agents_tier().unwrap_or_else(|err| {
-        tracing::warn!(event = "agents_tier_unreadable", error = %err);
-        None
-    });
-    (order, tier)
-}
-
-/// The ordered agents to try; an agent appears once, at its first place.
-pub fn agent_order(
+pub fn role_order(
+    config: &Configuration,
     task: Option<&AgentPreference>,
-    dispatch: Option<&IndexDispatch>,
-    global_order: &[&str],
-    global_tier: Option<Tier>,
-) -> Vec<AgentChoice> {
-    let mut order: Vec<AgentChoice> = Vec::new();
-    let mut push = |agent: &str, tier: Option<Tier>| {
-        if !order.iter().any(|choice| choice.agent == agent) {
-            order.push(AgentChoice {
-                agent: agent.to_owned(),
-                tier,
-            });
-        }
-    };
-    if let Some(task) = task {
-        push(
-            &task.agent,
-            task.tier
-                .or_else(|| dispatch.and_then(|d| Tier::parse(&d.tier)))
-                .or(global_tier),
-        );
-    }
-    match dispatch {
-        Some(dispatch) => {
-            let tier = Tier::parse(&dispatch.tier);
-            for agent in &dispatch.agent {
-                push(agent, tier);
-            }
-        }
-        None => {
-            for agent in global_order {
-                push(agent, global_tier);
-            }
-        }
-    }
-    order
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn choice(agent: &str, tier: Tier) -> AgentChoice {
-        AgentChoice {
-            agent: agent.into(),
+    role: Option<&str>,
+) -> Result<Vec<AgentChoice>, crate::sessions::SessionsError> {
+    Ok(config
+        .agents()?
+        .order(
+            role,
+            task.map(|t| t.agent.as_str()),
+            task.and_then(|t| t.tier),
+        )?
+        .into_iter()
+        .map(|(agent, tier)| AgentChoice {
+            agent,
             tier: Some(tier),
-        }
-    }
-
-    #[test]
-    fn the_task_preference_precedes_the_procedures_dispatch_which_replaces_the_global_order() {
-        let task = AgentPreference {
-            agent: "b".into(),
-            tier: Some(Tier::Light),
-        };
-        let dispatch = IndexDispatch {
-            agent: vec!["a".into(), "b".into()],
-            tier: "strong".into(),
-        };
-        assert_eq!(
-            agent_order(Some(&task), Some(&dispatch), &["c"], Some(Tier::Standard)),
-            [choice("b", Tier::Light), choice("a", Tier::Strong)]
-        );
-        assert_eq!(
-            agent_order(None, None, &["c", "d"], Some(Tier::Standard)),
-            [choice("c", Tier::Standard), choice("d", Tier::Standard)]
-        );
-        assert!(agent_order(None, None, &[], None).is_empty());
-    }
+        })
+        .collect())
 }
 
 /// Persisted agent/model marks, normalized at the command's controlled clock.
@@ -123,7 +48,7 @@ impl AvailabilityStatus {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Availability {
-    pub family: String,
+    pub profile: String,
     pub model: Option<String>,
     pub status: AvailabilityStatus,
     pub until: Option<jiff::Timestamp>,
@@ -141,7 +66,7 @@ pub fn availability(
         q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))
     })?.unwrap_or_default();
     rows.into_iter()
-        .map(|(family, model, status, until, reason)| {
+        .map(|(profile, model, status, until, reason)| {
             let until = until
                 .map(|v| v.parse::<jiff::Timestamp>())
                 .transpose()
@@ -151,7 +76,7 @@ pub fn availability(
                     .map_err(|e| crate::sessions::SessionsError::Refused(e.to_string()))?;
             let expired = until.is_some_and(|until| until <= now);
             Ok(Availability {
-                family,
+                profile,
                 model: (!model.is_empty()).then_some(model),
                 status: if expired {
                     AvailabilityStatus::Available
@@ -172,18 +97,30 @@ pub fn mark_availability(
 ) -> Result<(), crate::sessions::SessionsError> {
     use crate::state::{self, RunnerState, StateError};
     use instrukt_core::state_db::rusqlite::params;
-    let catalog = instrukt_core::config::agent_catalog()?;
-    let agent = catalog.get(&mark.family).ok_or_else(|| {
-        crate::sessions::SessionsError::Refused(format!("unknown agent family `{}`", mark.family))
-    })?;
-    if mark
-        .model
-        .as_ref()
-        .is_some_and(|model| !agent.models.contains_key(model))
+    if !instrukt_core::config::Agents::load(home)?
+        .profiles
+        .contains_key(&mark.profile)
     {
+        return Err(crate::sessions::SessionsError::Refused(format!(
+            "unknown profile `{}`",
+            mark.profile
+        )));
+    }
+    if mark.model.as_ref().is_some_and(|m| m.trim().is_empty()) {
         return Err(crate::sessions::SessionsError::Refused(
-            "unknown model for this family".into(),
+            "model name must be nonempty".into(),
         ));
+    }
+    if mark.status == AvailabilityStatus::Available {
+        RunnerState::new(home).write::<_, StateError>(|tx| {
+            tx.execute(
+                "DELETE FROM agent_availability WHERE agent=?1 AND model=?2",
+                params![mark.profile, mark.model.as_deref().unwrap_or("")],
+            )
+            .map_err(state::sql(&state::db_path(tx)))?;
+            Ok(())
+        })?;
+        return Ok(());
     }
     if mark.status != AvailabilityStatus::Available && mark.model.is_some() && mark.until.is_none()
     {
@@ -207,13 +144,12 @@ pub fn mark_availability(
         ));
     }
     RunnerState::new(home).write::<_,StateError>(|tx| {
-        tx.execute("INSERT INTO agent_availability(agent,model,status,status_until,reason) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(agent,model) DO UPDATE SET status=excluded.status,status_until=excluded.status_until,reason=excluded.reason",params![mark.family,mark.model.as_deref().unwrap_or(""),mark.status.as_str(),mark.until.map(|v|v.to_string()),mark.reason]).map_err(state::sql(&state::db_path(tx)))?;Ok(())
+        tx.execute("INSERT INTO agent_availability(agent,model,status,status_until,reason) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(agent,model) DO UPDATE SET status=excluded.status,status_until=excluded.status_until,reason=excluded.reason",params![mark.profile,mark.model.as_deref().unwrap_or(""),mark.status.as_str(),mark.until.map(|v|v.to_string()),mark.reason]).map_err(state::sql(&state::db_path(tx)))?;Ok(())
     })?;
     Ok(())
 }
 
-/// Sequential family then chain selection. Degraded capacity is reserved for
-/// human launches, as in TeleClaude; automated assignments skip it.
+/// Walk each profile's model chain in order, reporting capacity restrictions.
 pub fn selections(
     config: &Configuration,
     home: &instrukt_core::home::Home,
@@ -221,23 +157,27 @@ pub fn selections(
     now: jiff::Timestamp,
 ) -> Result<Vec<instrukt_core::config::AgentSelection>, crate::sessions::SessionsError> {
     let marks = availability(home, now)?;
-    let eligible = |family: &str, model: Option<&str>| {
-        !marks.iter().any(|mark| {
-            mark.family == family
+    let agents = config.agents()?;
+    let restriction = |profile: &str, model: Option<&str>| {
+        marks.iter().find(|mark| {
+            mark.profile == profile
                 && mark.model.as_deref() == model
                 && mark.status != AvailabilityStatus::Available
         })
     };
     let mut result = Vec::new();
     for choice in order {
-        if !eligible(&choice.agent, None) {
+        if let Some(mark) = restriction(&choice.agent, None) {
+            tracing::warn!(event="agent_selection_skip",profile=%choice.agent,status=%mark.status.as_str(),until=?mark.until,reason=%mark.reason.as_deref().unwrap_or("local profile capacity restriction"));
             continue;
         }
-        let tier = choice.tier.or(config.agents_tier()?).ok_or_else(|| {
+        let tier = choice.tier.or(agents.default.tier).ok_or_else(|| {
             crate::sessions::SessionsError::Refused("dispatch tier is missing".into())
         })?;
-        for entry in config.model_chain(&choice.agent, tier)? {
-            if eligible(&choice.agent, Some(&entry.model)) {
+        for entry in agents.model_chain(&choice.agent, tier)? {
+            if let Some(mark) = restriction(&choice.agent, Some(&entry.model)) {
+                tracing::warn!(event="agent_selection_skip",profile=%choice.agent,model=%entry.model,status=%mark.status.as_str(),until=?mark.until,reason=%mark.reason.as_deref().unwrap_or("local model capacity restriction"));
+            } else {
                 result.push(entry);
             }
         }

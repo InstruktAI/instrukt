@@ -23,3 +23,5 @@ use std::process::ExitCode;
 pub(crate) fn not_built(command: &str) -> anyhow::Result<ExitCode> {
     anyhow::bail!("`instrukt {command}` is not available in this build")
 }
+
+pub mod secrets;

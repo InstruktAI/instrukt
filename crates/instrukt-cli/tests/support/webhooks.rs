@@ -175,9 +175,15 @@ pub fn declare(computer: &Computer, declaration: &str) {
         "instrukt.yaml",
         &format!("schema_version: 1\nproject: fork\nwebhooks: {declaration}\n"),
     );
-    computer
-        .project
-        .write(".env", &format!("HOOK_KEY={SECRET}\nOLD_KEY={OLD}\n"));
+    for (name, value) in [("HOOK_KEY", SECRET), ("OLD_KEY", OLD)] {
+        computer
+            .env
+            .instrukt(computer.project.path())
+            .args(["secrets", "set", name])
+            .write_stdin(value)
+            .assert()
+            .success();
+    }
 }
 
 pub fn events(redis: &RedisServer) -> Vec<EventEnvelope> {

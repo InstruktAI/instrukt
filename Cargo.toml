@@ -32,6 +32,8 @@ indexmap = { version = "2", features = ["serde"] }
 jiff = { version = "0.2", features = ["serde"] }
 redis = { version = "=1.8.1", default-features = false, features = ["streams", "script", "tls-rustls", "tls-rustls-webpki-roots"] }
 regex = "1"
+rustix = { version = "1", features = ["process"] }
+signal-hook = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

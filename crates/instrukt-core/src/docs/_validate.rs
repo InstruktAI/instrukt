@@ -81,14 +81,9 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError
             });
         }
     }
-    let agents: Option<BTreeSet<String>> = config
-        .runner_runtime()?
-        .and_then(|runtime| runtime.startable_agents())
-        .map(|names| names.iter().map(|s| (*s).to_owned()).collect());
     let env = CheckEnv {
         repo_root: request.repo_root,
         wiring: request.wiring,
-        agents: agents.as_ref(),
         schemas: &schemas,
     };
     let (mut findings, mut notices) = check_all(&corpus, &env)?;
@@ -178,7 +173,6 @@ pub(super) struct CheckEnv<'a> {
     pub repo_root: &'a Path,
     pub wiring: &'a CoreWiring,
     /// Available adapter metadata; absence cannot validate or reject agent names.
-    pub agents: Option<&'a BTreeSet<String>>,
     /// The working tree's position schemas.
     pub schemas: &'a Schemas,
 }
@@ -327,18 +321,6 @@ fn check_version(
                 FindingCode::SubscriptionReachInvalid,
                 Some("subscription_home: project required at project position".into()),
             );
-        }
-        if let Some(dispatch) = &version.frontmatter().entry.dispatch
-            && let Some(agents) = env.agents
-        {
-            for agent in dispatch.agents.iter().filter(|a| !agents.contains(*a)) {
-                push(
-                    out,
-                    path,
-                    FindingCode::DispatchAgentUnknown,
-                    Some(agent.clone()),
-                );
-            }
         }
     } else {
         push(out, path, FindingCode::FrontmatterInvalid, None);
@@ -1754,13 +1736,12 @@ mod tests {
     }
 
     fn run_at(root: &Path, corpus: &Corpus, wiring: &CoreWiring, agents: &[&str]) -> Vec<Finding> {
-        let agents: BTreeSet<String> = agents.iter().map(|a| (*a).to_owned()).collect();
+        let _ = agents;
         check(
             corpus,
             &CheckEnv {
                 repo_root: root,
                 wiring,
-                agents: Some(&agents),
                 schemas: &Schemas::default(),
             },
         )
@@ -1803,19 +1784,6 @@ mod tests {
             ..CoreWiring::default()
         };
         assert!(run(&c, &declared, &[]).is_empty());
-    }
-
-    #[test]
-    fn dispatch_agents_must_be_startable() {
-        let c = corpus(&[(
-            "docs/project/procedure/p.md",
-            &procedure(
-                "role: r\nactivation_trigger: t\ndispatch: {agent: [claude, ghost], tier: standard}\n",
-            ),
-        )]);
-        let found = run(&c, &CoreWiring::default(), &["claude"]);
-        assert_eq!(codes(&found), [FindingCode::DispatchAgentUnknown]);
-        assert!(run(&c, &CoreWiring::default(), &["claude", "ghost"]).is_empty());
     }
 
     const ADR: &str = "---\ndescription: d\ndate: 2026-01-02\nnumber: 1\n{extra}---\n# A — ADR\n\n\
@@ -1991,13 +1959,11 @@ mod tests {
             return; // running with privileges that ignore file modes
         }
         let c = corpus_at(home.path(), &[]);
-        let agents = BTreeSet::new();
         let result = check(
             &c,
             &CheckEnv {
                 repo_root: Path::new("/nonexistent-repo"),
                 wiring: &CoreWiring::default(),
-                agents: Some(&agents),
                 schemas: &Schemas::default(),
             },
         );

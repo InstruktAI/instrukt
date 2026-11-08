@@ -173,7 +173,7 @@ struct CreateArgs {
     /// A task's preferred agent.
     #[arg(long, value_name = "NAME")]
     agent: Option<String>,
-    /// The preferred agent family's model-chain tier.
+    /// The preferred profile's model-chain tier.
     #[arg(long, value_name = "light|standard|strong|premium", requires = "agent")]
     tier: Option<TierArg>,
     /// Audit-only: whether a human was involved in filing.
@@ -234,7 +234,7 @@ struct UpdateArgs {
     /// A task's preferred agent.
     #[arg(long, value_name = "NAME")]
     agent: Option<String>,
-    /// The preferred agent family's model-chain tier.
+    /// The preferred profile's model-chain tier.
     #[arg(long, value_name = "light|standard|strong|premium", requires = "agent")]
     tier: Option<TierArg>,
     /// Permit orphaning artifacts in a kind change.

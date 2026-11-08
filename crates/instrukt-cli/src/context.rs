@@ -23,6 +23,9 @@ impl Ctx {
     pub fn from_process() -> anyhow::Result<Self> {
         let home = Home::from_env()?;
         let cwd = std::env::current_dir().context("cannot read the working directory")?;
+        // Every command enters with current owned configuration, before its
+        // module's refusal or unchanged-work decision.
+        instrukt_core::config::Configuration::load_at(&home, &cwd)?;
         let clock = Clock::from_process()?;
         Ok(Self {
             home,

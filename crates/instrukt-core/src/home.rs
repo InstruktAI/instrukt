@@ -2,9 +2,8 @@
 //! publication and state (architecture overview, "The home").
 //!
 //! Every path into the home is named here, so no context spells a home path
-//! of its own. The home is always derived from the `HOME` environment
-//! variable of the running process, which is what lets tests point a real
-//! binary at a temporary home.
+//! of its own. `INSTRUKT_HOME` selects an isolated root; otherwise the root
+//! sits below `HOME`. Machine secrets remain below `HOME` in either case.
 
 use std::path::{Path, PathBuf};
 
@@ -32,7 +31,13 @@ impl Home {
     /// The home of the user whose `HOME` the process runs with.
     pub fn from_env() -> Result<Self, HomeError> {
         match std::env::var_os("HOME") {
-            Some(home) if !home.is_empty() => Ok(Self::at_user_home(PathBuf::from(home))),
+            Some(home) if !home.is_empty() => {
+                let mut selected = Self::at_user_home(PathBuf::from(home));
+                if let Some(root) = std::env::var_os("INSTRUKT_HOME").filter(|s| !s.is_empty()) {
+                    selected.root = PathBuf::from(root);
+                }
+                Ok(selected)
+            }
             _ => Err(HomeError::HomeUnset),
         }
     }
@@ -41,6 +46,18 @@ impl Home {
     pub fn at_user_home(user_home: PathBuf) -> Self {
         let root = user_home.join(HOME_DIR_NAME);
         Self { user_home, root }
+    }
+
+    pub fn secrets_file(&self) -> PathBuf {
+        self.user_home.join(HOME_DIR_NAME).join("secrets.env")
+    }
+
+    pub fn agents_file(&self) -> PathBuf {
+        self.root.join("agents.yaml")
+    }
+
+    pub fn agents_deployment_file(&self) -> PathBuf {
+        self.state_dir().join("agents-deployment.json")
     }
 
     /// The user's home directory (`$HOME`), where agent CLIs keep their

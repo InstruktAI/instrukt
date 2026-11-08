@@ -8,6 +8,8 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The variables through which git locates a repository (`git rev-parse
 /// --local-env-vars`). Git exports them to hooks; every call here names its
 /// directory instead, so inherited values would aim it at another
@@ -108,33 +110,14 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    use std::io::Write as _;
-    use std::process::Stdio;
-
     let (args_text, mut command) = command(dir, args);
-    let spawn_err = |source| GitError::Spawn {
-        dir: dir.to_path_buf(),
-        source,
-    };
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(spawn_err)?;
-    let stdin = child.stdin.take();
-    let output = std::thread::scope(|scope| {
-        let writer = scope.spawn(move || match stdin {
-            Some(mut stdin) => stdin.write_all(input),
-            None => Ok(()),
-        });
-        let output = child.wait_with_output();
-        let written = writer
-            .join()
-            .unwrap_or_else(|_| Err(std::io::Error::other("the stdin writer panicked")));
-        output.and_then(|output| written.map(|()| output))
-    })
-    .map_err(spawn_err)?;
+    let output =
+        crate::process::output(&mut command, Some(input), COMMAND_TIMEOUT).map_err(|error| {
+            GitError::Spawn {
+                dir: dir.into(),
+                source: std::io::Error::other(error),
+            }
+        })?;
     if !output.status.success() {
         return Err(failed(dir, args_text, &output));
     }
@@ -253,9 +236,11 @@ where
     S: AsRef<OsStr>,
 {
     let (args_text, mut command) = command(dir, args);
-    let output = command.output().map_err(|source| GitError::Spawn {
-        dir: dir.to_path_buf(),
-        source,
+    let output = crate::process::output(&mut command, None, COMMAND_TIMEOUT).map_err(|error| {
+        GitError::Spawn {
+            dir: dir.to_path_buf(),
+            source: std::io::Error::other(error),
+        }
     })?;
     Ok((args_text, output))
 }

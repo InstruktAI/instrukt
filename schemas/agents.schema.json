@@ -1,0 +1,815 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/InstruktAI/instrukt/main/schemas/agents.schema.json",
+  "title": "instrukt agent profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "default",
+    "profiles"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "default": {
+      "$ref": "#/$defs/role"
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/role"
+      }
+    },
+    "bundles": {
+      "type": "object"
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      }
+    }
+  },
+  "$defs": {
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "tier": {
+          "enum": [
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ]
+        },
+        "class": {
+          "enum": [
+            "focused",
+            "standing",
+            "agent"
+          ]
+        },
+        "can": {
+          "type": "array"
+        },
+        "github_app": {
+          "type": "string"
+        }
+      }
+    },
+    "profile": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "codex"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/codex-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/codex-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/codex-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/codex-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "claude"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/claude-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/claude-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/claude-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/claude-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "antigravity"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/antigravity-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/antigravity-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/antigravity-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/antigravity-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "grok"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/grok-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/grok-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/grok-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/grok-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "kiro"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/kiro-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/kiro-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/kiro-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/kiro-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "pi"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/pi-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/pi-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/pi-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/pi-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "muse"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/muse-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/muse-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/muse-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/muse-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "opencode"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/opencode-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/opencode-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/opencode-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/opencode-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "fx"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/fx-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/fx-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/fx-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/fx-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "cursor"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/cursor-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/cursor-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/cursor-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/cursor-chain"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "instance",
+            "light",
+            "standard",
+            "strong",
+            "premium"
+          ],
+          "properties": {
+            "kind": {
+              "const": "acpRegistry"
+            },
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/acpRegistry-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/acpRegistry-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/acpRegistry-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/acpRegistry-chain"
+            }
+          }
+        }
+      ]
+    },
+    "codex-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "anyOf": [
+              {
+                "enum": [
+                  "gpt-6-luna",
+                  "gpt-6-sol",
+                  "gpt-6.1-sol",
+                  "gpt-6-astra"
+                ]
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "reasoningEffort": {
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              "ultra"
+            ]
+          },
+          "serviceTier": {
+            "enum": [
+              "default",
+              "priority",
+              "flex"
+            ]
+          }
+        }
+      }
+    },
+    "claude-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "anyOf": [
+              {
+                "enum": [
+                  "claude-haiku-5-5",
+                  "claude-sonnet-5-5",
+                  "claude-opus-5-5",
+                  "claude-fable-5-1"
+                ]
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              "ultrathink"
+            ]
+          },
+          "fastMode": {
+            "type": "boolean"
+          },
+          "thinking": {
+            "type": "boolean"
+          },
+          "contextWindow": {
+            "enum": [
+              "200k",
+              "1m"
+            ]
+          }
+        }
+      }
+    },
+    "antigravity-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "anyOf": [
+              {
+                "enum": [
+                  "gemini-3.8-flash-high",
+                  "gemini-pro-agent"
+                ]
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "thinking_level": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        }
+      }
+    },
+    "grok-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoningEffort": {
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        }
+      }
+    },
+    "kiro-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoningEffort": {
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        }
+      }
+    },
+    "pi-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "thinking": {
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        }
+      }
+    },
+    "muse-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoningEffort": {
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              "ultra"
+            ]
+          }
+        }
+      }
+    },
+    "opencode-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "variant": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          "agent": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "fx-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "effort": {
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        }
+      }
+    },
+    "cursor-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "effort": {
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "reasoning": {
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "contextWindow": {
+            "type": "string"
+          },
+          "fastMode": {
+            "type": "boolean"
+          },
+          "thinking": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "acpRegistry-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@
 
 use instrukt_core::home::Home;
 use instrukt_core::ids::{RoleName, SnippetId};
-use instrukt_core::index::{GlobalIndex, IndexDispatch, IndexEntry, IndexError, IndexParameter};
+use instrukt_core::index::{GlobalIndex, IndexEntry, IndexError, IndexParameter};
 
 /// A launch was refused before any session existed.
 #[derive(Debug, thiserror::Error)]
@@ -32,7 +32,6 @@ pub struct Launch {
     /// The role the session carries; `None` when the procedure declares
     /// none.
     pub role: Option<RoleName>,
-    pub dispatch: Option<IndexDispatch>,
     /// The session's opening message.
     pub message: String,
 }
@@ -66,7 +65,6 @@ pub fn prepare(
             .role
             .as_deref()
             .and_then(|role| RoleName::parse(role).ok()),
-        dispatch: entry.dispatch.clone(),
         message: compose(&entry.id, &bound, raw, brief),
     })
 }

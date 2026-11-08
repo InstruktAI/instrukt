@@ -72,9 +72,7 @@ pub fn serve(
                 return Ok(false);
             }
             for source in sources.values() {
-                source
-                    .resolve(&record.checkout)
-                    .map_err(|error| error.to_string())?;
+                source.resolve(home).map_err(|error| error.to_string())?;
             }
             Ok(!sources.is_empty())
         })();
@@ -191,7 +189,7 @@ fn receive(
     if request.method() != &Method::Post {
         return (405, "POST required; no handshake\n".into());
     }
-    let secrets = match source.resolve(&record.checkout) {
+    let secrets = match source.resolve(home) {
         Ok(secrets) => secrets,
         Err(error) => return (500, format!("project {project}: {error}\n")),
     };

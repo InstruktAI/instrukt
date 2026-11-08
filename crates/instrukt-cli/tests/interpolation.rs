@@ -8,7 +8,7 @@ fn configured_values_expand_without_rewriting_the_stored_layer() {
     let mut env = TestEnv::new();
     env.set_env("DESTINATION", "local");
     let repo = env.git_repo("demo");
-    let source = "schema_version: 1\nproject: demo\nactions: {base: 'echo', report: '{actions.base} ${DESTINATION}'}\n";
+    let source = "schema_version: 2\nproject: demo\nactions: {base: 'echo', report: '{actions.base} ${DESTINATION}'}\n";
     repo.write("instrukt.yaml", source);
     let out = env
         .run(repo.path(), ["config", "get", "actions.report"])

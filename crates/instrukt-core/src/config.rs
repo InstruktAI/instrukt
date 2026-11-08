@@ -15,17 +15,19 @@ mod _features;
 mod _interpolate;
 mod _layer;
 mod _merge;
+mod _migrate;
 mod _module;
 mod _redis;
 mod _render;
 mod _runtime;
 mod _schema;
+mod _secrets;
 mod _validate;
 mod _webhooks;
 
 use std::path::Path;
 
-pub use _agents::{AgentCatalog, AgentSelection, ModelEntry, agent_catalog, validate_model};
+pub use _agents::{AgentSelection, Agents, HarnessKind, Profile, RoleSelection, SHIPPED_AGENTS};
 
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
@@ -49,6 +51,8 @@ pub use _webhooks::{
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
+pub use _secrets::{generate_secret, resolve_secret, set_secret};
+
 /// The project slug the repository rooted at `repo_root` declares in its
 /// project layer; `None` when it has no project layer or declares none.
 ///
@@ -56,6 +60,7 @@ use crate::ids::ProjectSlug;
 /// signature.
 pub fn project_slug(repo_root: &Path) -> Result<Option<ProjectSlug>, ConfigError> {
     let layer = Layer::Project(repo_root.to_path_buf());
+    _layer::migrate_if_needed(&Home::at_user_home(repo_root.into()), &layer)?;
     let path = repo_root.join(CONFIG_FILE_NAME);
     let Some(value) = _layer::read(&path)?.map(|doc| doc.value) else {
         return Ok(None);

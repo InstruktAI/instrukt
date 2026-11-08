@@ -157,10 +157,7 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
 }
 
 fn selection_config(project: &Tracked, settings: &str) {
-    let file = project.env.instrukt_home().join("instrukt.yaml");
-    let mut config = std::fs::read_to_string(&file).unwrap();
-    config.push_str(settings);
-    std::fs::write(file, config).unwrap();
+    common::agent_profiles(&project.env, settings);
 }
 fn chosen(project: &Tracked) -> String {
     let result = project
@@ -183,7 +180,7 @@ fn sequential_selection_exhausts_the_first_family_chain_before_trying_another_fa
     let p = Tracked::new(true);
     selection_config(
         &p,
-        "agents:\n  order: [claude, codex]\n  tier: strong\n  claude:\n    strong: [{model: claude-sonnet-5-5, effort: high}, {model: claude-opus-5-5, effort: high}]\n",
+        "default: {order: [claude, codex], tier: strong}\nprofiles:\n  claude:\n    strong: [{model: claude-sonnet-5-5, effort: high}, {model: claude-opus-5-5, effort: high}]\n",
     );
     p.env
         .run(
@@ -212,7 +209,7 @@ fn sequential_selection_exhausts_the_first_family_chain_before_trying_another_fa
 #[test]
 fn exhausted_family_capacity_falls_back_to_the_next_family() {
     let p = Tracked::new(true);
-    selection_config(&p, "agents: {order: [claude, codex], tier: strong}\n");
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
     p.env
         .run(
             p.repo.path(),
@@ -236,7 +233,7 @@ fn exhausted_family_capacity_falls_back_to_the_next_family() {
 #[test]
 fn an_expired_model_mark_lapses_before_dispatch() {
     let mut p = Tracked::new(true);
-    selection_config(&p, "agents: {order: [claude, codex], tier: strong}\n");
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
     p.env.set_env("INSTRUKT_NOW", "2030-01-01T00:00:00Z");
     p.env
         .run(
@@ -266,11 +263,11 @@ fn an_expired_model_mark_lapses_before_dispatch() {
 #[test]
 fn a_task_preference_and_tier_override_the_procedure_and_global_preferences() {
     let mut p = Tracked::new(true);
-    selection_config(&p, "agents: {order: [claude], tier: light}\n");
+    selection_config(&p, "default: {order: [claude], tier: light}\n");
     p.authorized_task(
         "selected-task",
         "2030-01-06T09:00:00Z",
-        &["--agent", "gemini", "--tier", "strong"],
+        &["--agent", "antigravity", "--tier", "strong"],
     );
     p.tick_at("2030-01-06T09:00:01Z");
     assert_eq!(p.rt.started_count(), 1);
@@ -281,7 +278,7 @@ fn a_task_preference_and_tier_override_the_procedure_and_global_preferences() {
 #[test]
 fn runner_start_passes_the_resolved_provider_and_model_as_cli_arguments() {
     let p = Tracked::new(true);
-    selection_config(&p, "agents: {order: [claude], tier: standard}\n");
+    selection_config(&p, "default: {order: [claude], tier: standard}\n");
     create_change(&p);
     p.tick();
     let command =
@@ -304,39 +301,18 @@ fn a_global_tier_override_replaces_that_chain_and_retains_other_shipped_tiers() 
     let p = Tracked::new(false);
     selection_config(
         &p,
-        "agents:\n  codex:\n    light: [{model: gpt-6.1-sol, effort: xhigh}]\n",
+        "profiles:\n  codex:\n    light: [{model: gpt-6.1-sol, reasoningEffort: xhigh}]\n",
     );
     p.env
         .run(p.repo.path(), ["config", "validate", "--global"])
         .success();
     let result = p
         .env
-        .run(p.repo.path(), ["config", "get", "agents.codex"])
+        .run(p.repo.path(), ["config", "show", "agents"])
         .success();
     insta::assert_snapshot!(
         "chain-entry-override",
-        String::from_utf8_lossy(&result.get_output().stdout)
-    );
-}
-
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
-#[test]
-fn configured_unknown_models_are_reported_as_validation_findings() {
-    let p = Tracked::new(false);
-    selection_config(
-        &p,
-        "agents:\n  codex:\n    light: [{model: nonexistent-model, effort: high}]\n",
-    );
-    let result = p
-        .env
-        .run(p.repo.path(), ["config", "validate", "--global"])
-        .failure();
-    insta::assert_snapshot!(
-        "unknown-model-finding",
-        String::from_utf8_lossy(&result.get_output().stdout).replace(
-            p.env.path("").to_str().unwrap().trim_end_matches('/'),
-            "[TMP]"
-        )
+        serde_json::to_string_pretty(&serde_json::from_slice::<serde_json::Value>(&result.get_output().stdout).unwrap()["profiles"]["codex"]).unwrap()
     );
 }
 
@@ -346,7 +322,7 @@ fn configured_unknown_option_values_are_reported_as_validation_findings() {
     let p = Tracked::new(false);
     selection_config(
         &p,
-        "agents:\n  codex:\n    light: [{model: gpt-6.1-sol, effort: high, options: {serviceTier: imaginary}}]\n",
+        "profiles:\n  codex:\n    light: [{model: gpt-6.1-sol, reasoningEffort: high, serviceTier: imaginary}]\n",
     );
     let result = p
         .env
@@ -363,19 +339,12 @@ fn configured_unknown_option_values_are_reported_as_validation_findings() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn the_procedure_family_order_and_tier_replace_the_global_preferences() {
+fn the_procedure_role_selects_its_configured_profile_order_and_tier() {
     let p = Tracked::new(true);
-    selection_config(&p, "agents: {order: [claude], tier: light}\n");
-    let file = "docs/domain/acme/procedure/prepare-overview.md";
-    p.repo.write(
-        file,
-        &p.repo.read(file).replace(
-            "role: prepare-orchestrator",
-            "role: prepare-orchestrator\ndispatch: {agent: [gemini], tier: strong}",
-        ),
+    selection_config(
+        &p,
+        "default: {order: [claude], tier: light}\nroles: {prepare-orchestrator: {order: [antigravity], tier: strong}}\n",
     );
-    p.repo.commit("publish the procedure preference");
-    p.env.run(p.repo.path(), ["sync"]).success();
     create_change(&p);
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
@@ -386,7 +355,7 @@ fn the_procedure_family_order_and_tier_replace_the_global_preferences() {
 #[test]
 fn capacity_returning_after_total_exhaustion_starts_without_a_phantom_pending_request() {
     let p = Tracked::new(true);
-    selection_config(&p, "agents: {order: [codex], tier: strong}\n");
+    selection_config(&p, "default: {order: [codex], tier: strong}\n");
     p.env
         .run(
             p.repo.path(),
@@ -418,7 +387,7 @@ fn confirmed_no_creation_allows_the_runner_to_retry_the_next_available_model() {
     let p = Tracked::new(true);
     selection_config(
         &p,
-        "agents:\n  order: [codex, claude]\n  tier: strong\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
+        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, reasoningEffort: high}, {model: gpt-6.1-sol, reasoningEffort: high}]\n",
     );
     let fake = runtime::FakeT3::create(&p.env);
     fake.flag("empty-start", true);

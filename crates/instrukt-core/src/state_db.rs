@@ -6,7 +6,8 @@
 //! the per-computer writer lock `~/.instrukt/state/writer.lock`; SQLite's
 //! own locking is not the serialization contract. Opening for writing
 //! applies the pending migrations, each in its own transaction that also
-//! sets `PRAGMA user_version`; a read-only open never migrates. A database
+//! sets `PRAGMA user_version`; a reader of older state first takes that same
+//! migration path. A database
 //! newer than this build knows is refused.
 //!
 //! The work context owns the file, its migrations and the work tables; the
@@ -189,7 +190,7 @@ impl StateDb {
     }
 }
 
-/// A connection opened for reading: never migrates and never writes.
+/// A current-schema reader; older owned state migrates under its writer lock.
 #[derive(Debug)]
 pub struct StateRead {
     conn: Connection,
@@ -220,7 +221,9 @@ impl StateRead {
             return Err(StateDbError::Newer { path, found, known });
         }
         if found < known {
-            return Err(StateDbError::Older { path, found, known });
+            drop(conn);
+            drop(StateDb::open(home)?);
+            return Self::open(home);
         }
         Ok(Some(Self { conn, path }))
     }
@@ -305,6 +308,30 @@ fn refuse_links(home: &Home, path: &Path) -> Result<(), StateDbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v4_start_requests_keep_their_selected_model_while_moving_to_profiles() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(4) {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        let old = serde_json::json!({"key":"retained-key","brief":"retained-input","selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
+        conn.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s','/checkout','retained-input',?1,'2030-01-01T00:00:00Z',0,'unresolved')",[old.to_string()]).unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let stored: String = conn
+            .query_row("SELECT request FROM runtime_starts", [], |r| r.get(0))
+            .unwrap();
+        let expected = serde_json::json!({"key":"retained-key","brief":"retained-input","selection":{"profile":"antigravity","kind":"antigravity","instance":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"antigravity","tier":"strong"}]});
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&stored).unwrap(),
+            expected
+        );
+        let resolution: String = conn
+            .query_row("SELECT state FROM runtime_starts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(resolution, "unresolved");
+    }
 
     #[test]
     fn every_migration_applies_in_order_to_an_empty_database() {

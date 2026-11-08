@@ -102,7 +102,7 @@ pub use _corpus::{
 };
 pub use _finding::{Finding, FindingCode, Notice, NoticeCode};
 pub use _fold::{FoldOutcome, fold};
-pub use _frontmatter::{Dispatch, Frontmatter, Parameter, ProcedureEntry, Tier, Visibility};
+pub use _frontmatter::{Frontmatter, Parameter, ProcedureEntry, Visibility};
 pub use _identity::{
     BaselineOwner, DocDomain, Scope, Taxonomy, published_destination, published_origin,
     published_source,

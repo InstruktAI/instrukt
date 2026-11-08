@@ -504,3 +504,31 @@ fn stat(path: &Path) -> Stat {
 fn is_not_found(err: Option<&std::io::Error>) -> bool {
     err.is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
 }
+
+/// Edit a complete current agents fixture, inheriting the shipped native shapes.
+pub fn agent_profiles(env: &TestEnv, patch: &str) {
+    fn merge(value: &mut serde_yaml_ng::Value, patch: serde_yaml_ng::Value) {
+        if let (Some(target), Some(source)) = (value.as_mapping_mut(), patch.as_mapping()) {
+            for (key, child) in source {
+                merge(
+                    target
+                        .entry(key.clone())
+                        .or_insert(serde_yaml_ng::Value::Null),
+                    child.clone(),
+                );
+            }
+        } else {
+            *value = patch;
+        }
+    }
+    let mut agents: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(instrukt_core::config::SHIPPED_AGENTS).unwrap();
+    agents["roles"] = serde_yaml_ng::Value::Mapping(Default::default());
+    merge(&mut agents, serde_yaml_ng::from_str(patch).unwrap());
+    std::fs::create_dir_all(env.instrukt_home()).unwrap();
+    std::fs::write(
+        env.instrukt_home().join("agents.yaml"),
+        serde_yaml_ng::to_string(&agents).unwrap(),
+    )
+    .unwrap();
+}

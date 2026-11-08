@@ -429,3 +429,20 @@ fn a_lost_task_start_reply_recovers_its_original_occurrence_before_later_firings
     project.tick_at("2030-01-06T09:30:20Z");
     assert_eq!(project.rt.started_count(), 2);
 }
+
+// spec: project/instrukt/spec/feature/runner/task-timing UC-TT6
+#[test]
+fn recurring_occurrences_move_with_the_computers_current_timezone() {
+    let cron = instrukt_runner::timing::CronSpec::parse("0 9 * * *").unwrap();
+    let instant: jiff::Timestamp = "2030-07-01T07:00:00Z".parse().unwrap();
+    assert!(cron.matches(
+        instant,
+        &jiff::tz::TimeZone::get("Europe/Amsterdam").unwrap()
+    ));
+    assert!(!cron.matches(instant, &jiff::tz::TimeZone::UTC));
+    let winter: jiff::Timestamp = "2030-01-01T08:00:00Z".parse().unwrap();
+    assert!(cron.matches(
+        winter,
+        &jiff::tz::TimeZone::get("Europe/Amsterdam").unwrap()
+    ));
+}

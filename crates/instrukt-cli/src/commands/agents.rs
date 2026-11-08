@@ -10,18 +10,18 @@ pub struct AgentsArgs {
 }
 #[derive(Debug, clap::Subcommand)]
 enum AgentCommand {
-    /// Runtime catalogue of families, provider instance ids, models and native option values.
-    Catalog,
+    /// Configured profiles and native model options.
+    List,
     /// Show normalized local agent/model availability; expired marks lapse.
     Availability,
-    /// Mark an agent family or one model available, unavailable or degraded.
+    /// Mark an agent profile or one model available, unavailable or degraded.
     Status {
-        /// Agent family from the selected runtime catalogue.
-        family: String,
+        /// Configured profile name.
+        profile: String,
         /// New capacity status. Degraded capacity is skipped for automated dispatch.
         #[arg(value_enum)]
         status: Status,
-        /// Restrict the mark to this model instead of the entire family.
+        /// Restrict the mark to this model instead of the entire profile.
         #[arg(long)]
         model: Option<String>,
         /// Absolute RFC3339 expiry; required for non-available model marks.
@@ -40,21 +40,21 @@ enum Status {
 }
 pub fn run(args: AgentsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let output = match args.command {
-        AgentCommand::Catalog => {
-            serde_json::to_string_pretty(&instrukt_core::config::agent_catalog()?)?
+        AgentCommand::List => {
+            serde_json::to_string_pretty(&instrukt_core::config::Agents::load(&ctx.home)?)?
         }
         AgentCommand::Availability => {
             serde_json::to_string_pretty(&agents::availability(&ctx.home, ctx.clock.now())?)?
         }
         AgentCommand::Status {
-            family,
+            profile,
             status,
             model,
             until,
             reason,
         } => {
             let mark = Availability {
-                family,
+                profile,
                 model,
                 status: match status {
                     Status::Available => AvailabilityStatus::Available,

@@ -17,8 +17,7 @@ use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 
-/// One tier mode for the whole agent preference list
-/// (`agents.tier`).
+/// One model chain tier in a role or task preference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
@@ -86,6 +85,7 @@ pub enum Notify {
 pub struct Configuration {
     value: Value,
     project_root: Option<PathBuf>,
+    home: Home,
 }
 
 impl Configuration {
@@ -102,6 +102,7 @@ impl Configuration {
         Ok(Self::from_value(
             effective_value(global.as_ref(), project.as_ref())?,
             project_root,
+            home.clone(),
         ))
     }
 
@@ -117,10 +118,11 @@ impl Configuration {
         Self::load(home, None)
     }
 
-    fn from_value(value: Value, project_root: Option<PathBuf>) -> Self {
+    fn from_value(value: Value, project_root: Option<PathBuf>, home: Home) -> Self {
         Self {
             value,
             project_root,
+            home,
         }
     }
 
@@ -223,36 +225,17 @@ impl Configuration {
         self.str_at(&["agents", agent, "git_author"])
     }
 
-    /// `agents.order`: the default ordered agent preferences, below a
-    /// task's own preference and a procedure's `dispatch` (empty when
-    /// unset). Templates are not expanded.
-    pub fn agents_order(&self) -> Result<Vec<&str>, ConfigError> {
-        let Some(list) = self.at(&["agents", "order"]) else {
-            return Ok(Vec::new());
-        };
-        list.as_sequence()
-            .ok_or_else(|| invalid("agents.order", "is not a list"))?
-            .iter()
-            .map(|item| {
-                item.as_str()
-                    .ok_or_else(|| invalid("agents.order", "holds a non-string agent"))
-            })
-            .collect()
+    /// The machine-local role/profile configuration.
+    pub fn agents(&self) -> Result<super::Agents, ConfigError> {
+        super::Agents::load(&self.home)
     }
 
-    /// `agents.tier`, the mode of the whole `agents.order` list.
-    pub fn agents_tier(&self) -> Result<Option<Tier>, ConfigError> {
-        match self.str_at(&["agents", "tier"])? {
-            None => Ok(None),
-            Some("light") => Ok(Some(Tier::Light)),
-            Some("standard") => Ok(Some(Tier::Standard)),
-            Some("strong") => Ok(Some(Tier::Strong)),
-            Some("premium") => Ok(Some(Tier::Premium)),
-            Some(_) => Err(invalid(
-                "agents.tier",
-                "is not `light`, `standard`, `strong` or `premium`",
-            )),
-        }
+    pub(super) fn secret_template(&self, template: &str) -> Result<String, ConfigError> {
+        Interpolator::new(&self.value, Mode::Secrets(&self.home)).expand_text(template, None)
+    }
+
+    pub(super) fn secret(&self, reference: &str) -> Result<String, ConfigError> {
+        super::resolve_secret(&self.home, reference)
     }
 
     /// `github.api_url` (default `https://api.github.com`).
@@ -489,6 +472,7 @@ mod tests {
         Configuration::from_value(
             effective_value(Some(&yaml(global)), project.as_ref()).unwrap(),
             None,
+            Home::at_user_home("/unused".into()),
         )
     }
 
@@ -517,7 +501,6 @@ mod tests {
             cfg.ticks_enabled().unwrap(),
             global.ticks_enabled().unwrap()
         );
-        assert_eq!(cfg.agents_order().unwrap(), global.agents_order().unwrap());
         assert_eq!(cfg.approver(ApprovalGate::Task).unwrap(), Approver::Peer);
     }
 
@@ -546,13 +529,6 @@ mod tests {
                 global.runner_runtime().unwrap()
             );
         }
-    }
-
-    #[test]
-    fn the_agent_preferences_carry_one_tier() {
-        let cfg = config(GLOBAL, None);
-        assert_eq!(cfg.agents_order().unwrap().len(), 1);
-        assert_eq!(cfg.agents_tier().unwrap(), Some(Tier::Strong));
     }
 
     #[test]

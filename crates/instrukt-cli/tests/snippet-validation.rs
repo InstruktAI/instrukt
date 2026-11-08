@@ -98,7 +98,7 @@ fn valid_tree(repo: &Repo) {
             "procedure",
             "role: worker\nactivation_trigger: When work arrives.\n\
                  parameters:\n  - name: slug\n    required: true\n\
-                 dispatch:\n  agent: [claude]\n  tier: standard\n",
+",
             "",
         ),
     )

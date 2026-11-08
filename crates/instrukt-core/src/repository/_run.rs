@@ -8,10 +8,9 @@
 //! completes the record with sync's exit status — unless a later run of the
 //! same hook has replaced the record meanwhile.
 
-use std::io::Read as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -34,7 +33,6 @@ pub const HOOK_WORKER_COMMAND: [&str; 2] = ["hooks", "worker"];
 /// How long the worker waits for a sync before ending it.
 const SYNC_TIMEOUT: Duration = Duration::from_secs(600);
 /// How often the worker looks whether sync ended.
-const SYNC_POLL: Duration = Duration::from_millis(50);
 /// How long a record writer waits for another writer of the same record.
 const RECORD_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 /// The longest sync message a record keeps.
@@ -275,60 +273,20 @@ fn run_sync(exe: &Path, cwd: &Path) -> SyncOutcome {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(source) => {
-            return SyncOutcome::NotStarted {
-                error: RepositoryError::Spawn {
-                    program: exe.to_path_buf(),
-                    source,
-                }
-                .to_string(),
-            };
-        }
-    };
-    let reader = child.stderr.take().map(|mut stderr| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            stderr.read_to_end(&mut bytes).map(|_| bytes)
-        })
-    });
-    let started = Instant::now();
-    let status: Result<Option<ExitStatus>, std::io::Error> = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(Some(status)),
-            Ok(None) if started.elapsed() >= SYNC_TIMEOUT => {
-                if let Err(err) = child.kill() {
-                    tracing::warn!(event = "hook_sync_kill_failed", error = %err);
-                }
-                break child.wait().map(|_| None);
-            }
-            Ok(None) => std::thread::sleep(SYNC_POLL),
-            Err(err) => break Err(err),
-        }
-    };
-    let stderr = match reader.map(std::thread::JoinHandle::join) {
-        Some(Ok(Ok(bytes))) => String::from_utf8_lossy(&bytes).into_owned(),
-        Some(Ok(Err(err))) => format!("cannot read sync's output: {err}"),
-        Some(Err(_)) => "cannot read sync's output".to_owned(),
-        None => String::new(),
-    };
-    match status {
-        Ok(Some(status)) => SyncOutcome::Finished {
+    match crate::process::output(&mut command, None, SYNC_TIMEOUT) {
+        Ok(output) => SyncOutcome::Finished {
             finished_at_ms: now_ms(),
-            exit_code: status.code(),
-            message: (!status.success()).then(|| last_line(&stderr)).flatten(),
+            exit_code: output.status.code(),
+            message: (!output.status.success())
+                .then(|| last_line(&String::from_utf8_lossy(&output.stderr)))
+                .flatten(),
         },
-        Ok(None) => SyncOutcome::TimedOut {
+        Err(crate::process::ProcessError::Timeout { .. }) => SyncOutcome::TimedOut {
             finished_at_ms: now_ms(),
             after_secs: SYNC_TIMEOUT.as_secs(),
         },
-        Err(source) => SyncOutcome::NotStarted {
-            error: RepositoryError::Wait {
-                program: exe.to_path_buf(),
-                source,
-            }
-            .to_string(),
+        Err(error) => SyncOutcome::NotStarted {
+            error: error.to_string(),
         },
     }
 }

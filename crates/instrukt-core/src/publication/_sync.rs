@@ -14,7 +14,7 @@ use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
 use super::_tree::{self, ClaimRecord, Outputs, Written};
 use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
-use crate::config::{self, ConfigError, Configuration, Layer, Module};
+use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{
     self, Corpus, Finding, INDEX_FILE, Notice, NoticeCode, Position, PositionIndex,
     ValidationRequest, Values,
@@ -172,7 +172,10 @@ impl From<PublicationError> for SyncError {
 /// could not, and reports those it still cannot whatever its outcome.
 pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let started = Instant::now();
+    config::migrate(request.home, &Layer::Global).map_err(PublicationError::from)?;
     let project = _source::locate(request.cwd)?;
+    config::migrate(request.home, &Layer::Project(project.worktree.clone()))
+        .map_err(PublicationError::from)?;
     let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)
         .map_err(PublicationError::from)?;
     let mut leftovers = sweep(request.home.root())?;
@@ -279,16 +282,8 @@ fn publish(
             source,
         })?;
     committed.materialize(checkout.path())?;
-    // The committed layer is migrated in the temporary checkout only when
-    // it needs it: migration takes a lock named after the layer's path, and
-    // a fresh checkout path would leave a new lock file per sync.
-    let committed_slug = match config::project_slug(checkout.path()) {
-        Err(ConfigError::OlderSchema { .. }) => {
-            config::migrate(home, &Layer::Project(checkout.path().to_path_buf()))?;
-            config::project_slug(checkout.path())?
-        }
-        other => other?,
-    };
+    // Slug reads migrate the temporary committed layer before consuming it.
+    let committed_slug = config::project_slug(checkout.path())?;
     if committed_slug.as_ref() != Some(&project.slug) {
         return Err(PublicationError::SlugMismatch {
             committed: committed_slug.map(|s| s.to_string()).unwrap_or_default(),

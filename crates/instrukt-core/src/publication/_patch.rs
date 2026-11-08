@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::docs::{Corpus, DocDomain, Scope, Snippet, Visibility, published_destination};
 use crate::ids::{DomainName, ProjectSlug};
-use crate::index::{
-    GlobalIndex, IndexDispatch, IndexEntry, IndexParameter, IndexScope, ThirdPartyEntry,
-};
+use crate::index::{GlobalIndex, IndexEntry, IndexParameter, IndexScope, ThirdPartyEntry};
 
 /// Why the patch refused a project's contribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,20 +143,8 @@ fn entry(
                 rest: p.rest,
             })
             .collect(),
-        dispatch: procedure.dispatch.as_ref().map(|d| IndexDispatch {
-            agent: d.agents.clone(),
-            tier: serde_plain(&d.tier),
-        }),
         interruptible: procedure.interruptible,
     })
-}
-
-/// The lowercase name a unit enum serializes to.
-fn serde_plain<T: serde::Serialize>(value: &T) -> String {
-    match serde_json::to_value(value) {
-        Ok(serde_json::Value::String(text)) => text,
-        _ => String::new(),
-    }
 }
 
 /// A third-party doc without a `description`: its first H1, else its file
@@ -244,6 +230,7 @@ pub(super) fn patch(
     Ok(GlobalIndex {
         snippets,
         third_party,
+        ..GlobalIndex::default()
     })
 }
 
@@ -307,7 +294,6 @@ mod tests {
             subscription_attendance: Default::default(),
             required_reads: Vec::new(),
             parameters: Vec::new(),
-            dispatch: None,
             interruptible: false,
         }
     }

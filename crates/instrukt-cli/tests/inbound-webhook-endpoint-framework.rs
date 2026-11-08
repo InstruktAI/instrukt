@@ -409,7 +409,7 @@ fn current_and_previous_verify_until_previous_is_removed() {
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF28
 #[test]
-fn signing_values_are_project_scoped_and_config_reads_preserve_references() {
+fn signing_references_are_machine_local_and_config_reads_preserve_references() {
     let (mut computer, redis, receiver) = setup();
     computer.env.set_env("HOOK_KEY", "process-override");
     drop(receiver);
@@ -418,8 +418,15 @@ fn signing_values_are_project_scoped_and_config_reads_preserve_references() {
     documented::sync(&computer.env, &other);
     other.write(
         "instrukt.yaml",
-        "schema_version: 1\nproject: other\nwebhooks: {erp: {secret: '${HOOK_KEY}'}}\n",
+        "schema_version: 1\nproject: other\nwebhooks: {erp: {secret: '${OTHER_HOOK_KEY}'}}\n",
     );
+    computer
+        .env
+        .instrukt(other.path())
+        .args(["secrets", "set", "OTHER_HOOK_KEY"])
+        .write_stdin("other-project-key")
+        .assert()
+        .success();
     other.write(".env", "HOOK_KEY=other-project-key\n");
     assert_eq!(
         receiver
@@ -454,7 +461,7 @@ fn signing_values_are_project_scoped_and_config_reads_preserve_references() {
         "source-references",
         String::from_utf8_lossy(&result.get_output().stdout)
     );
-    std::fs::remove_file(computer.project.path().join(".env")).unwrap();
+    std::fs::remove_file(computer.env.instrukt_home().join("secrets.env")).unwrap();
     assert_eq!(
         receiver.signed(NATIVE, BODY, "process-override", &[]).0,
         500
@@ -469,10 +476,13 @@ fn literal_dollar_signs_in_dotenv_material_never_expand_process_variables() {
     computer.env.set_env("EXPAND_ME", "process-secret");
     drop(receiver);
     let receiver = Receiver::start(&computer, &redis);
-    computer.project.write(
-        ".env",
-        "# 'ignored comment\nHOOK_KEY=\"literal$EXPAND_ME\"\n",
-    );
+    computer
+        .env
+        .instrukt(computer.project.path())
+        .args(["secrets", "set", "HOOK_KEY"])
+        .write_stdin("literal$EXPAND_ME")
+        .assert()
+        .success();
     assert_eq!(
         receiver.signed(NATIVE, BODY, "literal$EXPAND_ME", &[]).0,
         202
@@ -558,7 +568,7 @@ fn non_ingress_computers_validate_references_without_project_signing_values() {
             .replace(&computer.computer(), "abcdef0123456789"),
     )
     .unwrap();
-    std::fs::remove_file(computer.project.path().join(".env")).unwrap();
+    std::fs::remove_file(computer.env.instrukt_home().join("secrets.env")).unwrap();
     computer
         .env
         .run(computer.project.path(), ["config", "validate"])

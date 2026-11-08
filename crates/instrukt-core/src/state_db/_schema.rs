@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"
@@ -417,4 +417,54 @@ CREATE TABLE agent_availability (
  agent TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
  status_until TEXT, reason TEXT, PRIMARY KEY(agent,model)
 );
+"#;
+
+/// Version 5: profile-based selection evidence preserves interrupted starts.
+const V5: &str = r#"
+UPDATE runtime_starts SET request=json_remove(json_set(request,
+ '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.kind',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
+ WHERE json_type(request,'$.selection.family') IS NOT NULL;
+UPDATE runtime_starts SET request=json_set(request,'$.preferences',
+ (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ WHERE json_type(request,'$.preferences')='array';
+UPDATE runtime_bindings SET request=json_remove(json_set(request,
+ '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.kind',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
+ WHERE json_type(request,'$.selection.family') IS NOT NULL;
+UPDATE runtime_bindings SET request=json_set(request,'$.preferences',
+ (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ WHERE json_type(request,'$.preferences')='array';
+UPDATE procedure_responsibilities SET request=json_remove(json_set(request,
+ '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.kind',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
+ WHERE json_type(request,'$.selection.family') IS NOT NULL;
+UPDATE procedure_responsibilities SET request=json_set(request,'$.preferences',
+ (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ WHERE json_type(request,'$.preferences')='array';
+UPDATE procedure_generations SET request=json_remove(json_set(request,
+ '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.kind',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
+ WHERE json_type(request,'$.selection.family') IS NOT NULL;
+UPDATE procedure_generations SET request=json_set(request,'$.preferences',
+ (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ WHERE json_type(request,'$.preferences')='array';
+UPDATE manual_standing_reservations SET request=json_remove(json_set(request,
+ '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.kind',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
+ '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
+ WHERE json_type(request,'$.selection.family') IS NOT NULL;
+UPDATE manual_standing_reservations SET request=json_set(request,'$.preferences',
+ (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ WHERE json_type(request,'$.preferences')='array';
+UPDATE procedure_responsibilities SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
+UPDATE procedure_generations SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
+UPDATE standing_deliveries SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
+UPDATE manual_standing_reservations SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
+UPDATE todos SET agent='antigravity' WHERE agent='gemini';
+UPDATE agent_availability SET agent='antigravity' WHERE agent='gemini';
 "#;

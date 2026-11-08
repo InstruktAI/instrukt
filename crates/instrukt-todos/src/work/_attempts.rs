@@ -185,13 +185,12 @@ fn native_selection(
         .map(|id| instrukt_runner::launch::procedure(s.home(), id))
         .transpose()
         .map_err(|e| WorkError::refused(e.to_string()))?;
-    let (global, tier) = instrukt_runner::agents::global_order(&s.config);
-    let order = instrukt_runner::agents::agent_order(
+    let order = instrukt_runner::agents::role_order(
+        &s.config,
         record.agent.as_ref(),
-        dispatch.as_ref().and_then(|p| p.dispatch.as_ref()),
-        &global,
-        tier,
-    );
+        dispatch.as_ref().and_then(|p| p.role.as_deref()),
+    )
+    .map_err(|e| WorkError::refused(e.to_string()))?;
     let selection = instrukt_runner::agents::selections(&s.config, s.home(), &order, s.now)
         .map_err(|e| WorkError::refused(e.to_string()))?
         .into_iter()

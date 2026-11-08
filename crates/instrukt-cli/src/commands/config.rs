@@ -22,6 +22,11 @@ enum ConfigCommand {
     /// interpolated. Reads the effective configuration (the global layer
     /// with the project layer applied) unless --global.
     Get(GetArgs),
+    /// Inspect machine-local configuration.
+    Show {
+        #[arg(value_parser=["agents"])]
+        name: String,
+    },
     /// Apply a merge patch (YAML mapping) to the project layer, or the
     /// global layer with --global, if it is still at --revision.
     Patch(PatchArgs),
@@ -74,6 +79,15 @@ struct PatchArgs {
 pub fn run(args: ConfigArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         ConfigCommand::Get(args) => get(args, ctx),
+        ConfigCommand::Show { name: _ } => {
+            let mut agents = config::Agents::load(&ctx.home)?;
+            for entry in agents.roles.values_mut() {
+                entry.order = entry.order.take().or_else(|| agents.default.order.clone());
+                entry.tier = entry.tier.or(agents.default.tier);
+            }
+            ctx.out.json(&agents)?;
+            Ok(ExitCode::SUCCESS)
+        }
         ConfigCommand::Patch(args) => patch(args, ctx),
         ConfigCommand::Init(args) => init(&args, ctx),
         ConfigCommand::Validate(args) => validate(&args, ctx),
@@ -143,6 +157,11 @@ fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let layer = layer(args.global, ctx)?;
     let path = layer.path(&ctx.home);
     let outcome = config::init(&ctx.home, &layer, None)?;
+    if args.global
+        && let Some(notice) = config::Agents::deploy(&ctx.home, config::SHIPPED_AGENTS)?
+    {
+        ctx.out.line(&notice)?;
+    }
     let what = match outcome {
         InitOutcome::Created => "created".to_owned(),
         InitOutcome::AlreadyCurrent => "already at the current schema; kept".to_owned(),
@@ -160,6 +179,25 @@ fn validate(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let findings = config::validate(&ctx.home, &layer)?;
     for finding in &findings {
         ctx.out.line(&finding.to_string())?;
+    }
+    if args.global
+        && let Ok(agents) = config::Agents::load(&ctx.home)
+    {
+        let index = instrukt_core::index::GlobalIndex::load(&ctx.home)?.unwrap_or_default();
+        let installed: Vec<&str> = index
+            .snippets
+            .iter()
+            .filter(|entry| entry.taxonomy == "procedure" && entry.delivered_by.is_empty())
+            .filter_map(|entry| entry.role.as_deref())
+            .collect();
+        let undeclared = agents.undeclared_roles(&installed);
+        if !undeclared.is_empty() {
+            ctx.out.line(&format!(
+                "{}: roles with no installed procedure: {}",
+                ctx.home.agents_file().display(),
+                undeclared.join(", ")
+            ))?;
+        }
     }
     Ok(if findings.is_empty() {
         ExitCode::SUCCESS

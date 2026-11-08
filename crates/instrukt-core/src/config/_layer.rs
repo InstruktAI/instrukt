@@ -170,6 +170,7 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
 /// Reads a layer for a read command: absent is `None`; an unusable schema
 /// version is refused.
 pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, ConfigError> {
+    migrate_if_needed(home, layer)?;
     let path = layer.path(home);
     match read(&path)? {
         Some(doc) => {
@@ -180,8 +181,17 @@ pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, C
     }
 }
 
+pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
+    if read(&layer.path(home))?.is_some_and(|doc| matches!(version(&doc.value), Version::Older(_)))
+    {
+        migrate(home, layer)?;
+    }
+    Ok(())
+}
+
 /// The current revision of `layer`.
 pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
+    migrate_if_needed(home, layer)?;
     let path = layer.path(home);
     match read(&path)? {
         Some(doc) => {
@@ -218,6 +228,7 @@ pub fn patch(
     if !patch.is_mapping() {
         return Err(ConfigError::PatchNotAMapping);
     }
+    migrate_if_needed(home, layer)?;
     let started = Instant::now();
     let path = layer.path(home);
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
@@ -304,7 +315,9 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
         }),
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
-            let migrated = migrate_value(doc.value, from);
+            let mut migrated = doc.value;
+            super::_migrate::selection(home, layer, &mut migrated)?;
+            let migrated = migrate_value(migrated, from);
             let revision = write(&path, &doc.bytes, &migrated)?;
             tracing::debug!(
                 event = "config_migrated",
@@ -319,9 +332,7 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
     }
 }
 
-/// Rewrites a document of version `from` into the current version. Each
-/// schema version after the first adds its step here; version 1 is the
-/// first, so no step exists yet.
+/// Stamp the converted document with the current owned schema version.
 fn migrate_value(mut value: Value, _from: u64) -> Value {
     if let Value::Mapping(map) = &mut value {
         map.insert(

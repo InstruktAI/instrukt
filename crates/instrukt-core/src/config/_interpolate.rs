@@ -8,6 +8,7 @@ use super::_runtime::{Env, Runtime};
 pub(crate) enum Mode<'a> {
     /// Expand against the caller's environment.
     Expand(&'a Env),
+    Secrets(&'a crate::home::Home),
     /// Check references without an environment; variables and the derived
     /// caller session expand to empty values.
     Check,
@@ -92,6 +93,7 @@ impl<'a> Interpolator<'a> {
     fn variable(&self, name: &str) -> Result<String, ConfigError> {
         match self.mode {
             Mode::Check => Ok(String::new()),
+            Mode::Secrets(home) => super::resolve_secret(home, &format!("${{{name}}}")),
             Mode::Expand(env) => {
                 env.get(name)
                     .map(str::to_owned)
@@ -173,7 +175,7 @@ impl<'a> Interpolator<'a> {
             return Ok(Located::Derived(String::new()));
         }
         let Mode::Expand(env) = self.mode else {
-            unreachable!()
+            return Err(ConfigError::NoActiveRuntime);
         };
         let selected = self
             .root

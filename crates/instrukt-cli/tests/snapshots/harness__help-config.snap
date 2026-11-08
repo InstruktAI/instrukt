@@ -10,6 +10,7 @@ Commands:
   get       Print the value at a dotted path, or the whole configuration, interpolated. Reads the
             effective configuration (the global layer with the project layer applied) unless
             --global
+  show      Inspect machine-local configuration
   patch     Apply a merge patch (YAML mapping) to the project layer, or the global layer with
             --global, if it is still at --revision
   init      Create the layer with the current schema version and defaults, or migrate an existing

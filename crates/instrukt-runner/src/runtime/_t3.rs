@@ -35,7 +35,7 @@ impl T3 {
         if let Some(selection) = &request.selection {
             args.extend([
                 "--provider",
-                &selection.provider,
+                &selection.instance,
                 "--model",
                 &selection.model,
             ]);

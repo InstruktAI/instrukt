@@ -47,8 +47,6 @@ pub enum FindingKind {
     SchemaVersionNotCurrent,
     /// `requires` names a module switched off in the effective configuration.
     ModuleSwitchedOff,
-    /// `agents.order` names an agent no runtime-mapping entry can start.
-    AgentNotStartable,
     /// `runner.runtime` names no runtime-mapping entry.
     UnknownRuntime,
     /// A module switch turns on features while no runtime is chosen.

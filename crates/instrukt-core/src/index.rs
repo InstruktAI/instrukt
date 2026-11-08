@@ -32,14 +32,17 @@ pub enum IndexError {
     },
     #[error("cannot render the index: {0}")]
     Render(serde_yaml_ng::Error),
+    #[error("unsupported index schema_version {found} in {path}; upgrade instrukt")]
+    Version { path: PathBuf, found: u64 },
     #[error(transparent)]
     Write(#[from] FsError),
 }
 
 /// The whole global index.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalIndex {
+    pub schema_version: u64,
     /// Taxonomy snippets, global and local.
     pub snippets: Vec<IndexEntry>,
     /// Third-party docs, indexed apart from taxonomy snippets.
@@ -94,8 +97,6 @@ pub struct IndexEntry {
     pub required_reads: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameters: Vec<IndexParameter>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dispatch: Option<IndexDispatch>,
     #[serde(default = "default_interruptible")]
     pub interruptible: bool,
 }
@@ -108,13 +109,6 @@ pub struct IndexParameter {
     pub required: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rest: bool,
-}
-
-/// A procedure's dispatch defaults.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IndexDispatch {
-    pub agent: Vec<String>,
-    pub tier: String,
 }
 
 /// One third-party doc.
@@ -144,15 +138,52 @@ impl GlobalIndex {
                 });
             }
         };
-        serde_yaml_ng::from_str(&text)
-            .map(Some)
-            .map_err(|source| IndexError::Parse {
-                path: path.to_path_buf(),
+        let map: serde_yaml_ng::Mapping =
+            serde_yaml_ng::from_str(&text).map_err(|source| IndexError::Parse {
+                path: path.into(),
                 source,
-            })
+            })?;
+        let mut value = serde_yaml_ng::Value::Mapping(map);
+        let old = value.get("schema_version").is_none();
+        if old {
+            value["schema_version"] = 1.into();
+            if let Some(entries) = value
+                .get_mut("snippets")
+                .and_then(serde_yaml_ng::Value::as_sequence_mut)
+            {
+                for entry in entries {
+                    if let Some(map) = entry.as_mapping_mut() {
+                        map.remove("dispatch");
+                    }
+                }
+            }
+        }
+        let index: Self = serde_yaml_ng::from_value(value).map_err(|source| IndexError::Parse {
+            path: path.into(),
+            source,
+        })?;
+        if index.schema_version != 1 {
+            return Err(IndexError::Version {
+                path: path.into(),
+                found: index.schema_version,
+            });
+        }
+        // Readers upcast the versionless cache in memory. Publication writes
+        // the current version under its existing owner lock.
+        Ok(Some(index))
     }
 }
 
 fn default_interruptible() -> bool {
     true
+}
+
+impl Default for GlobalIndex {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            snippets: Vec::new(),
+            third_party: Vec::new(),
+        }
+    }
 }

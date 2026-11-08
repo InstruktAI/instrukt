@@ -10,7 +10,7 @@ use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 1;
+pub const CURRENT_SCHEMA_VERSION: u64 = 2;
 
 /// The `blueprint.engine` values that name a shipped adapter: the only
 /// values a project layer may give it. Any other value is a command, which
@@ -89,9 +89,6 @@ enum Shape {
     StrList,
     ModuleList,
     Actions,
-    AgentOrder,
-    ModelChain,
-    Tier,
     Identity,
 }
 
@@ -182,17 +179,11 @@ fn schema() -> Node {
         (
             "agents",
             Node::Map {
-                children: vec![
-                    ("order", Leaf(GlobalOnly, Shape::AgentOrder)),
-                    ("tier", Leaf(GlobalOnly, Shape::Tier)),
-                ],
-                open: Some(Box::new(map(vec![
-                    ("git_author", Leaf(GlobalOnly, Shape::Identity)),
-                    ("light", Leaf(GlobalOnly, Shape::ModelChain)),
-                    ("standard", Leaf(GlobalOnly, Shape::ModelChain)),
-                    ("strong", Leaf(GlobalOnly, Shape::ModelChain)),
-                    ("premium", Leaf(GlobalOnly, Shape::ModelChain)),
-                ]))),
+                children: vec![],
+                open: Some(Box::new(map(vec![(
+                    "git_author",
+                    Leaf(GlobalOnly, Shape::Identity),
+                )]))),
             },
         ),
     ])
@@ -452,21 +443,7 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                 out.push(invalid("expected `human` or `peer`"));
             }
         }
-        Shape::ModelChain => {
-            if !value.as_sequence().is_some_and(|v| !v.is_empty()) {
-                out.push(invalid("expected a nonempty model chain"));
-            }
-        }
-        Shape::Tier => {
-            if !matches!(
-                value.as_str(),
-                Some("light" | "standard" | "strong" | "premium")
-            ) {
-                out.push(invalid(
-                    "expected `light`, `standard`, `strong` or `premium`",
-                ));
-            }
-        }
+
         Shape::Identity => match value.as_str() {
             Some(text) if is_identity_template(text) => {}
             Some(_) => out.push(invalid("expected a git author identity `Name <email>`")),
@@ -512,14 +489,7 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
             }
             None => out.push(invalid("expected a list of modules")),
         },
-        Shape::AgentOrder => match value.as_sequence() {
-            Some(seq) if !seq.is_empty() => {
-                for (i, item) in seq.iter().enumerate() {
-                    check_field(Field::NonEmptyStr, item, &join(path, &i.to_string()), out);
-                }
-            }
-            _ => out.push(invalid("expected a non-empty list of agent names")),
-        },
+
         Shape::Actions => match value.as_mapping() {
             Some(map) => {
                 for (name, action) in map {
@@ -763,7 +733,7 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         }),
         Shape::OnOff => json!({ "enum": ["on", "off"] }),
         Shape::Approver => json!({ "enum": ["human", "peer"] }),
-        Shape::Tier => json!({ "enum": ["light", "standard", "strong", "premium"] }),
+
         Shape::Autostart => json!({
             "anyOf": [
                 { "type": "boolean" },
@@ -775,12 +745,7 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
             strings(&names)
         }
-        Shape::ModelChain => {
-            json!({"type":"array","minItems":1,"items":{"type":"object","required":["model","effort"],"properties":{"model":{"type":"string"},"effort":{"type":"string"},"options":{"type":"object"}},"additionalProperties":false}})
-        }
-        Shape::AgentOrder => {
-            json!({ "type": "array", "minItems": 1, "items": { "type": "string" } })
-        }
+
         Shape::Actions => json!({
             "type": "object",
             "additionalProperties": {
@@ -848,7 +813,7 @@ mod tests {
         findings.iter().map(|f| (f.key.as_str(), f.kind)).collect()
     }
 
-    const GLOBAL_ONLY: &str = "agents: {order: [a], tier: strong, claude: {git_author: 'A <a@x>'}}\n\
+    const GLOBAL_ONLY: &str = "agents: {claude: {git_author: 'A <a@x>'}}\n\
         ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
@@ -974,8 +939,6 @@ mod tests {
         assert_eq!(
             judged(&findings),
             [
-                ("agents.order", N),
-                ("agents.tier", N),
                 ("agents.claude.git_author", N),
                 ("ticks", N),
                 ("runner.notify", N),
@@ -1037,8 +1000,7 @@ mod tests {
                 ("runner.autostart", I),
                 ("runtimes", I),
                 ("agents.tier", I),
-                ("agents.order.1", I),
-                ("agents.order.2", I),
+                ("agents.order", I),
                 ("nope", U),
             ]
         );
@@ -1047,14 +1009,6 @@ mod tests {
             LayerKind::Global,
         );
         assert_eq!(judged(&empty_order), [("agents.order", I)]);
-    }
-
-    #[test]
-    fn every_tier_is_accepted() {
-        for mode in ["light", "standard", "strong", "premium"] {
-            let doc = yaml(&format!("schema_version: 1\nagents: {{tier: {mode}}}\n"));
-            assert_eq!(check(&doc, LayerKind::Global), []);
-        }
     }
 
     #[test]

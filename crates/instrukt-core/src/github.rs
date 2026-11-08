@@ -12,10 +12,9 @@
 //! - [`credentials`]: `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`;
 //!   never stored.
 
-use std::io::Read as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use crate::config::{ConfigError, Configuration, Env};
 use crate::git::{self, GitError};
@@ -161,43 +160,26 @@ pub fn default_branch(root: &Path) -> Result<String, GitError> {
 /// `gh auth token`, bounded; absent when `gh` is missing, signed out or
 /// slow.
 fn gh_auth_token() -> Option<String> {
-    let mut child = Command::new("gh")
-        .args(["auth", "token"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut text = String::new();
-                child.stdout.take()?.read_to_string(&mut text).ok()?;
-                let token = text.trim();
-                return (!token.is_empty()).then(|| token.to_owned());
-            }
-            Ok(None) if started.elapsed() < GH_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            _ => {
-                if let Err(err) = child.kill() {
-                    tracing::warn!(event = "gh_token_kill_failed", error = %err, "cannot stop `gh auth token`");
-                }
-                if let Err(err) = child.wait() {
-                    tracing::warn!(event = "gh_token_wait_failed", error = %err, "cannot reap `gh auth token`");
-                }
-                tracing::warn!(
-                    event = "gh_token_timeout",
-                    "`gh auth token` did not answer in time"
-                );
-                return None;
-            }
+    let mut command = Command::new("gh");
+    command.args(["auth", "token"]);
+    let output = match crate::process::output(&mut command, None, GH_TIMEOUT) {
+        Ok(output) => output,
+        Err(crate::process::ProcessError::Spawn { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return None;
         }
+        Err(error) => {
+            tracing::warn!(event="gh_token_unavailable",error=%error);
+            return None;
+        }
+    };
+    if !output.status.success() {
+        return None;
     }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let token = text.trim();
+    (!token.is_empty()).then(|| token.to_owned())
 }
 
 /// A git query whose "no answer" is a non-zero exit with no output.

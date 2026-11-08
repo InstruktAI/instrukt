@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/configuration-editing.rs
 expression: written
 ---
-schema_version: 1
+schema_version: 2
 ticks: 'off'

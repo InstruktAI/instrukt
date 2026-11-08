@@ -78,12 +78,6 @@ impl Runtime {
             Self::T3 => "t3",
         }
     }
-    /// Families in the compiled T3 catalogue; provider ids remain runtime facts.
-    pub fn startable_agents(self) -> Option<&'static [&'static str]> {
-        match self {
-            Self::T3 => Some(&["claude", "codex", "gemini"]),
-        }
-    }
     pub fn caller(self, env: &Env) -> Option<crate::ids::SessionRef> {
         env.caller_identity(self.name())
             .map(|caller| caller.session)

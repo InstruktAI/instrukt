@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/task-timing.rs
-assertion_line: 269
 expression: "work::redact(&project.todo([\"show\", \"quarter-hourly-sync\"]))"
 ---
 quarter-hourly-sync · task · active
@@ -27,7 +26,7 @@ artifacts:
     <digest 2> by Test Developer at <time>
 stamps:
   #3 <time> task plan approved by a human — <digest 2> — by Test Developer, eval <digest 3>
-  #4 <time> task firing started — occurrence <time> — by session t3:s1 as task-runner, model codex gpt-6-sol, eval <digest 3>
-  #5 <time> task outcome success — occurrence <time> — by session t3:s1 as task-runner, model codex gpt-6-sol, eval <digest 3>
-  #6 <time> task firing started — occurrence <time> — by session t3:s2 as task-runner, model codex gpt-6-sol, eval <digest 3>
-  #7 <time> task outcome error: the sync target refused our credentials — occurrence <time> — by session t3:s2 as task-runner, model codex gpt-6-sol, eval <digest 3>
+  #4 <time> task firing started — occurrence <time> — by session t3:s1 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>
+  #5 <time> task outcome success — occurrence <time> — by session t3:s1 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>
+  #6 <time> task firing started — occurrence <time> — by session t3:s2 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>
+  #7 <time> task outcome error: the sync target refused our credentials — occurrence <time> — by session t3:s2 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>

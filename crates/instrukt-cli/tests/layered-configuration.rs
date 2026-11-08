@@ -156,11 +156,13 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     env.run(repo.path(), ["config", "init", "--global"])
         .success();
 
-    assert_eq!(repo.read("instrukt.yaml"), layer);
+    let stored: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
     assert_eq!(
-        std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
-        global
+        stored["schema_version"].as_u64(),
+        Some(CURRENT_SCHEMA_VERSION)
     );
+    assert_eq!(stored["board"].as_str(), Some("acme/7"));
     let read = |args: &[&str]| stdout(&env, &env.run(repo.path(), args).success());
     insta::assert_snapshot!(read(&["config", "get", "actions.test"]), @"make test");
     insta::assert_snapshot!(read(&["config", "get", "ticks"]), @"off");

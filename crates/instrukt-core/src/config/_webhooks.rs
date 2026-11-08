@@ -1,7 +1,7 @@
 //! Raw project declarations and project-only signing material. No environment fallback.
 
+use crate::home::Home;
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
@@ -255,41 +255,14 @@ impl WebhookSource {
         self.name.as_deref()
     }
 
-    pub fn resolve(&self, project: &Path) -> Result<SigningSecrets, ConfigError> {
-        let error = |reference: &str| {
-            invalid(
-                "webhooks",
-                &format!(
-                    "project {} cannot resolve {reference} from its .env",
-                    project.display()
-                ),
-            )
-        };
-        let dotenv = project.join(".env");
-        let metadata = std::fs::symlink_metadata(&dotenv).map_err(|_| error(&self.secret))?;
-        if !metadata.file_type().is_file() {
-            return Err(error(&self.secret));
-        }
-        let bytes = std::fs::read(dotenv).map_err(|_| error(&self.secret))?;
-        let text = std::str::from_utf8(&bytes).map_err(|_| error(&self.secret))?;
-        // Disable dotenvy's process-environment substitution while retaining
-        // its quoting and escape grammar. Signing values are literal material.
-        let literal = literal_values(text);
-        let values = dotenvy::from_read_iter(literal.as_bytes())
-            .collect::<Result<BTreeMap<_, _>, _>>()
-            .map_err(|_| error(&self.secret))?;
-        let read = |text: &str| -> Result<String, ConfigError> {
-            let name = reference(text)
-                .ok_or_else(|| invalid("webhooks", "expected an exact ${NAME} reference"))?;
-            values
-                .get(name)
-                .filter(|value| !value.trim().is_empty())
-                .cloned()
-                .ok_or_else(|| error(text))
-        };
+    pub fn resolve(&self, home: &Home) -> Result<SigningSecrets, ConfigError> {
         Ok(SigningSecrets {
-            current: read(&self.secret)?,
-            previous: self.previous_secret.as_deref().map(read).transpose()?,
+            current: super::resolve_secret(home, &self.secret)?,
+            previous: self
+                .previous_secret
+                .as_deref()
+                .map(|r| super::resolve_secret(home, r))
+                .transpose()?,
         })
     }
 }
@@ -318,46 +291,6 @@ pub(super) fn editor_schema() -> serde_json::Value {
         ]
     });
     json!({"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": source})
-}
-
-/// Quote only unescaped interpolation markers; no variable lookup can occur in
-/// the dotenv parser. Strong quotes already make their contents literal.
-fn literal_values(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut quote = None;
-    let mut escaped = false;
-    let mut comment = false;
-    let mut prior_space = true;
-    for ch in text.chars() {
-        if comment {
-            out.push(ch);
-            if ch == '\n' {
-                comment = false;
-                prior_space = true;
-            }
-            continue;
-        }
-        if escaped {
-            out.push(ch);
-            escaped = false;
-        } else if ch == '\\' && quote != Some('\'') {
-            out.push(ch);
-            escaped = true;
-        } else if ch == '#' && quote.is_none() && prior_space {
-            comment = true;
-            out.push(ch);
-        } else if matches!(ch, '\'' | '"') && (quote.is_none() || quote == Some(ch)) {
-            quote = if quote.is_some() { None } else { Some(ch) };
-            out.push(ch);
-        } else {
-            if ch == '$' && quote != Some('\'') {
-                out.push('\\');
-            }
-            out.push(ch);
-        }
-        prior_space = ch.is_whitespace();
-    }
-    out
 }
 
 pub(super) fn redact(value: &mut Value) {

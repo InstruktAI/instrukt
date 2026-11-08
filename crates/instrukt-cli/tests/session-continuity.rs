@@ -658,10 +658,10 @@ fn renamed_target_retrieval_reads_the_retained_preparation_assignment() {
 fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
     let crew = workflow::Crew::new();
     let slug = "native-selection";
-    let file = crew.project.env.instrukt_home().join("instrukt.yaml");
-    let mut config = std::fs::read_to_string(&file).unwrap();
-    config.push_str("agents:\n  order: [claude]\n  tier: standard\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high, options: {fastMode: false}}]\n");
-    std::fs::write(file, config).unwrap();
+    common::agent_profiles(
+        &crew.project.env,
+        "default: {order: [claude], tier: standard}\nprofiles:\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high, fastMode: false}]\n",
+    );
     crew.project
         .create(slug, "change", "Carry resolved native inputs.");
     crew.next("prepare", slug);
@@ -708,10 +708,10 @@ fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
 fn proven_native_no_start_retries_with_the_next_available_model() {
     let crew = workflow::Crew::new();
     let slug = "native-fallback";
-    let file = crew.project.env.instrukt_home().join("instrukt.yaml");
-    let mut config = std::fs::read_to_string(&file).unwrap();
-    config.push_str("agents:\n  order: [codex, claude]\n  tier: strong\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n");
-    std::fs::write(file, config).unwrap();
+    common::agent_profiles(
+        &crew.project.env,
+        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, reasoningEffort: high}, {model: gpt-6.1-sol, reasoningEffort: high}]\n",
+    );
     crew.project
         .create(slug, "change", "Retry only after proof of no native start.");
     crew.next("prepare", slug);

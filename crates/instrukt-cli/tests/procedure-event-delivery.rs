@@ -737,7 +737,11 @@ fn a_missing_retained_role_refuses_manual_and_automatic_entry_before_creation() 
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA1
 #[test]
 fn a_standing_agent_starts_with_its_procedures_resolved_model_instead_of_project_defaults() {
-    let r = Responsibility::new("dispatch: {agent: [gemini, codex], tier: strong}\n");
+    let r = Responsibility::new("");
+    common::agent_profiles(
+        &r.computer.env,
+        "default: {order: [antigravity, codex], tier: strong}",
+    );
     r.append("explicit-selection");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);

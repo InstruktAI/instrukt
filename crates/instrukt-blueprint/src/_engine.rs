@@ -281,10 +281,11 @@ impl Runner<'_> {
             .stdout(create(&stdout_path)?)
             .stderr(create(&stderr_path)?)
             .process_group(0);
-        let mut child = gated.spawn().map_err(|source| EngineError::Spawn {
-            program: program.to_owned(),
-            source,
-        })?;
+        let (mut child, owned_group) =
+            instrukt_core::process::spawn(&mut gated).map_err(|source| EngineError::Spawn {
+                program: program.to_owned(),
+                source,
+            })?;
         let group = child.id();
         let stdin = child.stdin.take();
         let status = match go_ahead((self.started)(group)) {
@@ -313,6 +314,11 @@ impl Runner<'_> {
         if let Err(err) = child.try_wait() {
             tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
         }
+        owned_group.stop().map_err(|source| EngineError::Io {
+            what: "cannot stop engine group in",
+            path: self.scratch.into(),
+            source,
+        })?;
         let status = status?;
         if status.code() == Some(COMMAND_NOT_FOUND) && program == GRAPHIFY {
             return Err(EngineError::NotInstalled {
