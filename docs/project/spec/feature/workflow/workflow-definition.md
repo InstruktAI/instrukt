@@ -67,7 +67,9 @@ action's responsible role follows from its command:
   the runner started into the orchestrator's procedure, or the one
   `instrukt todo prepare|work` made the orchestrator.
 
-Every procedure's `role` is one of the flavor's `roles:`. Definition findings
+Every procedure the workflow dispatches declares one of the flavor's `roles:`.
+Subscribed procedures are outside workflow role-list membership; the event
+system uses their roles independently of todos. Definition findings
 include a flow without `orchestrator`, an `orchestrator` role not declared
 under `roles:`, no procedure declaring the `orchestrator` role, and an action
 whose command names a procedure that declares no `role`. The setup-only

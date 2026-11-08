@@ -2,9 +2,6 @@
 description: Observe project work by its records and sessions, challenge unsupported judgments, restore missing attention, and ask human-owned questions in the coordinating thread.
 visibility: internal
 role: coordinator
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Coordinate — Procedure
@@ -74,8 +71,9 @@ the address-only challenge of `sdlc/concept/coordination-cases` NC-29.
 
 **Tandem for judgment.** Every material disposition, defect-ownership judgment
 or human-owned question is independently challenged by one peer before action.
-Establish it lazily through configured runtime delegation, selected from `dispatch`
-or `agents.order`, availability first, preferring another model when available.
+Establish it lazily through configured runtime delegation, selected through the
+peer's role mapping in `~/.instrukt/agents.yaml`, availability first, preferring
+another model when available.
 It receives case sources and governing contracts, never a preferred conclusion,
 and has no coordination mandate or mutation authority. Keep and reuse its
 recorded session; use the configured message value for case exchanges and the configured runtime discussion instruction when the

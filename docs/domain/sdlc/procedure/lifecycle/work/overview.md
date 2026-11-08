@@ -7,9 +7,6 @@ role: work-orchestrator
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Work Overview — Procedure
@@ -115,9 +112,13 @@ an unresolved dispatch. Completion stamps release writing attempts atomically;
 verdicts and dispositions release read-only attempts. Reuse only active,
 unreleased attempts. A released session retains evidence, not workspace admission.
 
-Select workers from procedure dispatch preferences or `agents.order`, availability
-first. Pass resolved family/model/effort/options through runtime.dispatch; do not substitute runtime project defaults. Use
-`standard` for builder/fixer, `strong` for independent review and `light` for finalizer.
+Select workers from the procedure's role mapping in `~/.instrukt/agents.yaml`,
+with per-task overrides first and availability checked. Pass the resolved
+profile/kind/instance/model/effort/options through runtime.dispatch where
+supported. The shipped role map supplies tier heuristics; user configuration
+owns them. T3 host CLI starts receive effort only from the project default
+until upstream supports an effort/options flag; record that limit, without
+building a workaround.
 Inspect native task evidence and current bindings before follow-up. A stopped
 worker follows the todo-attempt failure contract: clean shared tree and native
 stop evidence precede failed release; dirty or conflicted work remains outstanding

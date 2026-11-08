@@ -6,9 +6,6 @@ visibility: 'public'
 role: prepare-orchestrator
 parameters:
   - name: slug
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Prepare Overview — Procedure
@@ -94,8 +91,8 @@ The orchestrator and its native shared doc writers/reviewers use the todo's T3-m
 ### Worker selection and reuse
 
 Select doc writers, independent reviewers, commit reviewers and drift analysts using the
-procedure's dispatch preferences or the global agent order, availability first.
-Pass the resolved family/model/effort/options through runtime.dispatch; unavailable capacity advances through the selected tier chain. Read the
+procedure's role mapping in `~/.instrukt/agents.yaml`, with per-task overrides
+first and availability checked. Pass the resolved profile/kind/instance/model/effort/options through runtime.dispatch; unavailable capacity advances through the selected tier chain. Read the
 todo's recorded role binding before dispatch. Observe an active unreleased
 attempt through the configured runtime status inspection instruction and deliver its follow-up through
 the configured runtime message instruction. Start a new attempt only after the preceding attempt

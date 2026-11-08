@@ -242,7 +242,7 @@ And events for another project or none origin cannot activate it
 
 ## Known caveats
 
-- Runtime acceptance is not entry consumption or domain completion. Delivery uses the adapter's supported input boundary under procedure-event-delivery, including queue-only T3; subject revival and attendance have separate capability limits.
+- Runtime acceptance is not entry consumption or domain completion. Delivery uses the adapter's supported input boundary under procedure-event-delivery, including queue-only T3; standing T3 threads stay reachable after human settling.
 - Company/person homes are representable but not executable in this release; resolution fails visibly.
 - Scheduled-only readers react at their next wake within stream retention. No other computer substitutes after missed retention.
 - Replay protection is bounded by consumer marks and retained activation/delivery records, not exactly-once business effects.

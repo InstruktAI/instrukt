@@ -88,8 +88,11 @@ way, whatever was done before:
      `instrukt config patch`, check it with `instrukt config validate`, and
      register the wake-up with `instrukt install` when the module runs
      through the runner.
-   - **Reconfigure.** Change the requested settings with
-     `instrukt config patch` in the layer each belongs to, and validate.
+   - **Reconfigure.** Change layered settings with `instrukt config patch`
+     in their owning layer and validate. Model selection uses the configuration
+     skill and user-owned `~/.instrukt/agents.yaml`, keyed by role; the skill
+     discovers existing ACP instances without creating provider instances.
+     Protected instrukt secrets use only `instrukt secrets set/generate`.
    - Anything else about instrukt: `instrukt -h` and `instrukt docs`.
 3. **Show the result** by reading `instrukt status` again.
 
@@ -98,7 +101,9 @@ instrukt cannot answer: which runtime to call (no code detects or chooses
 one), which docs repository to adopt when the computer publishes none, the
 agent preferences and git authors, which modules, and the values a module
 needs. Everything instrukt can answer comes from status and `-h`, never from
-the human. Every change goes through instrukt's CLI. The skill never rewrites
+the human. Layered settings and secrets use instrukt's CLI; model profiles and
+role orders use the configuration skill's `agents.yaml` contract
+(`project/instrukt/spec/feature/configuration/agent-selection`). The skill never rewrites
 itself and keeps no state: the human's choices live in instrukt's
 configuration, so the same skill is opened again for any later change.
 

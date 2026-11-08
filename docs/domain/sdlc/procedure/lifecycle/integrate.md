@@ -4,9 +4,6 @@ visibility: 'public'
 role: integrator
 parameters:
   - name: slug
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 subscriptions:
   - workflow.finalized
   - workflow.preparation_reviewed
@@ -42,7 +39,7 @@ failure interpretation, promotion and recovery.
 - The integrator operates in the persistent integration worktree at
   `trees/_integration/`, separately from the project checkout and todo worktrees.
 - A work candidate has finalized evidence. Preparation arrives as `workflow.preparation_reviewed` with the exact reviewed head and report; integrate it as soon as possible before build, then remove its clean worktree and delete `<slug>/prepare` locally and on origin. Keep any failed cleanup owed. Ad hoc candidates likewise retain exact-head review.
-- Project CI and required checks, or the configured `test` action when CI is
+- Project CI and required checks, or the documented project test command when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
 
 ## Steps
@@ -106,10 +103,9 @@ CI status with conditional requests on ticks and wakes this session through
 watch. Missing, incomplete or mismatched results leave main unchanged.
 
 Without CI, the runner wakes this session through `runner.ci_completed` with
-the result `no_ci` for the exact candidate. Read
-`instrukt config get actions.test` and run the project's configured command in
-the integration worktree against that exact candidate. An unavailable or
-failing action supplies no admission. This is the local gate;
+the result `no_ci` for the exact candidate. Read the project's documented test
+command and run it in the integration worktree against that exact candidate.
+A missing documented check or failing command supplies no admission. This is the local gate;
 builders, reviewers and the evaluator add no suite execution of their own.
 
 - **Green:** fast-forward main to exactly the verified candidate and push it.
@@ -171,7 +167,9 @@ If main becomes red despite the gate, revert the offending delivery first.
 Compose and push the revert through `integrate` and obtain CI, or the local
 `test` result when CI is absent. Prioritize that verified restoration before
 subsequent deliveries build on the known-red baseline. Repair the cause in its
-own todo, filed as kind `bug` when the defect-evidence standard is met.
+own todo. Judge whether the red-main evidence warrants a bug under
+`sdlc/policy/todo-creation-discipline`; check existing work and file it once as
+kind `bug` only when warranted, or add evidence to its existing owner.
 
 If restoration cannot be completed, preserve the failure in this session.
 Ask human-owned questions here, leaving the thread waiting for input. A

@@ -6,9 +6,6 @@ role: diagnoser
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 ---
 
 # Peer Bug Diagnosis — Procedure

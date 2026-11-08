@@ -87,13 +87,13 @@ never from a candidate: a canonical head carrying no status and no check run
 means the project has no CI. A just-pushed candidate with nothing reported yet
 is pending, not evidence of a project without CI.
 
-For a project without CI the integrator runs the project's configured test
-action in the integration worktree against the candidate. Success supplies
+For a project without CI the integrator runs the project's documented test
+command in the integration worktree against the candidate. Success supplies
 the local admission evidence for that exact commit; failure remains with the
 integrator for judgment under the same remediation routes. An unavailable or
-failing action does not establish a green candidate.
+failing command does not establish a green candidate.
 
-This local action is the integration gate. Builders, reviewers and the pure
+This local check is the integration gate. Builders, reviewers and the pure
 workflow evaluator do not add suite execution to their steps. Project-owned
 hooks and CI retain their own checks.
 
@@ -103,7 +103,9 @@ If the canonical branch becomes red despite admission, the integrator reverts
 the offending delivery first. The revert passes through `integrate` like
 any change to main; its CI is the fast path back. It restores the usable shared baseline before
 repairing the cause in a separate todo, and keeps subsequent deliveries from
-building on the known-red baseline.
+building on the known-red baseline. The integrator judges whether the failure
+warrants a bug, deduplicates against existing work and files it once when
+warranted; the runner never turns every red check into a bug automatically.
 
 When the integrator cannot restore the baseline, the condition is an anomaly
 that can require notification. Ordinary approval and new-intent requests

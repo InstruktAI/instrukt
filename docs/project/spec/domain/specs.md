@@ -104,7 +104,7 @@ the structural graph, or the decision of who may author a use case.
   the structural graph and its traversals (blueprint,
   `project/instrukt/spec/domain/blueprint`); who authors a use case and
   when (`sdlc/policy/testing`, `sdlc/procedure/feature-spec-authoring`); the
-  project's own test and lint commands (configuration's actions); git hooks
+  project's own documented test and lint commands; git hooks
   (repository, `project/instrukt/spec/domain/repository`).
 - **Published contracts** — `instrukt specs coverage [--check] [--update-baseline]`,
   `instrukt specs reserve --slug <slug> --binding <spec_id>:<UC-id>…`;

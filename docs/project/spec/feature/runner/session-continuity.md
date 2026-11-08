@@ -41,7 +41,7 @@ creates no replacement session identity.
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
 Worktree creation, shared native delegation and attachment to an existing
-worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended CLI adapter lacks attachment and instrukt agent-preference mapping. Agent workflow requirements use typed native capability metadata;
+worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended CLI adapter lacks attachment and effort/options flags. Agent workflow requirements use typed native capability metadata;
 unattended consumers use adapter capabilities. Linking, notification and
 agent/model selection retain their optional capability contracts.
 Availability information, when the runtime supplies it, is adapter metadata;
@@ -128,8 +128,9 @@ the full key.
 Agent-native `run`, `send`, `alive`, `conversation` and `link` facades are absent
 from this surface. Explicit capability-gap fallbacks, if a runtime needs one,
 are named in its configuration instruction; no fallback is enabled for a native
-operation. Session ending and history search remain runtime-owned and outside
-the released instrukt surface. The runner's automatic starts return acceptance
+operation. Session ending remains runtime-owned. Extracted history and merged
+search belong to `project/instrukt/spec/feature/runner/history`, independently
+of this operational session surface. The runner's automatic starts return acceptance
 to its own dispatch path, never an instruction for an agent to execute.
 
 ### Runtime choice and feature availability
@@ -183,9 +184,11 @@ A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
 subject identity requires it. The first generation omits the generation suffix;
 a confirmed successor appends its positive generation number starting at 2.
-For home identity, confirmed closure permits succession. For attended subject
-identity, confirmed closure plus proven inability to resume permits succession;
-closed unattended assignments are not revived. A failed send, failed observation or
+T3 standing threads remain unsettled under automation. A human may settle
+one; it remains findable, wakes on a message and can be unsettled, for either
+home or subject identity and either attendance. Settling never permits succession.
+An actual terminal removal requires reconciliation of retained assignment and
+unresolved input before a successor can be admitted. A failed send, failed observation or
 unresolved start never does. Prior generations remain evidence; one current
 generation is admitted under the procedure/home guard and key lock. Discovery
 checks all generation-family semantic keys for that responsibility before selection;
@@ -281,25 +284,35 @@ wait for a runtime send. Input delivery is at least once across a lost acknowled
 or crash between send and commit. Handlers reconcile their subject idempotently;
 one keyed thread does not imply exactly-once execution of its brief.
 
-### Agent-selection catalogue
+### Model selection and adapter translation
 
-T3's `thread start` pairs `--provider <instance-id>` with `--model <slug>`.
-The compiled catalogue maps claude to `claudeAgent`, codex to `codex`, and
-gemini to `antigravity`, the runtime's default instance ids. Model slugs come
-from its published model manifest. Native effort ids are `effort`,
-`reasoningEffort`, and Antigravity's reported `thinking_level`, respectively;
-model selection retains the requested provider-native options. The host CLI
-exposes no catalogue endpoint, so custom provider instances and new models need
-updated adapter facts rather than user-authored catalogue configuration.
+`project/instrukt/spec/feature/configuration/agent-selection` owns role-keyed
+selection in `agents.yaml`. The adapter translates a profile's kind, existing
+T3 provider-instance id and typed option names; it owns no model catalogue,
+role order or tier chains. Every T3 built-in harness has shipped defaults.
+ACP discovery and configuration remain with the configuration skill; instrukt
+creates no T3 provider instance and implements no ACP protocol.
 
-The grounding sources are T3's [provider instance contract](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/providerInstance.ts),
-[model manifest](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/model-manifest.json),
-[Codex provider options](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/CodexProvider.ts),
-and [Antigravity model options](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/AntigravityProvider.test.ts).
-No effort flag exists in `t3 thread start -h`; unattended start evidence records
-that limit. Its unstructured launch failure does not prove that no thread was
-created, even when it mentions quota. Preserve its key for recovery rather than
-inferring a pre-creation rejection. Explicit no-start confirmation and an unavailable model mark allow a retry to resolve the next eligible chain entry on either start path. Retained requests carry their original family/tier preferences; only proven no-start retry may refresh the resolved model choice. Ambiguous or accepted starts preserve it.
+Before each instrukt-owned start the runner checks installation, enablement,
+login and reported models. It reports skipped profiles/models and their reasons.
+Native delegation passes resolved model and typed options when supported.
+T3's host CLI passes the selected instance with `--provider` and the model
+with `--model`; its effort limit is recorded under Known caveats.
+
+A quota rejection marks the selected model itself unavailable with expiry.
+That capacity mark alone never proves no thread was created. An unstructured
+launch failure, including one mentioning quota, retains the start key for
+recovery. Only proven pre-creation rejection or explicit no-start resolution
+permits chain fallback. Retry retains the role/order/tier inputs; ambiguous or
+accepted starts retain their resolved selection.
+
+### Owned child-command cleanup
+
+Every child command instrukt launches has a process group whose descendants
+are cleaned up on every outcome: success, failure, timeout and interruption.
+Completion is not reported while instrukt-owned descendants remain orphaned.
+This concerns instrukt's own commands, not a machine-wide process janitor or
+the runtime's standing agent lifecycle, which T3 owns.
 
 ### T3 command translation
 
@@ -322,8 +335,9 @@ instruction prose is a separate configuration surface.
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter matches their keys exactly. Sending to a settled thread
-wakes a new turn and un-settles it; settling is never evidence of absence or
-permission for a second keyed start. Archived or explicitly unknown threads are
+wakes a new turn and un-settles it; automation never settles a standing agent,
+and a human settling one is never evidence of absence or permission for a
+second keyed start. Archived or explicitly unknown threads are
 gone. The published CLI omits subagent threads from project listing; this
 surface reports only the threads the runtime exposes.
 
@@ -569,9 +583,21 @@ And the existing conversation wakes without a new thread
 And the listing window has no part in that decision
 ```
 
+### UC-SS21: Leave no instrukt-owned child processes behind
+
+```gherkin
+Given an instrukt invocation launches a child command that starts descendants
+When that command succeeds, fails, times out or is interrupted
+Then instrukt cleans the process group of its own child command
+And no descendant of that command remains orphaned by the invocation
+And runtime-managed standing agent lifecycle remains with the runtime
+```
+
 ### UC-SS4: Conversation archive lookup (retired)
 
-Retired: history search and archive lookup are outside A3; its test bindings have been removed.
+Retired on this operational session surface. Searchable history belongs to
+`project/instrukt/spec/feature/runner/history`; the former adapter bindings
+remain retired.
 
 ### UC-SS7: Agent-owned session ending (retired)
 
@@ -590,7 +616,8 @@ Retired: the runtime owns session ending; its test bindings have been removed.
 - T3 native shared delegation inherits the parent's recorded workspace. Native
   children may be absent from project listings; their parent recovers them through
   native task evidence.
-- UC-SS4 is retired: history search and archive lookup are outside A3.
+- UC-SS4 is retired on this session surface; searchable history is owned by
+  `project/instrukt/spec/feature/runner/history`.
 - UC-SS7 is retired: session ending belongs to the runtime.
 - T3 has no atomic server-side keyed start. Request pingdotgg/t3code#31621 could
   replace list-before-start; the local lock protects only instrukt starters.
@@ -598,9 +625,14 @@ Retired: the runtime owns session ending; its test bindings have been removed.
   explicit identity reconciliation, never a replacement start from a lost match.
 - T3's list JSON carries no worktree path. `show` decoder fields require verified
   runtime evidence; a fixture alone establishes no native response guarantee.
-- T3 receives the resolved provider/model pair. Its CLI has no effort/options flag; start evidence records that realization limit. Native dispatch receives all resolved inputs.
+- T3 receives the resolved provider-instance/model pair. Its CLI has no
+  effort/options flag; instrukt-owned starts get effort only from the T3
+  project default until upstream adds support. No instrukt workaround is
+  built. Native delegation passes supported resolved options; the full
+  selection contract is `project/instrukt/spec/feature/configuration/agent-selection`.
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
-  a visible gap; no archive or history service is introduced.
+  a visible gap; the operational session surface is independent of extracted
+  history under `project/instrukt/spec/feature/runner/history`.
 
 ## See Also
 

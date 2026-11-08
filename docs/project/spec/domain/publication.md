@@ -1,5 +1,5 @@
 ---
-description: Publication — a project publishes its `docs/general/` and `docs/domain/<x>/` positions from its committed main into the home, claims each by owner, patches the global index by owner, renders its `AGENTS.md` files, and, as owner of `docs/general/`, renders the global agent files and their settings keys from what is published on the computer.
+description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner, patches the global index by owner, renders its `AGENTS.md` files, and, as owner of `docs/general/`, renders the global agent files and their settings keys from what is published on the computer.
 delivered_by: [instrukt-first-build]
 ---
 # Publication — Spec
@@ -9,8 +9,8 @@ delivered_by: [instrukt-first-build]
 The publication context turns a project's committed documentation into what
 agents on this computer read. `instrukt sync` publishes the project the caller
 stands in, and only that project: from the committed state of its canonical
-main it publishes the project's `docs/general/` and `docs/domain/<x>/`
-positions into the home, claims each of them for the project, patches the
+main it publishes the project's general, domain and project positions
+into the home, claims each of them for the project, patches the
 global index so that exactly the project's own entries change, renders the
 project's `AGENTS.md` files, and records the commit it published beside the
 project's checkout path. The project that owns `docs/general/` also renders
@@ -20,14 +20,16 @@ instruction files. Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
 Publication never reads another project's repository, keeps no registry of
-projects, and does nothing when main equals the commit it last published. It
+projects, and after configuration migration does nothing when main equals the
+commit it last published. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
 ## Ubiquitous language
 
 **Home**
-:  `~/.instrukt`, the fixed place on this computer that holds publication and
+:  `~/.instrukt` by default, with isolated homes per worktree under
+   `project/instrukt/spec/feature/configuration/owned-files`; holds publication and
    state. Not a git repository; publication outputs are re-creatable from
    committed sources. The home's recovery exception is defined by
    `project/instrukt/design/architecture/overview`.
@@ -44,9 +46,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    each (`project/instrukt/spec/domain/docs`).
 
 **Published position**
-:  `docs/general/` or a `docs/domain/<x>/` of a project, published from its
+:  A project's general, domain or project position, published from its
    committed main to `~/.instrukt/docs/general/` or `~/.instrukt/docs/<x>/`.
-   `docs/project/` is never published; only its index entries enter the home.
+   The project position is likewise published to `~/.instrukt/docs/project/<slug>/…`.
+   All three are read from that committed publication.
 
 **Domain**
 :  A published `docs/domain/<x>/` position: a body of knowledge one project is
@@ -174,8 +177,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 #### Global index (aggregate)
 
 - **Root:** the home's global index.
-- **Contains:** index entries (id, description, position, owner, the absolute
-  path of a project entry's file in its project, pending ownership).
+- **Contains:** index entries (id, description, position, owner, published-file
+  location, source checkout provenance and pending ownership).
 - **Invariants:**
   - An id appears at most once.
   - Every entry names exactly one owner.

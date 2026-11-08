@@ -11,8 +11,8 @@ description: 'The two-tier Makefile button contract (fast agent loop vs heavy e2
 
 - Every repo's Makefile exposes the **agent loop**: `lint`, `format`, `test`,
   `install` — fast by design, safe to run on every change. The project
-  declares them as `actions` in its `instrukt.yaml`, and procedures call them
-  by name.
+  documents these commands in its project docs, and procedures run those checks.
+  Required CI checks remain the merge gate.
 - Every repo with heavy verification adds the mandatory **delivery lane**:
   `make e2e` — the suites too slow for the agent loop (browser/visual suites
   for sites, integration harnesses for services, release-grade test runs).
@@ -123,5 +123,5 @@ scripts may omit it.
 
 ## See Also
 
-- [sdlc/design/project-toolchain](../design/project-toolchain.md) — the project actions this extends.
+- [sdlc/design/project-toolchain](../design/project-toolchain.md) — the documented project checks this extends.
 - [sdlc/policy/frontend-production-baseline](frontend-production-baseline.md) — the frontend script buttons behind the shim.

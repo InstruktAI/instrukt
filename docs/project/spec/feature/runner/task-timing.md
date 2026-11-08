@@ -34,7 +34,7 @@ eligibility and missed-run decisions.
 | `cron: "<expr>"` | Recurring schedule. |
 | `catch_up: once` | Default: missed occurrences result in one catch-up run rather than a replay of every missed occurrence. |
 | `catch_up: skip` | Missed occurrences are skipped. |
-| Optional agent/model preference | Dispatch consults it before procedure dispatch defaults and global `agents.order`. |
+| Optional agent/model preference | Dispatch consults it before the role mapping in `~/.instrukt/agents.yaml`. |
 
 The task record holds its schedule. Instrukt applies the same due-time and
 missed-run logic on every machine; the external scheduler's own missed-run
@@ -42,8 +42,9 @@ behavior does not select task occurrences. A dependency such as "after todo
 X is delivered" is an event, not a clock schedule.
 
 Cron uses five fields in the machine's local time zone with the OS's
-daylight-saving rules. `at` is ISO-8601 with an offset. An occurrence is
-missed when it fell before this wake-up and after the last one and did not
+daylight-saving rules. Changing the computer's timezone moves recurring
+schedules with it; no task declares a timezone. `at` is ISO-8601 with an offset.
+An occurrence is missed when it fell before this wake-up and after the last one and did not
 fire. Last-fired accounting is a stamp on the task record. The runner lock
 serializes wake-ups; an in-flight task is not fired again, and a failed
 dispatch proven rejected before creation counts as not fired. An ambiguous
@@ -153,6 +154,15 @@ Then the task continues in that thread without firing the occurrence again
 But when listing finds no matching thread
 Then the occurrence remains unresolved and the developer sees its resolve-start command
 And later occurrences wait until the interrupted occurrence is resolved
+```
+
+### UC-TT6: Follow the computer's timezone
+
+```gherkin
+Given a developer's authorized recurring task has a cron schedule
+When the computer's timezone changes
+Then later recurring occurrences follow that computer's new local timezone and daylight-saving rules
+And the task supplies no timezone override
 ```
 
 ## Known caveats

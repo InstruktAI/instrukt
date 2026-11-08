@@ -7,7 +7,7 @@ delivered_by: [instrukt-first-build]
 
 ## What it is
 
-instrukt has one configuration file name and one schema, read in two layers,
+`instrukt.yaml` uses one schema read in two layers,
 like git's user and repository configuration. The global layer
 (`~/.instrukt/instrukt.yaml`) holds a machine's defaults and what only the
 machine may decide; the project layer (`instrukt.yaml` at the repository root)
@@ -37,8 +37,6 @@ enable events. Installation and withdrawal are owned by
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
-| `agents.order`, `agents.tier` (ordered families and tier) | global only | dispatch |
-| `agents.<family>.<tier>` (ordered model/effort/options chains) | global only, over shipped tier entries | dispatch |
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
@@ -53,8 +51,7 @@ enable events. Installation and withdrawal are owned by
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
 | `requires` (modules the flavor needs) | project only | publication |
-| `actions` (name → the project's own command) | project only | the flavor's procedures |
-| `board` (`false`, or the GitHub project `<owner>/<number>` todos are reflected to) | project only | the `todos` module |
+| `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
 | `github.approvers` (GitHub logins) | project only | work |
 | `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
@@ -62,8 +59,8 @@ enable events. Installation and withdrawal are owned by
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
 
 Runtime choice is global-only: a cloned repository does not decide which runtime
-executes on the machine. `actions` are called by name from procedures and never
-run by hooks.
+executes on the machine. Procedures run checks as the project documents them;
+there is no project-layer `actions` key. CI required checks remain the merge gate.
 
 ### Event configuration values and cross-computer agreement
 
@@ -83,10 +80,12 @@ Redis socket paths, local credentials, runtime and ticks settings stay local.
 No shared configuration layer or new project-owner-machine routing key exists.
 
 Project identities and checkouts needed for activation must exist on the emitting
-computer, including ingress. Only ingress needs a declaring project's `.env`
-signing values. Source secret fields are exact raw `${NAME}` references;
-ingress validates their nonblank values solely in that project's `.env`, with
-no process-environment fallback. A declared previous secret follows the same
+computer, including ingress. Signing values needed on ingress resolve from the
+one owner-only machine-local `~/.instrukt/secrets.env`. Source secret fields
+are exact raw `${NAME}` references; the same file also supplies Redis and all
+other instrukt secrets on every entry path. Project `.env` and process
+environment supply no fallback. The protected read/write contract is
+`project/instrukt/spec/feature/configuration/owned-files`. A declared previous secret follows the same
 rules as current. Configuration reads preserve references and never expand
 source signing material. Source edits apply at the next request. The domain key selects
 `/hooks/inbound/project/<slug>/<domain>` and the emitted type prefix; it is
@@ -183,9 +182,9 @@ agent-facing consumers retrieve the value through its alias.
 | `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
 | `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
 | `discuss` | Use a supported native discussion capability for the requested collaboration, preserving each participant's attribution. Report an unavailable capability; the linked-conversation mechanism remains unsettled and no instrukt forwarding route is supplied. |
-| `start_thread` | Use supplied placement.selection family/provider/model/effort/options for native startup. The host CLI passes --provider and --model and records its effort/options flag gap. For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
+| `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
 | `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
-| `finish_thread` | Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling. |
+| `finish_thread` | Preserve unfinished obligations. Automation never settles a standing agent; it remains unsettled in the sidebar. For other threads use native settling, which applies when its current turn ends. A human-settled standing thread stays reachable and wakes on a message. |
 | `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
 | `connect_environment` | Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite. |
 | `dispatch_remote` | Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success. |
@@ -203,43 +202,11 @@ reads and documentation remain usable without a runtime.
 
 ### Agent preferences and availability
 
-Procedure frontmatter is `dispatch: {agent: [<family>, …], tier: light|standard|strong|premium}`.
-Task `--agent` and optional `--tier` precede the procedure's ordered families;
-otherwise dispatch uses global `agents.order` and `agents.tier`. An explicitly authored global order carries its tier too; a missing tier is a validation finding. An omitted task
-tier inherits the procedure tier, then the global tier. The procedure order
-replaces the global order; a task family appears once at its first position.
-
-Global `agents.<family>.<tier>` is a nonempty ordered chain of
-`{model, effort, options?}`. Options map provider-native option ids to string or
-boolean values. Global chains override the corresponding shipped tier entry;
-other families and tiers retain shipped defaults. Shipped heuristics use high
-effort throughout, and premium ends with the strong tier's model/effort. These
-choices are data, never validation rules. No shipped procedure uses premium.
-
-The runtime catalogue supplies family/provider/model/option identities, never
-configuration. T3's host CLI has no catalogue listing, so its adapter carries a
-catalogue grounded in T3's published manifest and option descriptors. `instrukt
-agents catalog` returns it. Unknown model, effort, option id or option value is
-a configuration finding; project layers cannot replace machine selection.
-
-`instrukt agents status <family> <available|unavailable|degraded> [--model <slug>]
-[--until <RFC3339>] [--reason <text>]` records local capacity in SQLite;
-`instrukt agents availability` reads normalized marks. An agent mark applies to
-all its models; model marks apply only to that model. Expired marks lapse at the
-command clock, including equality. Non-available model marks require expiry;
-unavailable marks require a reason. Available clears the effective restriction.
-Automated starts skip unavailable and degraded capacity, preserving TeleClaude's
-reservation of degraded capacity for human launches. This marks no configuration
-and changes no existing conversation.
-
-Selection walks families sequentially, then each family's tier chain, taking
-the first eligible entry. Only after exhausting that chain does it try another
-family. Both unattended runner starts and native worker attempt facts carry the
-resolved family, provider, model, effort and options. Resolved options include the effort under its native option id, plus configured extra options, ready for native delegation. T3 CLI receives explicit
-`--provider` and `--model`; its lack of effort/options flags is recorded in start
-evidence. Native dispatch passes all resolved inputs through `runtime.dispatch`.
-Ambiguous creation or failed sends retain the existing assignment; only a
-rejection proven before creation permits chain fallback.
+Model selection is role-keyed configuration in `~/.instrukt/agents.yaml`,
+independent of these layers and of procedure content. A procedure's `role`
+selects a role mapping, falling back to `default`; per-task overrides win.
+The full profile, tier-chain, readiness, availability and upgrade contracts are
+`project/instrukt/spec/feature/configuration/agent-selection`.
 
 ### Locating the layers
 
@@ -282,9 +249,12 @@ references are checked for unresolved keys and cycles without executing commands
 ### Schema versions and migration
 
 - Every document carries `schema_version`; `init` writes the current one.
-- `instrukt config init` and publication run the migration operation: a document
-  of an older schema version is rewritten in the current version with its
-  settings preserved, through the same atomic write as a patch.
+- Every configuration path runs migration before schema refusal or skip: a
+  document of an older schema version is rewritten in the current version
+  with its settings preserved, through the same atomic write as a patch.
+  This includes reads, patches, validation, installation, ticks and unchanged
+  publication. Other owned files gain versions when their shapes first change
+  (`project/instrukt/spec/feature/configuration/owned-files`).
 - A document already at the current version is left untouched.
 
 ### Environment
@@ -336,7 +306,7 @@ And reading the runtime choice inside that project still answers the machine's o
 
 ```gherkin
 Given a developer's machine and project configuration were written by an older instrukt
-When they upgrade instrukt and initialize or publish as usual
+When they upgrade instrukt and read configuration or run a scheduled tick
 Then their configuration is brought to the current schema with every setting kept
 And the commands that read it work as before
 ```
@@ -358,18 +328,10 @@ And the configuration is unchanged
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; no runtime is chosen |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
-| `agents.<family>.<tier>` (ordered model/effort/options chains) | global only, over shipped tier entries | dispatch |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
-| `board` | `false` or `<owner>/<number>`; `true` is a finding asking for the project reference | `false` (todos are always issues; the board is opt-in). |
+| `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
-
-An action is a command string, which takes no files, or a declaration
-`{command: <string>, takes_files: true}`; `takes_files` defaults to `false`.
-For a file-taking action, procedures append file paths as arguments to the
-command read with `config get actions.<name>`; no action-runner command is
-introduced.
-
 
 ### UC-CL5: Configure external state in its owning source
 
@@ -398,7 +360,8 @@ But a cloned project cannot replace the machine's agent-action values
 - The project layer carries the `yaml-language-server` modeline naming its
   editor schema; it is a comment and never a setting
   (`project/instrukt/spec/feature/publication/editor-schemas`).
-- `init` and `sync` migrate older schema versions in place; other commands refuse and name that door. All commands refuse a newer schema version and direct the caller to upgrade instrukt.
+- Every entry path migrates older configuration before refusal or skip. All
+  commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - `requires` naming a switched-off module is a validation finding.
 - Runtime capability metadata belongs to the shipped integration; adapter

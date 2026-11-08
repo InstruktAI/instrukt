@@ -28,7 +28,7 @@ Implement the generic snapshot-testing contract in Python with syrupy, pytest ex
 4. For a non-empty boundary guard, assert the value's truthiness through a typed helper; do not inspect its wording.
 5. Represent protocol identifiers and closed vocabularies with the production-owned enum or nominal type. Import that member into the test for identity comparison, and snapshot its serialized schema value separately when that wire value is contractual.
 6. Replace equality, membership, prefix, suffix, search, and regex assertions over emitted text with a syrupy snapshot. Assert raised failures with `pytest.raises(<ExceptionType>)`, not their message text.
-7. Run the project's `test` action, read every snapshot diff, and only then run the project's own snapshot-update flag named in its `test` action when the delta matches intent.
+7. Run the project's documented test command, read every snapshot diff, and only then run the project's own snapshot-update flag named in its test documentation when the delta matches intent.
 
 ## Outputs
 

@@ -96,8 +96,8 @@ every production default ships silently from the applicable baseline.
 
    For sites, follow `sdlc/procedure/setup-visual-regression`.
 
-   Whatever the flavor, end by declaring the project's own quality commands
-   as `actions` in its `instrukt.yaml` (`test: make test`).
+   Whatever the flavor, end by documenting the project's own quality commands
+   in its project documentation so procedures can run those checks.
 
 ## Outputs
 

@@ -27,7 +27,7 @@ Implement the generic snapshot-testing contract in TypeScript with Vitest snapsh
 3. For a non-empty boundary guard, use a typed helper that checks presence without grading wording.
 4. Represent protocol identifiers and closed vocabularies with a production-owned `as const` object or literal-union owner. Import the member for identity comparison and snapshot the owner separately when its serialized values are contractual.
 5. Replace equality, containment, prefix, suffix, and regular-expression assertions over emitted text with a snapshot. Assert thrown failures by error type rather than message text.
-6. Run the declared package test script through the project's `test` action, read every snapshot diff, and only then run the project's own snapshot-update flag named in its `test` action when the delta matches intent.
+6. Run the declared package test script through the project's documented test command, read every snapshot diff, and only then run the project's own snapshot-update flag named in its test documentation when the delta matches intent.
 
 ## Outputs
 

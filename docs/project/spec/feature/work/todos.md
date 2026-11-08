@@ -31,7 +31,7 @@ first input-artifact version in one transaction of the state database
 kind, dependency or grouping rejects creation before partial work is recorded.
 `--icebox` creates the todo in the icebox. For a task, `--agent <name>
 [--tier light|standard|strong|premium]` sets its optional agent preference, which
-dispatch uses before `agents.order`. Admission is the agent's judgment;
+dispatch uses before the role mapping in `~/.instrukt/agents.yaml`. Admission is the agent's judgment;
 there is no machine proof gate.
 `instrukt todo create` accepts `--human-involved true|false` as an action-scoped,
 audit-only declaration under `general/policy/human-involvement-recording`.
@@ -65,7 +65,7 @@ Timing and firing decisions belong to the runner; work retains the schedule
 and task-firing stamps.
 
 A task record carries an optional agent/model preference. Dispatch consults
-that task preference before procedure dispatch defaults and global `agents.order`.
+that task preference before the role mapping in `~/.instrukt/agents.yaml`.
 
 ### Reads and changes
 

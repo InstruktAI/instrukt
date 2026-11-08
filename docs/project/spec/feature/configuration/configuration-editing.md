@@ -25,6 +25,10 @@ default and the global layer with `--global`.
 | `patch --revision <rev>` | applies a merge patch to the addressed layer (below). |
 | `validate` | reports the addressed layer's findings (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 
+Configuration migration precedes refusal or skip on every verb, not only init.
+Owned-file evolution and protected secret commands are
+`project/instrukt/spec/feature/configuration/owned-files`.
+
 ### Patch
 
 - **Input:** a YAML mapping, given inline with `--yaml`, from a file with
@@ -53,8 +57,10 @@ default and the global layer with `--global`.
 The same revision-checked patch validates raw source references before
 interpolation and checks the full effective event switch. Invalid source shapes,
 domain keys, verification schemes, conflicting name sources, layer placement or a source with events off refuse atomically.
-Only ingress requires the declared project's nonblank `.env` values;
-non-ingress configuration may carry reference names without values. Secret
+Ingress requires its signing references to have nonblank values in the machine's
+owner-only `~/.instrukt/secrets.env`; non-ingress source validation may carry
+those reference names without needing their signing values. Every path reads
+its required instrukt secrets through that same protected machine-local file. Secret
 resolution errors name project and reference, never value. `get`, `get --json`,
 revision reports and patch diagnostics retain or mask secret references;
 expanded signing/Redis credentials never enter their output. Reference text is

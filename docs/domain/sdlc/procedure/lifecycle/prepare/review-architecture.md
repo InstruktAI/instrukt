@@ -6,9 +6,6 @@ role: architecture-reviewer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 ---
 
 # Review Architecture — Procedure

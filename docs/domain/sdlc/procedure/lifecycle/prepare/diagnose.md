@@ -163,8 +163,8 @@ discovery effort and leaves unchanged what stands between a cause and a plan.
 Reserve one diagnoser attempt through `instrukt todo attempt`, delegate the
 returned assignment natively under the configured instruction, then record its
 native child id with `todo bind` before the peer records its work.
-Use the procedure's `dispatch` order or global `agents.order`, taking the
-first agent the runtime reports available. Only a rejection proven to precede creation permits another entry; an ambiguous
+Use the procedure's role mapping in `~/.instrukt/agents.yaml`, with per-task
+overrides first, walking each ready profile's tier chain before the next profile. Only a rejection proven to precede creation permits another entry; an ambiguous
 native start retains its reserved attempt. Exhaustion is an anomaly.
 Record and reuse the peer's session id with the configured runtime status inspection instruction and
 the configured runtime message instruction; read its conversation through

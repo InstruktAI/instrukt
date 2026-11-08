@@ -2,9 +2,6 @@
 description: 'Proactive log-scanning task that discovers a project''s runtime errors and files a minimal bug report for each untracked signal.'
 visibility: 'public'
 role: bug-hunter
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: standard
 ---
 
 # Log Bug Hunter — Procedure
@@ -36,7 +33,8 @@ the todos module as a todo of kind `bug`. The bug lifecycle owns diagnosis and i
 
 ## Steps
 
-Each firing writes its replacement checkpoint to `{project_root}/workspace/{slug}/checkpoint.json` and records that output reference in the task's `log` under `run-task`. The outcome stamp records success or error separately. No suppression store is used.
+Each firing writes its replacement checkpoint to `{project_root}/workspace/{slug}/checkpoint.json` and records that output reference in the task's `log` under `run-task`. The outcome stamp records success or error separately. Retained known-issue
+suppressions are consulted before filing; the scan checkpoint is not their store.
 
 1. Establish the scan window for this project.
    - Read the previous firing's checkpoint using the schema under Outputs. An absent checkpoint uses the first-run defaults. A present checkpoint that cannot be read or does not match this procedure's schema follows Recovery.
@@ -71,6 +69,13 @@ Each firing writes its replacement checkpoint to `{project_root}/workspace/{slug
    - When congestion or a computer restart explains the error, exclude it. When the available observations cannot rule out either cause, exclude it as causally inconclusive. Do not create a bug to obtain the missing causal evidence.
 
 3. Deduplicate each error signal that passed the eligibility and causal gates.
+   - Read the project's retained known-issue suppressions and apply their stated
+     scope and reason before filing. A matching triaged signal is suppressed,
+     not filed again; unrelated signals continue through these checks. Retain
+     the disposition independently of this firing's checkpoint. When triage
+     changes, update or remove the suppression through the owning work contract.
+     An unreadable suppression set is incomplete classification, never an empty
+     set or permission to file.
    - Read `instrukt todo list`. It returns slugs, and a
      slug names work rather than a mechanism, so a signal that matches no slug
      is not thereby untracked. Select candidates by token overlap between the

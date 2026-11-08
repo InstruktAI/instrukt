@@ -3,9 +3,6 @@ activation_trigger: Analyze or re-analyze a project.
 description: 'AI-driven project analysis procedure. Guides the analysis session through codebase discovery, convention inference, and snippet generation.'
 visibility: 'public'
 role: project-analyst
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: standard
 ---
 
 # Project Analysis — Procedure

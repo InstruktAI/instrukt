@@ -118,9 +118,10 @@ have no shared transaction: a crash after external acceptance but before local
 confirmation can repeat input. Retained identities suppress confirmed repeats;
 the procedure reconciles its effects idempotently.
 
-Explicit close suspends delivery without causing revival by itself. A later
-eligible continuation or confirmed successor resolves retained older work first
-under the responsibility's home, subject and attendance rules. Failed observation
+Human settling of a standing T3 thread suspends neither its responsibility nor
+delivery: later input wakes the same thread. Automation keeps it unsettled.
+Continuation resolves retained older work first; actual runtime record removal
+requires reconciliation under the standing-agent contract. Failed observation
 or send never authorizes a replacement. Cleanup retains pending input or a
 visible terminal failure; it never silently discards the responsibility's work.
 
@@ -128,7 +129,7 @@ visible terminal failure; it never silently discards the responsibility's work.
 
 Initialization records role, attendance and delivery intent.
 All events that session receives use those settings, including activations
-accepted under a newer declaration. Revival preserves them; a new successor
+accepted under a newer declaration. Continuation preserves them; a new successor
 adopts current publication. Acceptance retains its own declaration as evidence.
 The loader states fixed entry facts while loading current instructions; no
 historical documentation snapshot is implied. Inline reading reconfigures
@@ -243,7 +244,7 @@ Scenario Outline: Continue with fixed settings
   Examples:
     | agent                     | settings                       |
     | the existing agent        | its original settings          |
-    | the revived agent         | its original settings          |
+    | the human-settled agent   | its original settings          |
     | a newly created successor | the current published settings |
 ```
 
@@ -330,9 +331,9 @@ Examples:
 - Handover establishes supplied context, not successful domain execution.
   Lost acknowledgement can repeat data; identities promise neither exactly-once
   effects nor replay beyond retention.
-- Only-at-entry work may defer later events for its whole run. Attendance-aware
-  visibility and subject revival have their own capability limits under
-  procedure-standing-agent; missing steering is independent of those limits.
+- Only-at-entry work may defer later events for its whole run. Standing T3
+  threads remain unsettled under automation and reachable after human settling
+  under procedure-standing-agent; no revival or attendance-visibility gate applies.
 
 ## See Also
 

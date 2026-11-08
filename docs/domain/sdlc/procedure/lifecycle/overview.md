@@ -101,7 +101,7 @@ Merge candidates to canonical main:
   before freezing the candidate.
 - **Verification** — push the exact candidate to `origin/integrate`. Required
   green checks admit that commit; `runner.ci_completed` wakes the integrator
-  with its result. Without CI, run the project's configured `test` action on
+  with its result. Without CI, run the project's documented test command on
   that candidate in the integration worktree.
 - **Push** — fast-forward canonical main to exactly the verified commit and
   confirm the remote result. Main movement or candidate edits require

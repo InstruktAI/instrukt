@@ -10,9 +10,6 @@ parameters:
   - name: brief
     required: true
     rest: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Third-Party Research — Procedure

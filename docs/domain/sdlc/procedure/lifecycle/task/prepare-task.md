@@ -7,9 +7,6 @@ role: task-preparer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: standard
 ---
 
 # Prepare Task — Procedure

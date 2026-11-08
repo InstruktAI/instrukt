@@ -88,7 +88,9 @@ transition declares `from`, `to`,
 `when`, `action` and optional ordered effects. Actions are keyed by action id
 and declare `command` and `template`; template paths resolve within `workflow/`.
 `workflow/actions.yaml` also declares `roles:`, a non-empty list of unique role
-names used by procedure-role validation when todos is enabled. Action ids stay
+names used only to validate procedures that workflow dispatches when todos is
+enabled. Subscribed procedures use roles independently of this list and of todo
+enablement. Action ids stay
 at the file root alongside reserved `roles:` and `effects:` keys.
 Effects are declared in the same file under `effects:`, keyed by effect name,
 each with `command` and an optional `done_when` condition over facts.

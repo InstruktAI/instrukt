@@ -4,9 +4,6 @@ role: task-runner
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: standard
 ---
 
 # Run Task — Procedure

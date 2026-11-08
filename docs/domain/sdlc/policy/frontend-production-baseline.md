@@ -102,7 +102,7 @@ shadcn:add · shadcn:remove        (when shadcn is in play)
 A five-line Makefile shim maps the button contract
 (`sdlc/policy/ci-pipeline-conventions`) onto them (`lint:`/`format:`/`test:`
 delegate to the package scripts, `e2e:` runs the heavy suites) so the project's
-`actions` and shared CI pipelines work identically across all repos. Component libraries are vendored through their CLI (pinned as a
+documented checks and shared CI pipelines work identically across all repos. Component libraries are vendored through their CLI (pinned as a
 devDependency, driven via the scripts) — registry components are never
 hand-reconstructed.
 

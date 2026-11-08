@@ -99,7 +99,9 @@ without rewriting its config, credentials or service. Otherwise install the
 Redis executable when absent using a supported platform provisioner, and
 configure one instrukt-owned local instance. It has private configuration/data
 under instrukt state, an owner-only Unix socket, no TCP listener, persistence,
-default ACL user off and one instrukt ACL user with privately stored credentials.
+default ACL user off and one instrukt ACL user with credentials in the one
+machine-local owner-only `~/.instrukt/secrets.env`, written through the secrets
+commands under `project/instrukt/spec/feature/configuration/owned-files`.
 Only secret references enter configuration or output. Its owned launchd or
 systemd service survives runner exit. Package provisioning must preserve foreign
 service state; inability to do that is a prerequisite finding, never permission
@@ -126,7 +128,9 @@ Receiver demand exists only on the configured `ingress.computer`, identified
 by instrukt's stable machine ID, and only while an adopted enabled project's
 nonempty valid source map exists there. Missing declaring checkouts or signing
 values fail with the project/reference named. Signing material resolves only
-from each declaring project's `.env`; other computers need no signing values.
+from the ingress computer's owner-only `~/.instrukt/secrets.env`; other
+computers need no signing values. Ticks and interactive paths use that same
+file for their required signing, Redis and other instrukt secrets.
 All participants agree on ingress ID and logical cluster Redis/namespace;
 local sockets, runtime and tick policy remain local. Configuration management
 distributes those facts; instrukt has no shared configuration layer.

@@ -111,7 +111,7 @@ Preparation head reviews belong to the todo record: exact clean head, complete f
   heads) and separate preparation/work orchestrator workspace paths retained
   through their corresponding integration and cleanup, task
   schedule (`at`/`cron`, `catch_up`), optional agent/model preference consulted
-  before procedure dispatch defaults and global `agents.order`, and reflected revision.
+  before the role mapping in `~/.instrukt/agents.yaml`, and reflected revision.
 - **Invariants:** every change, creation included, commits in one
   transaction of the state database; identity survives rename and
   recovery; workflow facts bind the evidence they concern. The detailed
@@ -158,6 +158,8 @@ concerning the todo in its project origin
 (`project/instrukt/spec/domain/workflow`).
 
 ## Use cases
+
+- **known-issue-suppression** — [project/instrukt/spec/feature/work/known-issue-suppression](../feature/work/known-issue-suppression.md) — retained triage prevents repeated log-hunter filings.
 
 - **Todos** — `project/instrukt/spec/feature/work/todos` — record work
   with its kind and recover withdrawn intent and evidence.

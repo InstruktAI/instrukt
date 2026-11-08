@@ -1,5 +1,5 @@
 ---
-description: A project publishes only its own part, from the committed state of its canonical main — its `docs/general/` and `docs/domain/<x>/` positions claimed by owner, index entries patched into the global index by owner, with duplicate-id, ownership and reserved-name refusals, retraction of what it no longer owns, and a no-op when main equals the published commit.
+description: A project publishes only its own general, domain and project positions from committed canonical main, claimed by owner, index entries patched into the global index by owner, with duplicate-id, ownership and reserved-name refusals, retraction of what it no longer owns, and a no-op when main equals the published commit.
 delivered_by: [instrukt-first-build]
 ---
 # Project Publication — Spec
@@ -33,9 +33,11 @@ refuse publication and preserve the previous publication.
 - **Which positions.** What the committed tree holds decides what the project
   publishes: `docs/general/` when it exists, and each directory
   `docs/domain/<x>/`, published as domain `<x>`. No setting declares them.
-  `docs/project/` is the project's own and is never published.
+  `docs/project/` is published under `~/.instrukt/docs/project/<slug>/…`,
+  where its ids remain `project/<slug>/…`.
 - **Configuration first.** Before publishing, sync brings both configuration
-  layers to the current schema version
+  layers to the current schema version before any refusal or
+  unchanged-publication skip
   (`project/instrukt/spec/domain/configuration`).
 
 ### The no-op
@@ -43,8 +45,9 @@ refuse publication and preserve the previous publication.
 - Every successful sync records the commit it published beside the project's
   checkout path under `~/.instrukt/state/publication/`. The runner consumes
   this existing state (`project/instrukt/spec/domain/runner`).
-- Unless `--force` is supplied, when canonical main equals the published
-  commit, sync changes nothing in the home or the project, except removing
+- After configuration migration, unless `--force` is supplied, when canonical
+  main equals the published commit, sync changes nothing in the home or the
+  project, except removing
   leftovers a previous sync reported, and exits zero.
 - A sync that is refused or fails records no commit, so the next trigger
   tries again.
@@ -61,7 +64,7 @@ refuse publication and preserve the previous publication.
 | Workflow flavor | `~/.instrukt/docs/<x>/workflow/` | the owning project's `docs/domain/<x>/workflow/` definitions, actions and templates, copied with the domain and retracted by the same owner rules; not snippet index entries |
 | Claims | the ownership record under `~/.instrukt/state/publication/` | the project as owner of each position it publishes |
 | Published entries | the global index `~/.instrukt/state/index.yaml` | one entry per published snippet, owned by the project |
-| Project entries | the global index | one entry per snippet under the project's `docs/project/` (ids `project/<slug>/…`), owned by the project, carrying the absolute path of the file in the project's primary worktree |
+| Project position and entries | `~/.instrukt/docs/project/<slug>/…` and the global index | committed `docs/project/` content, including pending companions and its position files; entries owned by that project, ids `project/<slug>/…`, resolving to published files with source checkout provenance |
 | `AGENTS.md` files | the project's primary worktree | `project/instrukt/spec/feature/publication/agent-entrypoints` |
 | Global agent files | the agent CLIs' user directories | only from the owner of `docs/general/` (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
 | Editor schemas and modelines | the project's primary worktree | `project/instrukt/spec/feature/publication/editor-schemas` |
@@ -80,8 +83,8 @@ refuse publication and preserve the previous publication.
   sync refuses and names the file.
 - Rendering never inlines a pending snippet and drops planned material, so
   rendered outputs carry the current contract only.
-- Project snippet content stays in the project; only its index entries enter
-  the home.
+- Project snippets are copied from committed main into the project store;
+  working-tree edits do not alter retrieval.
 - Pending snippets and their companions are published and indexed with their
   pending ownership; retrieval decides what a reader sees
   (`project/instrukt/spec/domain/docs`).
@@ -117,8 +120,9 @@ of other projects are carried over unchanged.
 | Position owned by another project | `docs/general/`, or a `docs/domain/<x>/`, already claimed on this computer by another project | sync refused, naming the position and its current owner |
 | Duplicate id | a new entry's id is already held by another project's entry | sync refused, naming the id and its owner |
 
-A refused sync changes nothing in the home or the project, records no
-commit, and exits non-zero. A position becomes free to claim once its owner's
+After configuration migration, a refused sync changes no publication output,
+records no published commit, and exits non-zero. A position becomes free to
+claim once its owner's
 sync retracts it. No name is reserved beyond `general` and `project`, besides
 `third-party`'s existing special case, and no claim is curated.
 
@@ -162,8 +166,9 @@ Once the new publication is in place and its commit recorded, failing to
 remove the replaced publication's leftover copy does not fail the sync: the
 sync reports the leftover path and succeeds, and a later sync removes it.
 
-A refused or failed sync changes nothing in the home or the project except
-removing leftovers a previous sync reported. A refused or failed sync still
+Configuration migration precedes publication admission. After that migration,
+a refused or failed sync changes no publication output in the home or project
+except removing leftovers a previous sync reported. A refused or failed sync still
 reports the leftovers it could not remove.
 
 Listing and reading the published corpus and index belong to
@@ -211,7 +216,7 @@ And another project's published documentation is unchanged
 ```gherkin
 Given a developer's project whose committed main is already published
 When publication runs for the project again
-Then nothing in the published corpus, the index or the project changes
+Then after any required configuration migration, nothing in the published corpus, the index or the project changes
 When the developer asks for the project to be republished regardless
 Then its documentation is published again from its committed main
 ```
@@ -275,11 +280,20 @@ And it says that general and project are reserved and no domain may take them
 And the previously published documentation is unchanged
 ```
 
+### UC-PUB10: Read committed project docs independently of source edits
+
+```gherkin
+Given a developer has published a project's committed main
+When its primary worktree snippet is edited without another main publication
+Then docs get still reads the committed copy under the project's home store
+And reading that project's id from another project needs no source checkout file
+```
+
 ## Known caveats
 
-- Project index entries point at the file in the project's primary worktree,
-  while the entries themselves come from committed main; a project snippet
-  edited but not committed is read as edited.
+- Project retrieval reads the last committed-main publication. Uncommitted or
+  unmerged project edits remain outside that store; a failed sync retains the
+  previous project publication with its index.
 - The default branch is the remote's default (`origin/HEAD`); without a
   remote, it is the local repository's current main line as git reports its
   default.

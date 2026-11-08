@@ -9,7 +9,7 @@ visibility: public
 
 ## Rules
 
-Main has one writer: the integrator. Every other agent authors and commits in a worktree: a todo's separate preparation and work worktrees, or a short-lived one-off worktree for ad hoc work. Independent review binds the exact worktree head before integration. Reviewed preparation docs are integrated as soon as possible before build; work later starts from that updated main. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
+Main has one writer: the integrator. Every other agent authors and commits in a worktree: a todo's separate preparation and work worktrees, or a short-lived one-off worktree for ad hoc work. Where independent review is owed under the routing rule below, it binds the exact worktree head before integration. Reviewed preparation docs are integrated as soon as possible before build; work later starts from that updated main. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
 
 This is the canonical source of commit behavior. Other docs may reference it, but must not redefine commit policy.
 
@@ -47,7 +47,7 @@ All Committizen types are allowed.
   integration worktree and pushes it to `integrate`; CI runs on that push, and
   only a green result fast-forwards main to exactly that commit. Branch
   protection on main with required status checks refuses any other push. A
-  project without CI runs its `test` action on the candidate instead. When main
+  project without CI runs its documented test command on the candidate instead. When main
   still turns red, it is reverted first and repaired in its own todo.
 - **Commit authorized, coherent work first; then route review.** Committing is
   part of normal autonomous agent work once the current authoring context has
@@ -71,7 +71,7 @@ All Committizen types are allowed.
   between components, concurrency, security, or what a governed snippet
   directs other agents to do. The author dispatches that
   reviewer and waits for the verdict. Every other commit owes no review, and
-  the author asks no one: a removal, a merge of work already reviewed where it was written, a
+  the author asks no one: removal of dead code or files, a merge of work already reviewed where it was written, a
   validation or mechanical repair, a rename or move, formatting, and wording or
   prompt prose whose effect is presentation. Presentation wording its owner
   judged while it was being written — wording a human shaped with the authoring
@@ -79,7 +79,10 @@ All Committizen types are allowed.
   the consequences above goes to review whoever shaped it, because shaping its
   intent does not establish its effect on the rest of the system. Which paths
   the diff touches never decides that review is owed. Review is technical
-  stewardship, never a human ratification step.
+  stewardship, never a human ratification step. Removing a live check or branch
+  changes logic and owes review. Mechanical changes require green CI only.
+  This author-decided routing is always loaded through the general baseline;
+  it adds no checkpoint gate.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 
 - A `REQUEST CHANGES` verdict stays with the authoring session for

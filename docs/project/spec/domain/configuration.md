@@ -7,8 +7,9 @@ delivered_by: [instrukt-first-build]
 
 ## What it is
 
-The configuration context owns `instrukt.yaml`: one schema, read in two layers
-on git's model of a user file and a repository file. The global layer
+The configuration context owns the layered `instrukt.yaml`, role-keyed
+`agents.yaml` and protected machine-local secrets. `instrukt.yaml` uses one
+schema, read in two layers on git's model of a user file and a repository file. The global layer
 (`~/.instrukt/instrukt.yaml`) holds a machine's defaults and the settings only a
 machine may decide; the project layer (`instrukt.yaml` at a repository's root)
 holds what a project declares and its overrides. The context decides which key
@@ -66,7 +67,9 @@ be absent outside that runtime and does not change runtime selection.
 
 ## Ownership boundary
 
-- **Owns** — the `instrukt.yaml` schema; layer rules; validation of a layer
+- **Owns** — the `instrukt.yaml` schema, `agents.yaml` selection shape and
+  validation, machine-local protected secrets and owned-file migration;
+  layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
   revisions and safe patching; interpolation; validation of the explicit runtime
   choice, agent-action instruction entries and derived caller identity.
@@ -75,12 +78,12 @@ be absent outside that runtime and does not change runtime selection.
   composition reads adapter caller identity and `agents.<name>.git_author` and decides the
   commit author and trailers; blueprint, work, workflow and runner read the
   keys and module switches governing their capabilities; the flavor's
-  procedures call `actions` by name. When migration runs during publication, publication decides when;
-  configuration decides how.
+  procedures run the checks the project documents. Configuration migration
+  precedes refusal or skip on every path; configuration owns its ordering and conversion.
 - **Published contracts** — `instrukt config get [<path>] [--global]`,
   `instrukt config patch --revision <rev> [--global]`,
   `instrukt config init [--global]`, `instrukt config validate [--global]`;
-  the migration operation that `init` and publication invoke; the
+  the migration operation every entry path invokes before refusal or skip; the
   configuration schema type the editor schema of `instrukt.yaml` is generated
   from (`project/instrukt/spec/feature/publication/editor-schemas`); the explicit runtime selection and adapter caller-identity lookup used by
   commit composition.
@@ -92,9 +95,10 @@ be absent outside that runtime and does not change runtime selection.
 
 ## Canonical fields
 
-Global `agents.order` supplies the default ordered agent preferences with
-tier. Dispatch preferences use the selected adapter's capabilities and
-availability metadata. Global runtime entries carry native agent-operation
+Role-keyed model selection lives in `~/.instrukt/agents.yaml`, with `default`,
+`roles` and typed provider-instance `profiles`, under
+`project/instrukt/spec/feature/configuration/agent-selection`. Procedure content
+supplies a role, never a model preference. Global runtime entries carry native agent-operation
 instructions, resolved by `@config`; instrukt executes no instruction prose. `get --revision` prints the layer revision; `get --json` renders
 JSON.
 
@@ -115,7 +119,7 @@ JSON.
   repository root for a project layer.
 - **Lifecycle:** created by `instrukt config init` (or `instrukt init`, which
   writes the project layer with the same defaults); changed by `patch`;
-  migrated when `init` or publication finds an older schema version; never
+  migrated before refusal or skip on every entry path when an older schema is found; never
   deleted by instrukt.
 
 ### Domain events emitted
@@ -134,7 +138,9 @@ This context emits no events.
 
 - **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
 - **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
+- **agent-selection** — [project/instrukt/spec/feature/configuration/agent-selection](../feature/configuration/agent-selection.md) — role mappings, provider-instance profiles, tier chains, readiness and selection diagnostics.
 - **configuration-skill** — [project/instrukt/spec/feature/configuration/configuration-skill](../feature/configuration/configuration-skill.md) — one skill coordinates local configuration and infrastructure verification across participating computers through the selected runtime, or locally without a route.
+- **owned-files** — [project/instrukt/spec/feature/configuration/owned-files](../feature/configuration/owned-files.md) — one protected machine-local secret source, owned-shape migration and isolated worktree homes.
 - **interpolation** — `project/instrukt/spec/feature/configuration/interpolation` — values resolve across keys, the environment and the caller's own runtime session when read.
 - **logging** — `project/instrukt/spec/feature/configuration/logging` — every command's diagnostics are recorded where the InstruktAI logging contract puts them, readable afterwards with `instrukt-ai-logs instrukt`.
 

@@ -121,11 +121,13 @@ the todo pickup policy. Task timing belongs to
 
 ### Agent selection and intent checks
 
-Dispatch resolves task preference, procedure `dispatch` and global family/tier
-preferences under layered-configuration. Walk one family's ordered tier chain
-before the next family. Skip unavailable/degraded agent or model marks until
-expiry. Both runner starts and native assignment facts carry resolved family,
-provider, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
+Dispatch resolves the procedure's role through `agents.yaml`, with per-task
+overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
+Walk each ready profile's tier chain before moving to the next profile. Report
+skipped profiles/models and reasons; skip unavailable/degraded marks until
+expiry. Before instrukt's own starts, check installation, enablement, login and
+reported models. Runner starts and native assignment facts carry the resolved
+profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
 effort/options cannot be expressed there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion

@@ -7,13 +7,13 @@ visibility: public
 
 ## What
 
-This is the baseline knowledge an agent uses to choose which agent CLI runs
-which work and to compose ordered preferences. The global `agents.order` holds
-the default order and tier; a procedure's `dispatch` frontmatter
-overrides those defaults where its work needs a different choice. Valid agent
-names come from the configured runtime adapter, rather than a fixed catalog. The
-agents a runtime can start are a separate set from those to which instructions
-are deployed.
+These observations inform role-mapping judgment. Model selection is configured
+in `~/.instrukt/agents.yaml`: `roles` selects an order and tier for each procedure
+role, with `default` for an unlisted role. Profiles identify existing T3 provider
+instances and typed per-tier model chains. The owner is
+`project/instrukt/spec/feature/configuration/agent-selection`; procedures carry
+no model-selection frontmatter. Runtime startable profiles are distinct from
+the agent CLIs receiving deployed instructions.
 
 ### Selection paradigm
 
@@ -29,12 +29,10 @@ that is available; how availability is established is the configuration's and
 the runner's concern. Composing and maintaining the order is judgment: the
 profiles inform that judgment, rather than supplying a scoring algorithm.
 
-The usual order begins with Claude, then Codex; a procedure may move a
-characterized specialist earlier for its particular work. OpenCode sits a
-little before Pi and DeepSeek, although it usually also costs API calls. Pi
-belongs at the API-costing end too. DeepSeek always goes last because it costs
-API calls. These are ordering preferences, not claims that every installation
-uses the same billing method.
+The shipped role map preserves a cross-model pattern: authors prefer Claude,
+reviewers prefer Codex. Defaults cover every harness T3 builds in, including
+capable inexpensive and open-model routes. Orders are heuristics the user owns;
+DeepSeek has no special fallback position in instrukt's defaults.
 
 ### Profiles
 
@@ -135,8 +133,8 @@ does not establish strengths, weaknesses or billing, that gap remains explicit.
 - Strong at and weak at: not yet characterized. Its model catalog and native
   planning agent do not establish comparative strengths.
 - Cost class: usually API-billed; actual cost depends on configured access.
-- Typical order: a little before Pi and DeepSeek, usually in the API-costing
-  tail, after suitable subscription-backed agents.
+- Typical order: compare the configured route with suitable subscription-backed
+  profiles; billing and capability determine placement.
 
 **Pi**
 
@@ -144,13 +142,15 @@ does not establish strengths, weaknesses or billing, that gap remains explicit.
   and skills do not establish a cognitive profile.
 - Cost class: API-costing for this preference order. The CLI also supports
   provider login; that does not establish subscription coverage here.
-- Typical order: at the API-costing end, after OpenCode and before DeepSeek.
+- Typical order: compare the configured access route with other profiles;
+  no personal fallback order defines instrukt defaults.
 
 **DeepSeek Harness**
 
 - Strong at and weak at: not yet characterized.
 - Cost class: API-billed.
-- Typical order: always last because it costs API calls.
+- Typical order: no special position in instrukt defaults; the user configures
+  the order from the actual access route and capability.
 
 **Other configured agent CLIs**
 
@@ -160,11 +160,11 @@ does not establish strengths, weaknesses or billing, that gap remains explicit.
 - Cost class: not yet characterized; each agent brings its own authentication
   and models, so establish subscription or API billing per configured CLI.
 - Typical order: after the characterized frontier pair pending evidence;
-  API-billed entries go in the tail, with DeepSeek last.
+  billing and capability determine placement.
 
 ### Dispatch tiers
 
-A tier selects the ordered model chain for each agent family. Provider-native effort is a separate chain-entry setting, not the tier itself. Each procedure declares the tier its work earns; shipped chains use high effort throughout.
+A tier selects the ordered model chain within each configured profile. Provider-native effort is a separate chain-entry setting, not the tier itself. Role mappings in `agents.yaml` supply the tier; procedures declare only their role. Shipped chains use high effort throughout.
 
 - **strong**: work whose error is costly and hard to see — novel design, analysis,
   planning, root-cause diagnosis, and every review except one of a
@@ -173,14 +173,15 @@ A tier selects the ordered model chain for each agent family. Provider-native ef
   refactoring — and review of a documentation-only scope that directs no agent
   differently (`general/procedure/orchestration`).
 - **light**: mechanical, clerical work whose result is checked at a glance.
-- **premium**: an explicit higher-cost model chain, ending with the strong model as fallback. No shipped procedure selects it.
+- **premium**: an explicit higher-cost model chain, ending with the strong model as fallback. It is selected explicitly through configuration or a task override.
 
 ### Collaboration selection
 
 When an agent needs a partner for collaborative discovery or sparring:
 
 1. Select the complementary agent — the one whose cognitive profile covers your blind spots.
-2. Run the collaboration in **strong** tier.
+2. Resolve the collaborator's role mapping; **strong** is a shipped heuristic
+   for substantial collaboration, and configuration owns the actual tier.
 
 Default collaboration pairs:
 

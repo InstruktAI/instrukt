@@ -72,7 +72,8 @@ configuration and rendered through `@config`, independently of this adapter.
 
 ## Ownership boundary
 
-- **Owns:** Module-aware runner execution; todo dispatch policy; procedure
+- **Owns:** Per-computer history extraction/search and merged history queries;
+  module-aware runner execution; todo dispatch policy; procedure
   activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
   runtime capability translation, including optional linked-session input;
   unattended event/approval delivery and runner-owned execution observation; time
@@ -88,7 +89,8 @@ configuration and rendered through `@config`, independently of this adapter.
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
   session lifecycle, input delivery, restart, revival, handover,
-  transcripts and their search and cleanup, all owned by the runtime; instrukt calls only the adapter's
+  live transcripts and lifecycle cleanup, owned by the runtime; instrukt's
+  extracted searchable history is a separate contract. instrukt calls only the adapter's
   released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
@@ -288,6 +290,7 @@ has no origin, as declared in Canonical fields.
 
 ## Use cases
 
+- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3, one-time TeleClaude mirror import and merged search across computers.
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
@@ -360,8 +363,22 @@ per-role session bindings. Work owns validation and persistence of those writes.
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization uses the selected runtime's supported input boundary. Missing
   steering degrades ASAP attention to queued input or idle entry without a
-  validation finding. Attendance and subject revival remain separate limits.
-- Company/person home execution, conversation channels and help desks are unavailable in this port; runtime lifecycle remains runtime-owned.
+  validation finding. Standing T3 threads remain unsettled under automation
+  and stay reachable after human settling.
+- People, company/person homes, channels, voice, messaging, memory and help desks
+  stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
+  harness, one-time layout migrations, experiment matching, dsh upgrades,
+  harness-install management and session/work-record migration are outside
+  instrukt. GitHub-backed todos cover work movement without a separate
+  computer-transfer feature.
+- There is no installation inspector or incident-alert subsystem. Module
+  infrastructure checks retain their existing contract; anomaly notification
+  and the log bug hunter cover unattended failures.
+- Event reactions activate agents under their declared roles. Script-run
+  event actions and event-bound maintenance are outside scope. Path-based
+  post-commit follow-ups use git hooks, including existing sync hooks.
+- A visible coordinator singleton is a standing-agent responsibility.
+  Runtime lifecycle remains runtime-owned.
 
 
 - UC-HR1 is retired: machine maintenance is outside instrukt; its id is not reused.

@@ -64,15 +64,20 @@ recognising a caller does not select a runtime.
 
 ### The home
 
-`~/.instrukt` is fixed and is not a git repository. Everything in it is
-re-creatable, except local work-record writes not yet reflected to GitHub,
-which are lost if the home is deleted.
+`~/.instrukt` is the normal machine home and is not a git repository. An
+isolated instrukt home per worktree separates its publication and operational
+state under `project/instrukt/spec/feature/configuration/owned-files`. Committed
+sources recreate publication. User-owned configuration and secrets, local
+history and work-record writes not yet reflected to GitHub need preservation;
+deleting the home is not a lossless reset.
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, agents' git authors, module switches, runner settings) | the user |
-| `docs/general/`, `docs/<x>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
-| `state/index.yaml` | the global index, every entry carrying its owning project; `docs/project/` entries carry the absolute path of the file in their project | each project's `sync` |
+| `agents.yaml` | role mappings and typed provider-instance tier chains | shipped once, then user-owned; upgrade handling under `project/instrukt/spec/feature/configuration/agent-selection` |
+| `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
+| `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
+| `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
 | `state/hooks/<project>/` | each hook section's last run outcome, shown by `instrukt hooks status` | the next hook run |
 | `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent binding caches, pending delivery targets, start markers and per-key locks, held task failures, the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); the runner's state starts empty |
@@ -133,9 +138,9 @@ commands. Docs name `-h`.
   no additional consumer daemon; scheduled-only reactions wait for the next wake.
 - **Each project publishes only its own part.** Publication never reads
   another project's repository; the global index is patched by owner, never
-  rebuilt from all sources. Reading is different: `docs get` reads another
-  project's `docs/project/` snippet from the path its index entry carries,
-  because project content stays in its project.
+  rebuilt from all sources. `docs get` reads project snippets from
+  `~/.instrukt/docs/project/<slug>/…`, including another project's ids;
+  source paths identify where to author, not where to read live content.
 - **Committed state is the source.** Publication reads a project's committed
   main, never its working tree; the blueprint is generated for a pushed
   revision.
@@ -148,6 +153,9 @@ commands. Docs name `-h`.
 - **A cloned repository does not decide what runs on a machine.** The runtime
   choice lives only in the global layer, and so does the command form of
   `blueprint.engine`; a project layer may only name a shipped adapter.
+- **Owned child commands leave no descendants.** instrukt cleans each own
+  child-command process group on success, failure, timeout and interruption;
+  the runtime retains ownership of its agent lifecycle.
 - **Agents read; instrukt computes.** Freshness, ownership and state are
   instrukt's to compute; agents consume answers that name what they reflect
   (a SHA, a version).
@@ -180,9 +188,10 @@ configuration layers, never into the skill
 flowchart LR
   A[commit / merge / rebase / checkout on main] --> B[hook section]
   B --> C[instrukt sync, detached, under lock]
-  C --> D{main == published commit?}
+  C --> M[configuration migration before refusal or skip]
+  M --> D{main == published commit?}
   D -- yes --> E[done]
-  D -- no --> F[claim and write the project's general and domain positions]
+  D -- no --> F[claim and write general, domain and project positions]
   F --> G[patch global index by owner]
   G --> H[render AGENTS.md; global agent files if owner of general]
   H --> J[refresh editor schemas and modelines]
@@ -231,7 +240,7 @@ sequenceDiagram
 
 Branch protection with required checks refuses any push of main to a commit
 without a green result. A project without CI gets the same gate locally: the
-integrator runs the project's `test` action on the candidate, and only a
+integrator runs the project's documented test command on the candidate, and only a
 passing candidate is fast-forwarded onto main.
 
 ### Run
@@ -267,8 +276,9 @@ sent through `runner.notify`.
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
-only-at-entry delivery waits for observed idleness. Attendance-aware visibility
-and closed subject continuation remain separately reported runtime limits.
+only-at-entry delivery waits for observed idleness. Standing T3 threads remain
+unsettled under automation; a human-settled thread stays reachable and wakes
+on its next message.
 
 ### Event platform
 

@@ -42,7 +42,7 @@ instrukt distributes agreed facts, including any operator-managed dotfiles.
 | `redis.cluster.url` | All event participants reach the same logical Redis database and stream namespace. URL spellings may differ when they resolve to that same store. |
 | `redis.cluster.username`, `redis.cluster.password` | Machine-local credential references grant the required access to that common store; credentials and reference spellings need not match. |
 | Project identity and placement | The coordination brief records which computer holds each participating project and its local checkout. Project `project` identity and source declarations identify the same project wherever needed. This is a configuration-management fact, not a new YAML key or a replacement for todo claims. |
-| Ingress project homes | Every project declaring inbound sources has its adopted checkout on ingress; its signing references resolve in that project's `.env` there. External procedure activation remains on ingress under the intake contract. |
+| Ingress project homes | Every project declaring inbound sources has its adopted checkout on ingress; its signing references resolve in the ingress computer's owner-only `~/.instrukt/secrets.env`. External procedure activation remains on ingress under the intake contract. |
 | `ingress.port` | The receiver and its local edge agree on this port; other computers need not share it. |
 
 These are the cross-computer and edge-local agreements in
@@ -83,6 +83,21 @@ Disabled-module withdrawal uses the installation contract's full demand read.
 Reruns preserve matching settings and working resources, and repair differences
 through the same commands. Installation findings remain distinct from valid
 configuration; they retain their named repair doors.
+
+### Agent profiles and readiness
+
+Read `~/.instrukt/agents.yaml` and show the current role/profile order before
+changing model selection. Detect ACP instances already configured in T3, ask
+where the developer wants them in that order, and write their profiles and order
+changes. For a supported harness not ready, guide login or key setup and wait
+for readiness. Keep model-provider keys with T3. instrukt creates no T3 provider
+instance and implements no ACP. Selection and upgrade semantics belong to
+`project/instrukt/spec/feature/configuration/agent-selection`.
+
+Write instrukt-owned signing and Redis secrets only through `instrukt secrets
+set` or `instrukt secrets generate`, without echoing values. Every computer's
+interactive and scheduled paths read its one protected machine-local file
+(`project/instrukt/spec/feature/configuration/owned-files`).
 
 ### Runtime coordination
 

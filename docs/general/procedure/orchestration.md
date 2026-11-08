@@ -18,22 +18,20 @@ effects, and keep recovery with its responsible owner until a grounded handoff.
 
 ### Dispatch Rules
 
-- **Reviewer tier follows the review's scope.**
-  - `strong` for commit reviews containing code, including mixed code-and-doc
-    scope; for a documentation-only scope that changes what agents are directed
-    to do, the process layer included; and for other reviews.
-  - `standard` for a documentation-only scope that changes what a snippet
-    establishes and directs no agent differently.
-
-  The session dispatching a documentation-only review classifies its scope by
-  what the change does (`general/policy/documentation-discipline`). Context
-  procedures state the resolved mode for their fixed scope; they do not choose a
-  different mode.
+- **Classify the review's scope before selection.** Code, mixed code and docs,
+  directive documentation and other substantive reviews receive full depth.
+  Documentation that changes what a snippet establishes and directs no agent
+  differently uses the lighter scope under `general/policy/documentation-discipline`.
+  The dispatching session carries that classification to the reviewer.
+  Select through the reviewer's role mapping in `~/.instrukt/agents.yaml`;
+  shipped `strong` and `standard` choices are configurable heuristics, not
+  procedure-level model or tier defaults.
 
 Intelligence maintains the preference order for performance and then cost;
 availability is the first selection condition. The parent or orchestrator
 uses the strongest available entry, with the next as fallback. Valid agent
-names come from the configured runtime rather than a fixed catalog.
+profile names come from `~/.instrukt/agents.yaml`, whose role mappings and
+typed chains own model choice independently of procedure content.
 
 ### Review Quality Gate (Orchestrator-Owned)
 
@@ -45,8 +43,8 @@ current reviewed target. The orchestrator verifies the report's substance:
    lane or preparation-review section is present with substantive analysis.
 2. When the review reports zero Important-or-higher findings, verify the
    required `Why No Issues` evidence is specific to the target.
-3. If either check fails, reject the review and re-dispatch at the mode the
-   reviewer thinking-mode rule resolves for the scope.
+3. If either check fails, reject the review and re-dispatch with its required
+   scope and the reviewer role's configured selection.
 
 This is a document-quality check, not a second code or artifact review. Digest
 binding proves which report exists; the orchestrator verifies that the reviewer
@@ -71,8 +69,9 @@ actually did the work recorded there.
    the native child id and matching shared workspace evidence. Continue active attempts
    with native child messaging. The runtime supplies parent linkage and result
    attention. Yield while valid work continues; read the native result and current
-   record before choosing the next contribution. Selection follows procedure
-   `dispatch` or `agents.order` where natively supported. A proven rejection
+   record before choosing the next contribution. Selection follows the procedure's
+   role mapping in `~/.instrukt/agents.yaml`, with per-task overrides first,
+   where natively supported. A proven rejection
    before creation permits fallback; ambiguous native starts retain their attempt.
 
 5. Assess current session and work evidence under the sections below. A step

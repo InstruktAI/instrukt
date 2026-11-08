@@ -307,7 +307,8 @@ identity, next enqueue position and current session generation. One per-procedur
 home resolution guard covers all its subjects. Generation history retains the
 runtime key, native session, execution checkout, system-origin assignment evidence,
 initialized role, attendance and interruptibility, and confirmed
-terminal/continuation disposition. Revival preserves initialized settings;
+terminal/continuation disposition. Human settling does not retire a T3 standing
+assignment; later input retains its initialized settings;
 a successor adopts current publication. This is assignment bookkeeping, not a
 runtime session, transcript or lifecycle store. Conflicting semantic-key evidence or uncertain
 observation cannot advance the generation.
@@ -488,7 +489,7 @@ after seven days. Local history does not backfill a newly created Redis group.
 
 ### Agent capacity
 
-The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases travel in the reflected todo record. The internal `agent_availability` table holds family/model subjects, typed
+The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases travel in the reflected todo record. The internal `agent_availability` table holds profile/model subjects, typed
 available/unavailable/degraded status, optional absolute expiry and reason.
 Migration moves the prior todo preference column and its fast/med/slow values
 to tier light/standard/strong. Absence of capacity marks means available;

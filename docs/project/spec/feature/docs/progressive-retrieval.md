@@ -30,12 +30,11 @@ are plain ids or domain names.
 
 The commands discover snippets through the global index in the home's state
 (`~/.instrukt/state/`), written by publication with the published files. No
-index file is generated into a repository. A project snippet's index entry
-carries the absolute path of its file in its project, and `get` reads that
-file from disk, including another project's file. Working-tree validation is a
-separate surface (`project/instrukt/spec/feature/docs/snippet-validation`).
-Publication's own-repository restriction does not restrict these indexed
-project-file reads.
+index file is generated into a repository. Every project snippet is read from
+`~/.instrukt/docs/project/<slug>/…`, published from its committed main like
+general and domain content. Source checkout paths remain authoring provenance,
+not retrieval locations. Working-tree validation is a separate surface
+(`project/instrukt/spec/feature/docs/snippet-validation`).
 
 ## Canonical fields
 
@@ -63,8 +62,8 @@ project-file reads.
   source of each named domain (`docs/domain/<x>/`, or `docs/general/` for
   `general`); `--project <slug>`, and the project section of the default view,
   opens with the project's source, its `docs/project/` folder in the
-  project's primary worktree — the same checkout its index entries point
-  into. This is where the position's snippets are changed.
+  project's source checkout. This is where the position's snippets are changed;
+  retrieval reads the committed published store, not this source path.
 - **Entry line:** `<id>: <description>`, followed by `(delivered by: <slugs>)`
   for a pending snippet and `(superseded by: <slugs>)` for a live snippet with
   pending material. Entries are ordered by taxonomy (principle, concept,
@@ -80,8 +79,8 @@ project-file reads.
 
 ### Get
 
-- An id resolves to its file directly: a published id to the file in the home,
-  a project id through its index entry to the file in its project. A project
+- Every id resolves to its published file in the home; a project id resolves
+  under `docs/project/<slug>/…`. A project
   id of another project is read from any location; no project flag is needed.
 - An unknown id prints an error naming it and exits non-zero; known ids in the
   same call are not rendered.
@@ -185,9 +184,8 @@ same interpolation and the same refusals: an unknown path, and
   `instrukt config get <path>` would for the caller: against the effective
   configuration of the project the caller stands in (project over global),
   found by the same project resolution `index` and `get` use for project docs,
-  or against the global layer alone outside a project. A published procedure
-  asking for `actions.test` therefore receives the caller's project's own test
-  command.
+  or against the global layer alone outside a project. Project checks come from
+  the project's documentation, not an `actions` configuration key.
 - It resolves on every read, never cached.
 - The value replaces the directive as a fenced block, rendered as
   `instrukt config get` prints it; a structured value prints as YAML.
@@ -295,7 +293,9 @@ And other Markdown links and code examples remain as authored
 
 - The planned lens runs before configured values are resolved, so hidden content is never resolved.
 - `--project <slug>` lists only that project's snippets. An unknown slug lists nothing and says no such project has published.
-- A missing project file makes `get` name the project and missing path and direct the caller to republish from that project.
+- A missing published project file makes `get` name the project and missing
+  store path and direct the caller to republish from that project; it never
+  falls back to the primary worktree.
 - `docs index` entry lines carry no command; its closing line names `instrukt docs get`. Only renderings of a position index carry listing lines.
 - A bare-domain required read brings only that domain's `expanded` set, never its `listed` lines or triggered procedures.
 

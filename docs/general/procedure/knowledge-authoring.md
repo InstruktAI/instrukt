@@ -6,13 +6,6 @@ role: knowledge-author
 parameters:
   - name: topic
     rest: true
-dispatch:
-  agent:
-    - claude
-    - codex
-    - gemini
-    - deepseek
-  tier: standard
 ---
 
 # Knowledge Authoring — Procedure

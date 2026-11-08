@@ -20,7 +20,7 @@ visibility: 'public'
    `sys.executable -m <tool>` is not the default for project quality tooling
    in uv-managed repositories because the interpreter running the caller and
    the project tool environment are separate concerns.
-5. **Keep command wrappers thin.** The project's `actions`, hooks, and Make
+5. **Keep command wrappers thin.** The project's documented commands, hooks, and Make
    targets may choose targets, flags, and ordering, but tool versions
    and executable resolution belong to the uv-managed project environment.
 6. **Centralize exceptions.** If a tool cannot be run through `uv run <tool>`,

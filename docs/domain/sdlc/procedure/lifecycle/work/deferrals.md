@@ -6,9 +6,6 @@ role: deferrer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Deferrals — Procedure

@@ -6,9 +6,6 @@ role: finalizer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [gemini, claude, codex]
-  tier: light
 ---
 
 # Finalize — Procedure

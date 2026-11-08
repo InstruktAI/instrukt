@@ -20,8 +20,9 @@ Snippets live in repositories, in up to three positions:
   every global agent file, and the full rendering through
   `instrukt docs get --domain <x>`: on demand.
 - **Project** (`docs/project/`) — the project's own knowledge, living alongside
-  what it describes, never published, rendered into the project's root
-  `AGENTS.md`.
+  what it describes, published from committed main to
+  `~/.instrukt/docs/project/<slug>/…` and rendered into the project's root
+  `AGENTS.md`. Retrieval reads the published copy.
 
 Each position's `index.yaml` selects what its rendering carries.
 

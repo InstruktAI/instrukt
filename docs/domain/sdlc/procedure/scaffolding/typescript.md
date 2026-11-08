@@ -42,8 +42,8 @@ the files.
    checked in CI.
 4. **Standard scripts exist regardless of flavor**: `dev`, `build`, `lint`,
    `format`, `typecheck`, `test` — plus the flavor's additions. A thin
-   Makefile shim maps `lint`/`format`/`test`/`e2e` onto them; `instrukt.yaml`
-   declares those targets as `actions`, and shared CI calls them (see the CI
+   Makefile shim maps `lint`/`format`/`test`/`e2e` onto them; project docs
+   describe those targets, and shared CI calls them (see the CI
    pipeline conventions policy).
 5. **Quality gates are wired before feature work**, per the applicable
    production baseline.

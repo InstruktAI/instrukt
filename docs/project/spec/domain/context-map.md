@@ -31,7 +31,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local-leading work record, GitHub reflection, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources and scheduled ticks | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks and per-computer searchable history | `project/instrukt/spec/domain/runner` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
 ### Modules
@@ -131,5 +131,6 @@ This map records the relationships across all bounded contexts.
 ## Known caveats
 
 - One build run covers every module in order — core, blueprint, todos, events — each with its own acceptance.
-- Events come from reading state on each tick; webhook receipt is not part of
-  this build (see the runner's event-activation spec).
+- Enabled events use tick-read sources and opt-in signed webhook ingress
+  under the runner event contracts. Reactions activate agents, never script-run
+  event actions or event-bound maintenance.

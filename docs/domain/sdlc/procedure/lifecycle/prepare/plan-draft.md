@@ -6,9 +6,6 @@ role: planner
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Prepare Plan Draft — Procedure

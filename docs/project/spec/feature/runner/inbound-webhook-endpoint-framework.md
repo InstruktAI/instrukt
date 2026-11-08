@@ -26,7 +26,7 @@ webhooks:
 Sources sit directly under `webhooks`, keyed by the event domain, with no
 direction or `sources` subkey. Domain matches `[a-z][a-z0-9_]*`. Each registered
 project can declare several domains, each selecting its own verification scheme,
-secret references and event-name source. Project configuration and `.env` must
+secret references and event-name source. Project configuration and machine-local secrets must
 exist on ingress.
 
 | Source | Derived POST path | Origin and subject |
@@ -55,8 +55,10 @@ validation findings. Optional fields cannot be null.
 
 `secret` is required; `previous_secret` is optional. Both are raw `${NAME}`
 references, never literal signing material. Raw-reference validation precedes
-interpolation. On ingress each resolves solely from the declaring project's
-`.env`, not process environment, receiver cwd or another project. A missing,
+interpolation. On ingress each resolves solely from the owner-only machine-local
+`~/.instrukt/secrets.env`, with permission checks on read under
+`project/instrukt/spec/feature/configuration/owned-files`. Project `.env`,
+process environment and receiver cwd supply no fallback. A missing,
 blank or unreadable required value (including a declared previous value) prevents
 that declaration from validating on ingress. Other computers validate reference
 shape without needing the values. Responses, configuration reads and logs expose
@@ -243,13 +245,13 @@ When the previous reference is removed
 Then a request signed only by that old secret is rejected on the next request
 ```
 
-### UC-IF28: Keep a project signing secret isolated and redacted
+### UC-IF28: Resolve machine-local signing references without disclosure
 
 ```gherkin
-Given two projects reuse a secret reference name with different values in their own environment files
+Given two projects declare distinct signing references in the same machine-local protected secrets file
 When a developer delivers to one source and inspects configuration or diagnostics
-Then only that project's value verifies and neither value is printed
-And a process environment value cannot supply or override the source secret
+Then only that source's referenced value verifies and neither value is printed
+And neither a project environment file nor process environment can supply or override the source secret
 ```
 
 ### UC-IF29: Receive a payload-only sender's event name

@@ -6,9 +6,6 @@ role: architect
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: strong
 ---
 
 # Architecture — Procedure

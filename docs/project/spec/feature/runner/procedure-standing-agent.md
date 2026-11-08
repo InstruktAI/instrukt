@@ -71,23 +71,19 @@ inline changes no assignment.
 
 ### Continuation and successors
 
-An open subject-bound session receives later events about that subject.
-An attended closed session resumes its own context through the runtime before
-receiving them. The runtime owns revival and transcript retention. Proven
-inability to resume permits a new successor for the same responsibility;
-failed observation or a failed revival attempt is a visible failure and never
-proves non-resumability. A purged runtime record loses earlier context only
-after that absence and the prior assignment's terminal disposition are resolved.
+Standing T3 threads are settled, never closed. Automation never settles a
+standing agent: it stays unsettled in the sidebar by design. A human may settle
+it; the thread remains findable and reachable, wakes on a message and can be
+unsettled. Later activations reuse the same keyed assignment for home and
+subject identity, attended and unattended alike. Settling neither retires a
+responsibility nor authorizes a successor. There is no closed T3 context to
+revive or non-resumability proof to obtain.
 
-For home identity, a confirmed closed agent no longer stands; a later activation
-may initialize a successor after retained work is accounted for. Subject identity
-instead preserves the attended subject's resumable conversation as described
-above. An unattended session is usable while open, but is never revived after closure.
-Its next eligible activation resolves a new successor. Explicit session close
-suspends pending work without itself starting a successor. A later eligible
-continuation reconciles retained older events before newer ones. Failed sends
-and ambiguous starts retain their original targets; confirmed closure is a
-separate continuation decision, not send-failure recovery.
+A runtime record that is actually purged is distinct from a settled thread.
+Failed observation, a failed send and ambiguous startup retain their fixed
+target and pending work. Reconciliation must account for that assignment and
+unresolved input before any confirmed terminal removal admits a successor;
+settled or idle status never supplies that terminal evidence.
 
 Each responsibility retains its session generations and one current generation.
 The first uses its base standing key; a successor uses a recorded increasing
@@ -103,16 +99,16 @@ records assignment bindings and the continuation decision only.
 ### Fixed assignment and attendance
 
 Role, attendance and delivery intent are fixed at session
-initialization and survive revival. Accepted activations retain their own
+initialization and survive continuation, including a human settling the thread.
+Accepted activations retain their own
 declaration as evidence. A new successor uses the current published role,
 attendance and delivery settings. Required reads are retrieved from current
 publication; settings persistence creates no historical documentation snapshot.
 
 `attended` is the default. `unattended` declares an audience, never reach,
-authorization or event trust. The target runtime behavior omits unattended
-sessions from ordinary human listings unless explicitly requested. This is a
-runtime capability, with the T3 limitation below. Work an unattended agent
-dispatches has its own attendance; it does not inherit unattended status.
+authorization or event trust. Standing T3 threads stay visible and unsettled
+under automation regardless of attendance. Work an unattended agent dispatches
+has its own attendance; it does not inherit unattended status.
 
 Manual agent entry first records `instrukt events bind <procedure> --reserve`.
 This record-only command takes the responsibility guard, resolves the procedure's
@@ -284,22 +280,22 @@ When a later event concerns that same typed subject and home
 Then its event reaches that same agent
 ```
 
-### UC-PSA18: Resume a subject's own conversation
+### UC-PSA18: Wake a human-settled subject conversation
 
 ```gherkin
-Given an attended subject-bound agent has closed and the runtime can resume its context
+Given a human has settled a subject-bound standing T3 thread
 When a later activation concerns that subject
-Then the runtime resumes that same agent with its own context before delivering the event
+Then the message wakes the same reachable thread with its existing context
+And settling does not create a new generation
 ```
 
-### UC-PSA19: Continue when the earlier context cannot be resumed
+### UC-PSA19: Preserve a standing assignment when observation fails
 
 ```gherkin
-Given the runtime has confirmed a subject-bound agent closed and its context cannot resume
-When a later activation needs that responsibility
-Then one new successor is bound to the same subject and home
-And retained older work is reconciled before newer work
-But a failed observation or revival attempt never authorizes that successor
+Given a subject-bound standing T3 thread has been settled by a human
+When a later activation cannot observe or send to that thread
+Then the original assignment and undelivered event stay pending
+And no successor is authorized by that failure or settled state
 ```
 
 ### UC-PSA20: Avoid concurrent agents for one subject
@@ -342,12 +338,13 @@ When their agent reserves attended entry and binds its natively initialized stan
 Then that session retains its attended initialization for event delivery
 ```
 
-### UC-PSA27: Continue unattended work without reviving a closed run
+### UC-PSA27: Keep unattended standing agents unsettled under automation
 
 ```gherkin
-Given an unattended agent has closed
-When a later activation needs its responsibility
-Then the closed run is not revived and a new successor uses the current declaration
+Given an unattended standing T3 agent finishes its current work
+When automation records that outcome
+Then its standing thread remains unsettled in the sidebar
+And a human may settle it without preventing later messages from waking it
 ```
 
 ### UC-PSA29: Refuse an assignment without a declared role
@@ -362,12 +359,7 @@ Then entry refuses before creating a session and identifies the missing role
 
 - Company/person management and execution are unavailable. Source UC-PSA8's
   company continuation is not imported; UC-PSA13 retains project/platform scope.
-- T3's published start/send/list/show surface has not demonstrated subject
-  revival, proven non-resumability, assignment provenance or attendance-aware
-  visibility. These are build gates, not permission to narrow this target or
-  rebuild lifecycle in instrukt. Source UC-PSA23/24's runtime UI goals are not
-  claimed as supported instrukt use cases. The absent source UC-PSA28 stays absent.
-- A runtime's idle or settled thread is not necessarily closed. Observation
+- A standing T3 thread is never closed by settling. Observation
   errors and duplicate key titles never authorize a replacement.
 - Steering is optional: ASAP uses queue-only or idle-entry delivery when that
   is the runtime's capability. Missing steering is no activation finding.

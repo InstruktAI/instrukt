@@ -5,9 +5,6 @@ role: commit-reviewer
 parameters:
   - name: slug
     required: false
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 ---
 
 # Review Commits — Procedure

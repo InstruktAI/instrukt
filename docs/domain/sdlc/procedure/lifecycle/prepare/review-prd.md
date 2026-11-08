@@ -8,9 +8,6 @@ role: prd-reviewer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 ---
 
 # Review PRD — Procedure

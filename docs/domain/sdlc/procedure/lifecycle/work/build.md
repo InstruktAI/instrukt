@@ -6,9 +6,6 @@ role: builder
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [claude, codex, gemini]
-  tier: standard
 ---
 
 # Build — Procedure
@@ -84,9 +81,9 @@ with the governing contract.
 
    When project-owned verification shows snapshot diffs, read each diff before
    accepting it. If the diff matches the task's stated intent, use the project
-   tool's snapshot-update option declared in its `test` action and commit the
-   updated snapshot files with the task. Read that command with
-   `instrukt config get actions.test`; instrukt defines no snapshot-update flag. If the diff does not match intent, the code change is wrong:
+   tool's snapshot-update option documented by the project and commit the
+   updated snapshot files with the task. Read the project's test documentation
+   for that command; instrukt defines no snapshot-update flag. If the diff does not match intent, the code change is wrong:
    fix the code and do not update the snapshot. Concrete idioms and migration
    patterns live in `sdlc/procedure/snapshot-testing`.
 

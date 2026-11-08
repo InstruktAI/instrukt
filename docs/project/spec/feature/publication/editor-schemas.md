@@ -9,7 +9,7 @@ delivered_by: [instrukt-first-build]
 A developer editing instrukt's YAML files in a repository gets completion and
 validation from their editor, from the same rules the installed instrukt
 validates with. The binary generates a JSON Schema from its own document
-types for every YAML file a developer authors for instrukt, writes them into
+types for the repository YAML files below, writes them into
 the repository's `.instrukt/schemas/`, and keeps a modeline at the top of each
 such file pointing at its schema. The schemas are generated, git-ignored and
 never authored; `instrukt init` and `instrukt sync` regenerate them. No file
@@ -46,6 +46,11 @@ names a home path.
   version writes the same bytes on every computer.
 - `.instrukt/` is ignored through the line `instrukt init` adds to
   `.gitignore` (`project/instrukt/spec/feature/repository/project-initialization`).
+
+The separate machine-local `agents.yaml` has a hand-maintained schema in
+instrukt's repository, with open model names and known-name editor suggestions
+under `project/instrukt/spec/feature/configuration/agent-selection`. It is not
+one of these generated repository schemas.
 
 ### Modelines
 

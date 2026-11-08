@@ -6,9 +6,6 @@ role: plan-reviewer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 ---
 
 # Review Plan — Procedure

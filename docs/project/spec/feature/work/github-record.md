@@ -77,14 +77,19 @@ short prefix of the current evidence digest. Delivery closes it as completed and
 names the delivery evidence; removal closes it as withdrawn; restoration
 reopens it.
 
-A project board is optional. When `board` names a GitHub project
-(`<owner>/<number>`), instrukt adds each reflected todo's issue to that project
-and sets a single-select field named `Record status` that instrukt owns (never
-the built-in `Status`) to the record's status: active, iceboxed, held, delivered
-or withdrawn. It creates the field when absent and adds missing options; it
-never removes or renames options and never touches other fields. Changing a
-board position does not establish a workflow fact. Board reflection is retried
-on its own and never blocks the issue or the local record.
+The GitHub project board and its views are the developer's cockpit. With todos
+enabled, instrukt sets them up and repairs them automatically, without an opt-in.
+The project layer records the board reference (`<owner>/<number>`); an absent
+reference calls for setup, never silently disables the cockpit. Repeated setup
+reconciles existing resources instead of creating duplicate boards or views.
+
+instrukt adds every reflected issue and maintains its owned single-select
+`Record status` field and required options (active, iceboxed, held, delivered,
+withdrawn), plus the cockpit views. Unrelated user fields remain untouched.
+Moving a card establishes no workflow fact. Setup, view repair and board
+reflection failures remain visible and retryable independently of issue and
+local-record writes; missing GitHub permissions are a reported setup failure,
+never an implicit opt-out.
 
 Repository implementation has a linked pull request during its build and
 review path. It carries the reviewed commits and recorded verdicts. If the
@@ -141,9 +146,12 @@ project's todo commands refuse with the same reason and the runner picks up
 nothing for it. `instrukt status` reports whether the repository's code is on
 GitHub, so the instrukt skill says so before switching todos on.
 
-**Credentials.** The token is read, in order, from `GITHUB_TOKEN`, `GH_TOKEN`
-and `gh auth token`, and is never stored. With none, reflection reports
-"pending: no credentials" and the local record continues.
+**Credentials.** GitHub credentials resolve from the one owner-only machine-local
+`~/.instrukt/secrets.env` under
+`project/instrukt/spec/feature/configuration/owned-files`, on interactive paths
+and ticks alike. Process environment and `gh auth token` supply no alternate
+secret source. Credential values are never echoed. With none, reflection
+reports "pending: no credentials" and the local record continues.
 
 A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
 reflection; no separate writer process runs. Every command that writes the
@@ -228,7 +236,7 @@ card changes no work fact. Hold semantics belong to
 
 Reflection retains unfinished work across retries. Rate limiting defers
 reflection until the provider permits it; it does not lose local work. Issue,
-artifact, pull-request and optional board progress are recoverable without
+artifact, pull-request and board progress are recoverable without
 claiming that a failed request had no remote effect. A retry reconciles against
 the remote record before creating duplicate evidence.
 
@@ -281,12 +289,12 @@ the remote record before creating duplicate evidence.
 
 ```gherkin
   Given a developer's project reflects its todos to GitHub
-  And the developer has chosen a project board for that work
-  When their todos are reflected
-  Then each todo appears on that board with its current record status
-  And the board's own columns and fields are left as they were
-  When the developer chooses a different board
-  Then their work appears on the new board with its current record status
+  When their todos are reflected without a board already set up
+  Then instrukt sets up the project board and its views automatically
+  And each todo appears with its current record status
+  And unrelated user fields are preserved
+  When an owned cockpit field or view is missing or broken
+  Then instrukt repairs it without requiring opt-in or creating duplicate resources
 ```
 
 ### UC-GR6: A developer whose code is not on GitHub is told todos need it there
@@ -341,8 +349,6 @@ Then their hold-label action changes no work record
   taken as written; instrukt does not check it.
 - A listing's copy of a todo held elsewhere is as old as the last pickup
   listing; the label says how old.
-- instrukt does not create the board project, its views or its readme; the
-  predecessor's board setup is out of scope.
 - Records written by the predecessor's GitHub store are not read; the envelope
   format is new and carries no compatibility with it.
 - A GitHub App bot posts with association `NONE`, so a record it wrote would be

@@ -30,8 +30,8 @@ dominate iteration speed.
 4. Single-binary delivery, self-hosted (itsUP or native service); no runtime
    dependencies.
 5. Wire the Makefile buttons (`lint`/`format`/`test` via Cargo, `e2e` for
-   release-grade/integration runs), declare them as `actions` in
-   `instrukt.yaml` (`test: make test`), and wire the `ci-rust` reusable
+   release-grade/integration runs), document their commands in
+   the project's docs, and wire the `ci-rust` reusable
    workflow.
 
 ## Outputs

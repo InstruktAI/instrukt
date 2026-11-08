@@ -59,6 +59,15 @@ Apply these configured action values to the identified assignment and session.
 
 - **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A todo is created before preparation commits; its `<slug>/prepare` worktree serves preparation, is reviewed and integrated immediately, and is removed with its local/remote branch. Implementation later uses the separate `<slug>/work` worktree based on updated main. No agent other than the integrator commits on main.
 
+### Unexpected bugs
+
+Agents report unexpected bugs encountered during their work, with observed
+behavior and its expected contract under this policy's evidence standard. They
+check existing work and add evidence there when it already owns the defect;
+reporting does not authorize widening the active implementation. When main is
+red, the integrator judges whether the failure warrants a bug and files it
+once, deduplicated, while preserving the existing restoration obligation.
+
 ### Decide before creating
 
 - **Documentation evidence precedes lifecycle entry.** Pending contracts

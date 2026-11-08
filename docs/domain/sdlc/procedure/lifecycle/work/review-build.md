@@ -5,9 +5,6 @@ role: build-reviewer
 parameters:
   - name: slug
     required: true
-dispatch:
-  agent: [codex, claude, gemini]
-  tier: strong
 ---
 
 # Review Build — Procedure

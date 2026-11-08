@@ -35,8 +35,8 @@ check documentation before committing, and it changes nothing.
 | Family | A finding when |
 | --- | --- |
 | Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
-| Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` or `dispatch` appear without `role`; `parameters` or `dispatch` are malformed; an `adr` lacks `date` or `number`; `eval` is not a boolean |
-| Procedures | with todos enabled, a `role` is absent from the selected flavor’s `workflow/actions.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
+| Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without `role` or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
+| Procedures | a procedure dispatched by the selected workflow has a `role` absent from its `workflow/actions.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
 | Structure | the H1 is missing, not first, or does not end with `— <Type>`; a required H2 section of the effective schema is missing; an H2 outside it appears; `See Also` is not last (`project/instrukt/spec/feature/docs/snippet-schema`) |
 | References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a `general` or domain snippet requiring a project snippet |
 | Required-reads hygiene | a required read already implied by the closure of another required read of the same snippet; the finding names the read that implies it |
@@ -49,13 +49,15 @@ check documentation before committing, and it changes nothing.
 A todo slug is checked for form only. Whether it names an existing todo is
 checked as well when the `todos` module is on, by asking that module.
 
-With todos enabled, `role` must name a role declared by the flavor workflow.
-Core declares the role-lookup interface, as for pending-slug existence; the CLI
-wires its todos implementation. With todos off, no role-membership lookup runs.
+With todos enabled, only procedures the selected workflow dispatches must name
+a role declared by that workflow. Subscribed procedures are independent of that
+list, even when todos is enabled; events operate with their declared roles
+without enabling todos. Core declares the workflow-role lookup interface and
+the CLI wires its todos implementation. With todos off that lookup does not run.
 
-Validation checks procedure `dispatch` names against the configured runtime
-adapter's startable agents. Configuration supplies that set; docs owns the
-frontmatter finding. `requires` is not snippet frontmatter: it is the project
+Procedure `dispatch` is removed from frontmatter. Selection is validated in
+`agents.yaml` under `project/instrukt/spec/feature/configuration/agent-selection`;
+model names are open, never checked against a compiled adapter catalogue. `requires` is not snippet frontmatter: it is the project
 layer's configuration key naming the modules the flavor needs. `docs validate`
 and `sync` report a configuration finding when it names a module that is off
 under the effective switches (project over global), not the global layer in
@@ -157,6 +159,15 @@ Then the stale link is reported with the referring file and target
 And a link with missing, outside-repository or foreign-repository targets, or text other than one snippet id, is reported
 But when each link points to the file of its id in the same repository
 Then those references pass, as do plain ids and bare-domain required reads
+```
+
+### UC-SV6: Keep subscribed roles independent of workflow membership
+
+```gherkin
+Given a subscribed procedure declares a role outside the selected workflow's role list
+When its otherwise valid declarations are validated with todos enabled or disabled
+Then workflow membership does not reject that subscribed role
+But a procedure the workflow dispatches must declare a role in its workflow list
 ```
 
 ## Known caveats

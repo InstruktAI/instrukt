@@ -35,6 +35,11 @@ native deliveries; procedures do not subscribe directly to one runtime's native
 vocabulary. The runtime adapter receives the resulting assignment; event-source
 translation remains independent of session execution.
 
+Event activation works with the procedure's declared role independently of
+workflow role-list membership and todo enablement. Reactions are agent-based;
+script-run event actions and event-bound maintenance are outside scope.
+Path-based post-commit follow-ups use git hooks, including sync hooks.
+
 ### Sources and reactions
 
 The five source names remain unchanged as the runner domain's explicit naming
@@ -112,7 +117,7 @@ watched ref's last observed revision.
 Delivery acceptance and runtime execution are separate completion boundaries.
 The target contract retains procedure-first briefing, untrusted event provenance,
 bounded batch selection and eligible delivery boundaries, with settings fixed
-for a session including revival. The owning contracts are
+for a session including continuation after human settling of a standing thread. The owning contracts are
 `project/instrukt/spec/feature/runner/procedure-standing-agent` and
 `project/instrukt/spec/feature/runner/procedure-event-delivery`. Runtime realization
 uses the selected adapter's capabilities;
