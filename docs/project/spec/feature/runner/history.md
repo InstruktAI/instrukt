@@ -57,7 +57,7 @@ reads never retain a read transaction across local history writes.
 
 History stores the source position opaquely. The T3 adapter is the authoritative
 owner of vendor-table selection, fingerprint inputs and read mechanics; its
-verified vendor contract is the [T3 projection writer](https://github.com/pingdotgg/t3code/blob/6417151c093e54dbba0e6c824c69d03983793b9a/apps/server/src/orchestration-v2/ProjectionStore.ts).
+verified vendor contract is T3's projection writer (see See Also).
 
 ### Freshness and participation
 
@@ -140,3 +140,4 @@ And no central database is introduced
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/work/github-record](../work/github-record.md)
+- https://github.com/pingdotgg/t3code/blob/6417151c093e54dbba0e6c824c69d03983793b9a/apps/server/src/orchestration-v2/ProjectionStore.ts — T3's projection writer, the vendor contract the T3 adapter's source reads are verified against.
