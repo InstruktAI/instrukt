@@ -268,7 +268,7 @@ pub enum DocsError {
     )]
     MissingLocalFile { project: ProjectSlug, path: PathBuf },
     #[error(
-        "the published file of project `{project}` is missing at {}; run `instrukt sync` in that project to republish its documentation",
+        "the published file of project `{project}` is missing at {}; run `instrukt sync --force` in that project to republish its documentation",
         path.display()
     )]
     MissingPublishedFile { project: ProjectSlug, path: PathBuf },

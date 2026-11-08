@@ -4,11 +4,10 @@
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 //!
 //! All read the global index and the publication record; none writes
-//! anything. A published snippet is read from the home, a local snippet
-//! from the absolute path its index entry carries, with the companions
-//! beside either file. Where a listing or a read names a position or a
-//! snippet, it names its source: the file or folder in the checkout it was
-//! published from.
+//! anything. Every published snippet is read from the home, with its
+//! companions beside it. Explicit target reads use the preparation worktree.
+//! Where a listing or a read names a position or a snippet, it names its
+//! source: the file or folder in the checkout it was published from.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -209,7 +208,7 @@ fn target_index(
         index.snippets.retain(|e| &e.source_project != project);
         index
             .snippets
-            .extend(crate::publication::target_entries(project, &corpus, root));
+            .extend(crate::publication::target_entries(project, &corpus));
     }
     Ok(())
 }
@@ -878,50 +877,33 @@ struct Reader<'i> {
 impl<'i> Reader<'i> {
     /// Reads the snippet `entry` indexes, with its companions.
     fn load(&self, entry: &'i IndexEntry) -> Result<Loaded<'i>, DocsError> {
-        let (mut root, repo_rel, project) = match entry.scope {
-            IndexScope::Global => (self.home.docs_dir(), global_rel(entry)?, None),
-            IndexScope::Local => {
-                let (root, rel) = local_root(entry)?;
-                (root, rel, Some(entry.source_project.clone()))
-            }
-        };
+        let repo_rel = entry_rel(entry)?;
+        let project = (entry.scope == IndexScope::Local).then(|| entry.source_project.clone());
         let targeted = self
             .target
             .filter(|target| target.project == entry.source_project);
-        if let Some(target) = targeted {
-            root = target.root.clone();
-        }
-        let outside: fn(PathBuf) -> DocsError = match entry.scope {
-            IndexScope::Global => outside_home,
-            IndexScope::Local => outside_repository,
+        let (root, on_disk, outside): (PathBuf, String, fn(PathBuf) -> DocsError) = match targeted {
+            Some(target) => (target.root.clone(), repo_rel.clone(), outside_repository),
+            None => (
+                self.home.docs_dir(),
+                entry.path.to_string_lossy().into_owned(),
+                outside_home,
+            ),
         };
-        let (on_disk, as_source) = if targeted.is_some() {
-            (repo_rel.clone(), repo_rel.clone())
-        } else {
-            match entry.scope {
-                // The home holds `docs/general/…` and `docs/domain/<x>/…` at
-                // `<docs>/general/…` and `<docs>/<x>/…`: the id's own path.
-                IndexScope::Global => (format!("{}.md", entry.id.as_str()), repo_rel.clone()),
-                IndexScope::Local => (repo_rel.clone(), repo_rel.clone()),
+        let as_source = repo_rel;
+        let missing = || {
+            if targeted.is_some() {
+                DocsError::MissingLocalFile {
+                    project: entry.source_project.clone(),
+                    path: root.join(&on_disk),
+                }
+            } else {
+                DocsError::MissingPublishedFile {
+                    project: entry.source_project.clone(),
+                    path: root.join(&on_disk),
+                }
             }
         };
-        let missing = || match entry.scope {
-            IndexScope::Global => DocsError::MissingPublishedFile {
-                project: entry.source_project.clone(),
-                path: root.join(&on_disk),
-            },
-            IndexScope::Local => DocsError::MissingLocalFile {
-                project: entry.source_project.clone(),
-                path: root.join(&on_disk),
-            },
-        };
-        if entry.scope == IndexScope::Local {
-            match std::fs::symlink_metadata(&root) {
-                Ok(_) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Err(missing()),
-                Err(source) => return Err(DocsError::Read { path: root, source }),
-            }
-        }
         let text = read_confined(&root, Path::new(&on_disk), outside)?.ok_or_else(missing)?;
         let mut sources = vec![SourceFile {
             path: as_source.clone(),
@@ -1185,21 +1167,12 @@ impl<'i> Reader<'i> {
             && target.project == entry.source_project
         {
             let root = &target.root;
-            let rel = match entry.scope {
-                IndexScope::Global => global_rel(entry)?,
-                IndexScope::Local => local_root(entry)?.1,
-            };
-            return Ok(root.join(rel).display().to_string());
+            return Ok(root.join(entry_rel(entry)?).display().to_string());
         }
-        Ok(match entry.scope {
-            IndexScope::Local => entry.path.display().to_string(),
-            IndexScope::Global => {
-                let record = PublishedRecord::load(self.home, &entry.source_project)?;
-                match (record, published_source(&entry.id)) {
-                    (Some(record), Some(rel)) => record.checkout.join(rel).display().to_string(),
-                    _ => NOT_RECORDED.to_owned(),
-                }
-            }
+        let record = PublishedRecord::load(self.home, &entry.source_project)?;
+        Ok(match (record, published_source(&entry.id)) {
+            (Some(record), Some(rel)) => record.checkout.join(rel).display().to_string(),
+            _ => NOT_RECORDED.to_owned(),
         })
     }
 
@@ -1317,10 +1290,9 @@ fn outside_repository(path: PathBuf) -> DocsError {
     DocsError::OutsideRepository { path }
 }
 
-/// A published entry's file as the repository path it was published from
-/// (`docs/general/…`, `docs/domain/<x>/…`), once the path the entry carries
-/// relative to the home's docs directory is its id's own path.
-fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
+/// Checks that the entry names its own store path and project, then returns
+/// its repository-relative source path for parsing and explicit target reads.
+fn entry_rel(entry: &IndexEntry) -> Result<String, DocsError> {
     let parts: Option<Vec<&str>> = entry
         .path
         .components()
@@ -1330,41 +1302,20 @@ fn global_rel(entry: &IndexEntry) -> Result<String, DocsError> {
         })
         .collect();
     let at_identity = parts.is_some_and(|p| p.join("/") == format!("{}.md", entry.id.as_str()));
+    let owned = match entry.scope {
+        IndexScope::Global => entry.id.domain().is_some(),
+        IndexScope::Local => entry
+            .id
+            .as_str()
+            .starts_with(&format!("project/{}/", entry.source_project)),
+    };
     match published_source(&entry.id) {
-        Some(rel) if at_identity => Ok(rel),
+        Some(rel) if at_identity && owned => Ok(rel),
         _ => Err(DocsError::IndexMismatch {
             id: entry.id.clone(),
             path: entry.path.clone(),
         }),
     }
-}
-
-/// A local entry's project root and the file's repository path
-/// (`docs/project/<taxonomy>/<rest>.md`), from the absolute path the entry
-/// carries.
-fn local_root(entry: &IndexEntry) -> Result<(PathBuf, String), DocsError> {
-    let mismatch = || DocsError::IndexMismatch {
-        id: entry.id.clone(),
-        path: entry.path.clone(),
-    };
-    let prefix = format!("project/{}/", entry.source_project.as_str());
-    let rest = entry
-        .id
-        .as_str()
-        .strip_prefix(&prefix)
-        .ok_or_else(mismatch)?;
-    let rel = format!("docs/project/{rest}.md");
-    if !entry.path.is_absolute() || !entry.path.ends_with(&rel) {
-        return Err(mismatch());
-    }
-    let depth = Path::new(&rel).components().count();
-    let root = entry
-        .path
-        .ancestors()
-        .nth(depth)
-        .ok_or_else(mismatch)?
-        .to_path_buf();
-    Ok((root, rel))
 }
 
 /// Where the caller stands: the repository containing its working
@@ -1464,13 +1415,13 @@ mod tests {
         let id = "acme/spec/a";
         let placed = entry(id, IndexScope::Global, &format!("{id}.md"));
         assert_eq!(
-            global_rel(&placed).unwrap(),
+            entry_rel(&placed).unwrap(),
             format!("docs/domain/{}", placed.path.display())
         );
         for path in ["../../etc/passwd", "/etc/passwd", "acme/spec/b.md"] {
             assert!(
                 matches!(
-                    global_rel(&entry(id, IndexScope::Global, path)),
+                    entry_rel(&entry(id, IndexScope::Global, path)),
                     Err(DocsError::IndexMismatch { .. })
                 ),
                 "{path}"
@@ -1479,31 +1430,30 @@ mod tests {
     }
 
     #[test]
-    fn a_local_entry_names_its_project_root_by_the_path_it_carries() {
+    fn a_project_entry_is_read_only_at_its_identity_and_owned_project() {
         let id = "project/demo/spec/feature/a";
-        let rel = "docs/project/spec/feature/a.md";
-        let root = PathBuf::from("/work/demo");
-        let placed = entry(id, IndexScope::Local, &root.join(rel).display().to_string());
-        assert_eq!(local_root(&placed).unwrap(), (root, rel.to_owned()));
+        let placed = entry(id, IndexScope::Local, &format!("{id}.md"));
+        assert_eq!(
+            entry_rel(&placed).unwrap(),
+            "docs/project/spec/feature/a.md"
+        );
         for path in [
             "docs/project/spec/feature/a.md",
-            "/work/demo/docs/project/spec/feature/b.md",
+            "/work/demo/docs/project/spec/feature/a.md",
+            "project/demo/spec/feature/b.md",
         ] {
-            assert!(
-                matches!(
-                    local_root(&entry(id, IndexScope::Local, path)),
-                    Err(DocsError::IndexMismatch { .. })
-                ),
-                "{path}"
-            );
+            assert!(matches!(
+                entry_rel(&entry(id, IndexScope::Local, path)),
+                Err(DocsError::IndexMismatch { .. })
+            ));
         }
         let other = entry(
             "project/other/spec/a",
             IndexScope::Local,
-            "/x/docs/project/spec/a.md",
+            "project/other/spec/a.md",
         );
         assert!(matches!(
-            local_root(&other),
+            entry_rel(&other),
             Err(DocsError::IndexMismatch { .. })
         ));
     }

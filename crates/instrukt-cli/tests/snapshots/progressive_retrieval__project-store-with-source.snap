@@ -1,0 +1,54 @@
+---
+source: crates/instrukt-cli/tests/progressive-retrieval.rs
+expression: "stdout(&env, &removed)"
+---
+# instrukt docs get --closure: project/demo/spec/feature/x
+# Required reads (included): project/demo/design/y
+
+---
+id: project/demo/design/y
+type: design
+domain: project
+scope: project
+description: How y is built.
+source: [TMP]/demo/docs/project/design/y.md
+---
+# Y — Design
+
+## Purpose
+
+Y.
+
+## Inputs/Outputs
+
+Text.
+
+## Invariants
+
+Text.
+
+## Primary flows
+
+Text.
+
+## Failure modes
+
+Text.
+
+---
+id: project/demo/spec/feature/x
+type: spec
+domain: project
+scope: project
+description: The x feature.
+source: [TMP]/demo/docs/project/spec/feature/x.md
+---
+# X — Spec
+
+## What it is
+
+The x feature.
+
+## Canonical fields
+
+Text.

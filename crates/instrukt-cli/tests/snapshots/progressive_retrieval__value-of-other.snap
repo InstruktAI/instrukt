@@ -9,17 +9,17 @@ id: acme/procedure/verify
 type: procedure
 domain: acme
 scope: global
-description: Runs the project's tests.
+description: Names the current project.
 source: [TMP]/demo/docs/domain/acme/procedure/verify.md
 ---
 # Verify — Procedure
 
 ## Goal
 
-Run the tests:
+Project identity:
 
 ```
-cargo test --workspace
+other
 ```
 
 ## Preconditions

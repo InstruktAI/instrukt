@@ -28,7 +28,7 @@ runtimes:
     discover_environments: Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access.
     connect_environment: Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite.
     dispatch_remote: Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success.
-schema_version: 2
+schema_version: 3
 agents: {}
 board: false
 approvals:
@@ -37,5 +37,3 @@ approvals:
 workflow:
   domain: sdlc
 project: hostile
-actions:
-  report: report hostile

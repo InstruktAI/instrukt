@@ -3,8 +3,8 @@
 //! (`docs/project/spec/domain/publication.md`).
 //!
 //! What a project publishes follows from what its committed main holds:
-//! `docs/general/` and each `docs/domain/<x>/`. Each is claimed in the
-//! ownership record under `~/.instrukt/state/publication/claims/`.
+//! `docs/general/`, each `docs/domain/<x>/` and `docs/project/`. Each is
+//! claimed in the ownership record under `~/.instrukt/state/publication/claims/`.
 //!
 //! One operation, [`sync`]: publish the project the caller stands in from
 //! its canonical main, or do nothing when that commit is already

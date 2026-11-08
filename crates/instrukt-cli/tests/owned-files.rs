@@ -255,3 +255,35 @@ fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_mac
     assert!(!normal.join("state/index.yaml").exists());
     assert!(normal.join("secrets.env").exists());
 }
+
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
+#[test]
+fn retired_project_actions_migrate_before_reads_and_an_unchanged_sync() {
+    let env = TestEnv::new();
+    let repo = env.git_repo("retired-actions");
+    let old = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: retired-actions\nactions: {test: make test}\napprovals: {prd: peer}\n";
+    repo.write("instrukt.yaml", old);
+    repo.commit("old project configuration");
+    env.run(repo.path(), ["config", "get", "approvals.prd"])
+        .success();
+    let stored: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
+    assert!(stored.get("actions").is_none());
+    assert_eq!(stored["approvals"]["prd"].as_str(), Some("peer"));
+    assert_eq!(
+        stored["schema_version"].as_u64(),
+        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+    );
+    assert_eq!(
+        repo.read("instrukt.yaml").lines().next(),
+        old.lines().next()
+    );
+    env.run(repo.path(), ["sync"]).success();
+    repo.write("instrukt.yaml", old);
+    env.run(repo.path(), ["sync"]).success();
+    let stored: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
+    assert!(stored.get("actions").is_none());
+    assert_eq!(stored["approvals"]["prd"].as_str(), Some("peer"));
+}

@@ -9,16 +9,16 @@ id: acme/procedure/verify
 type: procedure
 domain: acme
 scope: global
-description: Runs the project's tests.
+description: Names the current project.
 source: [TMP]/demo/docs/domain/acme/procedure/verify.md
 ---
 # Verify — Procedure
 
 ## Goal
 
-Run the tests:
+Project identity:
 
-> instrukt: configured value `actions.test` cannot be resolved: `actions.test` does not exist: no `actions` in the configuration
+> instrukt: configured value `project` cannot be resolved: `project` does not exist: no `project` in the configuration
 
 ## Preconditions
 

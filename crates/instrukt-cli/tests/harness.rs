@@ -80,15 +80,15 @@ fn instrukt_children_see_only_the_injected_environment() {
     repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: 1\nproject: demo\nactions:\n  injected: \"${{{INJECTED}}}\"\n  ambient: \"${{{AMBIENT}}}\"\n"
+            "schema_version: 1\nproject: demo\ngithub:\n  repository: \"${{{INJECTED}}}\"\n  approvers: [\"${{{AMBIENT}}}\"]\n"
         ),
     );
     let injected = env
-        .run(repo.path(), ["config", "get", "actions.injected"])
+        .run(repo.path(), ["config", "get", "github.repository"])
         .success();
     let value = String::from_utf8_lossy(&injected.get_output().stdout).into_owned();
     insta::assert_snapshot!(value, @"s-1");
-    env.run(repo.path(), ["config", "get", "actions.ambient"])
+    env.run(repo.path(), ["config", "get", "github.approvers"])
         .failure();
 }
 

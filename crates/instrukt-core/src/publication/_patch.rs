@@ -15,6 +15,11 @@ use crate::index::{GlobalIndex, IndexEntry, IndexParameter, IndexScope, ThirdPar
 pub enum Claim {
     /// A new entry's id is held by another project's entry.
     DuplicateId { id: String, owner: ProjectSlug },
+    /// The project position is already claimed by another owner.
+    ProjectOwned {
+        project: ProjectSlug,
+        owner: ProjectSlug,
+    },
     /// A position the project publishes is owned by another project.
     DomainOwned {
         domain: DomainName,
@@ -28,6 +33,10 @@ impl fmt::Display for Claim {
             Claim::DuplicateId { id, owner } => {
                 write!(f, "`{id}` is already published by project `{owner}`")
             }
+            Claim::ProjectOwned { project, owner } => write!(
+                f,
+                "`docs/project/{project}/` is owned by project `{owner}`; it is free to claim once `{owner}` stops publishing it"
+            ),
             Claim::DomainOwned { domain, owner } => write!(
                 f,
                 "`{}` is owned by project `{owner}`; it is free to claim once `{owner}` stops publishing it",
@@ -49,18 +58,13 @@ pub(super) struct Contribution {
 
 impl Contribution {
     /// The entries of `corpus`: one global entry per snippet of a domain in
-    /// `domains`, one local entry per local snippet (carrying its file's
-    /// absolute path in `primary`) and one entry per third-party doc.
-    pub(super) fn of(
-        project: &ProjectSlug,
-        corpus: &Corpus,
-        domains: &[DomainName],
-        primary: &Path,
-    ) -> Self {
+    /// `domains`, one project entry per project snippet and one entry per
+    /// third-party doc. Every path is relative to the published docs store.
+    pub(super) fn of(project: &ProjectSlug, corpus: &Corpus, domains: &[DomainName]) -> Self {
         let mut snippets: Vec<IndexEntry> = corpus
             .snippets()
             .iter()
-            .filter_map(|snippet| entry(project, snippet, domains, primary))
+            .filter_map(|snippet| entry(project, snippet, domains))
             .collect();
         snippets.sort_by(|a, b| a.id.cmp(&b.id));
         let mut third_party: Vec<ThirdPartyEntry> = corpus
@@ -89,18 +93,16 @@ impl Contribution {
     }
 }
 
-fn entry(
-    project: &ProjectSlug,
-    snippet: &Snippet,
-    domains: &[DomainName],
-    primary: &Path,
-) -> Option<IndexEntry> {
+fn entry(project: &ProjectSlug, snippet: &Snippet, domains: &[DomainName]) -> Option<IndexEntry> {
     let (scope, path) = match (snippet.scope(), snippet.domain()) {
         (Scope::Global, DocDomain::Published(domain)) if domains.contains(domain) => (
             IndexScope::Global,
             PathBuf::from(published_destination(&snippet.path().to_string_lossy())?),
         ),
-        (Scope::Project, _) => (IndexScope::Local, primary.join(snippet.path())),
+        (Scope::Project, _) => (
+            IndexScope::Local,
+            PathBuf::from(format!("{}.md", snippet.id().as_str())),
+        ),
         _ => return None,
     };
     let frontmatter = snippet.current().frontmatter();
@@ -235,17 +237,13 @@ pub(super) fn patch(
 }
 
 /// Index a target worktree without publishing it or changing the live index.
-pub(crate) fn target_entries(
-    project: &ProjectSlug,
-    corpus: &Corpus,
-    root: &Path,
-) -> Vec<IndexEntry> {
+pub(crate) fn target_entries(project: &ProjectSlug, corpus: &Corpus) -> Vec<IndexEntry> {
     let domains = corpus
         .published_domains()
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    Contribution::of(project, corpus, &domains, root).snippets
+    Contribution::of(project, corpus, &domains).snippets
 }
 
 #[cfg(test)]

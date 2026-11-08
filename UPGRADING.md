@@ -18,12 +18,24 @@ webhook intake or authenticated Redis with this build:
    computer. Required material must be readable only by its owner in the normal
    machine home's `secrets.env`.
 
-Configuration schema 1 migrates to schema 2 before reads, validation, patches,
+Configuration schemas 1 and 2 migrate to schema 3 before reads, validation, patches,
 publication decisions, installation and ticks. Supported global model choices
 move to `agents.yaml`; non-bot git authors remain in `instrukt.yaml`. If a
 different `agents.yaml` already exists, conversion refuses rather than discarding
 either choice. Reconcile those selections and retry. A failed conversion keeps
 the source configuration.
+
+Schema 3 removes the retired project-layer `actions` key while preserving supported
+settings and the editor modeline. Procedures take project checks from project
+documentation. A new `actions` declaration is an unknown-key finding.
+
+Project documentation now lives in `~/.instrukt/docs/project/<slug>/`, copied from
+committed canonical main. Index schema 1 is upcast to schema 2 on read; its former
+checkout paths become store paths. For each previously published project, run
+`instrukt sync --force` once after upgrading to populate its store even when main
+has not changed. A missing store file reports the project and republish command;
+retrieval never reads a checkout as a fallback. Source headers retain the real
+checkout address for authoring.
 
 Procedure frontmatter no longer accepts `dispatch`. Configure its role's order
 and tier in `agents.yaml`. Model names are open; use `instrukt config show agents`

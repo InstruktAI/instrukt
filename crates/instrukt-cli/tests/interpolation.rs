@@ -8,12 +8,13 @@ fn configured_values_expand_without_rewriting_the_stored_layer() {
     let mut env = TestEnv::new();
     env.set_env("DESTINATION", "local");
     let repo = env.git_repo("demo");
-    let source = "schema_version: 2\nproject: demo\nactions: {base: 'echo', report: '{actions.base} ${DESTINATION}'}\n";
+    let source =
+        "schema_version: 3\nproject: demo\ngithub: {repository: '{project}/${DESTINATION}'}\n";
     repo.write("instrukt.yaml", source);
     let out = env
-        .run(repo.path(), ["config", "get", "actions.report"])
+        .run(repo.path(), ["config", "get", "github.repository"])
         .success();
-    insta::assert_snapshot!(String::from_utf8_lossy(&out.get_output().stdout),@"echo local");
+    insta::assert_snapshot!(String::from_utf8_lossy(&out.get_output().stdout),@"demo/local");
     assert_eq!(repo.read("instrukt.yaml").as_bytes(), source.as_bytes());
 }
 // spec: project/instrukt/spec/feature/configuration/interpolation UC-VI3
