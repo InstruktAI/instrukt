@@ -665,6 +665,10 @@ pub fn reserve_manual(
         if owner != caller.to_string() || request.brief != initialized {
             return Err(SessionsError::Unresolved { key });
         }
+        request.selection = request
+            .selection
+            .as_ref()
+            .map(|selection| crate::runtime::adapter(runtime).native_selection(selection));
         request.start_allowed = retry;
         if retry {
             state.write::<_,StateError>(|tx|{tx.execute("UPDATE manual_standing_reservations SET retry_allowed=0 WHERE responsibility=?1",[&key]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;

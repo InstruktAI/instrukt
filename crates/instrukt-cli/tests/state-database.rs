@@ -65,6 +65,7 @@ fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_
         "Lists keep their depth everywhere.",
     );
     let before = project.ok(["show", "list-depth"]);
+    let retained = retain_historical_starts(&project.env);
 
     // Filing nested-lists under list-depth is one change across two
     // records: list-depth becomes its group's holder and nested-lists is
@@ -116,6 +117,8 @@ fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_
         std::thread::sleep(Duration::from_millis(2));
     };
     drop(probe);
+    let after = project.ok(["show", "list-depth"]);
+    assert_retained_starts(&project.env, &retained);
     if let Err(status) = stopped {
         assert!(status.success(), "the filing failed: {status}");
         eprintln!(
@@ -124,7 +127,6 @@ fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_
         return;
     }
 
-    let after = project.ok(["show", "list-depth"]);
     // Nothing of the interrupted filing is present: no nested-lists.
     project.todo(["show", "nested-lists"]).failure();
 
@@ -168,22 +170,8 @@ fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_intr
     assert_eq!(version, instrukt_core::state_db::schema_version());
 }
 
-// spec: project/instrukt/spec/feature/work/state-database UC-SD2
-#[test]
-fn a_historical_start_request_migrates_and_loads_through_the_current_request_model() {
-    let env = common::TestEnv::new();
-    env.run(
-        env.home(),
-        [
-            "agents",
-            "status",
-            "codex",
-            "unavailable",
-            "--reason",
-            "fixture initialization",
-        ],
-    )
-    .success();
+// Historical completed records belong to UC-SD2's last completed state.
+fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
     let file = env.instrukt_home().join("state/instrukt.db");
     let db = Connection::open(&file).unwrap();
     db.execute_batch("DROP TABLE agent_quota; PRAGMA user_version=4;")
@@ -194,32 +182,46 @@ fn a_historical_start_request_migrates_and_loads_through_the_current_request_mod
     let cursor = serde_json::json!({"key":"cursor-key","brief":"cursor-input","checkout":checkout.path(),"selection":{"family":"cursor","provider":"cursor-account","model":"open-model","effort":"high","options":{"effort":"high","reasoning":"medium","fastMode":true}}});
     db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','cursor-key','p','run','s',?1,'cursor-input',?2,'2030-01-01T00:00:00Z',0,'unresolved')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),cursor.to_string()]).unwrap();
     drop(db);
-    env.run(env.home(), ["agents", "availability"]).success();
+    old
+}
+
+fn assert_retained_starts(env: &common::TestEnv, old: &serde_json::Value) {
+    let file = env.instrukt_home().join("state/instrukt.db");
     let db = Connection::open(file).unwrap();
-    let (encoded,unresolved):(String,bool)=db.query_row("SELECT request,state='unresolved' FROM runtime_starts WHERE semantic_key='retained-key'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    let (encoded, unresolved): (String, bool) = db.query_row("SELECT request,state='unresolved' FROM runtime_starts WHERE semantic_key='retained-key'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
     let current: instrukt_runner::runtime::RuntimeStart = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(current.checkout, checkout.path());
-    insta::assert_snapshot!(
-        "migrated-current-start-request",
-        serde_json::to_string_pretty(&current).unwrap().replace(
-            env.path("").to_str().unwrap().trim_end_matches('/'),
-            "[TMP]"
-        )
-    );
     assert!(unresolved);
-    let selection = current.selection.as_ref().unwrap();
+    assert_eq!(current.key, old["key"].as_str().unwrap());
+    assert_eq!(current.brief, old["brief"].as_str().unwrap());
+    assert_eq!(
+        current.checkout,
+        std::path::Path::new(old["checkout"].as_str().unwrap())
+    );
+    assert!(current.worktree.is_none());
+    let selection = current.selection.unwrap();
     assert_eq!(
         selection.profile,
         instrukt_core::ids::ProfileName::parse("antigravity").unwrap()
     );
     assert_eq!(
-        selection.instance,
-        instrukt_core::ids::ProviderInstanceId::parse("account-two").unwrap()
+        selection.kind,
+        instrukt_core::config::HarnessKind::Antigravity
     );
+    assert_eq!(
+        selection.instance,
+        instrukt_core::ids::ProviderInstanceId::parse(
+            old["selection"]["provider"].as_str().unwrap()
+        )
+        .unwrap()
+    );
+    assert_eq!(selection.model, old["selection"]["model"].as_str().unwrap());
     assert_eq!(selection.effort, Some(instrukt_core::config::Effort::High));
-    let native = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
-        .native_selection(selection);
-    insta::assert_json_snapshot!("migrated-current-request-selection", native);
+    assert!(selection.options.is_empty());
+    assert_eq!(current.preferences[0].agent, selection.profile);
+    assert_eq!(
+        current.preferences[0].tier,
+        Some(instrukt_core::config::Tier::Strong)
+    );
     let encoded: String = db
         .query_row(
             "SELECT request FROM runtime_starts WHERE semantic_key='cursor-key'",

@@ -84,9 +84,7 @@ not change an existing conversation.
 The runner supplies readiness, capacity and selection-realization outcomes under
 `project/instrukt/spec/feature/runner/session-continuity`. Selection consumes
 those outcomes before a new start, preserving the configured profile order and
-per-tier chains. A failed or incomplete readiness probe cannot admit a profile;
-source-supported configurations that require no provider login remain usable.
-Native default/automatic picks follow the selected adapter's declared behavior.
+per-tier chains.
 Skips and exhaustion retain their reasons and leave work pending through the
 existing anomaly route.
 

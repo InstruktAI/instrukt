@@ -535,6 +535,123 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(r.runtime.message_count("s1"), 2);
     insta::assert_snapshot!("manual-standing-attended", r.conversation());
 }
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA11
+#[test]
+fn an_interrupted_historical_reservation_retries_its_captured_native_selection_after_upgrade() {
+    let r = Responsibility::new("");
+    common::agent_profiles(
+        &r.computer.env,
+        "default: {order: [codex], tier: strong}\nprofiles:\n  codex:\n    instance: captured-account\n    strong: [{model: captured-model, effort: high, serviceTier: priority}]\n",
+    );
+    let root = r.computer.project.path();
+    let reserve = || {
+        r.computer
+            .env
+            .instrukt(root)
+            .env("T3CODE_THREAD_ID", "manual-parent")
+            .args([
+                "events",
+                "bind",
+                "reactions/procedure/respond",
+                "--reserve",
+                "--json",
+            ])
+            .assert()
+            .success()
+    };
+    let calls_before = r.runtime.calls().len();
+    let first = reserve();
+    let original: instrukt_runner::standing::ManualReservation =
+        serde_json::from_slice(&first.get_output().stdout).unwrap();
+    assert!(original.start_allowed);
+    // Schema 6's producer persisted this same semantic effort plus native options.
+    // The caller is interrupted before it can start or bind a native thread.
+    let db = r.computer.db();
+    db.pragma_update(None, "user_version", 6).unwrap();
+    drop(db);
+
+    // The real retained-reservation consumer upgrades the database before replay.
+    let replay = reserve();
+    let replay: instrukt_runner::standing::ManualReservation =
+        serde_json::from_slice(&replay.get_output().stdout).unwrap();
+    assert!(!replay.start_allowed);
+    assert_eq!(
+        r.computer
+            .db()
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
+            .unwrap(),
+        instrukt_core::state_db::schema_version()
+    );
+    r.computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            &original.reservation,
+            "--not-started",
+            "--reason",
+            "native inspection confirms no thread and no in-flight start",
+        ])
+        .assert()
+        .success();
+    common::agent_profiles(&r.computer.env, "default: {order: [claude], tier: light}\n");
+    let retry = reserve();
+    let retried: instrukt_runner::standing::ManualReservation =
+        serde_json::from_slice(&retry.get_output().stdout).unwrap();
+    assert!(retried.start_allowed);
+    assert_eq!(retried.reservation, original.reservation);
+    assert_eq!(retried.key, original.key);
+    assert_eq!(retried.brief, original.brief);
+    assert_eq!(retried.checkout, original.checkout);
+    assert_eq!(retried.preferences, original.preferences);
+    assert_eq!(retried.selection, original.selection);
+    assert_eq!(replay.selection, original.selection);
+    insta::assert_snapshot!(
+        "historical-reservation-native-retry",
+        String::from_utf8_lossy(&retry.get_output().stdout)
+            .replace(&original.reservation, "[RESERVATION]")
+            .replace(root.to_str().unwrap(), "[PROJECT]")
+    );
+    assert_eq!(r.runtime.calls().len(), calls_before);
+
+    r.runtime.seed("s1", root, &retried.key, &retried.brief);
+    let evidence =
+        serde_json::json!({"session":"t3:s1","title":retried.key,"assignment":retried.brief});
+    r.computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            &retried.reservation,
+            "--session",
+            "t3:s1",
+            "--evidence",
+            "-",
+        ])
+        .write_stdin(evidence.to_string())
+        .assert()
+        .success();
+    r.computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args(["events", "bind", "reactions/procedure/respond", "--reserve"])
+        .assert()
+        .failure();
+    r.append("after-historical-retry");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), 2);
+}
+
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED8
 #[test]
 fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
