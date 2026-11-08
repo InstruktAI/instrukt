@@ -92,9 +92,12 @@ refuse publication and preserve the previous publication.
 ### Subscription entries and index identity
 
 The same atomic owner-scoped index patch carries a delivered procedure's validated
-patterns, home kind, identity, attendance, delivery settings, role, required-read
-references and position reach. Pending entries retain their pending marker and
-are excluded by activation. Project-local subscription reach is preserved for
+patterns, home kind, identity, attendance, delivery settings, effective role,
+required-read references and position reach. An omitted subscribed role resolves
+to `event-handler`; explicit roles remain independent of workflow role lists.
+Role class and scoped grants are read from the machine's `agents.yaml`, not
+copied into a second publication role catalog. Pending entries retain their
+pending marker and are excluded by activation. Project-local subscription reach is preserved for
 the owning project; general/domain entries reach all origins of their declared
 kind. Index rendering lists subscribed procedures as configured responsibilities
 with patterns, never self-service triggered procedures. Events-off leaves those

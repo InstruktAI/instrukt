@@ -24,12 +24,12 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
-| configuration | Layered settings, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
+| configuration | Layered settings, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
 | publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
-| work | Local-leading work record, GitHub reflection, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks and per-computer searchable history | `project/instrukt/spec/domain/runner` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
@@ -63,9 +63,11 @@ not permission for an upstream module to depend on its consumer.
 | --- | --- | --- |
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
 | configuration → publication | Customer / Supplier | Project slug, runtime choice and configuration migration operation |
-| configuration → repository | Customer / Supplier | Project slug, runtime choice and agent author settings |
+| configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
 | configuration → blueprint | Customer / Supplier | Module switch and engine selection |
-| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice and runner settings |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration and runner settings |
+| work, runner → CLI admission | Published language | Owner-supplied todo attempts and standing/scheduled assignment facts for the recognized caller; core-declared lookup wired by the CLI |
+| work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
 | publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
 | publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |

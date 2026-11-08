@@ -35,7 +35,7 @@ check documentation before committing, and it changes nothing.
 | Family | A finding when |
 | --- | --- |
 | Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
-| Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without `role` or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
+| Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without an explicit or subscription-default role or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
 | Procedures | a procedure dispatched by the selected workflow has a `role` absent from its `workflow/actions.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
 | Structure | the H1 is missing, not first, or does not end with `— <Type>`; a required H2 section of the effective schema is missing; an H2 outside it appears; `See Also` is not last (`project/instrukt/spec/feature/docs/snippet-schema`) |
 | References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a `general` or domain snippet requiring a project snippet |
@@ -67,13 +67,19 @@ it is not that module list or snippet frontmatter.
 
 ### Subscription declarations
 
-Subscribed procedures require nonempty shared-matcher patterns, `role` and one
+Subscribed procedures require nonempty shared-matcher patterns and one
 `subscription_home` (`project`, `platform`, `company`, `person`); they cannot also
 carry `activation_trigger`. Identity is `home` or `subject` (default home),
 attendance `attended` or `unattended` (default attended), delivery `sequential` or
 `batched` (default sequential), and interruptible is boolean (default true,
-ASAP; false selects only-at-entry). Missing steering is a supported degradation,
-not a declaration finding.
+ASAP; false selects only-at-entry). An omitted `role` resolves to `event-handler`;
+an explicit role is retained even when absent from the agent configuration,
+where it uses `default`. Workflow membership constrains only workflow-dispatched
+procedures. The role-entry validation contract is
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`: unknown
+action/bundle names and malformed class/scope/grants are shape errors; roles no
+installed procedure declares are reported, except the two reserved fallbacks.
+Missing steering is a supported degradation, not a declaration finding.
 These fields without subscriptions, unknown values and malformed patterns are
 findings naming file and field. A project-position subscription answers only its
 own project and must declare project home; general/domain positions reach all

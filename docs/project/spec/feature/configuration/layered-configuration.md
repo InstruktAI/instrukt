@@ -52,6 +52,7 @@ enable events. Installation and withdrawal are owned by
 | `project` | project only | docs and publication |
 | `requires` (modules the flavor needs) | project only | publication |
 | `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
+| `github.apps` (App/bot public identities and protected private-key references), `github.project_app` (fallback App reference) | global only | work GitHub boundary; configuration stores and validates declarations |
 | `github.approvers` (GitHub logins) | project only | work |
 | `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
@@ -206,7 +207,13 @@ Model selection is role-keyed configuration in `~/.instrukt/agents.yaml`,
 independent of these layers and of procedure content. A procedure's `role`
 selects a role mapping, falling back to `default`; per-task overrides win.
 The full profile, tier-chain, readiness, availability and upgrade contracts are
-`project/instrukt/spec/feature/configuration/agent-selection`.
+`project/instrukt/spec/feature/configuration/agent-selection`. That same role map
+carries `class`, scoped `can` grants with named `bundles`, and `github_app` under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`. The
+machine-global App inventory and fallback identity follow
+`project/instrukt/spec/feature/work/github-apps`; keys resolve only through the
+protected secrets file. Neither model preferences nor project configuration
+selects a bot actor.
 
 ### Locating the layers
 

@@ -146,12 +146,15 @@ project's todo commands refuse with the same reason and the runner picks up
 nothing for it. `instrukt status` reports whether the repository's code is on
 GitHub, so the instrukt skill says so before switching todos on.
 
-**Credentials.** GitHub credentials resolve from the one owner-only machine-local
-`~/.instrukt/secrets.env` under
-`project/instrukt/spec/feature/configuration/owned-files`, on interactive paths
-and ticks alike. Process environment and `gh auth token` supply no alternate
-secret source. Credential values are never echoed. With none, reflection
-reports "pending: no credentials" and the local record continues.
+**Credentials and actors.** The GitHub boundary issues installation tokens for
+configured Apps under `project/instrukt/spec/feature/work/github-apps`. App keys
+resolve from the one owner-only machine-local `~/.instrukt/secrets.env` on
+interactive paths and ticks alike; tokens remain in memory. Shared records,
+issues, bugs and board updates use the project bot; role-driven pull requests
+and reviews use their role's App. Process environment and `gh auth token` supply
+no alternate credential source. With unavailable credentials, reflection remains
+visibly pending and the local record continues. Identity/issuance failures retain
+their secret-safe cause and never select a human fallback.
 
 A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
 reflection; no separate writer process runs. Every command that writes the
@@ -176,9 +179,13 @@ envelopes, artifact-version references and stamp ledger within the
 artifacts-and-stamps boundary. A mutation spanning several todos commits
 locally in one transaction and is reflected per item, not atomically.
 
-A record comment is applied only when GitHub reports its author's association
-with the repository as owner, member or collaborator; a record comment by
-anyone else is logged and never applied.
+A record comment is applied when GitHub reports its author's association with
+the repository as owner, member or collaborator, or when its verified stable
+actor matches a configured App bot under
+`project/instrukt/spec/feature/work/github-apps`. Configured bots are trusted
+for record restoration even with association `NONE`. Any other author is logged
+and never applied. Envelope trust does not grant human approval or hold-label
+authority; those controls retain their actor checks below.
 
 Inbound approvals and change requests are accepted only from logins in the
 project layer’s `github.approvers` with write access to the repository. An
@@ -206,6 +213,33 @@ The claim-hosting computer recovers attention for imported decisions exactly onc
 through reflection, claim movement and local database reconstruction. Its confirmation reply is retained with acceptance and
 retried separately. A source-comment marker reconciles a reply whose posting
 acknowledgement was lost, so confirmation retry changes no work fact.
+
+### Record schema compatibility
+
+Every GitHub record/revision envelope declares its record schema version.
+Every reader checks it before interpreting or applying that envelope: interest
+refresh, pickup listings, reconstruction and mutation pull-through use the same
+compatibility path. Local database and configuration versions remain separate.
+
+A version newer than this binary understands is refused before any dependent
+mutation: no local record replacement, stamp/artifact append, claim change,
+reflection, acknowledgement comment or remote rewrite proceeds against it.
+The refusal names the todo, observed and supported versions, and the upgrade
+door. The remote envelope and existing local evidence remain intact; a listing
+reports the incompatible item rather than silently dropping it. Unrelated work
+can continue. A known incompatible record is not treated as an ordinary offline
+refresh failure permitting a stale write.
+
+A supported older version is converted to the current in-memory record before
+consumption or mutation. Conversion preserves durable identity, relationships,
+artifact-version references, digests, stamps, actor attribution and revision
+history. Missing conversion or invalid content refuses with the source intact;
+it never fabricates evidence or resets the todo. Conversion is not a fresh
+human decision or workflow fact. Persisting a converted record uses the normal
+local transaction and remote revision-checked reflection; old retained revisions
+and artifact content are not rewritten. Re-reading a converted record converges
+without duplicating decisions. Offline operation keeps the existing local-leading
+contract; it cannot claim to have checked an unavailable remote version.
 
 ### GitHub hold label and output labels
 
@@ -282,7 +316,7 @@ the remote record before creating duplicate evidence.
   Given a developer's project is public and its todos are reflected to GitHub
   When someone without write access to the repository posts what looks like a record update on a todo
   Then the developer's work record is unchanged by it
-  And records posted by people with write access are still applied
+  And records posted by people with write access and configured verified bots are still applied
 ```
 
 ### UC-GR5: A developer follows their work on a project board
@@ -342,6 +376,16 @@ But when the actor lacks write access
 Then their hold-label action changes no work record
 ```
 
+### UC-GR10: Recover work across supported record schema upgrades
+
+```gherkin
+Given a developer restores reflected work written with an older supported record schema
+When instrukt reads its record and revision envelopes
+Then it converts them before consumption while preserving the retained evidence and attribution
+But a newer schema refuses before any dependent mutation and names the upgrade door
+And the remote record and existing local evidence remain intact
+```
+
 ## Known caveats
 
 - Code hosted anywhere but GitHub is not supported for todos.
@@ -351,8 +395,6 @@ Then their hold-label action changes no work record
   listing; the label says how old.
 - Records written by the predecessor's GitHub store are not read; the envelope
   format is new and carries no compatibility with it.
-- A GitHub App bot posts with association `NONE`, so a record it wrote would be
-  ignored; instrukt never writes records as an App.
 - GitHub reconstruction is limited to the artifact versions the provider
   retains and serves. An older version retained only locally is not promised
   on a replacement computer. Native artifact availability and accepted

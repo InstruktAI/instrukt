@@ -17,8 +17,9 @@ project and its tools put there, and routes each hook to the context that
 acts on it — publication after main changes, the blueprint on a push to main
 or a pull advancing main, when blueprint is enabled.
 It composes attributed commits (`instrukt repo commit`): the acting agent as
-author, the session it ran in, the caller's declaration of human involvement,
-and the work item when given. It does not decide what a sync publishes or a
+author, using the selected App's bot noreply identity for a recorded bot role;
+the session it ran in; the caller's declaration of human involvement; and the
+work item when given. It does not decide what a sync publishes or a
 graph contains, owns no lint or test hook, and never runs the project's own
 commands.
 
@@ -93,7 +94,10 @@ commands.
   the project layer's schema, the runtime choice and the agents' git authors
   (configuration, `project/instrukt/spec/domain/configuration`); a work
   item's existence (work, `project/instrukt/spec/domain/work`); the
-  project's lint, test and other hooks and actions (the project).
+  project's lint, test and other hooks and actions (the project). Recorded
+  assignment scope and grants are supplied by the shared admission interface;
+  verified App/bot author facts come through the GitHub boundary's interface
+  wired by the CLI, without core importing work or runner.
 - **Published contracts** — `instrukt init`;
   `instrukt hooks install|remove|status`; `instrukt hooks run <hook>`;
   `instrukt repo commit`;
@@ -188,7 +192,9 @@ This context emits no events.
 ## Context map position
 
 - **configuration** — Customer / Supplier. Configuration supplies the project
-  slug, the runtime choice, the agents' git authors and the blueprint switch.
+  slug, runtime choice, role/App references, non-bot agent git authors and the
+  blueprint switch. Bot author resolution follows
+  `project/instrukt/spec/feature/work/github-apps`, consumed through CLI wiring.
 - **publication** — Customer / Supplier. Post-hook runs start
   `instrukt sync`; publication decides what it does. Publication supplies the
   ownership record and published `sdlc` schema that `init` reads, and the

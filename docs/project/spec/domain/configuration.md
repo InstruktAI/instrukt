@@ -67,16 +67,21 @@ be absent outside that runtime and does not change runtime selection.
 
 ## Ownership boundary
 
-- **Owns** — the `instrukt.yaml` schema, `agents.yaml` selection shape and
-  validation, machine-local protected secrets and owned-file migration;
+- **Owns** — the `instrukt.yaml` schema, `agents.yaml` role/class/scoped-grant,
+  bundle and model-selection shapes and validation; GitHub App public profile
+  and role-reference configuration; machine-local protected secrets and owned-file migration;
   layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
   revisions and safe patching; interpolation; validation of the explicit runtime
   choice, agent-action instruction entries and derived caller identity.
+  Code owns the action catalog and operation mappings; configuration owns the
+  composed grants, with admission consuming owner-supplied assignment facts.
 - **Does not own** — what any key does: docs and publication read
   `project`; repository decides when publication runs and its commit
   composition reads adapter caller identity and `agents.<name>.git_author` and decides the
-  commit author and trailers; blueprint, work, workflow and runner read the
+  commit author and trailers, including the selected App bot author for bound
+  bot roles; the GitHub boundary owns installation-token issuance and actor
+  verification; blueprint, work, workflow and runner read the
   keys and module switches governing their capabilities; the flavor's
   procedures run the checks the project documents. Configuration migration
   precedes refusal or skip on every path; configuration owns its ordering and conversion.
@@ -138,6 +143,7 @@ This context emits no events.
 
 - **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
 - **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
+- **roles-and-capabilities** — [project/instrukt/spec/feature/configuration/roles-and-capabilities](../feature/configuration/roles-and-capabilities.md) — class, scoped action grants, bundles, assignment-based object resolution, focused enforcement and awareness help.
 - **agent-selection** — [project/instrukt/spec/feature/configuration/agent-selection](../feature/configuration/agent-selection.md) — role mappings, provider-instance profiles, tier chains, readiness and selection diagnostics.
 - **configuration-skill** — [project/instrukt/spec/feature/configuration/configuration-skill](../feature/configuration/configuration-skill.md) — one skill coordinates local configuration and infrastructure verification across participating computers through the selected runtime, or locally without a route.
 - **owned-files** — [project/instrukt/spec/feature/configuration/owned-files](../feature/configuration/owned-files.md) — one protected machine-local secret source, owned-shape migration and isolated worktree homes.

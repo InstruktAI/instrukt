@@ -92,7 +92,11 @@ way, whatever was done before:
      in their owning layer and validate. Model selection uses the configuration
      skill and user-owned `~/.instrukt/agents.yaml`, keyed by role; the skill
      discovers existing ACP instances without creating provider instances.
-     Protected instrukt secrets use only `instrukt secrets set/generate`.
+     The same role entries hold classes, scoped capability bundles and GitHub
+     App references. GitHub setup reuses configured Apps or creates/installs the
+     three identities through the configuration skill; author and reviewer bots
+     stay distinct. Protected instrukt secrets, including App keys, use only
+     `instrukt secrets set/generate`.
    - Anything else about instrukt: `instrukt -h` and `instrukt docs`.
 3. **Show the result** by reading `instrukt status` again.
 

@@ -22,8 +22,17 @@ message that writes them itself is refused.
 | Fact | Source | Unresolved |
 | --- | --- | --- |
 | Active runtime and its session id | the explicitly selected adapter's recognition of the caller's native session (`project/instrukt/spec/domain/configuration`) | no `Session:` trailer |
-| Active agent | the selected adapter's reported agent identity, when it can resolve one | the git user's own identity as author |
-| Agent author | the global layer's `agents.<name>.git_author` for the active agent | refuse and name `agents.<name>.git_author` |
+| Bot-role author | the recognized session's recorded role and configured App's verified bot login/id | refuse with the App identity configuration door |
+| Active agent outside a bot role | the selected adapter's reported agent identity, when it can resolve one | the git user's own identity as author |
+| Non-bot agent author | the global layer's `agents.<name>.git_author` for the active agent | refuse and name `agents.<name>.git_author` |
+
+A recorded bot role uses its selected App's bot noreply author under
+`project/instrukt/spec/feature/work/github-apps`, before provider-agent lookup.
+The bot account id, not the App id, forms the noreply address. Unmapped agent
+roles use the project App. This works with T3's recognized native session even
+when T3 reports no provider-agent identity. A known role with unavailable App
+identity refuses rather than writing under the developer's name. A roleless
+human session keeps the existing non-bot resolution.
 
 The runtime choice is explicit; recognising caller identity does not select one.
 An adapter may identify the provider of its recognised session, but an unknown
@@ -92,8 +101,12 @@ Retired: no agent authors direct commits on main. Worktree-head review precedes 
 
 ## Known caveats
 
-- T3's caller lookup resolves a native session but supplies no verified agent identity. The unresolved-agent author rule above applies even when an agent author is configured; selecting an agent author from configuration order is not identity evidence.
-- An agent with no configured git author is refused with the door `agents.<name>.git_author`.
+- T3's caller lookup supplies a native session without verified provider-agent
+  identity. A bound bot role resolves through the recorded role and verified App;
+  the unresolved-agent fallback applies only outside that path. Selection order
+  never supplies identity evidence.
+- Outside the bot-role path, a resolved agent with no configured git author is
+  refused with the door `agents.<name>.git_author`.
 - Without `--only`, commit includes what the caller staged, as plain git; `--only` commits exactly the given paths.
 
 ## See Also

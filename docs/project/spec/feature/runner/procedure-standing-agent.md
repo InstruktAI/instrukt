@@ -39,8 +39,11 @@ The assignment is system-origin: no initiating session becomes its dispatcher,
 and no starter's human lineage is inherited. Event origin remains the producer's
 fact. Project and platform assignments acquire no company context from location
 or ownership. Standing confers no integrator, coordinator or job-runner authority;
-the declared procedure role supplies the assignment. A human-lineage conversation
-is not adopted merely because it reads the same procedure in the same checkout.
+the declared procedure role, or `event-handler` when omitted, supplies the
+assignment. The role's class and grants follow
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`; standing
+responsibility identity alone supplies no extra command grant. A human-lineage
+conversation is not adopted merely because it reads the same procedure in the same checkout.
 
 ### Serialized adapter resolution
 

@@ -74,7 +74,10 @@ runner owns dispatch, and the configured runtime owns conversations.
   holds; per-role session bindings and task schedules; local-leading
   persistence in the state database — its file, writer rules, migrations and
   work tables (`project/instrukt/spec/feature/work/state-database`);
-  GitHub reflection and recovery; reports derived from that record.
+  GitHub reflection and recovery, record-schema checks/conversion, verified App
+  bot trust and installation credentials at its GitHub boundary; reports derived
+  from that record. The GitHub boundary's credential interface is shared through
+  CLI wiring with runner and repository consumers, not a reverse core dependency.
 - **Does not own:** workflow definitions and next-action derivation, execution
   and integration decisions, runner scheduling and dispatch, runtime thread
   status and conversation storage, or documentation publication. Those
@@ -98,6 +101,19 @@ runner owns dispatch, and the configured runtime owns conversations.
 Preparation head reviews belong to the todo record: exact clean head, complete findings digest, independent reviewer and immediate integration event. One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
 ## Canonical fields
+
+### Assignment and GitHub admission
+
+Work supplies its recorded todo-role attempt, native session and workspace
+facts to command admission; the capability contract is
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`. Role grants
+supply focus and every caller still meets the object's claim, phase and admitted
+workspace-writer checks. The record's GitHub schema is checked on every read
+before dependent mutation under
+`project/instrukt/spec/feature/work/github-record`. Configuration supplies App
+profiles and per-role selection; work's shared GitHub boundary verifies actors
+and issues installation credentials under
+`project/instrukt/spec/feature/work/github-apps`.
 
 ### Aggregates
 
@@ -163,6 +179,7 @@ concerning the todo in its project origin
 
 - **Todos** — `project/instrukt/spec/feature/work/todos` — record work
   with its kind and recover withdrawn intent and evidence.
+- **GitHub Apps** — [project/instrukt/spec/feature/work/github-apps](../feature/work/github-apps.md) — role-selected project/author/reviewer bots, installation credentials, bot trust and visible bot authorship.
 - **GitHub record** — `project/instrukt/spec/feature/work/github-record`
   — retain local progress through outages and follow reflected delivery evidence.
 - **Stamps** — `project/instrukt/spec/feature/work/stamps` — retain

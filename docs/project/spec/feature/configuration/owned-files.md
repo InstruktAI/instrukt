@@ -16,7 +16,10 @@ migration rules. A valid older configuration remains usable after an upgrade.
 ### Machine-local secrets
 
 `~/.instrukt/secrets.env` is the one machine-local file for every secret
-instrukt uses, including webhook signing material and Redis credentials.
+instrukt uses, including webhook signing material, Redis credentials and GitHub
+App private keys. App profiles carry protected references; installation tokens
+are issued in memory under `project/instrukt/spec/feature/work/github-apps`, not
+saved as long-lived secrets.
 Model-provider keys remain with T3. Configuration holds `${NAME}` references,
 never secret values. Every instrukt path resolves such secrets from this file,
 including noninteractive ticks; a process environment or project `.env` cannot

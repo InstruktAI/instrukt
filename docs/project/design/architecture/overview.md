@@ -59,8 +59,26 @@ interfaces, wired by the CLI to todos only when enabled.
 Core declares a caller-identity lookup interface for configuration interpolation
 and commit composition. The CLI wires the explicitly selected runtime adapter
 into it; the lookup reads caller context without runtime I/O. Core never imports
-runner. Missing context or unverified agent identity stays unresolved;
-recognising a caller does not select a runtime.
+runner. The CLI also wires owner-supplied work/standing assignment lookup into
+command admission. The native caller identifies the recorded assignment whose
+role, todo, home and workspace determine scoped grants; configuration supplies
+class, bundles and model/App selection from the single `roles` map. The
+code-owned catalog maps instrukt operations to actions and objects. Focused
+roles are enforced, standing/agent roles use awareness help and briefing, and
+all callers pass object checks under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
+Recognising a caller does not select a runtime. Missing known assignment
+provenance is not a roleless bypass. A bot-role commit resolves its author from
+the verified App actor even without native provider-agent identity; other
+unverified agent identity remains unresolved.
+
+The shared GitHub boundary uses configured project/author/reviewer Apps and
+issues installation credentials from protected key references under
+`project/instrukt/spec/feature/work/github-apps`. CLI wiring supplies its
+credential and verified-actor interfaces to consumers without reversing crate
+dependencies. Work checks record schema versions before dependent mutation and
+converts supported older envelopes; repository composes the selected bot's
+noreply author. Neither introduces person/company identity bands.
 
 ### The home
 
@@ -73,8 +91,8 @@ deleting the home is not a lossless reset.
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
-| `instrukt.yaml` | the global configuration layer (runtime choice, agents' git authors, module switches, runner settings) | the user |
-| `agents.yaml` | role mappings and typed provider-instance tier chains | shipped once, then user-owned; upgrade handling under `project/instrukt/spec/feature/configuration/agent-selection` |
+| `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
+| `agents.yaml` | one role map with class, scoped `can` bundles, model order/tier and App references; typed provider-instance tier chains | shipped once, then user-owned; upgrade handling under `project/instrukt/spec/feature/configuration/agent-selection` |
 | `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
 | `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
 | `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |

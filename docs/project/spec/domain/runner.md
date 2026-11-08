@@ -44,8 +44,9 @@ authorization and derived workflow state.
 `runner.runtime`. T3 is shipped first over its published host CLI. The
 adapter translates start-or-wake, start, send, state and conversation reads,
 recognises caller identity without runtime I/O,
-and reports optional capabilities. Native agent-operation prose is supplied by
-configuration and rendered through `@config`, independently of this adapter.
+and reports optional capabilities. Its recognized native session is the key to
+work/standing assignment lookup, not a role supplied by the caller.
+Native agent-operation prose is supplied by configuration and rendered through `@config`, independently of this adapter.
 
 **Singleton key**
 : The standing procedure, exact home and optional subject identity carried as a discoverable semantic key, separate from display title; the database binding is a cache. A per-key database lock admits one
@@ -123,6 +124,17 @@ configuration layers and controlling todos only. `runner.notify` is global-only.
 Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
 
 ## Canonical fields
+
+### Role-bearing assignments
+
+The runner records effective role and exact home/placement in its standing and
+scheduled assignments; work owns todo-role attempts. The shared admission
+boundary consumes these facts under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`. An omitted
+subscription role resolves to `event-handler`; unknown explicit role mappings
+use `default`. Role grants and help do not depend on todo enablement. Class does
+not replace claim, phase or single-writer object checks, and a standing
+responsibility is distinct from its configured role class.
 
 ### Aggregates
 

@@ -21,7 +21,7 @@ changes no session. Event enablement gates activation, not document publication.
 
 | Field | Meaning and validation |
 | --- | --- |
-| `subscriptions` | Nonempty list of shared validated type patterns; mutually exclusive with `activation_trigger`; requires `role`. |
+| `subscriptions` | Nonempty list of shared validated type patterns; mutually exclusive with `activation_trigger`; omitted `role` resolves to `event-handler`. |
 | `subscription_home` | Required with subscriptions; exactly `project`, `platform`, `company` or `person`. |
 | `subscription_identity` | `home` (default) or `subject`; selects one agent per home or per subject in that home. |
 | `subscription_attendance` | `attended` (default) or `unattended`; runtime audience statement, not event reach or trust. |
@@ -31,6 +31,9 @@ Home/identity/attendance/delivery fields without subscriptions are findings.
 Unknown values, malformed patterns and incompatible publication reach are
 findings and cannot publish an active subscription. Pattern validation and
 routing share the consumer matcher; no second glob implementation is admitted.
+An explicit role is retained; absence resolves to `event-handler` with the class
+and grants in `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
+The resolved role is independent of workflow membership and todo enablement.
 Handling instructions come from the procedure's authored Required reads, resolved
 through ordinary closure. Metadata injects no documentation dependencies.
 

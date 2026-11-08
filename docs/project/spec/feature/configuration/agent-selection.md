@@ -19,8 +19,9 @@ changing a procedure or recompiling instrukt.
 
 | Field | Meaning |
 | --- | --- |
-| `default: {order, tier}` | Fallback profile-name order and tier for roles not listed in `roles`. |
-| `roles: {<role>: {order, tier}}` | Complete order and tier for a named procedure role. |
+| `default: {class, can, order, tier}` | Fallback role entry; order and tier select models, class and grants follow roles-and-capabilities. |
+| `roles: {<role>: <role-entry>}` | One entry combines class, scoped `can` grants, model order and tier, and optional GitHub App reference. |
+| `bundles: {<name>: <grants>}` | Named scoped capability bundles, owned by roles-and-capabilities. |
 | `profiles: {<name>: <profile>}` | User-visible profile names; orders reference these names. |
 | Profile `instance` | The existing T3 provider-instance id this profile addresses. |
 | Profile `kind` | A known harness kind selecting that profile's typed shape and native option fields. |
@@ -29,9 +30,11 @@ changing a procedure or recompiling instrukt.
 Several profiles can share a kind, including separate accounts of one harness.
 Profile names, provider-instance ids and kinds are distinct identities. The
 file, rather than `instrukt.yaml`, `t3.yaml` or procedure frontmatter, owns
-orders, role mappings and chains. Commit git-author settings remain separate
-in `instrukt.yaml`. The selected runtime's adapter translates kinds, instance
-ids and native option names; it supplies no compiled model catalogue.
+orders, role mappings and chains. Role class and grants share that same map under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`; App references
+select the bot identity under `project/instrukt/spec/feature/work/github-apps`.
+Non-bot agent git-author settings remain separate in `instrukt.yaml`. The
+selected runtime's adapter translates kinds, instance ids and native option names; it supplies no compiled model catalogue.
 
 A task override wins over its role's selection; omitted inputs inherit the role
 mapping, then `default`. Selection walks the effective profile order
@@ -66,8 +69,11 @@ against a catalogue. A hand-maintained schema in instrukt's repository offers
 known model names as editor suggestions, without restricting other names.
 This is separate from the generated repository YAML schemas.
 
-Validation also reports configured roles no installed procedure declares.
-`instrukt config show agents` prints the effective role mapping and profiles.
+Validation rejects unknown action/bundle names and malformed role entries under
+roles-and-capabilities, and reports configured roles no installed procedure
+declares, apart from reserved fallback entries. `instrukt config show agents`
+prints effective role classes, expanded scoped grants, App references, model
+mappings and profiles.
 It exposes configuration, never provider credentials. Changing selection does
 not change an existing conversation.
 
@@ -170,6 +176,7 @@ Then that model receives an expiring unavailable mark without marking the whole 
 ## See Also
 
 - [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/configuration/roles-and-capabilities](roles-and-capabilities.md)
 - [project/instrukt/spec/feature/configuration/owned-files](owned-files.md)
 - [project/instrukt/spec/feature/configuration/configuration-skill](configuration-skill.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)

@@ -35,7 +35,7 @@ creates no replacement session identity.
 | `start` | Project, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator and scheduled task occurrences. |
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
-| `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id` and commit attribution. |
+| `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `link` | Two session ids and add/remove; returns acknowledgement or unsupported. Optional capability. | Fallback only where native shared-input linking is absent and the adapter supports it. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
@@ -51,7 +51,10 @@ Unsupported operations report the runtime and capability; an unavailable runtime
 leaves work pending.
 
 Standing assignment input retains machine-readable procedure, home, subject,
-role, attendance and interruptibility facts beside its system-origin loader.
+effective role (declared or `event-handler`), attendance and interruptibility
+facts beside its system-origin loader. Role-aware help and briefing use
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`; the binding's
+recorded role/home/placement, not native provider identity, resolves its scope.
 After loss of local binding caches, semantic-key discovery recovers those fixed
 facts through the selected adapter's supported assignment-evidence capability
 with native provenance before reuse. Missing or
