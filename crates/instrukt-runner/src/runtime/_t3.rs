@@ -37,7 +37,7 @@ impl T3 {
         if let Some(selection) = &request.selection {
             args.extend([
                 "--provider",
-                &selection.instance,
+                selection.instance.as_str(),
                 "--model",
                 &selection.model,
             ]);
@@ -121,13 +121,59 @@ impl instrukt_core::interfaces::CallerIdentityLookup for T3 {
 }
 
 impl RuntimeAdapter for T3 {
-    fn prepare_start(
+    fn provider_snapshot(
         &self,
         home: &instrukt_core::home::Home,
-        request: &RuntimeStart,
-        now: jiff::Timestamp,
-    ) -> Result<RuntimeStart, SessionsError> {
-        super::_t3_readiness::prepare(home, &self.env, request, now)
+    ) -> Result<super::ProviderSnapshot, SessionsError> {
+        super::_t3_readiness::snapshot(home, &self.env)
+    }
+    fn selection_realization(&self, operation: super::SelectionOperation) -> String {
+        match operation {
+            super::SelectionOperation::ThreadStart=>"T3 thread start accepts provider instance/model; requested effort/options are not expressible through this CLI operation.".into(),
+            super::SelectionOperation::NativeDelegation=>"T3 native delegation receives provider instance/model and translated harness options where the native operation supports them.".into(),
+        }
+    }
+    fn native_selection(
+        &self,
+        selection: &instrukt_core::config::AgentSelection,
+    ) -> instrukt_core::config::AgentSelection {
+        let mut native = selection.clone();
+        if let Some(effort) = selection.effort {
+            let key = match selection.kind {
+                instrukt_core::config::HarnessKind::Codex
+                | instrukt_core::config::HarnessKind::Grok
+                | instrukt_core::config::HarnessKind::Kiro
+                | instrukt_core::config::HarnessKind::Muse => "reasoningEffort",
+                instrukt_core::config::HarnessKind::Antigravity => "thinking_level",
+                instrukt_core::config::HarnessKind::Pi => "thinking",
+                instrukt_core::config::HarnessKind::OpenCode => "variant",
+                instrukt_core::config::HarnessKind::Claude
+                | instrukt_core::config::HarnessKind::Cursor
+                | instrukt_core::config::HarnessKind::Fx
+                | instrukt_core::config::HarnessKind::AcpRegistry => "effort",
+            };
+            // Effort remains a closed semantic variant until this native boundary.
+            native.options.insert(
+                key.into(),
+                serde_json::Value::String(
+                    match effort {
+                        instrukt_core::config::Effort::None => "none",
+                        instrukt_core::config::Effort::Minimal => "minimal",
+                        instrukt_core::config::Effort::Low => "low",
+                        instrukt_core::config::Effort::Medium => "medium",
+                        instrukt_core::config::Effort::High => "high",
+                        instrukt_core::config::Effort::Xhigh => "xhigh",
+                        instrukt_core::config::Effort::Max => "max",
+                        instrukt_core::config::Effort::Ultra => "ultra",
+                        instrukt_core::config::Effort::Ultrathink => "ultrathink",
+                        instrukt_core::config::Effort::Off => "off",
+                        instrukt_core::config::Effort::Auto => "auto",
+                    }
+                    .into(),
+                ),
+            );
+        }
+        native
     }
     fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
         T3::create_thread(self, request)

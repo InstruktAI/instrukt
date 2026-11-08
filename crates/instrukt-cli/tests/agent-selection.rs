@@ -5,7 +5,7 @@ use common::TestEnv;
 use instrukt_core::config::{Agents, Tier};
 
 const CONFIG: &str = r#"
-schema_version: 1
+schema_version: 2
 default: {order: [personal, work], tier: standard}
 roles:
   builder: {class: focused, can: [read], github_app: author, order: [work, personal], tier: strong}
@@ -13,17 +13,17 @@ profiles:
   personal:
     instance: codex-personal
     kind: codex
-    light: [{model: new-light, reasoningEffort: high}]
-    standard: [{model: new-standard, reasoningEffort: high}]
-    strong: [{model: new-strong, reasoningEffort: high}]
-    premium: [{model: new-premium, reasoningEffort: high}, {model: new-strong, reasoningEffort: high}]
+    light: [{model: new-light, effort: high}]
+    standard: [{model: new-standard, effort: high}]
+    strong: [{model: new-strong, effort: high}]
+    premium: [{model: new-premium, effort: high}, {model: new-strong, effort: high}]
   work:
     instance: codex-work
     kind: codex
-    light: [{model: work-light, reasoningEffort: high}]
-    standard: [{model: work-standard, reasoningEffort: high}]
-    strong: [{model: work-strong, reasoningEffort: high}]
-    premium: [{model: work-premium, reasoningEffort: high}, {model: work-strong, reasoningEffort: high}]
+    light: [{model: work-light, effort: high}]
+    standard: [{model: work-standard, effort: high}]
+    strong: [{model: work-strong, effort: high}]
+    premium: [{model: work-premium, effort: high}, {model: work-strong, effort: high}]
 "#;
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS1
@@ -31,8 +31,8 @@ profiles:
 fn role_mapping_falls_back_and_task_inputs_override_independently() {
     let agents = Agents::parse(CONFIG).unwrap();
     let selected = agents.select(Some("builder"), None, None).unwrap();
-    assert_eq!(selected[0].profile, "work");
-    assert_eq!(selected[0].instance, "codex-work");
+    assert_eq!(selected[0].profile.as_str(), "work");
+    assert_eq!(selected[0].instance.as_str(), "codex-work");
     assert_eq!(selected[0].model, "work-strong");
     assert_eq!(
         agents.select(Some("unknown"), None, None).unwrap()[0].model,
@@ -40,7 +40,11 @@ fn role_mapping_falls_back_and_task_inputs_override_independently() {
     );
     assert_eq!(
         agents
-            .select(Some("builder"), Some("personal"), Some(Tier::Light))
+            .select(
+                Some("builder"),
+                Some(&instrukt_core::ids::ProfileName::parse("personal").unwrap()),
+                Some(Tier::Light)
+            )
             .unwrap()[0]
             .model,
         "new-light"
@@ -51,11 +55,8 @@ fn role_mapping_falls_back_and_task_inputs_override_independently() {
 #[test]
 fn open_models_accept_native_options_but_reject_malformed_shapes() {
     assert!(Agents::parse(CONFIG).is_ok());
-    assert!(
-        Agents::parse(&CONFIG.replace("reasoningEffort: high", "reasoningEffort: invalid"))
-            .is_err()
-    );
-    assert!(Agents::parse(&CONFIG.replace("reasoningEffort: high", "effort: high")).is_err());
+    assert!(Agents::parse(&CONFIG.replace("effort: high", "effort: invalid")).is_err());
+    assert!(Agents::parse(&CONFIG.replace("effort: high", "reasoningEffort: high")).is_err());
     assert!(Agents::parse(&CONFIG.replace("kind: codex", "kind: unknown")).is_err());
     let agents = Agents::parse(CONFIG).unwrap();
     assert_eq!(agents.undeclared_roles(&[]), vec!["builder"]);
@@ -93,4 +94,26 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
         )
     );
     assert_eq!(std::fs::read_to_string(file).unwrap(), edited);
+}
+
+// spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3
+#[test]
+fn a_version_one_agents_file_migrates_edited_choices_to_neutral_effort() {
+    let env = TestEnv::new();
+    let file = env.instrukt_home().join("agents.yaml");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let old = CONFIG
+        .replace("schema_version: 2", "schema_version: 1")
+        .replace("effort: high", "reasoningEffort: high");
+    std::fs::write(&file, &old).unwrap();
+    let output = env.run(env.home(), ["config", "show", "agents"]).success();
+    let current: Agents = Agents::parse(&std::fs::read_to_string(file).unwrap()).unwrap();
+    assert_eq!(
+        current.select(Some("builder"), None, None).unwrap()[0].effort,
+        Some(instrukt_core::config::Effort::High)
+    );
+    insta::assert_json_snapshot!(
+        "neutral-effort-migration",
+        serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap()
+    );
 }

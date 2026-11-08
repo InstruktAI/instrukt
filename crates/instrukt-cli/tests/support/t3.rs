@@ -27,7 +27,7 @@ root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
 with (root/'calls').open('a') as f: f.write(' '.join(args)+'\n')
 if args==['--version']:
-    print('t3 v0.1.7'); sys.exit(0)
+    print((root/'release').read_text() if (root/'release').exists() else 't3 v0.1.7'); sys.exit(0)
 if args[:3]==['auth','session','issue']:
     import base64
     claims={'v':1,'kind':'session','sid':'00000000-0000-4000-8000-000000000001','method':'bearer-access-token','scopes':['orchestration:read']}

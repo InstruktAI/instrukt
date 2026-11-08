@@ -17,7 +17,7 @@ enum AgentCommand {
     /// Mark an agent profile or one model available, unavailable or degraded.
     Status {
         /// Configured profile name.
-        profile: String,
+        profile: instrukt_core::ids::ProfileName,
         /// New capacity status. Degraded capacity is skipped for automated dispatch.
         #[arg(value_enum)]
         status: Status,

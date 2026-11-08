@@ -301,7 +301,7 @@ fn a_global_tier_override_replaces_that_chain_and_retains_other_shipped_tiers() 
     let p = Tracked::new(false);
     selection_config(
         &p,
-        "profiles:\n  codex:\n    light: [{model: gpt-6.1-sol, reasoningEffort: xhigh}]\n",
+        "profiles:\n  codex:\n    light: [{model: gpt-6.1-sol, effort: xhigh}]\n",
     );
     p.env
         .run(p.repo.path(), ["config", "validate", "--global"])
@@ -322,7 +322,7 @@ fn configured_unknown_option_values_are_reported_as_validation_findings() {
     let p = Tracked::new(false);
     selection_config(
         &p,
-        "profiles:\n  codex:\n    light: [{model: gpt-6.1-sol, reasoningEffort: high, serviceTier: imaginary}]\n",
+        "profiles:\n  codex:\n    light: [{model: gpt-6.1-sol, effort: high, serviceTier: imaginary}]\n",
     );
     let result = p
         .env
@@ -387,7 +387,7 @@ fn confirmed_no_creation_allows_the_runner_to_retry_the_next_available_model() {
     let p = Tracked::new(true);
     selection_config(
         &p,
-        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, reasoningEffort: high}, {model: gpt-6.1-sol, reasoningEffort: high}]\n",
+        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
     );
     let fake = runtime::FakeT3::create(&p.env);
     fake.flag("empty-start", true);
@@ -477,19 +477,19 @@ fn a_full_usage_window_marks_that_profiles_models_with_expiry() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn an_unknown_readiness_version_refuses_start_without_creating_a_thread() {
+fn compatible_protocol_and_shape_admit_different_release_diagnostics() {
     let p = Tracked::new(true);
     let file = common::t3_readiness::state_file(&p.env);
     let mut state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     state["serverVersion"] = "99.0.0".into();
     std::fs::write(file, state.to_string()).unwrap();
+    std::fs::write(p.env.path("t3-state/release"), "t3 v99.0.0-compatible").unwrap();
     create_change(&p);
     p.tick();
-    assert_eq!(p.rt.started_count(), 0);
+    assert_eq!(p.rt.started_count(), 1);
     assert!(
-        !p.rt
-            .calls()
+        p.rt.calls()
             .iter()
             .any(|line| line.starts_with("thread start "))
     );
@@ -607,4 +607,41 @@ fn failed_readiness_token_revocation_refuses_thread_creation() {
     create_change(&p);
     p.tick();
     assert_eq!(p.rt.started_count(), 0);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn an_incomplete_claude_authentication_probe_skips_its_bundled_models() {
+    let p = Tracked::new(true);
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "claudeAgent" {
+                provider["status"] = "warning".into();
+                provider["auth"]["status"] = "unknown".into();
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    let threads: serde_json::Value = serde_json::from_str(&chosen(&p)).unwrap();
+    insta::assert_json_snapshot!("incomplete-claude-probe-fallback", threads[0]["provider"]);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn a_successfully_probed_codex_custom_configuration_needs_no_openai_login() {
+    let p = Tracked::new(true);
+    selection_config(&p, "default: {order: [codex], tier: strong}\n");
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "codex" {
+                provider["status"] = "ready".into();
+                provider["auth"]["status"] = "unknown".into();
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
 }

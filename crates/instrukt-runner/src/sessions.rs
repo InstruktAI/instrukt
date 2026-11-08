@@ -201,7 +201,9 @@ impl<'c> Sessions<'c> {
                 crate::agents::selections(self.config, self.home, order, request.now)?
                     .into_iter()
                     .next();
-            input.selection_evidence=Some("T3 CLI receives provider/model; effort and options cannot be expressed by thread start and remain requested native facts.".into());
+            input.selection_evidence = Some(
+                adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
+            );
         }
         let thread = adapter.start(&crate::runtime::RuntimeAssignment {
             creation: request.creation,

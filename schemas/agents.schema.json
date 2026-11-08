@@ -11,7 +11,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "default": {
       "$ref": "#/$defs/role",
@@ -465,7 +465,14 @@
               }
             ]
           },
-          "reasoningEffort": {
+          "serviceTier": {
+            "enum": [
+              "default",
+              "priority",
+              "flex"
+            ]
+          },
+          "effort": {
             "enum": [
               "none",
               "minimal",
@@ -475,13 +482,6 @@
               "xhigh",
               "max",
               "ultra"
-            ]
-          },
-          "serviceTier": {
-            "enum": [
-              "default",
-              "priority",
-              "flex"
             ]
           }
         }
@@ -564,7 +564,7 @@
               }
             ]
           },
-          "thinking_level": {
+          "effort": {
             "enum": [
               "low",
               "medium",
@@ -588,7 +588,7 @@
             "type": "string",
             "minLength": 1
           },
-          "reasoningEffort": {
+          "effort": {
             "enum": [
               "none",
               "low",
@@ -615,7 +615,7 @@
             "type": "string",
             "minLength": 1
           },
-          "reasoningEffort": {
+          "effort": {
             "enum": [
               "none",
               "low",
@@ -642,7 +642,7 @@
             "type": "string",
             "minLength": 1
           },
-          "thinking": {
+          "effort": {
             "enum": [
               "off",
               "minimal",
@@ -670,7 +670,7 @@
             "type": "string",
             "minLength": 1
           },
-          "reasoningEffort": {
+          "effort": {
             "enum": [
               "none",
               "minimal",
@@ -699,16 +699,16 @@
             "type": "string",
             "minLength": 1
           },
-          "variant": {
+          "agent": {
+            "type": "string"
+          },
+          "effort": {
             "enum": [
               "low",
               "medium",
               "high",
               "xhigh"
             ]
-          },
-          "agent": {
-            "type": "string"
           }
         }
       }
@@ -765,17 +765,6 @@
               "max"
             ]
           },
-          "reasoning": {
-            "enum": [
-              "none",
-              "minimal",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
           "contextWindow": {
             "type": "string"
           },
@@ -811,6 +800,21 @@
                 "boolean"
               ]
             }
+          },
+          "effort": {
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              "ultra",
+              "ultrathink",
+              "off",
+              "auto"
+            ]
           }
         }
       }

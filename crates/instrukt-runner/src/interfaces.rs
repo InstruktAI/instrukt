@@ -147,7 +147,7 @@ pub struct PickupCandidate {
 /// The profile a task prefers, set with `--agent <name> [--tier …]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentPreference {
-    pub agent: String,
+    pub agent: instrukt_core::ids::ProfileName,
     pub tier: Option<Tier>,
 }
 

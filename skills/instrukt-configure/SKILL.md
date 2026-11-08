@@ -21,6 +21,7 @@ computers, use the installed command help for their supported behavior:
 
 - project/instrukt/spec/feature/configuration/layered-configuration
 - project/instrukt/spec/feature/configuration/configuration-editing
+- project/instrukt/spec/feature/configuration/owned-files
 - project/instrukt/spec/feature/runner/module-installation
 - project/instrukt/spec/feature/runner/single-ingress-webhook-termination
 
@@ -50,7 +51,10 @@ identity discovery surface as a prerequisite instead of inventing an ID.
   procedure activation occurs there. Existing todo claims retain their meaning.
 - Align `ingress.port` with the ingress edge. Keep local Redis endpoints,
   runtime, credentials, ticks and project overrides specific to each computer.
-  Signing values resolve in each declaring project's `.env` on ingress.
+  Record signing and Redis material through `instrukt secrets set` or
+  `instrukt secrets generate` on the computer that uses it. References resolve
+  only from that machine's owner-only `~/.instrukt/secrets.env`, including on
+  ticks; keep secret values out of patches, briefs and reports.
 
 Configuration management outside instrukt distributes these agreements. Each
 machine's global layer remains its own; project placement uses existing homes

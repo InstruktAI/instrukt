@@ -39,16 +39,11 @@ pub(super) fn selection(home: &Home, layer: &Layer, value: &mut Value) -> Result
             } else {
                 name
             };
-            let option = match profile {
-                "codex" => "reasoningEffort",
-                "claude" => "effort",
-                "antigravity" => "thinking_level",
-                _ => {
-                    return Err(invalid(format!(
-                        "no migration for selection profile `{name}`"
-                    )));
-                }
-            };
+            if !matches!(profile, "codex" | "claude" | "antigravity") {
+                return Err(invalid(format!(
+                    "no migration for selection profile `{name}`"
+                )));
+            }
             let entries = chain
                 .as_sequence()
                 .ok_or_else(|| invalid("model chain is not a sequence"))?;
@@ -63,9 +58,6 @@ pub(super) fn selection(home: &Home, layer: &Layer, value: &mut Value) -> Result
                         .as_mapping()
                         .ok_or_else(|| invalid("model options are not a mapping"))?;
                     entry.extend(options.clone());
-                }
-                if let Some(effort) = entry.remove("effort") {
-                    entry.insert(option.into(), effort);
                 }
                 converted.push(Value::Mapping(entry));
             }

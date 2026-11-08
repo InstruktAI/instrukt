@@ -2,12 +2,13 @@
 //! index patching by owner, agent-file rendering and the eval fingerprint
 //! (`docs/project/spec/domain/publication.md`).
 //!
-//! What a project publishes follows from what its committed main holds:
+//! Installed publication reads committed canonical main; explicit development
+//! execution reads the development worktree's committed HEAD. Both read:
 //! `docs/general/` and each `docs/domain/<x>/`. Each is claimed in the
-//! ownership record under `~/.instrukt/state/publication/claims/`.
+//! ownership record in the selected home's publication state.
 //!
 //! One operation, [`sync`]: publish the project the caller stands in from
-//! its canonical main, or do nothing when that commit is already
+//! the selected committed source, or do nothing when that commit is already
 //! published. What it reads (the committed tree), how it patches the
 //! index, stages and swaps the published tree, renders agent files and
 //! undoes a failed run stays behind that call. Readers of its state use
@@ -143,8 +144,8 @@ pub enum PublicationStateError {
 pub struct PublishedRecord {
     pub project: ProjectSlug,
     pub commit: CommitSha,
-    /// The project's primary worktree: the checkout its positions are
-    /// published from.
+    /// The source checkout: the primary worktree for installed publication,
+    /// or the selected development worktree for explicit development execution.
     pub checkout: PathBuf,
     /// The URL of the repository's `origin` remote; `None` without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]

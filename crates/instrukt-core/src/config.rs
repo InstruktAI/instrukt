@@ -9,6 +9,7 @@
 //! [`validate`].
 
 mod _agents;
+mod _agents_migrate;
 mod _effective;
 mod _error;
 mod _features;
@@ -27,7 +28,9 @@ mod _webhooks;
 
 use std::path::Path;
 
-pub use _agents::{AgentSelection, Agents, HarnessKind, Profile, RoleSelection, SHIPPED_AGENTS};
+pub use _agents::{
+    AgentSelection, Agents, Effort, HarnessKind, Profile, RoleSelection, SHIPPED_AGENTS,
+};
 
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};

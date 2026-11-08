@@ -166,6 +166,29 @@ identifier!(
     "non-empty text without whitespace or control characters"
 );
 
+identifier!(
+    /// A user-owned agent profile name, distinct from a native provider instance.
+    ProfileName,
+    "agent profile",
+    is_nonblank,
+    "nonempty text"
+);
+identifier!(
+    /// A runtime-native provider instance identity, independent of profile names.
+    ProviderInstanceId,
+    "provider instance",
+    is_nonblank,
+    "nonempty text"
+);
+impl std::borrow::Borrow<str> for ProfileName {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+fn is_nonblank(value: &str) -> bool {
+    !value.trim().is_empty()
+}
+
 /// One session of one runtime, written `{runtime}:{id}`: the form artifact
 /// writers, stamps and `--session <runtime:id>` use (`session-continuity`,
 /// "Identity and reuse"; `approvals`, "Command boundary"). Shared by work's

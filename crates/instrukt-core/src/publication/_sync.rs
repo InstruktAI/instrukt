@@ -166,7 +166,8 @@ impl From<PublicationError> for SyncError {
 }
 
 /// Publishes the project `request.cwd` stands in from the committed state
-/// of its canonical main, under the docs lock. A refused or failed sync
+/// of canonical main in installed use, or its own committed HEAD in explicit
+/// development execution, under the docs lock. A refused or failed sync
 /// leaves the previous publication in place and records no commit. Every
 /// sync, the no-op included, first removes the leftovers earlier syncs
 /// could not, and reports those it still cannot whatever its outcome.

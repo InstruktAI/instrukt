@@ -296,18 +296,48 @@ role order or tier chains. Every T3 built-in harness has shipped defaults.
 ACP discovery and configuration remain with the configuration skill; instrukt
 creates no T3 provider instance and implements no ACP protocol.
 
-Before each instrukt-owned start, the adapter obtains the version-gated local T3
-provider snapshot through a short-lived read-scoped token and revokes it after
-use. Missing readiness, unreported models, capacity skips and quota windows follow
-`project/instrukt/spec/feature/configuration/agent-selection`; an unknown protocol
-or failed read refuses startup visibly. Native delegation retains its resolved
-model and typed options. The host CLI passes instance/model; its effort/options
-limit remains under Known caveats.
+Before each instrukt-owned start, the adapter acquires and translates readiness
+facts. Generic runner policy owns quota expiry, marking and the ordered walk of
+configured profiles and tier chains; those decisions are not adapter translation.
+A failed or unknown readiness outcome refuses creation visibly. Existing keyed
+conversations retain their captured selection without a new-start probe.
 
-Quota restrictions come from snapshot usage windows, never launch-error text.
-An unstructured launch failure retains its start key and selected inputs for
-recovery. Only proven pre-creation rejection or explicit no-start resolution
-permits chain fallback; a quota mark alone supplies no such proof.
+For T3, the adapter reads the local server's `server.getConfig` WebSocket RPC and
+its `providers: ServerProvider[]` snapshot. It issues a five-minute read-scoped
+session with `t3 auth session issue --scope orchestration:read --ttl 5m
+--token-only --label instrukt-readiness`, keeps its token only in memory and
+revokes that session after use. Server discovery, token framing and RPC framing
+follow T3's internal protocol. Protocol and response-shape validation admit the
+operation; CLI/server release strings are diagnostics, not exact-release gates.
+Unknown protocol/shape, failed acquisition and failed token cleanup refuse startup
+with the operation and a safe failure category, without raw outputs or credentials.
+A hard process stop before revocation leaves the session bounded by its short TTL.
+
+The T3 adapter interprets combined probe facts: Claude warning/unknown from a
+failed or incomplete authentication probe is unready; Codex ready/unknown from a
+successful custom no-auth probe is usable. It reports missing, disabled,
+uninstalled, unauthenticated, unavailable or error-state instances with reasons.
+Reported model slugs and aliases are acquisition facts; T3's native `auto` and
+`default` picks are exempt from reported-model membership.
+
+Runner policy applies those facts in configured order. Automatic starts skip
+unavailable and degraded marks until expiry at the command clock; available
+clears the addressed restriction. A usage window at 100% restricts that profile's
+configured models until its reset. Missing resets use one hour from the command
+clock and record that default. Overlapping exhausted windows use the latest
+active reset; a reset already past has lapsed. Observed quota marks and manual
+restrictions remain independent. Availability and skip diagnostics retain cause
+and expiry. Launch-error text supplies no quota evidence or no-start proof.
+
+The selected adapter supplies the selection-realization report: generic starts,
+standing assignments and generations carry it without declaring native limits.
+Configuration retains neutral effort and extra settings; the T3 boundary maps
+effort to its native option ids for native delegation. Host CLI starts pass
+instance/model and report their inability to express requested effort/options.
+
+An unstructured launch failure retains its key and selected inputs for recovery.
+Only proven pre-creation rejection or explicit no-start resolution permits chain
+fallback. Capacity evidence never proves that startup created no thread.
 
 ### Owned child-command cleanup
 

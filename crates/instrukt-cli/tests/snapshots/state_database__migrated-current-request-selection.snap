@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/state-database.rs
+expression: native
+---
+{
+  "profile": "antigravity",
+  "kind": "antigravity",
+  "instance": "account-two",
+  "model": "chosen-model",
+  "effort": "high",
+  "options": {
+    "thinking_level": "high"
+  }
+}

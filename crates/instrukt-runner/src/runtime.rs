@@ -5,7 +5,7 @@ mod _t3_readiness;
 use std::path::{Path, PathBuf};
 
 use instrukt_core::config::{Env, Runtime};
-use instrukt_core::ids::SessionRef;
+use instrukt_core::ids::{ProviderInstanceId, SessionRef};
 use serde::{Deserialize, Serialize};
 
 use crate::sessions::{SessionState, SessionsError};
@@ -153,14 +153,44 @@ pub struct AssignmentEvidence {
     pub observed_at: jiff::Timestamp,
 }
 
+/// Adapter-translated provider facts; expiry and selection belong to runner policy.
+pub struct ProviderSnapshot {
+    pub providers: Vec<ProviderFacts>,
+    pub native_picks: Vec<String>,
+}
+pub struct ProviderFacts {
+    pub instance: ProviderInstanceId,
+    pub kind: Option<instrukt_core::config::HarnessKind>,
+    pub unavailable_reason: Option<String>,
+    pub models: Vec<ReportedModel>,
+    pub usage: Vec<UsageWindow>,
+}
+pub struct ReportedModel {
+    pub name: String,
+    pub aliases: Vec<String>,
+}
+pub struct UsageWindow {
+    pub id: String,
+    pub used_percent: f64,
+    pub resets_at: Option<jiff::Timestamp>,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum SelectionOperation {
+    ThreadStart,
+    NativeDelegation,
+}
+
 pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     fn runtime(&self) -> Runtime;
-    fn prepare_start(
+    fn provider_snapshot(
         &self,
         home: &instrukt_core::home::Home,
-        request: &RuntimeStart,
-        now: jiff::Timestamp,
-    ) -> Result<RuntimeStart, SessionsError>;
+    ) -> Result<ProviderSnapshot, SessionsError>;
+    fn selection_realization(&self, operation: SelectionOperation) -> String;
+    fn native_selection(
+        &self,
+        selection: &instrukt_core::config::AgentSelection,
+    ) -> instrukt_core::config::AgentSelection;
     fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError>;
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;

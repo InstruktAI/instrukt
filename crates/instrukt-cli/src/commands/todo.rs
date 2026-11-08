@@ -172,7 +172,7 @@ struct CreateArgs {
     catch_up: Option<CatchUpArg>,
     /// A task's preferred agent.
     #[arg(long, value_name = "NAME")]
-    agent: Option<String>,
+    agent: Option<instrukt_core::ids::ProfileName>,
     /// The preferred profile's model-chain tier.
     #[arg(long, value_name = "light|standard|strong|premium", requires = "agent")]
     tier: Option<TierArg>,
@@ -233,7 +233,7 @@ struct UpdateArgs {
     unclaim: bool,
     /// A task's preferred agent.
     #[arg(long, value_name = "NAME")]
-    agent: Option<String>,
+    agent: Option<instrukt_core::ids::ProfileName>,
     /// The preferred profile's model-chain tier.
     #[arg(long, value_name = "light|standard|strong|premium", requires = "agent")]
     tier: Option<TierArg>,

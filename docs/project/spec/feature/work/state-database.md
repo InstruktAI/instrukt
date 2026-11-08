@@ -49,7 +49,9 @@ the meaning and the writes of the runner tables.
   across GitHub requests and takes the writer lock only briefly for each local
   transaction that records what reflection learned. Lock order is always
   reflection → writer; a local writer releases the writer lock before acquiring
-  the reflection lock. Local readers take neither lock.
+  the reflection lock. Current-schema local readers take neither lock. Readers
+  of an older database enter the same migration path under the writer lock
+  before consuming it.
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -85,7 +87,9 @@ adapter; an actor as JSON text, one of
   sequence of migrations and owns every one of them.
 - Opening the database for writing applies each pending migration in its own
   transaction under the writer lock, and sets `user_version` in that same
-  transaction. A read-only open never migrates.
+  transaction. Opening older owned state for reading first performs that same
+  locked migration, then opens a current-schema reader. Current-schema reads
+  do not migrate or take the writer lock.
 - A database whose version is newer than the running instrukt knows is
   refused for reading and writing; the refusal names both versions and the
   door: install the newer instrukt.

@@ -710,7 +710,7 @@ fn proven_native_no_start_retries_with_the_next_available_model() {
     let slug = "native-fallback";
     common::agent_profiles(
         &crew.project.env,
-        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, reasoningEffort: high}, {model: gpt-6.1-sol, reasoningEffort: high}]\n",
+        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
     );
     crew.project
         .create(slug, "change", "Retry only after proof of no native start.");

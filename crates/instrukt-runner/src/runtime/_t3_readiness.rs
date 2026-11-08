@@ -1,11 +1,12 @@
-//! Version-pinned translation of T3's internal read-scoped provider snapshot.
+//! Protocol- and shape-validated translation of T3's internal read-scoped provider snapshot.
 //! Wire source: https://github.com/pingdotgg/t3code/tree/6417151c09/apps/server/src
-use super::RuntimeStart;
+use super::{ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
 use crate::{process::Invocation, sessions::SessionsError};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{
-    config::{AgentSelection, Agents, Configuration, Env, HarnessKind},
+    config::{Env, HarnessKind},
     home::Home,
+    ids::ProviderInstanceId,
 };
 use jiff::Timestamp;
 use serde::Deserialize;
@@ -17,12 +18,10 @@ use std::{
 };
 use tungstenite::{Message, client::IntoClientRequest};
 
-const T3_VERSION: &str = "0.1.7";
 const RPC_REQUEST_ID: &str = "instrukt-readiness";
 const TIMEOUT: Duration = Duration::from_secs(10);
-const QUOTA_DEFAULT_SECONDS: i64 = 3600;
 fn refused(cause: &str) -> SessionsError {
-    SessionsError::Refused(format!("T3 readiness: {cause}; start was not invoked"))
+    SessionsError::Refused(format!("T3 readiness: {cause}"))
 }
 
 #[derive(Deserialize)]
@@ -32,7 +31,7 @@ struct RuntimeState {
     pid: u32,
     port: u16,
     origin: String,
-    server_version: String,
+    server_version: Option<String>,
 }
 #[derive(Deserialize)]
 struct Snapshot {
@@ -41,7 +40,7 @@ struct Snapshot {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Provider {
-    instance_id: String,
+    instance_id: ProviderInstanceId,
     driver: String,
     enabled: bool,
     installed: bool,
@@ -107,15 +106,53 @@ where
     T::deserialize(deserializer).map(Some)
 }
 
-fn command(args: &[&str], operation: &str) -> Result<String, SessionsError> {
-    let out = Invocation::program("t3", args)
-        .run(TIMEOUT)
-        .map_err(|_| refused(operation))?;
-    if !out.success {
-        return Err(refused(operation));
-    }
-    Ok(out.stdout)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandFailure {
+    Launch,
+    Timeout,
+    Io,
+    Exit,
 }
+impl CommandFailure {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Launch => "launch",
+            Self::Timeout => "timeout",
+            Self::Io => "io",
+            Self::Exit => "exit",
+        }
+    }
+}
+fn command_failure(error: crate::process::ProcessError) -> CommandFailure {
+    match error {
+        crate::process::ProcessError::Spawn { .. } => CommandFailure::Launch,
+        crate::process::ProcessError::Timeout { .. } => CommandFailure::Timeout,
+        crate::process::ProcessError::Io { .. } => CommandFailure::Io,
+    }
+}
+fn command_output(
+    outcome: Result<crate::process::Finished, crate::process::ProcessError>,
+) -> Result<String, CommandFailure> {
+    match outcome {
+        Ok(out) if out.success => Ok(out.stdout),
+        Ok(_) => Err(CommandFailure::Exit),
+        Err(error) => Err(command_failure(error)),
+    }
+}
+fn command(args: &[&str], operation: &str) -> Result<String, SessionsError> {
+    match command_output(Invocation::program("t3", args).run(TIMEOUT)) {
+        Ok(stdout) => Ok(stdout),
+        Err(failure) => {
+            tracing::warn!(
+                event = "t3_readiness_command_failed",
+                operation,
+                category = failure.as_str()
+            );
+            Err(refused(&format!("{operation} [{}]", failure.as_str())))
+        }
+    }
+}
+
 struct Token {
     secret: String,
     session: String,
@@ -186,13 +223,11 @@ impl Drop for Token {
         }
     }
 }
-fn snapshot(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
-    let cli = command(&["--version"], "cannot inspect CLI version")?;
-    if cli.trim().strip_prefix("t3 v") != Some(T3_VERSION) {
-        return Err(refused(
-            "unsupported CLI version; update the adapter's verified protocol support",
-        ));
-    }
+fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
+    let cli = match command(&["--version"], "cannot inspect CLI release") {
+        Ok(release) => release.trim().strip_prefix("t3 v").map(str::to_owned),
+        Err(_) => None,
+    };
     let explicit = env.get("T3CODE_HOME").filter(|v| !v.trim().is_empty());
     let base = explicit
         .map(|value| {
@@ -217,12 +252,10 @@ fn snapshot(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
         .map_err(|_| refused("cannot discover the local running server"))?;
     let state: RuntimeState =
         serde_json::from_slice(&bytes).map_err(|_| refused("unrecognized server runtime state"))?;
-    if state.version != 1 || state.server_version != T3_VERSION || state.pid == 0 || state.port == 0
-    {
-        return Err(refused(
-            "unsupported server runtime version or shape; update the adapter's verified protocol support",
-        ));
+    if state.version != 1 || state.pid == 0 || state.port == 0 {
+        return Err(refused("unsupported server runtime descriptor shape"));
     }
+    tracing::debug!(event="t3_readiness_releases",cli_release=?cli,server_release=?state.server_version,descriptor_version=state.version,orchestration_protocol=2);
     let mut endpoint =
         url::Url::parse(&state.origin).map_err(|_| refused("invalid local server address"))?;
     if endpoint.scheme() != "http"
@@ -330,8 +363,7 @@ fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError>
                 .map_err(|_| refused("unrecognized provider snapshot shape"))?;
             let mut ids = BTreeSet::new();
             for provider in &snapshot.providers {
-                if provider.instance_id.is_empty()
-                    || provider.driver.is_empty()
+                if provider.driver.is_empty()
                     || !ids.insert(&provider.instance_id)
                     || provider.models.iter().any(|m| m.slug.is_empty())
                     || provider.usage_limits.as_ref().is_some_and(|usage| {
@@ -351,25 +383,23 @@ fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError>
     }
     Err(refused("snapshot response did not complete"))
 }
-fn driver(kind: HarnessKind) -> &'static str {
-    match kind {
-        HarnessKind::Claude => "claudeAgent",
-        HarnessKind::Codex => "codex",
-        HarnessKind::Antigravity => "antigravity",
-        HarnessKind::Cursor => "cursor",
-        HarnessKind::Grok => "grok",
-        HarnessKind::Fx => "fx",
-        HarnessKind::OpenCode => "opencode",
-        HarnessKind::Kiro => "kiro",
-        HarnessKind::Pi => "pi",
-        HarnessKind::Muse => "muse",
-        HarnessKind::AcpRegistry => "acpRegistry",
+fn kind(driver: &str) -> Option<HarnessKind> {
+    match driver {
+        "claudeAgent" => Some(HarnessKind::Claude),
+        "codex" => Some(HarnessKind::Codex),
+        "antigravity" => Some(HarnessKind::Antigravity),
+        "cursor" => Some(HarnessKind::Cursor),
+        "grok" => Some(HarnessKind::Grok),
+        "fx" => Some(HarnessKind::Fx),
+        "opencode" => Some(HarnessKind::OpenCode),
+        "kiro" => Some(HarnessKind::Kiro),
+        "pi" => Some(HarnessKind::Pi),
+        "muse" => Some(HarnessKind::Muse),
+        "acpRegistry" => Some(HarnessKind::AcpRegistry),
+        _ => None,
     }
 }
-fn unavailable(provider: &Provider, selection: &AgentSelection) -> Option<String> {
-    if provider.driver != driver(selection.kind) {
-        return Some("instance harness kind differs from configured kind".into());
-    }
+fn unavailable(provider: &Provider) -> Option<String> {
     if !provider.enabled || matches!(provider.status, Status::Disabled) {
         return Some("instance disabled".into());
     }
@@ -390,108 +420,89 @@ fn unavailable(provider: &Provider, selection: &AgentSelection) -> Option<String
     if matches!(provider.status, Status::Error) {
         return Some("provider status error".into());
     }
-    if !matches!(selection.model.as_str(), "auto" | "default")
-        && !provider
-            .models
-            .iter()
-            .any(|model| model.slug == selection.model || model.aliases.contains(&selection.model))
+    // Claude emits warning/unknown and bundled models when its account probe fails.
+    // Codex emits ready/unknown for a successfully probed no-auth custom configuration.
+    if provider.driver == "claudeAgent"
+        && matches!(provider.status, Status::Warning)
+        && matches!(provider.auth.status, AuthStatus::Unknown)
     {
-        return Some("model not reported by instance".into());
+        return Some("Claude authentication probe failed or incomplete".into());
     }
     None
 }
-
-pub(super) fn prepare(
-    home: &Home,
-    env: &Env,
-    request: &RuntimeStart,
-    now: Timestamp,
-) -> Result<RuntimeStart, SessionsError> {
-    let snapshot = snapshot(home, env)?;
-    let config = Configuration::load(home, Some(&request.checkout))?;
-    let agents = Agents::load(home)?;
-    let default_until = now
-        .checked_add(jiff::SignedDuration::from_secs(QUOTA_DEFAULT_SECONDS))
-        .map_err(|_| refused("cannot compute the one-hour quota expiry"))?;
-    for (name, profile) in &agents.profiles {
-        let Some(provider) = snapshot
+pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, SessionsError> {
+    let source = acquire(home, env)?;
+    Ok(ProviderSnapshot {
+        native_picks: vec!["auto".into(), "default".into()],
+        providers: source
             .providers
-            .iter()
-            .find(|p| p.instance_id == profile.instance)
-        else {
-            continue;
-        };
-        let exhausted = provider
-            .usage_limits
-            .as_ref()
             .into_iter()
-            .flat_map(|u| &u.windows)
-            .filter(|w| w.used_percent == 100.0)
-            .map(|w| {
-                let default = w.resets_at.is_none();
-                let until = w.resets_at.unwrap_or(default_until);
-                (
-                    until,
-                    format!(
-                        "quota: window {} at 100%{}",
-                        w.id,
-                        if default {
-                            "; one-hour default expiry (resetsAt missing)"
-                        } else {
-                            ""
-                        }
-                    ),
-                )
-            })
-            .filter(|(until, _)| *until > now)
-            .max_by_key(|(until, _)| *until);
-        if let Some((until, cause)) = exhausted {
-            let mut models = BTreeSet::new();
-            for tier in [
-                instrukt_core::config::Tier::Light,
-                instrukt_core::config::Tier::Standard,
-                instrukt_core::config::Tier::Strong,
-                instrukt_core::config::Tier::Premium,
-            ] {
-                for entry in agents.model_chain(name, tier)? {
-                    models.insert(entry.model);
+            .map(|provider| {
+                let unavailable_reason = unavailable(&provider);
+                ProviderFacts {
+                    kind: kind(&provider.driver),
+                    instance: provider.instance_id,
+                    unavailable_reason,
+                    models: provider
+                        .models
+                        .into_iter()
+                        .map(|model| ReportedModel {
+                            name: model.slug,
+                            aliases: model.aliases,
+                        })
+                        .collect(),
+                    usage: provider
+                        .usage_limits
+                        .into_iter()
+                        .flat_map(|usage| usage.windows)
+                        .map(|window| UsageWindow {
+                            id: window.id,
+                            used_percent: window.used_percent,
+                            resets_at: window.resets_at,
+                        })
+                        .collect(),
                 }
-            }
-            crate::agents::mark_quota(
-                home,
-                &crate::agents::QuotaMark {
-                    profile: name.clone(),
-                    models,
-                    until,
-                    cause,
-                },
-            )?;
-        }
+            })
+            .collect(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandFailure, command_output};
+    use crate::process::{Finished, ProcessError};
+    use std::{io, time::Duration};
+    #[test]
+    fn launch_failure_keeps_its_safe_category() {
+        let result = command_output(Err(ProcessError::Spawn {
+            program: "t3".into(),
+            source: io::Error::new(io::ErrorKind::NotFound, "private detail"),
+        }));
+        assert_eq!(result, Err(CommandFailure::Launch));
     }
-    let candidates = if request.preferences.is_empty() {
-        request.selection.iter().cloned().collect()
-    } else {
-        crate::agents::selections(&config, home, &request.preferences, now)?
-    };
-    let mut tried = Vec::new();
-    for selection in candidates {
-        let cause = snapshot
-            .providers
-            .iter()
-            .find(|p| p.instance_id == selection.instance)
-            .map(|provider| unavailable(provider, &selection))
-            .unwrap_or_else(|| Some("instance missing".into()));
-        if let Some(cause) = cause {
-            tried.push(format!(
-                "{} / {}: {cause}",
-                selection.profile, selection.model
-            ));
-            tracing::warn!(event="agent_readiness_skip",profile=%selection.profile,instance=%selection.instance,model=%selection.model,reason=%cause);
-            continue;
-        }
-        let mut prepared = request.clone();
-        prepared.selection = Some(selection);
-        return Ok(prepared);
+    #[test]
+    fn timeout_keeps_its_safe_category() {
+        let result = command_output(Err(ProcessError::Timeout {
+            program: "t3".into(),
+            timeout: Duration::from_secs(10),
+        }));
+        assert_eq!(result, Err(CommandFailure::Timeout));
     }
-    Err(SessionsError::OrderExhausted { tried })
+    #[test]
+    fn io_failure_keeps_its_safe_category() {
+        let result = command_output(Err(ProcessError::Io {
+            program: "t3".into(),
+            source: io::Error::other("private detail"),
+        }));
+        assert_eq!(result, Err(CommandFailure::Io));
+    }
+    #[test]
+    fn unsuccessful_exit_keeps_its_category_and_discards_raw_output() {
+        let result = command_output(Ok(Finished {
+            success: false,
+            stdout: "private stdout".into(),
+            stderr: "private stderr".into(),
+        }));
+        assert_eq!(result, Err(CommandFailure::Exit));
+    }
 }

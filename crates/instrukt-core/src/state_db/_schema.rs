@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"
@@ -475,4 +475,38 @@ CREATE TABLE agent_quota (
  agent TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL,
  status_until TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(agent,model)
 );
+"#;
+
+/// Version 7: retained start requests keep neutral effort separately from extra settings.
+const V7: &str = r#"
+UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.reasoningEffort') WHERE json_extract(request,'$.selection.kind') IN ('codex','grok','kiro','muse');
+UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind') IN ('antigravity');
+UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.thinking') WHERE json_extract(request,'$.selection.kind') IN ('pi');
+UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.variant') WHERE json_extract(request,'$.selection.kind') IN ('opencode');
+UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.effort') WHERE json_extract(request,'$.selection.kind') IN ('claude','fx','cursor');
+UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.reasoning') WHERE json_extract(request,'$.selection.kind')='cursor';
+UPDATE runtime_bindings SET request=json_remove(request,'$.selection.options.reasoningEffort') WHERE json_extract(request,'$.selection.kind') IN ('codex','grok','kiro','muse');
+UPDATE runtime_bindings SET request=json_remove(request,'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind') IN ('antigravity');
+UPDATE runtime_bindings SET request=json_remove(request,'$.selection.options.thinking') WHERE json_extract(request,'$.selection.kind') IN ('pi');
+UPDATE runtime_bindings SET request=json_remove(request,'$.selection.options.variant') WHERE json_extract(request,'$.selection.kind') IN ('opencode');
+UPDATE runtime_bindings SET request=json_remove(request,'$.selection.options.effort') WHERE json_extract(request,'$.selection.kind') IN ('claude','fx','cursor');
+UPDATE runtime_bindings SET request=json_remove(request,'$.selection.options.reasoning') WHERE json_extract(request,'$.selection.kind')='cursor';
+UPDATE procedure_responsibilities SET request=json_remove(request,'$.selection.options.reasoningEffort') WHERE json_extract(request,'$.selection.kind') IN ('codex','grok','kiro','muse');
+UPDATE procedure_responsibilities SET request=json_remove(request,'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind') IN ('antigravity');
+UPDATE procedure_responsibilities SET request=json_remove(request,'$.selection.options.thinking') WHERE json_extract(request,'$.selection.kind') IN ('pi');
+UPDATE procedure_responsibilities SET request=json_remove(request,'$.selection.options.variant') WHERE json_extract(request,'$.selection.kind') IN ('opencode');
+UPDATE procedure_responsibilities SET request=json_remove(request,'$.selection.options.effort') WHERE json_extract(request,'$.selection.kind') IN ('claude','fx','cursor');
+UPDATE procedure_responsibilities SET request=json_remove(request,'$.selection.options.reasoning') WHERE json_extract(request,'$.selection.kind')='cursor';
+UPDATE procedure_generations SET request=json_remove(request,'$.selection.options.reasoningEffort') WHERE json_extract(request,'$.selection.kind') IN ('codex','grok','kiro','muse');
+UPDATE procedure_generations SET request=json_remove(request,'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind') IN ('antigravity');
+UPDATE procedure_generations SET request=json_remove(request,'$.selection.options.thinking') WHERE json_extract(request,'$.selection.kind') IN ('pi');
+UPDATE procedure_generations SET request=json_remove(request,'$.selection.options.variant') WHERE json_extract(request,'$.selection.kind') IN ('opencode');
+UPDATE procedure_generations SET request=json_remove(request,'$.selection.options.effort') WHERE json_extract(request,'$.selection.kind') IN ('claude','fx','cursor');
+UPDATE procedure_generations SET request=json_remove(request,'$.selection.options.reasoning') WHERE json_extract(request,'$.selection.kind')='cursor';
+UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.reasoningEffort') WHERE json_extract(request,'$.selection.kind') IN ('codex','grok','kiro','muse');
+UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind') IN ('antigravity');
+UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.thinking') WHERE json_extract(request,'$.selection.kind') IN ('pi');
+UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.variant') WHERE json_extract(request,'$.selection.kind') IN ('opencode');
+UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.effort') WHERE json_extract(request,'$.selection.kind') IN ('claude','fx','cursor');
+UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.reasoning') WHERE json_extract(request,'$.selection.kind')='cursor';
 "#;

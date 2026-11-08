@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/logging.rs
+expression: events
+---
+[
+  "event=agents_defaults_written operation=install",
+  "event=agents_defaults_written operation=replace"
+]

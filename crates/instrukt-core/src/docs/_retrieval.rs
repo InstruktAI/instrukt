@@ -3,8 +3,10 @@
 //! domain's position index rendered
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 //!
-//! All read the global index and the publication record; none writes
-//! anything. A published snippet is read from the home, a local snippet
+//! All read the global index and publication records. Current-schema database
+//! reads take no writer lock; an older database first enters its locked
+//! migration path. Configuration reads can likewise migrate their owned layers.
+//! A published snippet is read from the home, a local snippet
 //! from the absolute path its index entry carries, with the companions
 //! beside either file. Where a listing or a read names a position or a
 //! snippet, it names its source: the file or folder in the checkout it was

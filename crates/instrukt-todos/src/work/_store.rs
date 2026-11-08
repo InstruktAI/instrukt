@@ -384,7 +384,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
         .map_err(&sql)?;
     }
     let (agent, tier) = match &r.agent {
-        Some(pref) => (Some(pref.agent.clone()), pref.tier.as_ref().map(text_of)),
+        Some(pref) => (Some(pref.agent.as_str()), pref.tier.as_ref().map(text_of)),
         None => (None, None),
     };
     let removal = r
@@ -794,7 +794,8 @@ fn load_item(conn: &Connection, path: &Path, row: TodoRow) -> Result<LocalItem, 
         .agent
         .map(|agent| {
             Ok::<_, WorkError>(AgentPreference {
-                agent,
+                agent: instrukt_core::ids::ProfileName::parse(&agent)
+                    .map_err(|e| WorkError::refused(e.to_string()))?,
                 tier: row.tier.map(|t| value_of::<Tier>(path, &t)).transpose()?,
             })
         })

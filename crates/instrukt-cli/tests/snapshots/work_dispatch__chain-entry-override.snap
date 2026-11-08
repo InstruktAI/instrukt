@@ -8,29 +8,29 @@ expression: "serde_json::to_string_pretty(&serde_json::from_slice::<serde_json::
   "light": [
     {
       "model": "gpt-6.1-sol",
-      "reasoningEffort": "xhigh"
+      "effort": "xhigh"
     }
   ],
   "standard": [
     {
       "model": "gpt-6-sol",
-      "reasoningEffort": "high"
+      "effort": "high"
     }
   ],
   "strong": [
     {
       "model": "gpt-6.1-sol",
-      "reasoningEffort": "high"
+      "effort": "high"
     }
   ],
   "premium": [
     {
       "model": "gpt-6-astra",
-      "reasoningEffort": "high"
+      "effort": "high"
     },
     {
       "model": "gpt-6.1-sol",
-      "reasoningEffort": "high"
+      "effort": "high"
     }
   ]
 }

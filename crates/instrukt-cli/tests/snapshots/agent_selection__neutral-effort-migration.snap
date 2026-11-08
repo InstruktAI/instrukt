@@ -1,0 +1,94 @@
+---
+source: crates/instrukt-cli/tests/agent-selection.rs
+expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap()"
+---
+{
+  "schema_version": 2,
+  "default": {
+    "order": [
+      "personal",
+      "work"
+    ],
+    "tier": "standard"
+  },
+  "roles": {
+    "builder": {
+      "order": [
+        "work",
+        "personal"
+      ],
+      "tier": "strong",
+      "can": [
+        "read"
+      ],
+      "class": "focused",
+      "github_app": "author"
+    }
+  },
+  "profiles": {
+    "personal": {
+      "instance": "codex-personal",
+      "kind": "codex",
+      "light": [
+        {
+          "model": "new-light",
+          "effort": "high"
+        }
+      ],
+      "standard": [
+        {
+          "model": "new-standard",
+          "effort": "high"
+        }
+      ],
+      "strong": [
+        {
+          "model": "new-strong",
+          "effort": "high"
+        }
+      ],
+      "premium": [
+        {
+          "model": "new-premium",
+          "effort": "high"
+        },
+        {
+          "model": "new-strong",
+          "effort": "high"
+        }
+      ]
+    },
+    "work": {
+      "instance": "codex-work",
+      "kind": "codex",
+      "light": [
+        {
+          "model": "work-light",
+          "effort": "high"
+        }
+      ],
+      "standard": [
+        {
+          "model": "work-standard",
+          "effort": "high"
+        }
+      ],
+      "strong": [
+        {
+          "model": "work-strong",
+          "effort": "high"
+        }
+      ],
+      "premium": [
+        {
+          "model": "work-premium",
+          "effort": "high"
+        },
+        {
+          "model": "work-strong",
+          "effort": "high"
+        }
+      ]
+    }
+  }
+}

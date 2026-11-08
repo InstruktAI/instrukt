@@ -310,30 +310,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v4_start_requests_keep_their_selected_model_while_moving_to_profiles() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        for migration in _schema::MIGRATIONS.iter().take(4) {
-            conn.execute_batch(migration).unwrap();
-        }
-        conn.pragma_update(None, "user_version", 4).unwrap();
-        let old = serde_json::json!({"key":"retained-key","brief":"retained-input","selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
-        conn.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s','/checkout','retained-input',?1,'2030-01-01T00:00:00Z',0,'unresolved')",[old.to_string()]).unwrap();
-        migrate(&mut conn, Path::new(":memory:")).unwrap();
-        let stored: String = conn
-            .query_row("SELECT request FROM runtime_starts", [], |r| r.get(0))
-            .unwrap();
-        let expected = serde_json::json!({"key":"retained-key","brief":"retained-input","selection":{"profile":"antigravity","kind":"antigravity","instance":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"antigravity","tier":"strong"}]});
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&stored).unwrap(),
-            expected
-        );
-        let resolution: String = conn
-            .query_row("SELECT state FROM runtime_starts", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(resolution, "unresolved");
-    }
-
-    #[test]
     fn every_migration_applies_in_order_to_an_empty_database() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", true).unwrap();

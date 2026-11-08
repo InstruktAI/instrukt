@@ -3,21 +3,23 @@ use super::{ConfigError, Tier};
 use crate::{
     fsx::{LockGuard, atomic_write},
     home::Home,
+    ids::{ProfileName, ProviderInstanceId},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 
 pub const SHIPPED_AGENTS: &str = include_str!("shipped/agents.yaml");
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
+const DEPLOYMENT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSelection {
-    pub profile: String,
+    pub profile: ProfileName,
     pub kind: HarnessKind,
-    pub instance: String,
+    pub instance: ProviderInstanceId,
     pub model: String,
-    pub effort: Option<String>,
+    pub effort: Option<Effort>,
     pub options: BTreeMap<String, serde_json::Value>,
 }
 
@@ -49,7 +51,7 @@ pub enum HarnessKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoleSelection {
-    pub order: Option<Vec<String>>,
+    pub order: Option<Vec<ProfileName>>,
     pub tier: Option<Tier>,
     // These values belong to the roles/App slice; selection neither parses
     // nor interprets their contents, and retains the single shared role map.
@@ -60,7 +62,7 @@ pub struct RoleSelection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
-    pub instance: String,
+    pub instance: ProviderInstanceId,
     pub kind: HarnessKind,
     pub light: Vec<serde_json::Value>,
     pub standard: Vec<serde_json::Value>,
@@ -85,7 +87,7 @@ pub struct Agents {
     pub default: RoleSelection,
     #[serde(default)]
     pub roles: BTreeMap<String, RoleSelection>,
-    pub profiles: BTreeMap<String, Profile>,
+    pub profiles: BTreeMap<ProfileName, Profile>,
     #[serde(default, skip_serializing_if = "serde_yaml_ng::Value::is_null")]
     pub bundles: serde_yaml_ng::Value,
 }
@@ -138,9 +140,6 @@ impl Agents {
             }
         }
         for (name, profile) in &result.profiles {
-            if name.trim().is_empty() || profile.instance.trim().is_empty() {
-                return Err(invalid("profile and instance names must be nonempty"));
-            }
             for tier in [Tier::Light, Tier::Standard, Tier::Strong, Tier::Premium] {
                 if profile.chain(tier).is_empty() {
                     return Err(invalid(format!("{name}.{} chain is empty", tier.as_str())));
@@ -170,6 +169,11 @@ impl Agents {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(source) => return Err(ConfigError::Read { path, source }),
         };
+        let migrated = current
+            .as_deref()
+            .map(super::_agents_migrate::current)
+            .transpose()?
+            .flatten();
         let prior: Option<Deployment> = match std::fs::read(&state) {
             Ok(bytes) => Some(
                 serde_json::from_slice(&bytes)
@@ -183,7 +187,10 @@ impl Agents {
                 });
             }
         };
-        if prior.as_ref().is_some_and(|p| p.schema_version != VERSION) {
+        if prior
+            .as_ref()
+            .is_some_and(|p| p.schema_version != DEPLOYMENT_VERSION)
+        {
             return Err(invalid("unsupported defaults deployment schema"));
         }
         let unedited = current.as_ref().is_none_or(|b| {
@@ -194,7 +201,7 @@ impl Agents {
         if unedited {
             if current.as_deref() != Some(defaults.as_bytes()) {
                 let prepared = Deployment {
-                    schema_version: VERSION,
+                    schema_version: DEPLOYMENT_VERSION,
                     digest: prior.as_ref().map(|p| p.digest.clone()).unwrap_or_default(),
                     pending: Some(new_digest.clone()),
                 };
@@ -205,20 +212,40 @@ impl Agents {
                 atomic_write(&path, defaults.as_bytes())?;
             }
             let record = serde_json::to_vec(&Deployment {
-                schema_version: VERSION,
+                schema_version: DEPLOYMENT_VERSION,
                 digest: new_digest,
                 pending: None,
             })
             .map_err(|e| invalid(e.to_string()))?;
             atomic_write(&state, &record)?;
+            if current.as_deref() != Some(defaults.as_bytes()) {
+                tracing::info!(
+                    event = "agents_defaults_written",
+                    operation = if current.is_none() {
+                        "install"
+                    } else {
+                        "replace"
+                    }
+                );
+            }
             Ok(None)
-        } else if prior.as_ref().is_none_or(|p| p.digest != new_digest) {
-            Ok(Some(format!(
-                "{}: user edits retained; new agents defaults are available",
-                path.display()
-            )))
         } else {
-            Ok(None)
+            if let Some(converted) = migrated {
+                atomic_write(&path, &converted)?;
+                tracing::info!(
+                    event = "agents_shape_migrated",
+                    from_version = 1,
+                    to_version = VERSION
+                );
+            }
+            if prior.as_ref().is_none_or(|p| p.digest != new_digest) {
+                Ok(Some(format!(
+                    "{}: user edits retained; new agents defaults are available",
+                    path.display()
+                )))
+            } else {
+                Ok(None)
+            }
         }
     }
 
@@ -244,9 +271,9 @@ impl Agents {
     pub fn order(
         &self,
         role: Option<&str>,
-        task_profile: Option<&str>,
+        task_profile: Option<&ProfileName>,
         task_tier: Option<Tier>,
-    ) -> Result<Vec<(String, Tier)>, ConfigError> {
+    ) -> Result<Vec<(ProfileName, Tier)>, ConfigError> {
         let entry = role
             .and_then(|r| self.roles.get(r))
             .unwrap_or(&self.default);
@@ -260,15 +287,12 @@ impl Agents {
             .or(self.default.tier)
             .ok_or_else(|| invalid("missing default tier"))?;
         let mut names = Vec::new();
-        for name in task_profile
-            .into_iter()
-            .chain(order.iter().map(String::as_str))
-        {
+        for name in task_profile.into_iter().chain(order.iter()) {
             if !self.profiles.contains_key(name) {
                 return Err(invalid(format!("unknown profile `{name}`")));
             }
             if !names.iter().any(|(n, _)| n == name) {
-                names.push((name.to_owned(), tier));
+                names.push((name.clone(), tier));
             }
         }
         Ok(names)
@@ -277,7 +301,7 @@ impl Agents {
     pub fn select(
         &self,
         role: Option<&str>,
-        task_profile: Option<&str>,
+        task_profile: Option<&ProfileName>,
         task_tier: Option<Tier>,
     ) -> Result<Vec<AgentSelection>, ConfigError> {
         self.order(role, task_profile, task_tier)?
@@ -286,7 +310,11 @@ impl Agents {
             .collect::<Result<Vec<_>, _>>()
             .map(|chains| chains.into_iter().flatten().collect())
     }
-    pub fn model_chain(&self, name: &str, tier: Tier) -> Result<Vec<AgentSelection>, ConfigError> {
+    pub fn model_chain(
+        &self,
+        name: &ProfileName,
+        tier: Tier,
+    ) -> Result<Vec<AgentSelection>, ConfigError> {
         let profile = self
             .profiles
             .get(name)
@@ -306,9 +334,10 @@ struct Deployment {
     pending: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Runtime-neutral effort vocabulary; harness membership is checked before selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum Effort {
+pub enum Effort {
     None,
     Minimal,
     Low,
@@ -320,6 +349,67 @@ enum Effort {
     Ultrathink,
     Off,
     Auto,
+}
+impl Effort {
+    pub fn allowed_for(self, kind: HarnessKind) -> bool {
+        match kind {
+            HarnessKind::Claude => matches!(
+                self,
+                Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max | Self::Ultrathink
+            ),
+            HarnessKind::Antigravity => matches!(self, Self::Low | Self::Medium | Self::High),
+            HarnessKind::Kiro | HarnessKind::Grok => matches!(
+                self,
+                Self::None | Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max
+            ),
+            HarnessKind::Fx => matches!(
+                self,
+                Self::Auto | Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max
+            ),
+            HarnessKind::Cursor => matches!(
+                self,
+                Self::None
+                    | Self::Minimal
+                    | Self::Low
+                    | Self::Medium
+                    | Self::High
+                    | Self::Xhigh
+                    | Self::Max
+            ),
+            HarnessKind::OpenCode => {
+                matches!(self, Self::Low | Self::Medium | Self::High | Self::Xhigh)
+            }
+            HarnessKind::Pi => matches!(
+                self,
+                Self::Off
+                    | Self::Minimal
+                    | Self::Low
+                    | Self::Medium
+                    | Self::High
+                    | Self::Xhigh
+                    | Self::Max
+            ),
+            HarnessKind::Codex | HarnessKind::Muse => matches!(
+                self,
+                Self::None
+                    | Self::Minimal
+                    | Self::Low
+                    | Self::Medium
+                    | Self::High
+                    | Self::Xhigh
+                    | Self::Max
+                    | Self::Ultra
+            ),
+            HarnessKind::AcpRegistry => true,
+        }
+    }
+}
+#[derive(Deserialize)]
+struct ModelEntry {
+    model: String,
+    effort: Option<Effort>,
+    #[serde(flatten)]
+    settings: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Serialize, Deserialize)]
 enum ContextWindow {
@@ -335,166 +425,136 @@ enum ServiceTier {
     Priority,
     Flex,
 }
-macro_rules! model_shape {
-    ($name:ident {$($field:ident : $ty:ty),* $(,)?}) => {
-        #[derive(Serialize,Deserialize)]
-        #[serde(deny_unknown_fields,rename_all="camelCase")]
-        struct $name { model:String, $(#[serde(default,skip_serializing_if="Option::is_none")] $field:Option<$ty>),* }
-    };
-}
-model_shape!(CodexModel {
-    reasoning_effort: Effort,
-    service_tier: ServiceTier
-});
-model_shape!(ClaudeModel {
-    effort: Effort,
-    fast_mode: bool,
-    thinking: bool,
-    context_window: ContextWindow
-});
-model_shape!(ReasoningModel {
-    reasoning_effort: Effort
-});
-model_shape!(PiModel { thinking: Effort });
-model_shape!(OpenCodeModel {
-    variant: Effort,
-    agent: String
-});
-model_shape!(FxModel { effort: Effort });
-model_shape!(CursorModel {
-    effort: Effort,
-    reasoning: Effort,
-    context_window: String,
-    fast_mode: bool,
-    thinking: bool
-});
+// Extra settings remain per-kind records; effort keeps its semantic type.
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AntigravityModel {
-    model: String,
-    thinking_level: Option<Effort>,
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct CodexSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    service_tier: Option<ServiceTier>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ClaudeSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fast_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thinking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_window: Option<ContextWindow>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct CursorSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fast_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thinking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_window: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AcpModel {
-    model: String,
+struct OpenCodeSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoSettings {}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcpSettings {
     #[serde(default)]
     options: BTreeMap<String, serde_json::Value>,
 }
-
-fn typed<T: serde::de::DeserializeOwned + Serialize>(
-    raw: &serde_json::Value,
-) -> Result<serde_json::Value, ConfigError> {
-    let parsed: T = serde_json::from_value(raw.clone()).map_err(|e| invalid(e.to_string()))?;
-    serde_json::to_value(parsed).map_err(|e| invalid(e.to_string()))
+fn settings<T: serde::de::DeserializeOwned + Serialize>(
+    settings: &BTreeMap<String, serde_json::Value>,
+) -> Result<BTreeMap<String, serde_json::Value>, ConfigError> {
+    let parsed: T = serde_json::from_value(serde_json::Value::Object(
+        settings.clone().into_iter().collect(),
+    ))
+    .map_err(|e| invalid(e.to_string()))?;
+    let value = serde_json::to_value(parsed).map_err(|e| invalid(e.to_string()))?;
+    serde_json::from_value(value).map_err(|e| invalid(e.to_string()))
 }
 fn resolve_entry(
-    name: &str,
+    name: &ProfileName,
     profile: &Profile,
     raw: &serde_json::Value,
 ) -> Result<AgentSelection, ConfigError> {
-    use HarnessKind::*;
     if raw
         .as_object()
         .is_some_and(|fields| fields.values().any(serde_json::Value::is_null))
     {
         return Err(invalid("model fields cannot be null"));
     }
-    let (value, effort_key) = match profile.kind {
-        Codex => (typed::<CodexModel>(raw)?, Some("reasoningEffort")),
-        Claude => (typed::<ClaudeModel>(raw)?, Some("effort")),
-        Antigravity => (typed::<AntigravityModel>(raw)?, Some("thinking_level")),
-        Grok | Kiro | Muse => (typed::<ReasoningModel>(raw)?, Some("reasoningEffort")),
-        Pi => (typed::<PiModel>(raw)?, Some("thinking")),
-        OpenCode => (typed::<OpenCodeModel>(raw)?, Some("variant")),
-        Cursor => (typed::<CursorModel>(raw)?, Some("effort")),
-        Fx => (typed::<FxModel>(raw)?, Some("effort")),
-        AcpRegistry => (typed::<AcpModel>(raw)?, None),
-    };
-    let mut options = value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| invalid("model entry must be a mapping"))?;
-    let model = options
-        .remove("model")
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .filter(|m| !m.trim().is_empty())
-        .ok_or_else(|| invalid("model name must be nonempty"))?;
-    let effort = effort_key
-        .and_then(|key| options.get(key))
-        .or_else(|| {
-            if profile.kind == Cursor {
-                options.get("reasoning")
-            } else {
-                None
-            }
-        })
-        .and_then(|v| v.as_str())
-        .map(str::to_owned);
-    let mut efforts = effort.iter().map(String::as_str).collect::<Vec<_>>();
-    if profile.kind == Cursor
-        && let Some(reasoning) = options.get("reasoning").and_then(|v| v.as_str())
+    let entry: ModelEntry =
+        serde_json::from_value(raw.clone()).map_err(|e| invalid(e.to_string()))?;
+    if entry.model.trim().is_empty() {
+        return Err(invalid("model name must be nonempty"));
+    }
+    if entry
+        .effort
+        .is_some_and(|effort| !effort.allowed_for(profile.kind))
     {
-        efforts.push(reasoning);
+        return Err(invalid("invalid harness effort value"));
     }
-    for effort in efforts {
-        let allowed = match profile.kind {
-            Claude => matches!(
-                effort,
-                "low" | "medium" | "high" | "xhigh" | "max" | "ultrathink"
-            ),
-            Antigravity => matches!(effort, "low" | "medium" | "high"),
-            Kiro | Grok => matches!(effort, "none" | "low" | "medium" | "high" | "xhigh" | "max"),
-            Fx => matches!(effort, "auto" | "low" | "medium" | "high" | "xhigh" | "max"),
-            Cursor => matches!(
-                effort,
-                "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
-            ),
-            OpenCode => matches!(effort, "low" | "medium" | "high" | "xhigh"),
-            Pi => matches!(
-                effort,
-                "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
-            ),
-            _ => !matches!(effort, "off" | "ultrathink" | "auto"),
-        };
-        if !allowed {
-            return Err(invalid("invalid harness effort value"));
+    let mut options = entry.settings;
+    match profile.kind {
+        HarnessKind::Codex => {
+            options = settings::<CodexSettings>(&options)?;
         }
-    }
-    if profile.kind == AcpRegistry {
-        options = options
-            .remove("options")
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-        if options
-            .values()
-            .any(|v| !v.is_string() && !v.is_boolean() && !v.is_number())
-        {
-            return Err(invalid("ACP native options must be scalar values"));
+        HarnessKind::Claude => {
+            options = settings::<ClaudeSettings>(&options)?;
+        }
+        HarnessKind::Cursor => {
+            options = settings::<CursorSettings>(&options)?;
+        }
+        HarnessKind::OpenCode => {
+            options = settings::<OpenCodeSettings>(&options)?;
+        }
+        HarnessKind::AcpRegistry => {
+            let parsed: AcpSettings =
+                serde_json::from_value(serde_json::Value::Object(options.into_iter().collect()))
+                    .map_err(|e| invalid(e.to_string()))?;
+            options = parsed.options;
+            if options
+                .values()
+                .any(|value| !value.is_string() && !value.is_boolean() && !value.is_number())
+            {
+                return Err(invalid("ACP native options must be scalar values"));
+            }
+        }
+        HarnessKind::Antigravity
+        | HarnessKind::Grok
+        | HarnessKind::Fx
+        | HarnessKind::Kiro
+        | HarnessKind::Pi
+        | HarnessKind::Muse => {
+            options = settings::<NoSettings>(&options)?;
         }
     }
     Ok(AgentSelection {
-        profile: name.into(),
+        profile: name.clone(),
         kind: profile.kind,
         instance: profile.instance.clone(),
-        model,
-        effort,
-        options: options.into_iter().collect(),
+        model: entry.model,
+        effort: entry.effort,
+        options,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    use super::{Agents, ConfigError};
     #[test]
     fn a_newer_schema_is_refused_before_interpreting_its_profile_shape() {
-        let newer = "schema_version: 2\nprofiles: {future: {kind: future-harness}}\n";
+        let newer = "schema_version: 3\nprofiles: {future: {kind: future-harness}}\n";
         assert!(matches!(
             Agents::parse(newer),
             Err(ConfigError::NewerSchema {
-                found: 2,
-                current: 1,
+                found: 3,
+                current: 2,
                 ..
             })
         ));

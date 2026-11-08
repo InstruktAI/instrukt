@@ -483,7 +483,12 @@ fn deliver_group(
         let selection = crate::agents::selections(&config, invocation.home(), &preferences, now)?
             .into_iter()
             .next();
-        let request = RuntimeStart { preferences, selection, selection_evidence:Some("T3 CLI receives provider/model; effort/options are not expressible by thread start.".into()),
+        let request = RuntimeStart {
+            preferences,
+            selection,
+            selection_evidence: Some(
+                adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
+            ),
             checkout: root.clone(),
             key: responsibility.into(),
             brief: content,
@@ -597,7 +602,7 @@ pub fn reserve_manual(
         brief,
     } = *request;
     use instrukt_core::subscription::SubscriptionHome;
-    config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
+    let runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     if entry.subscriptions.is_empty()
         || entry.subscription_identity == SubscriptionIdentity::Subject
@@ -672,7 +677,8 @@ pub fn reserve_manual(
         preferences: order.clone(),
         selection: crate::agents::selections(config, invocation.home(), &order, now)?
             .into_iter()
-            .next(),
+            .next()
+            .map(|selection| crate::runtime::adapter(runtime).native_selection(&selection)),
         reservation: keyed::request_id()?,
         key: key.clone(),
         brief: initialized,
@@ -715,7 +721,7 @@ pub fn bind_manual(
         if owner!=caller.to_string() || fixed.id.as_str()!=procedure { return Err(state::invalid(&db,"reservation belongs to another caller or procedure")); }
         if let Some(e)=evidence {
             if e.session.runtime.as_str()!=runtime.name() || e.title!=request.key || e.assignment!=request.brief || bound.as_deref().is_some_and(|s|s!=e.session.to_string()) { return Err(state::invalid(&db,"native identity or initialized assignment differs from reserved facts")); }
-            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some("Native standing entry receives resolved family/model/effort/options.".into()),checkout:request.checkout.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None};
+            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None};
             tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",params![responsibility,procedure,home,request.checkout.to_string_lossy(),declaration,serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?,e.session.to_string()]).map_err(state::sql(&db))?;
             tx.execute("UPDATE manual_standing_reservations SET session=?2 WHERE token=?1",params![token,e.session.to_string()]).map_err(state::sql(&db))?;
             inputs::retain(tx,&e.session,&Entry{id:&format!("assignment:{}",request.key),kind:InputKind::Recovery,assignment:None,source_at:None,arrived_at:now,intent:Intent::Asap,content:&request.brief})?;
@@ -767,6 +773,9 @@ fn prepare_successor(
     let selection = crate::agents::selections(&config, state.home(), &order, cx.now)?
         .into_iter()
         .next();
+    let runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
+    let realization = crate::runtime::adapter(runtime)
+        .selection_realization(crate::runtime::SelectionOperation::ThreadStart);
     state.write::<_,SessionsError>(|tx|{
         let path=state::db_path(tx);
         let (generation,old_key)=tx.query_row("SELECT generation,semantic_key FROM procedure_responsibilities WHERE responsibility=?1",[cx.responsibility],|r|Ok((r.get::<_,u64>(0)?,r.get::<_,String>(1)?))).map_err(state::sql(&path))?;
@@ -782,7 +791,7 @@ fn prepare_successor(
         let entries=pending.iter().map(log_entry).collect::<Result<Vec<_>,_>>()?;
         let (count,content)=inputs::compose(cx.now,&prefix,&entries)?;
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);pending.truncate(count);
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some("T3 CLI receives provider/model; effort/options are not expressible by thread start.".into()),checkout:cx.root.into(),key:next_key.clone(),brief:content,worktree:None};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),key:next_key.clone(),brief:content,worktree:None};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;

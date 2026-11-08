@@ -167,3 +167,71 @@ fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_intr
         .unwrap();
     assert_eq!(version, instrukt_core::state_db::schema_version());
 }
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD2
+#[test]
+fn a_historical_start_request_migrates_and_loads_through_the_current_request_model() {
+    let env = common::TestEnv::new();
+    env.run(
+        env.home(),
+        [
+            "agents",
+            "status",
+            "codex",
+            "unavailable",
+            "--reason",
+            "fixture initialization",
+        ],
+    )
+    .success();
+    let file = env.instrukt_home().join("state/instrukt.db");
+    let db = Connection::open(&file).unwrap();
+    db.execute_batch("DROP TABLE agent_quota; PRAGMA user_version=4;")
+        .unwrap();
+    let checkout = env.git_repo("retained");
+    let old = serde_json::json!({"key":"retained-key","brief":"retained-input","checkout":checkout.path(),"worktree":null,"selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
+    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s',?1,'retained-input',?2,'2030-01-01T00:00:00Z',0,'unresolved')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),old.to_string()]).unwrap();
+    let cursor = serde_json::json!({"key":"cursor-key","brief":"cursor-input","checkout":checkout.path(),"selection":{"family":"cursor","provider":"cursor-account","model":"open-model","effort":"high","options":{"effort":"high","reasoning":"medium","fastMode":true}}});
+    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','cursor-key','p','run','s',?1,'cursor-input',?2,'2030-01-01T00:00:00Z',0,'unresolved')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),cursor.to_string()]).unwrap();
+    drop(db);
+    env.run(env.home(), ["agents", "availability"]).success();
+    let db = Connection::open(file).unwrap();
+    let (encoded,unresolved):(String,bool)=db.query_row("SELECT request,state='unresolved' FROM runtime_starts WHERE semantic_key='retained-key'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    let current: instrukt_runner::runtime::RuntimeStart = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(current.checkout, checkout.path());
+    insta::assert_snapshot!(
+        "migrated-current-start-request",
+        serde_json::to_string_pretty(&current).unwrap().replace(
+            env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]"
+        )
+    );
+    assert!(unresolved);
+    let selection = current.selection.as_ref().unwrap();
+    assert_eq!(
+        selection.profile,
+        instrukt_core::ids::ProfileName::parse("antigravity").unwrap()
+    );
+    assert_eq!(
+        selection.instance,
+        instrukt_core::ids::ProviderInstanceId::parse("account-two").unwrap()
+    );
+    assert_eq!(selection.effort, Some(instrukt_core::config::Effort::High));
+    let native = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
+        .native_selection(selection);
+    insta::assert_json_snapshot!("migrated-current-request-selection", native);
+    let encoded: String = db
+        .query_row(
+            "SELECT request FROM runtime_starts WHERE semantic_key='cursor-key'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let cursor: instrukt_runner::runtime::RuntimeStart = serde_json::from_str(&encoded).unwrap();
+    let cursor = cursor.selection.unwrap();
+    assert_eq!(cursor.effort, Some(instrukt_core::config::Effort::High));
+    assert_eq!(
+        cursor.options,
+        [("fastMode".into(), serde_json::json!(true))].into()
+    );
+}

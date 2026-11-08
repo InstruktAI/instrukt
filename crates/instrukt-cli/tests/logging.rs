@@ -79,3 +79,59 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
     insta::assert_snapshot!("publication-log", records);
     insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stderr), @"");
 }
+
+/// Only instrukt's declared write records; timestamps and logger metadata are external.
+fn write_events(env: &TestEnv, source: &str) -> Vec<String> {
+    let file = env
+        .home()
+        .join(format!(".local/state/instrukt-ai/instrukt/{source}.log"));
+    std::fs::read_to_string(file)
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let (_, tail) = line.split_once(" event=")?;
+            if tail.starts_with("secret_written") || tail.starts_with("agents_defaults_written") {
+                Some(format!("event={tail}"))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+// spec: project/instrukt/spec/feature/configuration/logging UC-LG1
+#[test]
+fn secret_mutations_emit_one_secret_safe_completion_each() {
+    let env = TestEnv::new();
+    env.instrukt(env.home())
+        .args(["secrets", "set", "SIGNING"])
+        .write_stdin("fixture-value-stays-in-the-protected-file")
+        .assert()
+        .success()
+        .stdout("");
+    env.run(env.home(), ["secrets", "generate", "GENERATED"])
+        .success()
+        .stdout("");
+    let events = write_events(&env, "secrets");
+    assert_eq!(events.len(), 2);
+    insta::assert_json_snapshot!("secret-write-completions", events);
+}
+
+// spec: project/instrukt/spec/feature/configuration/logging UC-LG1
+#[test]
+fn defaults_install_and_replace_are_recorded_without_unchanged_read_noise() {
+    use sha2::{Digest, Sha256};
+    let env = TestEnv::new();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    env.run(env.home(), ["config", "show", "agents"]).success();
+    let prior = instrukt_core::config::SHIPPED_AGENTS.replace("gpt-6.1-sol", "prior-model");
+    std::fs::write(env.instrukt_home().join("agents.yaml"), &prior).unwrap();
+    std::fs::write(env.instrukt_home().join("state/agents-deployment.json"),serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(prior.as_bytes()))}).to_string()).unwrap();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    env.run(env.home(), ["config", "show", "agents"]).success();
+    let events = write_events(&env, "config");
+    assert_eq!(events.len(), 2);
+    insta::assert_json_snapshot!("defaults-write-completions", events);
+}

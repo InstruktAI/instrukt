@@ -195,7 +195,12 @@ fn native_selection(
         .map_err(|e| WorkError::refused(e.to_string()))?
         .into_iter()
         .next();
-    Ok(selection)
+    let runtime = s
+        .config
+        .runner_runtime()?
+        .ok_or_else(|| WorkError::refused("choose runner.runtime for native assignment"))?;
+    Ok(selection
+        .map(|selection| instrukt_runner::runtime::adapter(runtime).native_selection(&selection)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

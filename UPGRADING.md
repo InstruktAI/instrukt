@@ -46,9 +46,16 @@ repository has no worktree-removal hook: remove its ignored `.instrukt-home`
 when cleaning up a development worktree (before removing that worktree). No
 machine home needs removal or reseeding.
 
-Unattended starts require the adapter's verified T3 CLI/server and WebSocket
-protocol versions. Unknown versions or readiness response shapes refuse startup
+Unattended starts require the adapter's supported WebSocket protocol and
+readiness response shapes. CLI/server release strings are diagnostic; a different
+compatible release remains usable. Unknown protocols or response shapes refuse startup
 with a repair reason. The adapter obtains and revokes a five-minute read-scoped
 session for each new start's provider snapshot. Quota restrictions now come from
 reported usage windows, with a recorded one-hour expiry when no reset is reported;
 launch-error text supplies no quota or no-start evidence.
+
+Agents schema 1 converts to schema 2 before selection/default replacement.
+Every harness uses the same neutral `effort` input; only the adapter emits native
+option identifiers. Existing effort settings are preserved. Conflicting retired
+fields refuse conversion with the source intact until reconciled. Runtime start
+requests migrate to the same neutral representation before current consumers load.

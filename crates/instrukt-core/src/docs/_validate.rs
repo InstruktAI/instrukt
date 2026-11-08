@@ -172,7 +172,6 @@ fn scope_of(repo_root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, DocsErr
 pub(super) struct CheckEnv<'a> {
     pub repo_root: &'a Path,
     pub wiring: &'a CoreWiring,
-    /// Available adapter metadata; absence cannot validate or reject agent names.
     /// The working tree's position schemas.
     pub schemas: &'a Schemas,
 }

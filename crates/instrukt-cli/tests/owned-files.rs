@@ -158,6 +158,7 @@ fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_mac
         .write("docs/general/concept/sample.md","---\ndescription: Development source.\n---\n# Sample — Concept\n\n## What\n\nFirst source.\n\n## Why\n\nIsolation.\n")
         .write("scripts/dev-instrukt",include_str!("../../../scripts/dev-instrukt"))
         .write("scripts/with-build-lock.sh",include_str!("../../../scripts/with-build-lock.sh"));
+    repo.write(".gitignore", "/.instrukt-home/\n");
     for name in ["scripts/dev-instrukt", "scripts/with-build-lock.sh"] {
         std::fs::set_permissions(
             repo.path().join(name),
@@ -223,20 +224,70 @@ fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_mac
         .unwrap(),
         std::fs::read(two.join(".instrukt-home/docs/general/concept/sample.md")).unwrap()
     );
+    let private_a = repo.path().join(".instrukt-home");
+    let private_b = two.join(".instrukt-home");
+    let a_before = std::fs::read(private_a.join("docs/general/concept/sample.md")).unwrap();
+    let b_before = std::fs::read(private_b.join("docs/general/concept/sample.md")).unwrap();
+    let b_index = std::fs::read(private_b.join("state/index.yaml")).unwrap();
+    repo.write("docs/general/concept/sample.md","---\ndescription: Updated development source.\n---\n# Sample — Concept\n\n## What\n\nUpdated source.\n\n## Why\n\nIsolation.\n");
+    repo.commit("update the first worktree source after seeding");
+    env.command(&repo.path().join("scripts/dev-instrukt"), repo.path())
+        .args(["sync"])
+        .output()
+        .unwrap()
+        .assert()
+        .success();
+    let a_after = std::fs::read(private_a.join("docs/general/concept/sample.md")).unwrap();
+    assert_ne!(a_after, a_before);
+    assert_eq!(
+        a_after,
+        std::fs::read(repo.path().join("docs/general/concept/sample.md")).unwrap()
+    );
+    assert_eq!(
+        std::fs::read(private_b.join("docs/general/concept/sample.md")).unwrap(),
+        b_before
+    );
+    assert_eq!(
+        std::fs::read(private_b.join("state/index.yaml")).unwrap(),
+        b_index
+    );
+    assert_eq!(
+        std::fs::read(normal.join("instrukt.yaml")).unwrap(),
+        machine_config
+    );
+    assert!(!normal.join("state/index.yaml").exists());
+    let revision = env
+        .command(&repo.path().join("scripts/dev-instrukt"), repo.path())
+        .args(["config", "get", "--revision", "--global"])
+        .output()
+        .unwrap();
+    assert!(revision.status.success());
+    let revision = String::from_utf8(revision.stdout).unwrap();
     env.command(&repo.path().join("scripts/dev-instrukt"), repo.path())
         .args([
             "config",
             "patch",
             "--global",
             "--revision",
-            "stale",
+            revision.trim(),
             "--yaml",
             "ticks: off",
         ])
         .output()
         .unwrap()
         .assert()
-        .failure();
+        .success();
+    let edited = std::fs::read(private_a.join("instrukt.yaml")).unwrap();
+    env.command(&repo.path().join("scripts/dev-instrukt"), repo.path())
+        .args(["config", "get", "ticks", "--global"])
+        .output()
+        .unwrap()
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read(private_a.join("instrukt.yaml")).unwrap(),
+        edited
+    );
     let second = std::fs::read(two.join(".instrukt-home/instrukt.yaml")).unwrap();
     env.command(&repo.path().join("scripts/dev-instrukt"), repo.path())
         .args(["secrets", "generate", "GENERATED"])

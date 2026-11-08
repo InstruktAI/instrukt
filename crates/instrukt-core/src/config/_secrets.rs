@@ -104,6 +104,7 @@ pub fn set_secret(home: &Home, name: &str, value: &str) -> Result<(), ConfigErro
         text.as_bytes(),
         std::fs::Permissions::from_mode(0o600),
     )?;
+    tracing::info!(event = "secret_written", reference = name);
     Ok(())
 }
 

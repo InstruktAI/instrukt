@@ -317,7 +317,7 @@ pub(crate) fn start(
             key: input.key.clone(),
         });
     }
-    let prepared = match adapter.prepare_start(invocation.home(), input, now) {
+    let prepared = match crate::agents::prepare_start(invocation.home(), adapter, input, now) {
         Ok(prepared) => prepared,
         Err(error) => {
             guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='instrukt',resolution='readiness_refused_before_creation' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,input.key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;

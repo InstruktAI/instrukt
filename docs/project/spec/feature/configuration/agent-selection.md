@@ -24,8 +24,8 @@ changing a procedure or recompiling instrukt.
 | `bundles: {<name>: <grants>}` | Named scoped capability bundles, owned by roles-and-capabilities. |
 | `profiles: {<name>: <profile>}` | User-visible profile names; orders reference these names. |
 | Profile `instance` | The existing T3 provider-instance id this profile addresses. |
-| Profile `kind` | A known harness kind selecting that profile's typed shape and native option fields. |
-| Profile tier chains | Nonempty ordered entries for `light`, `standard`, `strong` and `premium`, each holding a model name and that harness's own effort/option fields. |
+| Profile `kind` | A known harness kind selecting that profile's allowed effort values and typed extra settings. |
+| Profile tier chains | Nonempty ordered entries for `light`, `standard`, `strong` and `premium`, each holding a model name, one runtime-neutral `effort` field validated per kind, and extra harness settings beside it. |
 
 Several profiles can share a kind, including separate accounts of one harness.
 Profile names, provider-instance ids and kinds are distinct identities. The
@@ -64,7 +64,9 @@ follow `project/instrukt/spec/feature/configuration/owned-files`.
 
 Shape is strict: known kinds, the four tier names, declared profile references,
 nonempty orders/chains and the kind's typed fields and allowed effort values.
-Model names are open strings. Unknown names are neither rejected nor tested
+Effort remains a closed semantic vocabulary through per-kind validation; the
+selected runtime adapter maps it to native option identifiers. Model names are
+open strings. Unknown names are neither rejected nor tested
 against a catalogue. A hand-maintained schema in instrukt's repository offers
 known model names as editor suggestions, without restricting other names.
 This is separate from the generated repository YAML schemas.
@@ -79,38 +81,18 @@ not change an existing conversation.
 
 ### Readiness, skips and quota
 
-Before each instrukt-owned start, the T3 adapter reads the local server's
-`server.getConfig` WebSocket RPC and its `providers: ServerProvider[]` snapshot.
-It issues a five-minute `orchestration:read` session through `t3 auth session
-issue --scope orchestration:read --ttl 5m --token-only --label instrukt-readiness`,
-uses the bearer token only in memory, and revokes that session after the read.
-Server discovery, the token envelope and RPC framing follow T3's source contract.
-This is an internal T3 protocol: the adapter gates its supported CLI/server and
-protocol versions and refuses startup visibly for an unknown version, unknown
-shape, failed read or failed token cleanup. It never treats missing readiness
-evidence as permission to start.
+The runner supplies readiness, capacity and selection-realization outcomes under
+`project/instrukt/spec/feature/runner/session-continuity`. Selection consumes
+those outcomes before a new start, preserving the configured profile order and
+per-tier chains. A failed or incomplete readiness probe cannot admit a profile;
+source-supported configurations that require no provider login remain usable.
+Native default/automatic picks follow the selected adapter's declared behavior.
+Skips and exhaustion retain their reasons and leave work pending through the
+existing anomaly route.
 
-A missing instance, disabled instance, missing installation, unauthenticated
-instance or unavailable provider is skipped with its reason. A configured model
-not reported by that instance is skipped; native `auto` and `default` picks are
-exempt from model-list membership. Selection reports each skipped profile/model
-and its readiness or local capacity cause. Exhaustion leaves work pending and
-uses the existing anomaly route. This check precedes startup; an existing keyed
-conversation remains recoverable without a new-start readiness check.
-
-`instrukt agents availability` reads local expiring capacity marks;
-`instrukt agents status` changes them. Profile marks apply to that profile;
-model marks apply to the selected model within its profile. Automatic starts
-skip unavailable and degraded capacity; expiry lapses at the command clock and
-available clears the restriction.
-
-The same snapshot supplies quota evidence. A usage window with `usedPercent`
-at 100 marks that profile's models unavailable until its `resetsAt`. Without a
-reset time, the restriction lasts one hour and records that default in its cause.
-Marks retain cause and expiry in availability and skip diagnostics. Overlapping
-exhausted windows restrict until all have reset; a reported reset already past
-has lapsed. Independent manual restrictions are preserved. Quota is never inferred
-from launch-error text, and a capacity mark proves nothing about thread creation.
+`instrukt agents availability` and `instrukt agents status` inspect and change
+runner-owned capacity restrictions. Their expiry and observed-quota policy is
+owned by the runner contract, independently of configuration shape validation.
 
 Ambiguous startup retains its key and selected inputs for recovery. Chain
 fallback after invocation requires rejection proven before creation or explicit
@@ -168,14 +150,14 @@ Retired: readiness and quota are parts of the prose contract above.
 
 ## Known caveats
 
-- A hard process stop before token revocation leaves the issued session bounded
-  by its short TTL. Its token material is never saved in instrukt state.
-
 - `t3 thread start` has no effort/options flag. Until upstream supports it,
   instrukt's own starts receive effort only from the T3 project default.
   Native delegation and the T3 server can carry options; instrukt builds no
   workaround for the host CLI. The upstream request is
   [pingdotgg/t3code#29863](https://github.com/pingdotgg/t3code/issues/29863).
+- Mandatory conversion of a version-one agents file preserves user choices and
+  refuses conflicting retired effort fields with the source intact until they
+  are reconciled.
 - Editor model suggestions are manually maintained and neither tested nor
   used to reject unknown names. Readiness reporting and actual provider
   acceptance remain separate from configuration shape validation.
