@@ -705,14 +705,17 @@ fn project_positions_publish_committed_files_and_pending_companions() {
         std::fs::read_to_string(root.join("policy/house.rework.md")).unwrap(),
         companion
     );
-    assert_eq!(
-        std::fs::read_to_string(root.join("index.yaml")).unwrap(),
-        "expanded: []\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(root.join("schema.yaml")).unwrap(),
-        "{}\n"
-    );
+    for file in ["index.yaml", "schema.yaml"] {
+        let committed = env
+            .git_command(repo.path())
+            .args(["show", &format!("HEAD:docs/project/{file}")])
+            .assert()
+            .success();
+        assert_eq!(
+            std::fs::read(root.join(file)).unwrap(),
+            committed.get_output().stdout
+        );
+    }
     assert!(!root.join("policy/draft.md").exists());
     assert!(
         env.instrukt_home()
@@ -743,7 +746,20 @@ fn retiring_the_project_position_retracts_only_its_own_store_and_claim() {
             .exists()
     );
     assert_eq!(std::fs::read(other).unwrap(), before);
-    assert_eq!(ids(&index(&env)), ["project/second/policy/house"]);
+    let retired = env
+        .run(first.path(), ["docs", "index", "--project", "first"])
+        .success();
+    let remaining = env
+        .run(second.path(), ["docs", "index", "--project", "second"])
+        .success();
+    insta::assert_snapshot!(
+        "project-retraction-indexes",
+        common::mask_published_commits(&format!(
+            "{}{}",
+            without_tmp(&env, &retired.get_output().stdout, &[]),
+            without_tmp(&env, &remaining.get_output().stdout, &[])
+        ))
+    );
 }
 
 // spec: project/instrukt/spec/feature/publication/project-publication UC-PUB7

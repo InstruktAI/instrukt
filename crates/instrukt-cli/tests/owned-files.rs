@@ -265,12 +265,13 @@ fn retired_project_actions_migrate_before_reads_and_an_unchanged_sync() {
     let old = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: retired-actions\nactions: {test: make test}\napprovals: {prd: peer}\n";
     repo.write("instrukt.yaml", old);
     repo.commit("old project configuration");
-    env.run(repo.path(), ["config", "get", "approvals.prd"])
+    let read = env
+        .run(repo.path(), ["config", "get", "approvals.prd"])
         .success();
     let stored: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
     assert!(stored.get("actions").is_none());
-    assert_eq!(stored["approvals"]["prd"].as_str(), Some("peer"));
+    insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stdout), @"peer");
     assert_eq!(
         stored["schema_version"].as_u64(),
         Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
@@ -285,5 +286,8 @@ fn retired_project_actions_migrate_before_reads_and_an_unchanged_sync() {
     let stored: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
     assert!(stored.get("actions").is_none());
-    assert_eq!(stored["approvals"]["prd"].as_str(), Some("peer"));
+    let after_sync = env
+        .run(repo.path(), ["config", "get", "approvals.prd"])
+        .success();
+    insta::assert_snapshot!(String::from_utf8_lossy(&after_sync.get_output().stdout), @"peer");
 }
