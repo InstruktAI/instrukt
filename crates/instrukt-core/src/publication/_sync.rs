@@ -11,7 +11,7 @@ use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_render::Renderer;
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
-use super::_tree::{self, ClaimRecord, Outputs, Written};
+use super::_tree::{self, ClaimRecord, Outputs, ProjectClaimRecord, Written};
 use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
@@ -340,7 +340,15 @@ fn publish(
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
     let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
-    let contribution = Contribution::of(&project.slug, &corpus, &held, &project.primary);
+    let contribution = Contribution::of(&project.slug, &corpus, &held);
+    if let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
+        && claim.owner != project.slug
+    {
+        return Ok(refused(Refusal::Claim(Claim::ProjectOwned {
+            project: project.slug.clone(),
+            owner: claim.owner,
+        })));
+    }
     let owners = _tree::claims(home)?;
     let index = GlobalIndex::load(home)?.unwrap_or_default();
     let patched = match patch(&index, &owners, &contribution) {
@@ -500,6 +508,8 @@ fn preflight(
                 .map(|d| docs.join(&d.path)),
         );
     }
+    targets.push(home.project_docs_dir(&project.slug));
+    targets.push(_tree::project_claim_path(home, &project.slug));
     targets.push(home.index_file());
     targets.extend(_fingerprint::record_paths(home, commit));
     targets.push(Outputs::record_path(home, &project.slug));
@@ -665,7 +675,7 @@ fn write(
     let published: BTreeSet<&DomainName> = prepared.held.iter().collect();
     for domain in &prepared.held {
         let staged = staging.path().join(domain.as_str());
-        _tree::stage_domain(&prepared.committed, domain, &staged)?;
+        _tree::stage_position(&prepared.committed, &Position::of_domain(domain), &staged)?;
         tx.replace_dir(&staged, &in_home(&home.domain_dir(domain))?)?;
         let claim = ClaimRecord {
             position: domain.clone(),
@@ -679,6 +689,23 @@ fn write(
             tx.remove_dir(&in_home(&home.domain_dir(domain))?)?;
             tx.remove_file(&in_home(&_tree::claim_path(home, domain))?)?;
         }
+    }
+    // Project positions use the same transaction and whole-tree replacement.
+    let project_dir = in_home(&home.project_docs_dir(&project.slug))?;
+    let claim_path = in_home(&_tree::project_claim_path(home, &project.slug))?;
+    if prepared.committed.below("docs/project/").next().is_some() {
+        let staged = staging.path().join("project").join(project.slug.as_str());
+        _tree::stage_position(&prepared.committed, &Position::Project, &staged)?;
+        tx.replace_dir(&staged, &project_dir)?;
+        let claim = ProjectClaimRecord {
+            project: project.slug.clone(),
+            owner: project.slug.clone(),
+        };
+        let text = serde_yaml_ng::to_string(&claim).map_err(PublicationError::Render)?;
+        tx.write(&claim_path, text.as_bytes())?;
+    } else {
+        tx.remove_dir(&project_dir)?;
+        tx.remove_file(&claim_path)?;
     }
     // Third-party docs: file by file, owner-scoped.
     let docs = home.docs_dir();

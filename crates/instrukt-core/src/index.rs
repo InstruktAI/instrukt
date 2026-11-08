@@ -4,9 +4,9 @@
 //! This is the persisted format shared by its writer and its readers:
 //! publication builds entries from a project's committed docs and patches
 //! the index by owner (`docs/project/spec/domain/publication.md`, "Global
-//! index"); docs lists and resolves from it (`docs index`, `docs get`). The
-//! entry fields follow the predecessor's index, plus local entries carrying
-//! the absolute path of their file in their project.
+//! index"); docs lists and resolves from it (`docs index`, `docs get`).
+//! Every entry carries a path relative to the published docs store. The
+//! publication record retains source checkout provenance.
 
 use std::path::{Path, PathBuf};
 
@@ -69,8 +69,7 @@ pub struct IndexEntry {
     pub scope: IndexScope,
     /// The published domain, or the local half's structural domain.
     pub domain: String,
-    /// Global entries: relative to `~/.instrukt/docs/`. Local entries: the
-    /// absolute path of the file in its project.
+    /// Relative to `~/.instrukt/docs/`, including `project/<slug>/…`.
     pub path: PathBuf,
     /// The owning project.
     pub source_project: ProjectSlug,
@@ -165,19 +164,28 @@ impl GlobalIndex {
         if let Some(found) = value
             .get("schema_version")
             .and_then(serde_yaml_ng::Value::as_u64)
-            && found != 1
+            && !matches!(found, 1 | 2)
         {
             return Err(IndexError::Version {
                 path: path.into(),
                 found,
             });
         }
-        let index: Self = serde_yaml_ng::from_value(value).map_err(|source| IndexError::Parse {
-            path: path.into(),
-            source,
-        })?;
-        // Readers upcast the versionless cache in memory. Publication writes
-        // the current version under its existing owner lock.
+        let mut index: Self =
+            serde_yaml_ng::from_value(value).map_err(|source| IndexError::Parse {
+                path: path.into(),
+                source,
+            })?;
+        // Upcast old checkout locations without reading them. Publication
+        // persists the current shape under its existing owner lock.
+        if index.schema_version == 1 {
+            for entry in &mut index.snippets {
+                if entry.scope == IndexScope::Local {
+                    entry.path = PathBuf::from(format!("{}.md", entry.id.as_str()));
+                }
+            }
+            index.schema_version = 2;
+        }
         Ok(index)
     }
 }
@@ -189,7 +197,7 @@ fn default_interruptible() -> bool {
 impl Default for GlobalIndex {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             snippets: Vec::new(),
             third_party: Vec::new(),
         }
@@ -200,11 +208,26 @@ impl Default for GlobalIndex {
 mod tests {
     use super::*;
     #[test]
+    fn an_old_index_upcasts_project_locations_without_changing_other_entries() {
+        let old = "schema_version: 1\nsnippets:\n- id: project/demo/spec/thing\n  description: A thing.\n  type: spec\n  scope: local\n  domain: project\n  path: /source/demo/docs/project/spec/thing.md\n  source_project: demo\n- id: acme/spec/thing\n  description: Published thing.\n  type: spec\n  scope: global\n  domain: acme\n  path: acme/spec/thing.md\n  source_project: demo\n";
+        let expected = old
+            .replace("schema_version: 1", "schema_version: 2")
+            .replace(
+                "/source/demo/docs/project/spec/thing.md",
+                "project/demo/spec/thing.md",
+            );
+        assert_eq!(
+            GlobalIndex::parse(Path::new("index.yaml"), old).unwrap(),
+            serde_yaml_ng::from_str::<GlobalIndex>(&expected).unwrap()
+        );
+    }
+
+    #[test]
     fn a_newer_index_does_not_require_this_versions_body_shape() {
-        let newer = "schema_version: 2\nfuture_field: future_value\n";
+        let newer = "schema_version: 3\nfuture_field: future_value\n";
         assert!(matches!(
             GlobalIndex::parse(Path::new("index.yaml"), newer),
-            Err(IndexError::Version { found: 2, .. })
+            Err(IndexError::Version { found: 3, .. })
         ));
     }
 }

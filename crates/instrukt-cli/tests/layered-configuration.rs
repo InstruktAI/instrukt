@@ -81,8 +81,6 @@ runner: {runtime: hostile}
 agents:
   order: [project-agent]
   tier: strong
-actions:
-  report: report {project}
 "#,
     );
     author.commit("feat: configuration");
@@ -164,7 +162,8 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     );
     assert_eq!(stored["board"].as_str(), Some("acme/7"));
     let read = |args: &[&str]| stdout(&env, &env.run(repo.path(), args).success());
-    insta::assert_snapshot!(read(&["config", "get", "actions.test"]), @"make test");
+    assert!(stored.get("actions").is_none());
+    insta::assert_snapshot!(read(&["config", "get", "board"]), @"acme/7");
     insta::assert_snapshot!(read(&["config", "get", "ticks"]), @"off");
     env.run(repo.path(), ["config", "validate"]).success();
 }

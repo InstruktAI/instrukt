@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/editor-schemas.rs
-assertion_line: 130
 expression: "String::from_utf8(bytes).unwrap()"
 ---
 {
@@ -22,31 +21,6 @@ expression: "String::from_utf8(bytes).unwrap()"
           "blueprint",
           "todos",
           "events"
-        ]
-      }
-    },
-    "actions": {
-      "type": "object",
-      "additionalProperties": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "command": {
-                "type": "string"
-              },
-              "takes_files": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "command"
-            ],
-            "additionalProperties": false
-          }
         ]
       }
     },

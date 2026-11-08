@@ -369,7 +369,7 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
         .success();
     insta::assert_snapshot!("unknown-project", stdout(&env, &nobody));
 
-    std::fs::remove_file(demo.path().join("docs/project/design/y.md")).unwrap();
+    std::fs::remove_file(env.instrukt_home().join("docs/project/demo/design/y.md")).unwrap();
     let missing = env
         .run(demo.path(), ["docs", "get", "project/demo/design/y"])
         .failure();
@@ -673,28 +673,21 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
     let procedure = snippet(
         "procedure",
         "Verify",
-        "Runs the project's tests.",
+        "Names the current project.",
         "",
         &[],
-        "Run the tests:\n\n<!-- @config: actions.test -->\n",
+        "Project identity:\n\n<!-- @config: project -->\n",
     );
     let demo = project(
         &env,
         "demo",
         &[("docs/domain/acme/procedure/verify.md", procedure)],
     );
-    demo.write(
-        "instrukt.yaml",
-        "schema_version: 1\nproject: demo\n\
-         actions:\n  test: make test\n",
-    );
-    demo.commit("chore: the test action");
+    demo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
+    demo.commit("chore: project configuration");
     sync(&env, &demo);
     let other = project(&env, "other", &[]);
-    other.write(
-        "instrukt.yaml",
-        "schema_version: 1\nproject: other\nactions:\n  test: cargo test --workspace\n",
-    );
+    other.write("instrukt.yaml", "schema_version: 1\nproject: other\n");
 
     let in_demo = env
         .run(demo.path(), ["docs", "get", "acme/procedure/verify"])
@@ -706,7 +699,7 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
     insta::assert_snapshot!("value-of-other", stdout(&env, &in_other));
 
     // Outside every project the global layer alone answers, and it has no
-    // test action.
+    // project identity.
     let outside = env.path("elsewhere");
     std::fs::create_dir_all(&outside).unwrap();
     let refused = env
@@ -775,8 +768,8 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
     );
     assert!(!env.instrukt_home().join("docs/acme").exists());
 
-    // A local snippet is read from the project's working tree, so a
-    // command written there after publication is still met at read.
+    // A leftover directive in the published store is inert at read, even
+    // though current publication refuses to introduce one.
     demo.write(
         "docs/domain/acme/procedure/runs.md",
         &snippet("procedure", "Runs", "Runs nothing.", "", &[], "Nothing.\n"),
@@ -795,6 +788,12 @@ fn a_snippet_that_runs_a_command_is_refused_at_publication_and_runs_nothing_when
     demo.commit("docs: no commands");
     sync(&env, &demo);
     demo.write("docs/project/procedure/later.md", &runs("Later"));
+    std::fs::write(
+        env.instrukt_home()
+            .join("docs/project/demo/procedure/later.md"),
+        runs("Later"),
+    )
+    .unwrap();
     let read = env
         .run(demo.path(), ["docs", "get", "project/demo/procedure/later"])
         .success();
@@ -883,4 +882,26 @@ fn rendered_nested_agent_instructions_show_reference_links_as_ids() {
     let demo = published_linked_demo(&env);
     let agents = std::fs::read_to_string(demo.path().join("tools/AGENTS.md")).unwrap();
     insta::assert_snapshot!("linked-nested-agents", text(&env, agents.as_bytes()));
+}
+
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1
+// spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR8
+#[test]
+fn project_reads_keep_published_bodies_and_checkout_provenance_after_checkout_edits() {
+    let env = TestEnv::new();
+    let demo = published_demo(&env);
+    let args = ["docs", "get", "project/demo/spec/feature/x", "--closure"];
+    let before = env.run(env.home(), args).success();
+    let expected = before.get_output().stdout.clone();
+    demo.write(
+        "docs/project/spec/feature/x.md",
+        "uncommitted replacement\n",
+    )
+    .write("docs/project/design/y.md", "uncommitted dependency\n");
+    let edited = env.run(demo.path(), args).success();
+    assert_eq!(edited.get_output().stdout, expected);
+    std::fs::remove_dir_all(demo.path().join("docs/project")).unwrap();
+    let removed = env.run(env.home(), args).success();
+    assert_eq!(removed.get_output().stdout, expected);
+    insta::assert_snapshot!("project-store-with-source", stdout(&env, &removed));
 }

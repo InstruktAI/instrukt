@@ -317,7 +317,7 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
         Version::Older(from) => {
             let mut migrated = doc.value;
             super::_migrate::selection(home, layer, &mut migrated)?;
-            let migrated = migrate_value(migrated, from);
+            let migrated = migrate_value(migrated, from, layer.kind());
             let revision = write(&path, &doc.bytes, &migrated)?;
             tracing::debug!(
                 event = "config_migrated",
@@ -332,9 +332,12 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
     }
 }
 
-/// Stamp the converted document with the current owned schema version.
-fn migrate_value(mut value: Value, _from: u64) -> Value {
+/// Remove retired project settings and stamp the current owned schema version.
+fn migrate_value(mut value: Value, from: u64, layer: LayerKind) -> Value {
     if let Value::Mapping(map) = &mut value {
+        if from < 3 && layer == LayerKind::Project {
+            map.remove("actions");
+        }
         map.insert(
             Value::String("schema_version".to_owned()),
             Value::Number(CURRENT_SCHEMA_VERSION.into()),

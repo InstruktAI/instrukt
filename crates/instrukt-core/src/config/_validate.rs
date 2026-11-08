@@ -415,27 +415,30 @@ fn workflow_capabilities(home: &Home, effective: &Value, out: &mut Vec<KeyFindin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn current_document(settings: &str) -> Value {
+        serde_yaml_ng::from_str(&format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\n{settings}"
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn retired_runtime_configuration_is_unknown() {
-        let doc: Value = serde_yaml_ng::from_str("schema_version: 2\nruntimes: []").unwrap();
+        let doc = current_document("runtimes: []");
         let found = judge(&doc, LayerKind::Global, None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, FindingKind::InvalidValue);
     }
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
-        let doc: Value = serde_yaml_ng::from_str(
-            "schema_version: 2\nrunner: {runtime: t3}\nmodules: {todos: true, events: true}",
-        )
-        .unwrap();
+        let doc = current_document("runner: {runtime: t3}\nmodules: {todos: true, events: true}");
         let found = judge(&doc, LayerKind::Global, None);
         assert!(found.is_empty());
     }
     #[test]
     fn references_still_detect_cycles_and_missing_keys() {
-        let doc: Value =
-            serde_yaml_ng::from_str("schema_version: 2\nrunner: {notify: '{runner.notify}'}")
-                .unwrap();
+        let doc = current_document("runner: {notify: '{runner.notify}'}");
         assert!(
             judge(&doc, LayerKind::Global, None)
                 .iter()

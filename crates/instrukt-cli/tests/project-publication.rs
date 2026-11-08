@@ -158,7 +158,7 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
         (local.scope, local.path.clone()),
         (
             IndexScope::Local,
-            repo.path().join("docs/project/policy/house.md")
+            PathBuf::from("project/demo/policy/house.md")
         )
     );
     let record = PublishedRecord::load(&home(&env), &entry.source_project)
@@ -679,4 +679,109 @@ fn a_refused_sync_still_reports_the_leftover_it_could_not_remove() {
     {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+}
+
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB1
+#[test]
+fn project_positions_publish_committed_files_and_pending_companions() {
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &[]);
+    let current = policy("House", "");
+    let companion = policy("Next", "");
+    repo.write("docs/project/policy/house.md", &current)
+        .write("docs/project/policy/house.rework.md", &companion)
+        .write("docs/project/index.yaml", "expanded: []\n")
+        .write("docs/project/schema.yaml", "{}\n");
+    repo.commit("project position");
+    repo.write("docs/project/policy/house.md", &policy("Uncommitted", ""))
+        .write("docs/project/policy/draft.md", &policy("Draft", ""));
+    sync(&env, &repo).success();
+    let root = env.instrukt_home().join("docs/project/demo");
+    assert_eq!(
+        std::fs::read_to_string(root.join("policy/house.md")).unwrap(),
+        current
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("policy/house.rework.md")).unwrap(),
+        companion
+    );
+    for file in ["index.yaml", "schema.yaml"] {
+        let committed = env
+            .git_command(repo.path())
+            .args(["show", &format!("HEAD:docs/project/{file}")])
+            .assert()
+            .success();
+        assert_eq!(
+            std::fs::read(root.join(file)).unwrap(),
+            committed.get_output().stdout
+        );
+    }
+    assert!(!root.join("policy/draft.md").exists());
+    assert!(
+        env.instrukt_home()
+            .join("state/publication/claims/project/demo.yaml")
+            .is_file()
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB3
+#[test]
+fn retiring_the_project_position_retracts_only_its_own_store_and_claim() {
+    let env = TestEnv::new();
+    let first = project(&env, "first", &[]);
+    let second = project(&env, "second", &[]);
+    sync(&env, &first).success();
+    sync(&env, &second).success();
+    let other = env
+        .instrukt_home()
+        .join("docs/project/second/policy/house.md");
+    let before = std::fs::read(&other).unwrap();
+    std::fs::remove_dir_all(first.path().join("docs/project")).unwrap();
+    first.commit("retire project docs");
+    sync(&env, &first).success();
+    assert!(!env.instrukt_home().join("docs/project/first").exists());
+    assert!(
+        !env.instrukt_home()
+            .join("state/publication/claims/project/first.yaml")
+            .exists()
+    );
+    assert_eq!(std::fs::read(other).unwrap(), before);
+    let retired = env
+        .run(first.path(), ["docs", "index", "--project", "first"])
+        .success();
+    let remaining = env
+        .run(second.path(), ["docs", "index", "--project", "second"])
+        .success();
+    insta::assert_snapshot!(
+        "project-retraction-indexes",
+        common::mask_published_commits(&format!(
+            "{}{}",
+            without_tmp(&env, &retired.get_output().stdout, &[]),
+            without_tmp(&env, &remaining.get_output().stdout, &[])
+        ))
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB7
+#[cfg(unix)]
+#[test]
+fn a_linked_project_store_is_refused_without_writing_through_it() {
+    let env = TestEnv::new();
+    let repo = project(&env, "demo", &[]);
+    sync(&env, &repo).success();
+    let published = published_commit(&env, "demo");
+    let store = env.instrukt_home().join("docs/project/demo");
+    let outside = env.path("project-docs-elsewhere");
+    std::fs::rename(&store, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &store).unwrap();
+    let previous = std::fs::read(outside.join("policy/house.md")).unwrap();
+    repo.write("docs/project/policy/house.md", &policy("Changed", ""));
+    repo.commit("change project docs");
+    let refused = sync(&env, &repo).failure();
+    insta::assert_snapshot!(without_tmp(&env, &refused.get_output().stderr, &[]), @"instrukt: [TMP]/home/.instrukt/docs/project/demo is a symbolic link or lies behind one; publication writes only inside its root");
+    assert_eq!(
+        std::fs::read(outside.join("policy/house.md")).unwrap(),
+        previous
+    );
+    assert_eq!(published_commit(&env, "demo"), published);
 }

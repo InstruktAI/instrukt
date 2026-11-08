@@ -207,9 +207,13 @@ pub(super) fn place(rel: &str, project: Option<&ProjectSlug>) -> Option<Placemen
 }
 
 /// The repository path of a published snippet's file: `general/…` below
-/// `docs/general/`, `<x>/…` below `docs/domain/<x>/`. `None` for a project
-/// snippet, whose file is found through its project.
+/// `docs/general/`, `<x>/…` below `docs/domain/<x>/`, or
+/// `project/<slug>/…` below `docs/project/`.
 pub fn published_source(id: &SnippetId) -> Option<String> {
+    if let Some(rest) = id.as_str().strip_prefix("project/") {
+        let (_, rest) = rest.split_once('/')?;
+        return Some(format!("docs/project/{rest}.md"));
+    }
     let domain = id.domain()?;
     let rest = id.as_str().strip_prefix(domain.as_str())?;
     Some(format!("{}{rest}.md", Position::of_domain(&domain).dir()))

@@ -4,8 +4,8 @@
 //!
 //! Installed publication reads committed canonical main; explicit development
 //! execution reads the development worktree's committed HEAD. Both read:
-//! `docs/general/` and each `docs/domain/<x>/`. Each is claimed in the
-//! ownership record in the selected home's publication state.
+//! `docs/general/`, each `docs/domain/<x>/` and `docs/project/`. Each is claimed
+//! in the ownership record in the selected home's publication state.
 //!
 //! One operation, [`sync`]: publish the project the caller stands in from
 //! the selected committed source, or do nothing when that commit is already

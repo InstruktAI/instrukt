@@ -29,6 +29,36 @@ pub(super) fn claim_path(home: &Home, domain: &DomainName) -> PathBuf {
     home.claims_dir().join(format!("{}.yaml", domain.as_str()))
 }
 
+/// Project positions have a namespace separate from domain claims.
+pub(super) fn project_claim_path(home: &Home, project: &ProjectSlug) -> PathBuf {
+    home.claims_dir()
+        .join("project")
+        .join(format!("{project}.yaml"))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct ProjectClaimRecord {
+    pub project: ProjectSlug,
+    pub owner: ProjectSlug,
+}
+
+impl ProjectClaimRecord {
+    pub(super) fn load(
+        home: &Home,
+        project: &ProjectSlug,
+    ) -> Result<Option<Self>, PublicationError> {
+        let path = project_claim_path(home, project);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(PublicationError::Io { path, source }),
+        };
+        serde_yaml_ng::from_str(&text)
+            .map(Some)
+            .map_err(|source| PublicationError::Parse { path, source })
+    }
+}
+
 /// Every claimed position's owner, by the domain name it is addressed by.
 pub(super) fn claims(home: &Home) -> Result<BTreeMap<DomainName, ProjectSlug>, PublicationError> {
     Ok(super::position_owners(home)?)
@@ -60,14 +90,13 @@ pub(super) fn held_positions(committed: &Committed) -> (Vec<DomainName>, Vec<Str
     (held.into_iter().collect(), reserved.into_iter().collect())
 }
 
-/// Writes the committed files of the position `domain` addresses
-/// (`docs/general/…` or `docs/domain/<x>/…`, raw) into `staged`.
-pub(super) fn stage_domain(
+/// Stages one complete position, including companions and position files.
+pub(super) fn stage_position(
     committed: &Committed,
-    domain: &DomainName,
+    position: &Position,
     staged: &Path,
 ) -> Result<(), PublicationError> {
-    let prefix = format!("{}/", Position::of_domain(domain).dir());
+    let prefix = format!("{}/", position.dir());
     std::fs::create_dir_all(staged).map_err(|source| PublicationError::Io {
         path: staged.to_path_buf(),
         source,

@@ -104,7 +104,7 @@ impl Home {
     }
 
     /// `~/.instrukt/docs/` — the published tree: `general/` and one
-    /// directory per published domain, beside the third-party docs.
+    /// directory per published domain, beside `project/<slug>/` and third-party docs.
     pub fn docs_dir(&self) -> PathBuf {
         self.root.join("docs")
     }
@@ -113,6 +113,11 @@ impl Home {
     /// or `general/`.
     pub fn domain_dir(&self, domain: &DomainName) -> PathBuf {
         self.docs_dir().join(domain.as_str())
+    }
+
+    /// The committed project position in the published store.
+    pub fn project_docs_dir(&self, project: &ProjectSlug) -> PathBuf {
+        self.docs_dir().join("project").join(project.as_str())
     }
 
     /// `~/.instrukt/docs/third-party/` — published third-party docs, at

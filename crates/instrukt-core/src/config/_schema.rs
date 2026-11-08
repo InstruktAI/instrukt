@@ -10,7 +10,7 @@ use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 2;
+pub const CURRENT_SCHEMA_VERSION: u64 = 3;
 
 /// The `blueprint.engine` values that name a shipped adapter: the only
 /// values a project layer may give it. Any other value is a command, which
@@ -88,7 +88,6 @@ enum Shape {
     WatchList,
     StrList,
     ModuleList,
-    Actions,
     Identity,
 }
 
@@ -115,7 +114,6 @@ fn schema() -> Node {
         ("schema_version", Leaf(Both, Shape::Version)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
-        ("actions", Leaf(ProjectOnly, Shape::Actions)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
         (
             "github",
@@ -490,29 +488,6 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
             None => out.push(invalid("expected a list of modules")),
         },
 
-        Shape::Actions => match value.as_mapping() {
-            Some(map) => {
-                for (name, action) in map {
-                    let action_path = join(path, &key_text(name));
-                    match action {
-                        Value::String(_) => {}
-                        Value::Mapping(_) => check_record(
-                            action,
-                            &action_path,
-                            &[("command", Field::Str)],
-                            &[("takes_files", Field::Bool)],
-                            out,
-                        ),
-                        _ => out.push(KeyFinding::new(
-                            &action_path,
-                            FindingKind::InvalidValue,
-                            "expected a command string or `{command, takes_files}`",
-                        )),
-                    }
-                }
-            }
-            None => out.push(invalid("expected a mapping of action name to command")),
-        },
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {
@@ -746,15 +721,6 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             strings(&names)
         }
 
-        Shape::Actions => json!({
-            "type": "object",
-            "additionalProperties": {
-                "anyOf": [
-                    { "type": "string" },
-                    record(&["command"], &[("takes_files", json!({ "type": "boolean" }))]),
-                ],
-            },
-        }),
         Shape::WatchList => json!({ "type": "array", "items": record(&["remote", "ref"], &[]) }),
     }
 }
@@ -817,7 +783,7 @@ mod tests {
         ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
-        requires: [todos]\nactions: {test: make test, lint: {command: lint, takes_files: true}}\n\
+        requires: [todos]\n\
         board: acme/7\ngithub: {approvers: [me]}\napprovals: {prd: peer, task: human}\n\
         workflow: {domain: sdlc}\nevents: {watch: [{remote: origin, ref: main}]}\n\
         runner: {autostart: {build: true}}\n";
@@ -971,7 +937,7 @@ mod tests {
             &yaml(&format!("schema_version: 1\n{PROJECT_ONLY}")),
             LayerKind::Global,
         );
-        assert_eq!(findings.len(), 9, "{findings:?}");
+        assert_eq!(findings.len(), 8, "{findings:?}");
         assert!(
             findings
                 .iter()
@@ -1012,26 +978,13 @@ mod tests {
     }
 
     #[test]
-    fn an_action_is_a_string_or_a_declaration_of_command_and_takes_files() {
-        let findings = check(
-            &yaml(
-                "schema_version: 1\nactions:\n  plain: make\n  files: {command: lint}\n  \
-                 bad_flag: {command: echo, takes_files: not-a-bool}\n  \
-                 no_command: {takes_files: true}\n  \
-                 extra: {command: x, shell: bash}\n  number: 3\n",
-            ),
-            LayerKind::Project,
-        );
-        use FindingKind::{InvalidValue as I, Missing as M, UnknownKey as U};
+    fn actions_is_an_unknown_key_in_validation_and_the_editor_schema() {
+        let text = "schema_version: 3\nproject: demo\nactions: {test: make test}\n";
         assert_eq!(
-            judged(&findings),
-            [
-                ("actions.bad_flag.takes_files", I),
-                ("actions.no_command.command", M),
-                ("actions.extra.shell", U),
-                ("actions.number", I),
-            ]
+            judged(&check(&yaml(text), LayerKind::Project)),
+            [("actions", FindingKind::UnknownKey)]
         );
+        assert!(!fits(&editor_schema(), &as_json(text)));
     }
 
     #[test]

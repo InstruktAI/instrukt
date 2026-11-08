@@ -65,7 +65,7 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
         &env,
         &repo,
         &before,
-        "board: acme/7\nactions:\n  test: make test {runtime.session_id}\n",
+        "board: acme/7\ngithub:\n  repository: '{project}/{runtime.session_id}'\n",
     )
     .success();
     assert!(
@@ -79,9 +79,9 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
     assert_eq!(changed["project"], untouched["project"]);
     assert_eq!(changed["schema_version"], untouched["schema_version"]);
     assert_eq!(changed["board"], Value::String("acme/7".into()));
-    let stored: Value = serde_yaml_ng::from_str("make test {runtime.session_id}").unwrap();
+    let stored = Value::String("{project}/{runtime.session_id}".into());
     assert_eq!(
-        changed["actions"]["test"], stored,
+        changed["github"]["repository"], stored,
         "references are stored unexpanded"
     );
 
@@ -143,7 +143,7 @@ fn of_two_patches_from_one_revision_exactly_one_lands() {
                             "--revision",
                             read,
                             "--yaml",
-                            &format!("actions:\n  writer{i}: echo {i}\n"),
+                            &format!("approvals:\n  {}: peer\n", ["prd", "task"][i]),
                         ])
                         .output()
                         .expect("instrukt runs")
@@ -155,8 +155,8 @@ fn of_two_patches_from_one_revision_exactly_one_lands() {
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
     assert_eq!(outcomes.iter().filter(|ok| **ok).count(), 1, "{outcomes:?}");
-    let actions = layer(&repo)["actions"].as_mapping().map(|m| m.len());
-    assert_eq!(actions, Some(1), "only the winning patch is stored");
+    let approvals = layer(&repo)["approvals"].as_mapping().map(|m| m.len());
+    assert_eq!(approvals, Some(1), "only the winning patch is stored");
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
@@ -285,7 +285,7 @@ fn an_empty_project_identity_is_refused() {
 fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
     let repo = env.git_repo("demo");
-    let layer = "# my notes\nschema_version: 2\nproject: chosen\nboard: acme/7\n";
+    let layer = "# my notes\nschema_version: 3\nproject: chosen\nboard: acme/7\n";
     repo.write("instrukt.yaml", layer);
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(repo.read("instrukt.yaml"), layer);
