@@ -99,7 +99,20 @@ fn invalid(message: impl Into<String>) -> ConfigError {
 
 impl Agents {
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let result: Self = serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
+        let value: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
+        if let Some(found) = value
+            .get("schema_version")
+            .and_then(serde_yaml_ng::Value::as_u64)
+            && found > VERSION
+        {
+            return Err(ConfigError::NewerSchema {
+                path: "agents.yaml".into(),
+                found,
+                current: VERSION,
+            });
+        }
+        let result: Self = serde_yaml_ng::from_value(value).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {
             return Err(invalid(
                 "unsupported agents schema_version; upgrade instrukt",
@@ -468,4 +481,22 @@ fn resolve_entry(
         effort,
         options: options.into_iter().collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_newer_schema_is_refused_before_interpreting_its_profile_shape() {
+        let newer = "schema_version: 2\nprofiles: {future: {kind: future-harness}}\n";
+        assert!(matches!(
+            Agents::parse(newer),
+            Err(ConfigError::NewerSchema {
+                found: 2,
+                current: 1,
+                ..
+            })
+        ));
+    }
 }

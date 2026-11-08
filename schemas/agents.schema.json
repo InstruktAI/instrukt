@@ -14,7 +14,11 @@
       "const": 1
     },
     "default": {
-      "$ref": "#/$defs/role"
+      "$ref": "#/$defs/role",
+      "required": [
+        "order",
+        "tier"
+      ]
     },
     "roles": {
       "type": "object",

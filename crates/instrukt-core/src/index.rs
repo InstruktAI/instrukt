@@ -138,8 +138,12 @@ impl GlobalIndex {
                 });
             }
         };
+        Self::parse(path, &text).map(Some)
+    }
+
+    fn parse(path: &Path, text: &str) -> Result<Self, IndexError> {
         let map: serde_yaml_ng::Mapping =
-            serde_yaml_ng::from_str(&text).map_err(|source| IndexError::Parse {
+            serde_yaml_ng::from_str(text).map_err(|source| IndexError::Parse {
                 path: path.into(),
                 source,
             })?;
@@ -158,19 +162,23 @@ impl GlobalIndex {
                 }
             }
         }
+        if let Some(found) = value
+            .get("schema_version")
+            .and_then(serde_yaml_ng::Value::as_u64)
+            && found != 1
+        {
+            return Err(IndexError::Version {
+                path: path.into(),
+                found,
+            });
+        }
         let index: Self = serde_yaml_ng::from_value(value).map_err(|source| IndexError::Parse {
             path: path.into(),
             source,
         })?;
-        if index.schema_version != 1 {
-            return Err(IndexError::Version {
-                path: path.into(),
-                found: index.schema_version,
-            });
-        }
         // Readers upcast the versionless cache in memory. Publication writes
         // the current version under its existing owner lock.
-        Ok(Some(index))
+        Ok(index)
     }
 }
 
@@ -185,5 +193,18 @@ impl Default for GlobalIndex {
             snippets: Vec::new(),
             third_party: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_newer_index_does_not_require_this_versions_body_shape() {
+        let newer = "schema_version: 2\nfuture_field: future_value\n";
+        assert!(matches!(
+            GlobalIndex::parse(Path::new("index.yaml"), newer),
+            Err(IndexError::Version { found: 2, .. })
+        ));
     }
 }
