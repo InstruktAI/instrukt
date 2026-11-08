@@ -166,6 +166,11 @@ impl Home {
         self.state_dir().join("runner.lock")
     }
 
+    /// Serializes history catch-up and legacy imports without holding the database writer lock.
+    pub fn history_lock_file(&self) -> PathBuf {
+        self.state_dir().join("history.lock")
+    }
+
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
     pub fn eval_fingerprint_dir(&self) -> PathBuf {
         self.state_dir().join("eval-fingerprint")

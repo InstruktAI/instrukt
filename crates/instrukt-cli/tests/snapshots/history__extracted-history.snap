@@ -1,0 +1,40 @@
+---
+source: crates/instrukt-cli/tests/history.rs
+assertion_line: 38
+expression: stable_sources(retained)
+---
+{
+  "matches": [
+    {
+      "store_computer": "aaaaaaaaaaaaaaaa",
+      "computer": "aaaaaaaaaaaaaaaa",
+      "source": "t3:[SOURCE]",
+      "conversation": "child",
+      "title": "Local jewels",
+      "parent": "parent",
+      "aliases": [
+        "child"
+      ],
+      "excerpt": "Keep the jewels searchable.",
+      "limitations": [
+        "T3 exposes only provider-persisted reasoning; tool outputs and diffs may be bounded or omitted by its wire projection."
+      ]
+    },
+    {
+      "store_computer": "aaaaaaaaaaaaaaaa",
+      "computer": "aaaaaaaaaaaaaaaa",
+      "source": "t3:[SOURCE]",
+      "conversation": "parent",
+      "title": "Local jewels",
+      "parent": null,
+      "aliases": [
+        "parent"
+      ],
+      "excerpt": "Keep the jewels searchable.",
+      "limitations": [
+        "T3 exposes only provider-persisted reasoning; tool outputs and diffs may be bounded or omitted by its wire projection."
+      ]
+    }
+  ],
+  "failures": []
+}

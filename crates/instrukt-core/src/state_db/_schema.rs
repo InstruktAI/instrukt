@@ -3,7 +3,33 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+
+/// Version 7: retained conversations, search and transactional extraction positions.
+const V7: &str = r#"
+CREATE TABLE history_sources (
+ source TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0, imported INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE history_pending (
+ source TEXT NOT NULL, native_id TEXT NOT NULL, PRIMARY KEY(source,native_id)
+);
+CREATE TABLE history_conversations (
+ id INTEGER PRIMARY KEY, source TEXT NOT NULL, native_id TEXT NOT NULL, computer TEXT NOT NULL,
+ title TEXT NOT NULL, parent TEXT, aliases TEXT NOT NULL, document TEXT NOT NULL,
+ body TEXT NOT NULL, limitations TEXT NOT NULL, UNIQUE(source,native_id)
+);
+CREATE VIRTUAL TABLE history_fts USING fts5(title,body,content='history_conversations',content_rowid='id');
+CREATE TRIGGER history_insert AFTER INSERT ON history_conversations BEGIN
+ INSERT INTO history_fts(rowid,title,body) VALUES(new.id,new.title,new.body);
+END;
+CREATE TRIGGER history_delete AFTER DELETE ON history_conversations BEGIN
+ INSERT INTO history_fts(history_fts,rowid,title,body) VALUES('delete',old.id,old.title,old.body);
+END;
+CREATE TRIGGER history_update AFTER UPDATE ON history_conversations BEGIN
+ INSERT INTO history_fts(history_fts,rowid,title,body) VALUES('delete',old.id,old.title,old.body);
+ INSERT INTO history_fts(rowid,title,body) VALUES(new.id,new.title,new.body);
+END;
+"#;
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"

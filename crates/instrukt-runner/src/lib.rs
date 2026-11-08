@@ -28,6 +28,7 @@ pub mod dispatch;
 pub mod event_log;
 pub mod events;
 pub mod executions;
+pub mod history;
 pub mod install;
 pub mod interfaces;
 pub mod keyed;

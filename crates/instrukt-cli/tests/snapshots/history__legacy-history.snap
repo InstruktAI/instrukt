@@ -1,0 +1,28 @@
+---
+source: crates/instrukt-cli/tests/history.rs
+assertion_line: 54
+expression: stable_sources(found)
+---
+{
+  "matches": [
+    {
+      "store_computer": "aaaaaaaaaaaaaaaa",
+      "computer": "old-computer",
+      "source": "teleclaude:[SOURCE]",
+      "conversation": "archive-session",
+      "title": "Retained archive",
+      "parent": null,
+      "aliases": [
+        "/gone/transcript",
+        "archive-session",
+        "native-session",
+        "source-alias"
+      ],
+      "excerpt": "The archive jewels.",
+      "limitations": [
+        "Legacy archive: only material retained by the TeleClaude mirror is available."
+      ]
+    }
+  ],
+  "failures": []
+}
