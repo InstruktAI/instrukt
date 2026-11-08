@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/history.rs
-assertion_line: 115
+assertion_line: 154
 expression: stable_sources(found)
 ---
 {
@@ -17,7 +17,7 @@ expression: stable_sources(found)
       ],
       "excerpt": "Keep the jewels searchable.",
       "limitations": [
-        "T3 exposes only provider-persisted reasoning; tool outputs and diffs may be bounded or omitted by its wire projection."
+        "Only content retained by the source runtime is available."
       ]
     },
     {
@@ -32,7 +32,7 @@ expression: stable_sources(found)
       ],
       "excerpt": "Keep the jewels searchable.",
       "limitations": [
-        "T3 exposes only provider-persisted reasoning; tool outputs and diffs may be bounded or omitted by its wire projection."
+        "Only content retained by the source runtime is available."
       ]
     },
     {
@@ -47,7 +47,7 @@ expression: stable_sources(found)
       ],
       "excerpt": "Keep the jewels searchable.",
       "limitations": [
-        "T3 exposes only provider-persisted reasoning; tool outputs and diffs may be bounded or omitted by its wire projection."
+        "Only content retained by the source runtime is available."
       ]
     },
     {
@@ -62,7 +62,7 @@ expression: stable_sources(found)
       ],
       "excerpt": "Keep the jewels searchable.",
       "limitations": [
-        "T3 exposes only provider-persisted reasoning; tool outputs and diffs may be bounded or omitted by its wire projection."
+        "Only content retained by the source runtime is available."
       ]
     }
   ],

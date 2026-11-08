@@ -115,7 +115,6 @@ pub(super) fn import(home: &Home, path: Option<&Path>) -> Result<Extraction, His
         aliases.sort();
         aliases.dedup();
         conversations.push(Conversation {
-            active:false,
             native_id:session["session_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("mirror:{id}")),
             computer:mirror["computer"].as_str().ok_or_else(||HistoryError::Source("mirror lacks computer provenance".into()))?.into(),
             title:mirror["title"].as_str().ok_or_else(||HistoryError::Source("mirror lacks title".into()))?.into(),

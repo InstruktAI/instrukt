@@ -9,7 +9,6 @@ use instrukt_core::{
 use serde_json::Value;
 
 pub(super) struct Conversation {
-    pub active: bool,
     pub native_id: String,
     pub computer: String,
     pub title: String,
@@ -44,53 +43,9 @@ pub(super) fn load(
 ) -> Result<Extraction, HistoryError> {
     let mut db = StateDb::open(home)?;
     db.write(|tx| -> Result<_,HistoryError> {
-        for c in conversations {
-            if c.active {
-                tx.execute("INSERT OR IGNORE INTO history_pending(source,native_id) VALUES(?1,?2)",params![source,c.native_id])?;
-            } else {
-                tx.execute("DELETE FROM history_pending WHERE source=?1 AND native_id=?2",params![source,c.native_id])?;
-            }
-            tx.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(source,native_id) DO UPDATE SET computer=excluded.computer,title=excluded.title,parent=excluded.parent,aliases=excluded.aliases,document=excluded.document,body=excluded.body,limitations=excluded.limitations",params![source,c.native_id,c.computer,c.title,c.parent,serde_json::to_string(&c.aliases)?,c.document.to_string(),c.body,serde_json::to_string(&c.limitations)?])?;
-        }
+        for c in conversations { write_conversation(tx,source,c)?; }
         tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=max(history_sources.position,excluded.position),imported=max(history_sources.imported,excluded.imported)",params![source,position,imported])?;
-        Ok(Extraction {loaded:conversations.len(),position})
-    })
-}
-
-pub(super) fn pending(home: &Home, source: &str) -> Result<Vec<String>, HistoryError> {
-    let Some(db) = StateRead::open(home)? else {
-        return Ok(Vec::new());
-    };
-    let mut stmt = db
-        .conn()
-        .prepare("SELECT native_id FROM history_pending WHERE source=?1 ORDER BY native_id")?;
-    Ok(stmt
-        .query_map([source], |r| r.get(0))?
-        .collect::<Result<Vec<_>, _>>()?)
-}
-
-pub(super) fn remove_pending(home: &Home, source: &str, id: &str) -> Result<(), HistoryError> {
-    let mut db = StateDb::open(home)?;
-    db.write(|tx| -> Result<(), HistoryError> {
-        tx.execute(
-            "DELETE FROM history_pending WHERE source=?1 AND native_id=?2",
-            params![source, id],
-        )?;
-        Ok(())
-    })
-}
-
-pub(super) fn defer(
-    home: &Home,
-    source: &str,
-    id: &str,
-    position: u64,
-) -> Result<(), HistoryError> {
-    let mut db = StateDb::open(home)?;
-    db.write(|tx|->Result<(),HistoryError>{
-        tx.execute("INSERT OR IGNORE INTO history_pending(source,native_id) VALUES(?1,?2)",params![source,id])?;
-        tx.execute("INSERT INTO history_sources(source,position) VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET position=max(history_sources.position,excluded.position)",params![source,position])?;
-        Ok(())
+        Ok(Extraction {loaded:conversations.len(),position:serde_json::json!(position)})
     })
 }
 
@@ -147,4 +102,13 @@ pub(super) fn show(home: &Home, source: &str, conversation: &str) -> Result<Valu
         ));
     }
     serde_json::from_str(document).map_err(HistoryError::from)
+}
+
+pub(super) fn write_conversation(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    source: &str,
+    c: &Conversation,
+) -> Result<(), HistoryError> {
+    tx.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(source,native_id) DO UPDATE SET computer=excluded.computer,title=excluded.title,parent=excluded.parent,aliases=excluded.aliases,document=excluded.document,body=excluded.body,limitations=excluded.limitations",params![source,c.native_id,c.computer,c.title,c.parent,serde_json::to_string(&c.aliases)?,c.document.to_string(),c.body,serde_json::to_string(&c.limitations)?])?;
+    Ok(())
 }

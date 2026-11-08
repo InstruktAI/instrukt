@@ -1,4 +1,4 @@
-//! Version-pinned translation of T3's internal read-scoped provider snapshot.
+//! Protocol- and shape-validated translation of T3's internal read-scoped provider snapshot.
 //! Wire source: https://github.com/pingdotgg/t3code/tree/6417151c09/apps/server/src
 use super::RuntimeStart;
 use crate::{process::Invocation, sessions::SessionsError};
@@ -17,7 +17,6 @@ use std::{
 };
 use tungstenite::{Message, client::IntoClientRequest};
 
-const T3_VERSION: &str = "0.1.7";
 const RPC_REQUEST_ID: &str = "instrukt-readiness";
 const TIMEOUT: Duration = Duration::from_secs(10);
 const QUOTA_DEFAULT_SECONDS: i64 = 3600;
@@ -32,7 +31,7 @@ struct RuntimeState {
     pid: u32,
     port: u16,
     origin: String,
-    server_version: String,
+    server_version: Option<String>,
 }
 #[derive(Deserialize)]
 struct Snapshot {
@@ -187,42 +186,24 @@ impl Drop for Token {
     }
 }
 fn snapshot(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
-    let cli = command(&["--version"], "cannot inspect CLI version")?;
-    if cli.trim().strip_prefix("t3 v") != Some(T3_VERSION) {
-        return Err(refused(
-            "unsupported CLI version; update the adapter's verified protocol support",
-        ));
-    }
-    let explicit = env.get("T3CODE_HOME").filter(|v| !v.trim().is_empty());
-    let base = explicit
-        .map(|value| {
-            let value = value.trim();
-            if let Some(rest) = value.strip_prefix("~/") {
-                home.machine_user_home().join(rest)
-            } else {
-                std::path::PathBuf::from(value)
-            }
-        })
-        .unwrap_or_else(|| home.machine_user_home().join(".t3"));
-    let band = if explicit.is_none()
-        && env
-            .get("VITE_DEV_SERVER_URL")
-            .is_some_and(|v| !v.is_empty())
-    {
-        "dev"
-    } else {
-        "userdata"
+    let cli = match command(&["--version"], "cannot inspect CLI release") {
+        Ok(release) => Some(release),
+        Err(error) => {
+            tracing::debug!(event="t3_readiness_release_unavailable",error=%error);
+            None
+        }
     };
-    let bytes = std::fs::read(base.join(band).join("server-runtime.json"))
+    let location = super::_t3_home::T3Home::discover(home, env);
+    let bytes = std::fs::read(location.descriptor())
         .map_err(|_| refused("cannot discover the local running server"))?;
     let state: RuntimeState =
         serde_json::from_slice(&bytes).map_err(|_| refused("unrecognized server runtime state"))?;
-    if state.version != 1 || state.server_version != T3_VERSION || state.pid == 0 || state.port == 0
-    {
+    if state.version != 1 || state.pid == 0 || state.port == 0 {
         return Err(refused(
             "unsupported server runtime version or shape; update the adapter's verified protocol support",
         ));
     }
+    tracing::debug!(event="t3_readiness_releases",cli_release=?cli,server_release=?state.server_version,descriptor_version=state.version,orchestration_protocol=2);
     let mut endpoint =
         url::Url::parse(&state.origin).map_err(|_| refused("invalid local server address"))?;
     if endpoint.scheme() != "http"

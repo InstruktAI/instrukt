@@ -153,15 +153,26 @@ pub fn run(
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
     let _runner = LockGuard::acquire(&cx.home.runner_lock_file(), RUN_LOCK_WAIT)?;
+    // Initialize the shared schema before independent workers open connections.
+    drop(instrukt_core::state_db::StateDb::open(cx.home).map_err(StateError::from)?);
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);
     let mut platform: Option<EventPlatform> = None;
     let mut _readers = None;
-    let history = if Configuration::load_global(cx.home)?.runner_runtime()?
-        == Some(instrukt_core::config::Runtime::T3)
-    {
-        Some(crate::history::start(cx.home, cx.env)?)
-    } else {
-        None
+    let history = match Configuration::load_global(cx.home)?.runner_runtime()? {
+        Some(runtime)
+            if crate::runtime::adapter(runtime)
+                .supports(crate::runtime::Capability::ConversationSource) =>
+        {
+            Some(crate::history::start(cx.home, cx.env)?)
+        }
+        Some(runtime) => {
+            tracing::warn!(
+                event = "history_source_unsupported",
+                runtime = runtime.name()
+            );
+            None
+        }
+        None => None,
     };
     let mut history_search = None;
     tracing::info!(event = "runner_started");

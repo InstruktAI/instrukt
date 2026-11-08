@@ -477,12 +477,12 @@ fn a_full_usage_window_marks_that_profiles_models_with_expiry() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn an_unknown_readiness_version_refuses_start_without_creating_a_thread() {
+fn an_unknown_readiness_descriptor_version_refuses_start_without_creating_a_thread() {
     let p = Tracked::new(true);
     let file = common::t3_readiness::state_file(&p.env);
     let mut state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
-    state["serverVersion"] = "99.0.0".into();
+    state["version"] = 2.into();
     std::fs::write(file, state.to_string()).unwrap();
     create_change(&p);
     p.tick();
@@ -607,4 +607,19 @@ fn failed_readiness_token_revocation_refuses_thread_creation() {
     create_change(&p);
     p.tick();
     assert_eq!(p.rt.started_count(), 0);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn compatible_readiness_releases_do_not_block_start() {
+    let p = Tracked::new(true);
+    let file = common::t3_readiness::state_file(&p.env);
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    state["serverVersion"] = "future-compatible".into();
+    std::fs::write(file, state.to_string()).unwrap();
+    runtime::FakeT3::create(&p.env).release("future-cli");
+    create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
 }

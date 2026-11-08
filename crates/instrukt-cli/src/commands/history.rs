@@ -42,6 +42,16 @@ enum Command {
     },
 }
 pub fn run(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    execute(args, ctx).map_err(|error| {
+        tracing::error!(event="history_command_failed",error=%format!("{error:#}"));
+        let detail = error
+            .downcast_ref::<history::HistoryError>()
+            .map(history::HistoryError::public_message)
+            .unwrap_or("history operation failed; inspect this computer's history logs");
+        anyhow::anyhow!(detail)
+    })
+}
+fn execute(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let env = crate::wiring::environment(ctx)?;
     match args.command {
         Command::Extract { json } => {

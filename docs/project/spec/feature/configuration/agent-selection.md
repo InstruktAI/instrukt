@@ -85,9 +85,11 @@ It issues a five-minute `orchestration:read` session through `t3 auth session
 issue --scope orchestration:read --ttl 5m --token-only --label instrukt-readiness`,
 uses the bearer token only in memory, and revokes that session after the read.
 Server discovery, the token envelope and RPC framing follow T3's source contract.
-This is an internal T3 protocol: the adapter gates its supported CLI/server and
-protocol versions and refuses startup visibly for an unknown version, unknown
-shape, failed read or failed token cleanup. It never treats missing readiness
+This is an internal T3 protocol: the adapter gates the runtime-descriptor version,
+negotiates the supported orchestration protocol and validates the consumed response
+shape. CLI/server release strings are diagnostics rather than equality gates.
+An unknown descriptor/protocol or response shape, failed read or failed token
+cleanup refuses startup visibly. It never treats missing readiness
 evidence as permission to start.
 
 A missing instance, disabled instance, missing installation, unauthenticated

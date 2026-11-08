@@ -1,164 +1,116 @@
-#![allow(clippy::panic, reason = "fixture protocol violations fail the test")]
+#![allow(clippy::unwrap_used, reason = "temporary source fixtures")]
 use crate::common::TestEnv;
-use instrukt_core::state_db::rusqlite::Connection;
+use instrukt_core::state_db::rusqlite::{Connection, params};
 use serde_json::{Value, json};
-use std::net::{TcpListener, TcpStream};
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::process::Child;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
+use std::{
+    path::PathBuf,
+    process::Child,
+    time::{Duration, Instant},
 };
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
 
 pub struct T3Store {
-    file: PathBuf,
-    subscribers: Arc<Mutex<Vec<mpsc::Sender<Value>>>>,
-    address: std::net::SocketAddr,
-    stop: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    pub file: PathBuf,
+    db: Connection,
 }
 impl T3Store {
     pub fn new(env: &TestEnv) -> Self {
         computer(env, "aaaaaaaaaaaaaaaa");
-        let root = env.home().join(".t3/userdata");
-        std::fs::create_dir_all(&root).unwrap();
-        let file = root.join("fixture.json");
-        let thread = |id: &str, parent: Option<&str>| json!({"thread":{"id":id,"projectId":"project","title":"Local jewels","updatedAt":"2026-11-08T10:00:00Z","lineage":{"parentThreadId":parent,"relationshipToParent":parent.map(|_|"subagent")}},"messages":[{"id":format!("message-{id}"),"role":"assistant","text":"Keep the jewels searchable.","createdAt":"2026-11-08T10:00:00Z"}],"turnItems":[],"runs":[],"updatedAt":"2026-11-08T10:00:00Z"});
         std::fs::write(
-            &file,
-            json!({"sequence":2,"threads":[thread("parent",None),thread("child",Some("parent"))]})
-                .to_string(),
+            env.instrukt_home().join("instrukt.yaml"),
+            "schema_version: 1\nrunner: {runtime: t3}\n",
         )
         .unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        std::fs::write(root.join("server-runtime.json"),json!({"version":1,"pid":std::process::id(),"port":address.port(),"origin":format!("http://{address}"),"serverVersion":"0.1.7"}).to_string()).unwrap();
-        let bin = env.path("runtime-bin/t3");
-        std::fs::write(&bin, r#"#!/usr/bin/env python3
-import sys,json,base64
-a=sys.argv[1:]
-if a==['--version']: print('t3 v0.1.7')
-elif a[:3]==['auth','session','issue']: print(base64.urlsafe_b64encode(json.dumps({'v':1,'kind':'session','sid':'fixture-session'}).encode()).decode().rstrip('=')+'.signature')
-elif a[:3]==['auth','session','revoke']: pass
-else: sys.exit(1)
-"#).unwrap();
-        std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopping = stop.clone();
-        let subscribers: Arc<Mutex<Vec<mpsc::Sender<Value>>>> = Arc::new(Mutex::new(Vec::new()));
-        let listeners = subscribers.clone();
-        let data_file = file.clone();
-        let worker = std::thread::spawn(move || {
-            let mut connections = Vec::new();
-            for stream in listener.incoming() {
-                if stopping.load(Ordering::Relaxed) {
-                    break;
-                }
-                let data_file = data_file.clone();
-                let stopping = stopping.clone();
-                let listeners = listeners.clone();
-                connections.push(std::thread::spawn(move || {
-                    let stream = stream.unwrap();
-                    stream.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
-                    let Ok(mut socket) = tungstenite::accept(stream) else { return; };
-                    let (updates,receiver) = mpsc::channel::<Value>();
-                    while !stopping.load(Ordering::Relaxed) {
-                        for event in receiver.try_iter() {
-                            if socket.send(tungstenite::Message::Text(json!({"_tag":"Chunk","requestId":"shell","values":[event]}).to_string().into())).is_err() { return; }
-                        }
-                        let message = match socket.read() {
-                            Ok(message) => message,
-                            Err(tungstenite::Error::Io(error)) if matches!(error.kind(),std::io::ErrorKind::WouldBlock|std::io::ErrorKind::TimedOut) => continue,
-                            Err(_) => break,
-                        };
-                        let tungstenite::Message::Text(text) = message else { break; };
-                        let request: Value = serde_json::from_str(&text).unwrap();
-                        if request["_tag"] != "Request" { continue; }
-                        let data: Value = serde_json::from_slice(&std::fs::read(&data_file).unwrap()).unwrap();
-                        let send = |socket: &mut tungstenite::WebSocket<TcpStream>, value: Value, streaming: bool| {
-                            let response = if streaming { json!({"_tag":"Chunk","requestId":request["id"],"values":[value]}) } else { json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":value}}) };
-                            socket.send(tungstenite::Message::Text(response.to_string().into())).unwrap();
-                        };
-                        match request["tag"].as_str().unwrap() {
-                            "orchestration.subscribeShell" => {
-                                listeners.lock().unwrap().push(updates.clone());
-                                if request["payload"]["afterSequence"].as_u64().unwrap_or(0) < data["sequence"].as_u64().unwrap() {
-                                    let shells: Vec<Value> = data["threads"].as_array().unwrap().iter().map(|p|p["thread"].clone()).collect();
-                                    send(&mut socket,json!({"kind":"snapshot","snapshot":{"snapshotSequence":data["sequence"],"threads":shells,"archivedThreads":[]}}),true);
-                                }
-                                send(&mut socket,json!({"kind":"synchronized"}),true);
-                            }
-                            "orchestration.getArchivedShellSnapshot" => send(&mut socket,json!({"snapshotSequence":data["sequence"],"threads":[]}),false),
-                            "orchestration.getThreadProjection" => {
-                                let projection = data["threads"].as_array().unwrap().iter().find(|p|p["thread"]["id"]==request["payload"]["threadId"]).unwrap();
-                                send(&mut socket, projection.clone(),false);
-                            }
-                            _ => panic!("unexpected fixture RPC"),
-                        }
-                    }
-                }));
-            }
-            for connection in connections {
-                connection.join().unwrap();
-            }
-        });
-        Self {
-            file,
-            subscribers,
-            address,
-            stop,
-            worker: Some(worker),
-        }
+        let file = env.home().join(".t3/userdata/statev2.sqlite");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch("PRAGMA journal_mode=WAL;
+CREATE TABLE effect_sql_migrations(migration_id INTEGER PRIMARY KEY,name TEXT);
+INSERT INTO effect_sql_migrations VALUES(79,'fixture');
+CREATE TABLE orchestration_v2_projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT,title TEXT,created_at TEXT,updated_at TEXT,archived_at TEXT,deleted_at TEXT,payload_json TEXT);
+CREATE TABLE orchestration_v2_projection_messages(message_id TEXT PRIMARY KEY,thread_id TEXT,role TEXT,streaming INTEGER,created_at TEXT,updated_at TEXT,payload_json TEXT);
+CREATE TABLE orchestration_v2_projection_runs(run_id TEXT PRIMARY KEY,thread_id TEXT,status TEXT,requested_at TEXT,completed_at TEXT,payload_json TEXT);
+CREATE TABLE orchestration_v2_projection_subagents(subagent_id TEXT PRIMARY KEY,thread_id TEXT,child_thread_id TEXT,updated_at TEXT,payload_json TEXT);
+CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KEY,thread_id TEXT,type TEXT,status TEXT,updated_at TEXT,payload_json TEXT);").unwrap();
+        let store = Self { file, db };
+        store.thread("parent", None, None, "2026-11-08T10:00:00.000Z");
+        store.thread("child", Some("parent"), None, "2026-11-08T10:00:00.000Z");
+        store.message(
+            "parent",
+            "message-parent",
+            "Keep the jewels searchable.",
+            "2026-11-08T10:00:00.000Z",
+            false,
+        );
+        store.message(
+            "child",
+            "message-child",
+            "Keep the jewels searchable.",
+            "2026-11-08T10:00:00.000Z",
+            false,
+        );
+        store
+    }
+    pub fn thread(&self, id: &str, parent: Option<&str>, archive: Option<&str>, at: &str) {
+        let payload = json!({"id":id,"projectId":"project","title":"Local jewels","lineage":{"parentThreadId":parent,"relationshipToParent":parent.map(|_|"subagent")},"createdAt":at,"updatedAt":at,"archivedAt":archive,"deletedAt":null});
+        self.db.execute("INSERT OR REPLACE INTO orchestration_v2_projection_threads VALUES(?1,'project','Local jewels',?2,?2,?3,NULL,?4)",params![id,at,archive,payload.to_string()]).unwrap();
+    }
+    pub fn message(&self, thread: &str, id: &str, text: &str, at: &str, streaming: bool) {
+        let payload = json!({"id":id,"threadId":thread,"role":"assistant","text":text,"createdAt":at,"updatedAt":at,"streaming":streaming});
+        self.db.execute("INSERT OR REPLACE INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',?3,?4,?4,?5)",params![id,thread,streaming,at,payload.to_string()]).unwrap();
     }
     pub fn remove_threads(&self) {
-        self.write(json!({"sequence":3,"threads":[]}));
+        self.db.execute_batch("DELETE FROM orchestration_v2_projection_messages;DELETE FROM orchestration_v2_projection_threads;").unwrap();
     }
     pub fn active_child(&self, append: bool) {
-        let mut data: Value = serde_json::from_slice(&std::fs::read(&self.file).unwrap()).unwrap();
-        data["threads"][1]["runs"] = json!([{"status":"running"}]);
         if append {
-            data["threads"][1]["messages"].as_array_mut().unwrap().push(json!({"id":"hidden-update","role":"assistant","text":"Unreported child progress.","createdAt":"2026-11-08T11:00:00Z"}));
+            self.message(
+                "child",
+                "hidden-update",
+                "Unreported child progress.",
+                "2026-11-08T11:00:00.000Z",
+                false,
+            );
         }
-        // Native-child transcript changes need not change the shell sequence.
-        self.write(data);
-    }
-    fn write(&self, data: Value) {
-        let temporary = self.file.with_extension("new");
-        std::fs::write(&temporary, data.to_string()).unwrap();
-        std::fs::rename(temporary, &self.file).unwrap();
     }
     pub fn complete(&self) {
-        let mut data: Value = serde_json::from_slice(&std::fs::read(&self.file).unwrap()).unwrap();
-        data["sequence"] = json!(3);
-        data["threads"][1]["messages"].as_array_mut().unwrap().push(json!({"id":"completion","role":"assistant","text":"Finished the next turn.","createdAt":"2026-11-08T11:00:00Z"}));
-        data["threads"][1]["thread"]["status"] = json!("completed");
-        let event = json!({"kind":"thread.updated","sequence":3,"location":"active","thread":data["threads"][1]["thread"]});
-        self.write(data);
-        self.subscribers
-            .lock()
-            .unwrap()
-            .retain(|sender| sender.send(event.clone()).is_ok());
+        self.message(
+            "child",
+            "completion",
+            "Finished the next turn.",
+            "2026-11-08T11:00:00.000Z",
+            false,
+        );
     }
-    pub fn wait_for_readers(&self, count: usize) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.subscribers.lock().unwrap().len() < count {
-            assert!(
-                Instant::now() < deadline,
-                "history source subscriber did not connect"
-            );
-            std::thread::yield_now();
-        }
+    pub fn archived_after_gap(&self) {
+        self.thread(
+            "archived-gap",
+            None,
+            Some("2026-11-08T12:00:00.000Z"),
+            "2026-11-08T12:00:00.000Z",
+        );
+        self.message(
+            "archived-gap",
+            "archived-message",
+            "Archivedgap treasure.",
+            "2026-11-08T12:00:00.000Z",
+            false,
+        );
     }
-}
-impl Drop for T3Store {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        let _ = TcpStream::connect(self.address);
-        self.worker.take().unwrap().join().unwrap();
+    pub fn break_shape(&self) {
+        self.db.execute_batch("ALTER TABLE orchestration_v2_projection_messages RENAME COLUMN payload_json TO incompatible_payload;").unwrap();
+    }
+    pub fn restore_shape(&self) {
+        self.db.execute_batch("ALTER TABLE orchestration_v2_projection_messages RENAME COLUMN incompatible_payload TO payload_json;").unwrap();
+    }
+    pub fn release_and_migration(&self) {
+        self.db
+            .execute("UPDATE effect_sql_migrations SET migration_id=1000", [])
+            .unwrap();
+        std::fs::write(
+            self.file.parent().unwrap().join("server-runtime.json"),
+            json!({"serverVersion":"future-compatible-release"}).to_string(),
+        )
+        .unwrap();
     }
 }
 
@@ -191,7 +143,7 @@ impl Drop for Runner {
     }
 }
 pub fn runner(env: &TestEnv) -> Runner {
-    let child = env
+    let mut child = env
         .command(
             std::path::Path::new(env!("CARGO_BIN_EXE_instrukt")),
             env.home(),
@@ -221,6 +173,10 @@ pub fn runner(env: &TestEnv) -> Runner {
         .query::<bool>(&mut conn)
         .unwrap()
     {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "history runner stopped before readiness"
+        );
         assert!(Instant::now() < deadline, "history responder did not start");
         std::thread::yield_now();
     }

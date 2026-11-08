@@ -1,8 +1,9 @@
 //! Retains source conversations locally and answers searches with explicit source failures.
 mod _fleet;
 mod _legacy;
+mod _projection;
 mod _store;
-mod _t3;
+mod _watch;
 
 use instrukt_core::{config::Env, home::Home};
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,6 @@ pub(crate) use _fleet::SearchWorker;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
-    #[error("history stream has no new frame within the read bound")]
-    StreamIdle,
     #[error(transparent)]
     Db(#[from] instrukt_core::state_db::StateDbError),
     #[error("history SQLite operation failed: {0}")]
@@ -37,6 +36,32 @@ pub enum HistoryError {
     Transport(#[from] crate::transport::TransportError),
     #[error(transparent)]
     Config(#[from] instrukt_core::config::ConfigError),
+    #[error(transparent)]
+    ConversationSource(#[from] crate::runtime::conversations::SourceError),
+    #[error(transparent)]
+    Runtime(#[from] crate::sessions::SessionsError),
+}
+
+impl HistoryError {
+    pub fn public_message(&self) -> &'static str {
+        match self {
+            Self::Db(_) | Self::Sql(_) => {
+                "history storage or source schema is unavailable; inspect this computer's history logs"
+            }
+            Self::Runtime(crate::sessions::SessionsError::MissingCapability { .. }) => {
+                "selected runtime does not support durable conversation extraction"
+            }
+            Self::Runtime(crate::sessions::SessionsError::NoActiveRuntime) => {
+                "choose a runtime before extracting conversation history"
+            }
+            Self::ConversationSource(crate::runtime::conversations::SourceError::Watch(_)) => {
+                "history source notifications are unavailable; inspect this computer's history logs"
+            }
+            _ => {
+                "history source or operation is unavailable or incompatible; inspect this computer's history logs"
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,8 +80,33 @@ pub struct Match {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Failure {
     pub computer: String,
-    pub operation: String,
+    pub operation: Operation,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Operation {
+    CatchUp,
+    RemoteSearch,
+}
+impl std::fmt::Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::CatchUp => "catch_up",
+            Self::RemoteSearch => "remote_search",
+        })
+    }
+}
+impl Failure {
+    pub(super) fn new(computer: String, operation: Operation, error: &HistoryError) -> Self {
+        tracing::error!(event="history_operation_failed",%computer,%operation,error=%error);
+        Self {
+            computer,
+            operation,
+            detail: error.public_message().into(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -68,12 +118,32 @@ pub struct SearchResult {
 #[derive(Debug, Default, Serialize)]
 pub struct Extraction {
     pub loaded: usize,
-    pub position: u64,
+    pub position: Value,
 }
 
 /// Catch up through T3's ordered state; no local writer lock spans runtime I/O.
 pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
-    _t3::extract(home, env, false)
+    let source = source(home, env)?;
+    let _lock =
+        instrukt_core::fsx::LockGuard::acquire(&home.history_lock_file(), Duration::from_secs(30))?;
+    let mut position = _projection::position(home, source.identity())?;
+    let mut report = Extraction::default();
+    loop {
+        let started = std::time::Instant::now();
+        let batch = source.changed_since(position.as_ref())?;
+        let changed = position.as_ref() != Some(&batch.position);
+        let loaded = _projection::apply(home, source.identity(), &batch)?;
+        if changed || !batch.records.is_empty() {
+            tracing::debug!(event="history_extract_completed",source=source.identity(),loaded,position=?batch.position,duration_ms=started.elapsed().as_millis() as u64);
+        }
+        report.loaded += loaded;
+        report.position = serde_json::to_value(&batch.position)?;
+        position = Some(batch.position);
+        if !batch.has_more {
+            break;
+        }
+    }
+    Ok(report)
 }
 
 /// One atomic, repeat-safe import. A completed source is never opened again.
@@ -113,11 +183,11 @@ pub fn search(home: &Home, env: &Env, request: &Search<'_>) -> Result<SearchResu
             }
             Err(error) => {
                 for computer in computers {
-                    result.failures.push(Failure {
-                        computer: computer.clone(),
-                        operation: "remote_search".into(),
-                        detail: error.to_string(),
-                    });
+                    result.failures.push(Failure::new(
+                        computer.clone(),
+                        Operation::RemoteSearch,
+                        &error,
+                    ));
                 }
             }
         }
@@ -152,11 +222,7 @@ pub(super) fn local_search(
     }
     let failures = caught_up
         .err()
-        .map(|error| Failure {
-            computer,
-            operation: "catch_up".into(),
-            detail: error.to_string(),
-        })
+        .map(|error| Failure::new(computer, Operation::CatchUp, &error))
         .into_iter()
         .collect();
     Ok(SearchResult { matches, failures })
@@ -167,6 +233,15 @@ pub fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, Hist
     _store::show(home, source, conversation)
 }
 
-pub(crate) fn start(home: &Home, env: &Env) -> Result<_t3::Worker, HistoryError> {
-    _t3::Worker::start(home, env)
+pub(super) fn source(
+    home: &Home,
+    env: &Env,
+) -> Result<Box<dyn crate::runtime::conversations::ConversationSource>, HistoryError> {
+    let runtime = instrukt_core::config::Configuration::load_global(home)?
+        .runner_runtime()?
+        .ok_or(crate::sessions::SessionsError::NoActiveRuntime)?;
+    Ok(crate::runtime::adapter(runtime).conversation_source(home, env)?)
+}
+pub(crate) fn start(home: &Home, env: &Env) -> Result<_watch::Worker, HistoryError> {
+    _watch::Worker::start(home, env)
 }

@@ -1,5 +1,5 @@
 //! Bounded request/reply over the existing cluster Redis connection; no archive lives there.
-use super::{Failure, HistoryError, SearchResult, local_search};
+use super::{Failure, HistoryError, Operation, SearchResult, local_search};
 use crate::{
     state::RunnerState,
     transport::{EventScope, ScopedTransport},
@@ -80,8 +80,11 @@ pub(super) fn merge(
             }
             Err(error) => result.failures.push(Failure {
                 computer: computer.clone(),
-                operation: "remote_search".into(),
-                detail: error.to_string(),
+                operation: Operation::RemoteSearch,
+                detail: {
+                    tracing::error!(event="history_remote_operation_failed",error=%error);
+                    HistoryError::Transport(error).public_message().into()
+                },
             }),
         }
     }
@@ -109,19 +112,23 @@ pub(super) fn merge(
                     }
                     Err(error) => result.failures.push(Failure {
                         computer,
-                        operation: "remote_search".into(),
-                        detail: format!("invalid reply: {error}"),
+                        operation: Operation::RemoteSearch,
+                        detail: {
+                            tracing::error!(event="history_reply_invalid",error=%error);
+                            "remote history response is incompatible".into()
+                        },
                     }),
                 }
             }
             Ok(None) => break,
             Err(error) => {
+                let error = HistoryError::Transport(error);
                 for computer in pending.values() {
-                    result.failures.push(Failure {
-                        computer: computer.clone(),
-                        operation: "remote_search".into(),
-                        detail: error.to_string(),
-                    });
+                    result.failures.push(Failure::new(
+                        computer.clone(),
+                        Operation::RemoteSearch,
+                        &error,
+                    ));
                 }
                 pending.clear();
             }
@@ -130,7 +137,7 @@ pub(super) fn merge(
     for computer in pending.into_values() {
         result.failures.push(Failure {
             computer,
-            operation: "remote_search".into(),
+            operation: Operation::RemoteSearch,
             detail: "computer did not answer before the search deadline".into(),
         });
     }
@@ -195,8 +202,8 @@ impl SearchWorker {
                                 matches: Vec::new(),
                                 failures: vec![Failure {
                                     computer: computer.clone(),
-                                    operation: "remote_search".into(),
-                                    detail: error.to_string(),
+                                    operation: Operation::RemoteSearch,
+                                    detail: {tracing::error!(event="history_remote_operation_failed",error=%error);error.public_message().into()},
                                 }],
                             },
                         };

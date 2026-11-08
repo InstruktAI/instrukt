@@ -263,17 +263,17 @@ Owned by the runner and written through its interface, in the same
 transactions as the reactions they record. Work invokes that interface for
 finalized publication and approval attention committed with their stamps.
 
-**History tables** — `history_sources` retains each source's committed position
-and one-time import completion. `history_pending` retains changed active
-threads whose final conversation has not yet been extracted; advancing another
-thread's position does not lose them. `history_conversations` retains source and
-native identity, owning/source computer provenance, parent reference, archive
-aliases, original structured source document, searchable text and explicit
-source limitations. The `history_fts` FTS5 index changes in the same transaction
-as those conversations. A source position advances only with its batch's
-conversation writes or durable pending-thread marks. These tables are owned by
-`project/instrukt/spec/feature/runner/history`; they survive source thread
-removal and are never reflected to GitHub or stored centrally in Redis.
+**History tables** — `history_sources` records selected-source legacy import
+completion. `history_source_positions` stores each runtime source's opaque
+committed position; history does not interpret adapter cursor fields.
+`history_projection_records` retains normalized native records by source, kind
+and native id, including records delivered by earlier batches. Completed
+conversation views, archive aliases, original source documents and FTS5 changes
+commit with the source position. Migration from the previous history shape
+preserves retained native records before the new source position begins.
+`history_conversations` and `history_fts` serve local search and document lookup.
+These tables are owned by `project/instrukt/spec/feature/runner/history`, survive
+source removal and are never reflected to GitHub or stored centrally in Redis.
 
 **`events`** — the local event log, oldest first. `seq` is a monotone local
 position, never a transport or occurrence identity. Rows hold the stable event

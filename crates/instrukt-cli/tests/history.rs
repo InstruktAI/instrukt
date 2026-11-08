@@ -17,9 +17,8 @@ fn stable_sources(mut result: Value) -> Value {
 }
 
 fn search(env: &TestEnv, query: &str) -> Value {
-    let out = env
-        .run(env.home(), ["history", "search", query, "--json"])
-        .success();
+    let out = env.run(env.home(), ["history", "search", query, "--json"]);
+    let out = out.success();
     serde_json::from_slice(&out.get_output().stdout).unwrap()
 }
 
@@ -62,7 +61,7 @@ fn search_refreshes_active_children_even_when_shell_transcript_events_are_suppre
 #[test]
 fn legacy_import_keeps_aliases_once_without_a_continuing_mirror_dependency() {
     let env = TestEnv::new();
-    let _source = fixture::T3Store::new(&env);
+    let t3 = fixture::T3Store::new(&env);
     let mirror = fixture::mirror(&env);
     let original = std::fs::read(&mirror).unwrap();
     env.run(env.home(), ["history", "import-teleclaude", "--json"])
@@ -71,6 +70,20 @@ fn legacy_import_keeps_aliases_once_without_a_continuing_mirror_dependency() {
     std::fs::remove_file(mirror).unwrap();
     env.run(env.home(), ["history", "import-teleclaude", "--json"])
         .success();
+    t3.message(
+        "child",
+        "after-import",
+        "Postimport native message.",
+        "2026-11-08T12:00:00.000Z",
+        false,
+    );
+    assert_eq!(
+        search(&env, "Postimport")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     let found = search(&env, "archive");
     assert_eq!(found["matches"].as_array().unwrap().len(), 1);
     let source = found["matches"][0]["source"].as_str().unwrap();
@@ -84,7 +97,7 @@ fn legacy_import_keeps_aliases_once_without_a_continuing_mirror_dependency() {
 
 // spec: project/instrukt/spec/feature/runner/history UC-HI1
 #[test]
-fn runner_completion_keeps_history_current_without_a_search_or_tick() {
+fn runner_database_notifications_keep_history_current_without_a_search_or_tick() {
     let env = TestEnv::new();
     let source = fixture::T3Store::new(&env);
     let found = search(&env, "jewels");
@@ -92,7 +105,7 @@ fn runner_completion_keeps_history_current_without_a_search_or_tick() {
     let redis = common::redis::RedisServer::new(&env);
     fixture::configure_cluster(&env, &redis.url);
     let _runner = fixture::runner(&env);
-    source.wait_for_readers(2);
+    // The responder readiness marker is published after the runner installs history watching.
     source.complete();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -140,4 +153,178 @@ fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
     assert_eq!(found["failures"].as_array().unwrap().len(), 1);
     insta::assert_json_snapshot!("merged-history", stable_sources(found));
     drop(worker);
+}
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn older_messages_survive_a_later_conversation_refresh() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    for index in 0..257 {
+        source.message(
+            "child",
+            &format!("older-padding-{index:03}"),
+            "Retained older entry.",
+            "2025-01-01T00:00:00.000Z",
+            false,
+        );
+    }
+    source.message(
+        "child",
+        "older-message",
+        "Ancienttoken retained.",
+        "2025-01-01T00:00:00.000Z",
+        false,
+    );
+    assert_eq!(
+        search(&env, "Ancienttoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    source.complete();
+    assert_eq!(
+        search(&env, "Finished")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "Ancienttoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn catch_up_keeps_threads_archived_during_an_extraction_gap() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    search(&env, "jewels");
+    source.archived_after_gap();
+    assert_eq!(
+        search(&env, "Archivedgap")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn streaming_messages_are_picked_up_after_completion_even_behind_the_cursor() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    source.message(
+        "child",
+        "streaming",
+        "Drafttoken text.",
+        "2026-11-08T10:00:00.000Z",
+        true,
+    );
+    source.complete();
+    assert_eq!(
+        search(&env, "Drafttoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    source.message(
+        "child",
+        "streaming",
+        "Drafttoken text.",
+        "2026-11-08T10:00:00.000Z",
+        false,
+    );
+    assert_eq!(
+        search(&env, "Drafttoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn source_shape_refusal_does_not_consume_new_rows_and_release_numbers_are_diagnostics() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    source.release_and_migration();
+    search(&env, "jewels");
+    source.message(
+        "child",
+        "recoverable",
+        "Recoverabletoken text.",
+        "2026-11-08T12:00:00.000Z",
+        false,
+    );
+    source.break_shape();
+    env.run(env.home(), ["history", "extract", "--json"])
+        .failure();
+    let failed = env
+        .run(env.home(), ["history", "search", "jewels", "--json"])
+        .failure();
+    let failed: Value = serde_json::from_slice(&failed.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!("safe-source-failure", stable_sources(failed));
+    source.restore_shape();
+    assert_eq!(
+        search(&env, "Recoverabletoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn development_history_reads_the_machine_runtime_instead_of_its_output_home() {
+    let mut env = TestEnv::new();
+    let _source = fixture::T3Store::new(&env);
+    let development = env.home().join("development");
+    std::fs::create_dir_all(&development).unwrap();
+    std::fs::write(
+        development.join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\n",
+    )
+    .unwrap();
+    env.set_env("INSTRUKT_HOME", development.to_str().unwrap())
+        .set_env("INSTRUKT_DEVELOPMENT", "1");
+    assert_eq!(
+        search(&env, "jewels")["matches"].as_array().unwrap().len(),
+        2
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime() {
+    let env = TestEnv::new();
+    let _source = fixture::T3Store::new(&env);
+    let found = search(&env, "jewels");
+    let source_id = found["matches"][0]["source"].as_str().unwrap();
+    let file = env.instrukt_home().join("state/instrukt.db");
+    std::fs::remove_file(&file).unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
+    db.execute_batch(include_str!("fixtures/history-v7.sql"))
+        .unwrap();
+    let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"messages":[{"id":"pre-upgrade","threadId":"child","role":"assistant","text":"Upgradetoken retained only in history."}]});
+    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Upgradetoken retained only in history.','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
+    drop(db);
+    assert_eq!(
+        search(&env, "Upgradetoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        search(&env, "jewels")["matches"].as_array().unwrap().len(),
+        2
+    );
 }
