@@ -38,6 +38,8 @@ const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 /// A runner invocation could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
+    #[error(transparent)]
+    History(#[from] crate::history::HistoryError),
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
     #[error("the activation wake channel failed; accepted work remains pending")]
@@ -151,15 +153,39 @@ pub fn run(
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
     let _runner = LockGuard::acquire(&cx.home.runner_lock_file(), RUN_LOCK_WAIT)?;
+    // Initialize the shared schema before independent workers open connections.
+    drop(instrukt_core::state_db::StateDb::open(cx.home).map_err(StateError::from)?);
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);
     let mut platform: Option<EventPlatform> = None;
     let mut _readers = None;
+    let history = match Configuration::load_global(cx.home)?.runner_runtime()? {
+        Some(runtime)
+            if crate::runtime::adapter(runtime)
+                .supports(crate::runtime::Capability::ConversationSource) =>
+        {
+            Some(crate::history::start(cx.home, cx.env)?)
+        }
+        Some(runtime) => {
+            tracing::warn!(
+                event = "history_source_unsupported",
+                runtime = runtime.name()
+            );
+            None
+        }
+        None => None,
+    };
+    let mut history_search = None;
     tracing::info!(event = "runner_started");
     loop {
         let considered = considered_projects(cx.home)?;
         if platform.is_none()
             && let Some(prepared) = event_platform(cx, &state, &considered)?
         {
+            history_search = Some(crate::history::SearchWorker::start(
+                cx.home,
+                cx.env,
+                &prepared.transport,
+            )?);
             _readers = Some(prepared.runtime.start(Arc::clone(&clock))?);
             platform = Some(prepared);
         }
@@ -179,6 +205,12 @@ pub fn run(
             tracing::error!(event = "runner_wakeup_failed", error = %err);
         }
         drop(invocation);
+        if let Some(history) = &history {
+            history.check()?;
+        }
+        if let Some(search) = &history_search {
+            search.check()?;
+        }
         if let Some(platform) = &platform {
             let receiver = platform
                 .wakeups

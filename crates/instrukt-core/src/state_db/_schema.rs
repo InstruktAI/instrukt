@@ -3,7 +3,33 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+
+/// Version 7: retained conversations, search and transactional extraction positions.
+const V7: &str = r#"
+CREATE TABLE history_sources (
+ source TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0, imported INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE history_pending (
+ source TEXT NOT NULL, native_id TEXT NOT NULL, PRIMARY KEY(source,native_id)
+);
+CREATE TABLE history_conversations (
+ id INTEGER PRIMARY KEY, source TEXT NOT NULL, native_id TEXT NOT NULL, computer TEXT NOT NULL,
+ title TEXT NOT NULL, parent TEXT, aliases TEXT NOT NULL, document TEXT NOT NULL,
+ body TEXT NOT NULL, limitations TEXT NOT NULL, UNIQUE(source,native_id)
+);
+CREATE VIRTUAL TABLE history_fts USING fts5(title,body,content='history_conversations',content_rowid='id');
+CREATE TRIGGER history_insert AFTER INSERT ON history_conversations BEGIN
+ INSERT INTO history_fts(rowid,title,body) VALUES(new.id,new.title,new.body);
+END;
+CREATE TRIGGER history_delete AFTER DELETE ON history_conversations BEGIN
+ INSERT INTO history_fts(history_fts,rowid,title,body) VALUES('delete',old.id,old.title,old.body);
+END;
+CREATE TRIGGER history_update AFTER UPDATE ON history_conversations BEGIN
+ INSERT INTO history_fts(history_fts,rowid,title,body) VALUES('delete',old.id,old.title,old.body);
+ INSERT INTO history_fts(rowid,title,body) VALUES(new.id,new.title,new.body);
+END;
+"#;
 
 /// Version 1: the work tables and the runner tables.
 const V1: &str = r#"
@@ -477,8 +503,98 @@ CREATE TABLE agent_quota (
 );
 "#;
 
-/// Version 7: retained start requests keep neutral effort separately from extra settings.
-const V7: &str = r#"
+/// Version 8: normalized source records and runtime-opaque positions.
+const V8: &str = r#"
+DROP TABLE history_pending;
+CREATE TABLE history_projection_records (
+ source TEXT NOT NULL, projection TEXT NOT NULL, native_id TEXT NOT NULL,
+ thread_id TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL,
+ PRIMARY KEY(source,projection,native_id)
+);
+CREATE INDEX history_projection_threads ON history_projection_records(source,thread_id);
+CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEXT NOT NULL);
+INSERT INTO history_projection_records
+SELECT source,'conversation',native_id,native_id,coalesce(json_extract(document,'$.thread.updatedAt'),''),
+ json_object('kind','conversation','id',native_id,'conversation_id',native_id,'parent_id',json_extract(document,'$.thread.lineage.parentThreadId'),
+ 'title',json_extract(document,'$.thread.title'),'text',NULL,'run_id',NULL,'role',NULL,
+ 'created_at',json_extract(document,'$.thread.createdAt'),'updated_at',json_extract(document,'$.thread.updatedAt'),
+ 'completed',json('false'),'native',json_extract(document,'$.thread'))
+FROM history_conversations WHERE source LIKE 't3:%' AND json_type(document,'$.thread')='object';
+INSERT OR IGNORE INTO history_projection_records
+SELECT c.source,'message',json_extract(v.value,'$.id'),coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.completedAt'),json_extract(v.value,'$.requestedAt'),''),
+ json_object('kind','message','id',json_extract(v.value,'$.id'),'conversation_id',coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ 'parent_id',NULL,'title',NULL,'run_id',json_extract(v.value,'$.runId'),'role',
+ CASE WHEN json_extract(v.value,'$.role') IN ('user','assistant','system') THEN json_extract(v.value,'$.role') ELSE NULL END,
+ 'created_at',coalesce(json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.requestedAt')),
+ 'updated_at',coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt')),
+ 'completed',CASE WHEN json_extract(v.value,'$.streaming')=1 THEN json('false') ELSE json('true') END,
+ 'text',coalesce(json_extract(v.value,'$.text'),json_extract(v.value,'$.markdown'),json_extract(v.value,'$.input'),'') , 'native',json(v.value))
+FROM history_conversations c,json_each(c.document,'$.messages') v
+WHERE c.source LIKE 't3:%' AND json_type(v.value,'$.id')='text';
+INSERT OR IGNORE INTO history_projection_records
+SELECT c.source,'run',json_extract(v.value,'$.id'),coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.completedAt'),json_extract(v.value,'$.requestedAt'),''),
+ json_object('kind','run','id',json_extract(v.value,'$.id'),'conversation_id',coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ 'parent_id',NULL,'title',NULL,'run_id',json_extract(v.value,'$.runId'),'role',
+ CASE WHEN json_extract(v.value,'$.role') IN ('user','assistant','system') THEN json_extract(v.value,'$.role') ELSE NULL END,
+ 'created_at',coalesce(json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.requestedAt')),
+ 'updated_at',coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt')),
+ 'completed',CASE WHEN json_extract(v.value,'$.completedAt') IS NOT NULL THEN json('true') ELSE json('false') END,
+ 'text',coalesce(json_extract(v.value,'$.text'),json_extract(v.value,'$.markdown'),json_extract(v.value,'$.input'),'') , 'native',json(v.value))
+FROM history_conversations c,json_each(c.document,'$.runs') v
+WHERE c.source LIKE 't3:%' AND json_type(v.value,'$.id')='text';
+INSERT OR IGNORE INTO history_projection_records
+SELECT c.source,'subagent',json_extract(v.value,'$.id'),coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.completedAt'),json_extract(v.value,'$.requestedAt'),''),
+ json_object('kind','subagent','id',json_extract(v.value,'$.id'),'conversation_id',coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ 'parent_id',NULL,'title',NULL,'run_id',json_extract(v.value,'$.runId'),'role',
+ CASE WHEN json_extract(v.value,'$.role') IN ('user','assistant','system') THEN json_extract(v.value,'$.role') ELSE NULL END,
+ 'created_at',coalesce(json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.requestedAt')),
+ 'updated_at',coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt')),
+ 'completed',CASE WHEN json_extract(v.value,'$.completedAt') IS NOT NULL THEN json('true') ELSE json('false') END,
+ 'text',coalesce(json_extract(v.value,'$.text'),json_extract(v.value,'$.markdown'),json_extract(v.value,'$.input'),'') , 'native',json(v.value))
+FROM history_conversations c,json_each(c.document,'$.subagents') v
+WHERE c.source LIKE 't3:%' AND json_type(v.value,'$.id')='text';
+INSERT OR IGNORE INTO history_projection_records
+SELECT c.source,'turn_item',json_extract(v.value,'$.id'),coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.completedAt'),json_extract(v.value,'$.requestedAt'),''),
+ json_object('kind','turn_item','id',json_extract(v.value,'$.id'),'conversation_id',coalesce(json_extract(v.value,'$.threadId'),c.native_id),
+ 'parent_id',NULL,'title',NULL,'run_id',json_extract(v.value,'$.runId'),'role',
+ CASE WHEN json_extract(v.value,'$.role') IN ('user','assistant','system') THEN json_extract(v.value,'$.role') ELSE NULL END,
+ 'created_at',coalesce(json_extract(v.value,'$.createdAt'),json_extract(v.value,'$.requestedAt')),
+ 'updated_at',coalesce(json_extract(v.value,'$.updatedAt'),json_extract(v.value,'$.createdAt')),
+ 'completed',CASE WHEN json_extract(v.value,'$.completedAt') IS NOT NULL THEN json('true') ELSE json('false') END,
+ 'text',coalesce(json_extract(v.value,'$.text'),json_extract(v.value,'$.markdown'),json_extract(v.value,'$.input'),'') , 'native',json(v.value))
+FROM history_conversations c,json_each(c.document,'$.turnItems') v
+WHERE c.source LIKE 't3:%' AND json_type(v.value,'$.id')='text';
+"#;
+
+/// Version 9: repair the complete retained text contribution of prior normalized records.
+const V9: &str = r#"
+UPDATE history_projection_records
+SET payload_json=json_set(payload_json,'$.text',
+ coalesce(json_extract(payload_json,'$.text'),'') || char(10) || char(10) ||
+ coalesce((SELECT group_concat(value,char(10)||char(10)) FROM (
+  SELECT value FROM json_each(json_extract(history_projection_records.payload_json,'$.native'))
+  WHERE type='text' AND key IN ('text','input','output','markdown','diffStr','result','progress')
+  ORDER BY CASE key WHEN 'text' THEN 0 WHEN 'input' THEN 1 WHEN 'output' THEN 2 WHEN 'markdown' THEN 3 WHEN 'diffStr' THEN 4 WHEN 'result' THEN 5 ELSE 6 END
+ )),''))
+WHERE source LIKE 't3:%';
+UPDATE history_conversations AS c
+SET body=body || char(10) || char(10) || coalesce((
+ SELECT group_concat(json_extract(r.payload_json,'$.text'),char(10)||char(10))
+ FROM history_projection_records r
+ WHERE r.source=c.source AND r.thread_id=c.native_id AND r.projection<>'conversation'
+),'')
+WHERE c.source LIKE 't3:%' AND EXISTS(
+ SELECT 1 FROM history_projection_records r WHERE r.source=c.source AND r.thread_id=c.native_id
+);
+
+"#;
+
+/// Version 10: retained start requests keep neutral effort separately from extra settings.
+const V10: &str = r#"
 UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.reasoningEffort') WHERE json_extract(request,'$.selection.kind') IN ('codex','grok','kiro','muse');
 UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind') IN ('antigravity');
 UPDATE runtime_starts SET request=json_remove(request,'$.selection.options.thinking') WHERE json_extract(request,'$.selection.kind') IN ('pi');

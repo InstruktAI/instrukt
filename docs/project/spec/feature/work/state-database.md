@@ -267,6 +267,18 @@ Owned by the runner and written through its interface, in the same
 transactions as the reactions they record. Work invokes that interface for
 finalized publication and approval attention committed with their stamps.
 
+**History tables** — `history_sources` records selected-source legacy import
+completion. `history_source_positions` stores each runtime source's opaque
+committed position; history does not interpret adapter cursor fields.
+`history_projection_records` retains normalized native records by source, kind
+and native id, including records delivered by earlier batches. Completed
+conversation views, archive aliases, original source documents and FTS5 changes
+commit with the source position. Migration from the previous history shape
+preserves retained native records before the new source position begins.
+`history_conversations` and `history_fts` serve local search and document lookup.
+These tables are owned by `project/instrukt/spec/feature/runner/history`, survive
+source removal and are never reflected to GitHub or stored centrally in Redis.
+
 **`events`** — the local event log, oldest first. `seq` is a monotone local
 position, never a transport or occurrence identity. Rows hold the stable event
 `id`, `type`, full canonical envelope including opaque `data`, `logged_at` and

@@ -15,8 +15,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, config, docs, eval, events, repository, runner, secrets, specs, sync, todo,
-    webhooks,
+    agents, blueprint, config, docs, eval, events, history, repository, runner, secrets, specs,
+    sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -58,6 +58,8 @@ enum Command {
     Eval(eval::EvalArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
+    /// Extract, import and search retained conversations across computers.
+    History(history::HistoryArgs),
     /// Internal signed loopback webhook receiver (installation is separate).
     Webhooks(webhooks::WebhooksArgs),
     /// Run the runner until stopped.
@@ -96,6 +98,7 @@ fn main() -> ExitCode {
         Command::Todo(args) => todo::run(args, &mut ctx),
         Command::Eval(args) => eval::run(args, &mut ctx),
         Command::Events(args) => events::run(args, &mut ctx),
+        Command::History(args) => history::run(args, &mut ctx),
         Command::Webhooks(args) => webhooks::run(args, &mut ctx),
         Command::Run(args) => runner::run_run(args, &mut ctx),
         Command::Tick(args) => runner::run_tick(args, &mut ctx),
@@ -133,6 +136,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Todo(_) => "todo",
         Command::Eval(_) => "eval",
         Command::Events(_) => "events",
+        Command::History(_) => "history",
         Command::Webhooks(_) => "webhooks",
         Command::Run(_) => "run",
         Command::Tick(_) => "tick",

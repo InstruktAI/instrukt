@@ -121,6 +121,15 @@ impl instrukt_core::interfaces::CallerIdentityLookup for T3 {
 }
 
 impl RuntimeAdapter for T3 {
+    fn conversation_source(
+        &self,
+        home: &instrukt_core::home::Home,
+        env: &instrukt_core::config::Env,
+    ) -> Result<Box<dyn super::conversations::ConversationSource>, SessionsError> {
+        Ok(Box::new(super::_t3_conversations::T3Conversations::new(
+            home, env,
+        )))
+    }
     fn provider_snapshot(
         &self,
         home: &instrukt_core::home::Home,
@@ -204,7 +213,8 @@ impl RuntimeAdapter for T3 {
     fn supports(&self, capability: Capability) -> bool {
         matches!(
             capability,
-            Capability::CreateWorktree
+            Capability::ConversationSource
+                | Capability::CreateWorktree
                 | Capability::AgentSelection
                 | Capability::InputConsumption
                 | Capability::AssignmentEvidence

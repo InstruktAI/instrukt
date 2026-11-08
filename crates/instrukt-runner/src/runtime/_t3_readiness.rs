@@ -225,30 +225,14 @@ impl Drop for Token {
 }
 fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
     let cli = match command(&["--version"], "cannot inspect CLI release") {
-        Ok(release) => release.trim().strip_prefix("t3 v").map(str::to_owned),
-        Err(_) => None,
+        Ok(release) => Some(release),
+        Err(error) => {
+            tracing::debug!(event="t3_readiness_release_unavailable",error=%error);
+            None
+        }
     };
-    let explicit = env.get("T3CODE_HOME").filter(|v| !v.trim().is_empty());
-    let base = explicit
-        .map(|value| {
-            let value = value.trim();
-            if let Some(rest) = value.strip_prefix("~/") {
-                home.machine_user_home().join(rest)
-            } else {
-                std::path::PathBuf::from(value)
-            }
-        })
-        .unwrap_or_else(|| home.machine_user_home().join(".t3"));
-    let band = if explicit.is_none()
-        && env
-            .get("VITE_DEV_SERVER_URL")
-            .is_some_and(|v| !v.is_empty())
-    {
-        "dev"
-    } else {
-        "userdata"
-    };
-    let bytes = std::fs::read(base.join(band).join("server-runtime.json"))
+    let location = super::_t3_home::T3Home::discover(home, env);
+    let bytes = std::fs::read(location.descriptor())
         .map_err(|_| refused("cannot discover the local running server"))?;
     let state: RuntimeState =
         serde_json::from_slice(&bytes).map_err(|_| refused("unrecognized server runtime state"))?;

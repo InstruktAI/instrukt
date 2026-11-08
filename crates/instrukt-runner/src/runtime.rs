@@ -1,6 +1,11 @@
 //! Structured runtime primitives; the selected runtime owns conversations and workspaces.
 mod _t3;
+mod _t3_conversations;
+mod _t3_fingerprint;
+pub(crate) mod _t3_home;
+mod _t3_notifications;
 mod _t3_readiness;
+pub mod conversations;
 
 use std::path::{Path, PathBuf};
 
@@ -76,6 +81,7 @@ pub struct Conversation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
+    ConversationSource,
     CreateWorktree,
     AttachWorktree,
     Link,
@@ -87,6 +93,7 @@ pub enum Capability {
 impl std::fmt::Display for Capability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::ConversationSource => "durable conversation changes",
             Self::CreateWorktree => "worktree creation",
             Self::AttachWorktree => "worktree attachment",
             Self::Link => "link",
@@ -181,6 +188,16 @@ pub enum SelectionOperation {
 }
 
 pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
+    fn conversation_source(
+        &self,
+        _home: &instrukt_core::home::Home,
+        _env: &Env,
+    ) -> Result<Box<dyn conversations::ConversationSource>, SessionsError> {
+        Err(SessionsError::MissingCapability {
+            runtime: self.runtime().name().into(),
+            capability: Capability::ConversationSource,
+        })
+    }
     fn runtime(&self) -> Runtime;
     fn provider_snapshot(
         &self,

@@ -115,6 +115,10 @@ pub struct FakeT3 {
 }
 
 impl FakeT3 {
+    pub fn release(&self, value: &str) {
+        std::fs::write(self.state_dir().join("release"), value).unwrap();
+    }
+
     pub fn state_dir(&self) -> &std::path::Path {
         &self.state
     }

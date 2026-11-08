@@ -82,7 +82,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
-  held task failures and the last wake-up), whose schema is published in
+  held task failures and the last wake-up, plus retained history, source positions and import provenance), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -96,6 +96,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list|resolve-start` surface,
+  `instrukt history extract|import-teleclaude|search|show`,
   `instrukt ticks status`, and wake-up registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, optional linked input and notification; instrukt-owned start semantic-key discovery
