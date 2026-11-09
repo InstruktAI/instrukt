@@ -480,11 +480,10 @@ impl Owned {
         self.pending_receiver = Some(desired.clone());
         self.save(request.home)?;
         self.write_files(desired)?;
-        if active {
-            restart_receiver(request.home, desired)?;
-        } else {
+        if !active {
             start(desired)?;
         }
+        restart_receiver(request.home, desired)?;
         super::_launch::verify(request.home, port)?;
         if let Some((port, route)) = &desired.probe {
             super::receiver_health(*port, route)?;

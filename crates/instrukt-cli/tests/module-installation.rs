@@ -1352,6 +1352,7 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
     )
     .unwrap();
     let unit = record["resources"]["receiver"]["unit"].as_str().unwrap();
+    fixture.request(&["kickstart", "-k", &format!("gui/1/{unit}")]);
     let before = fixture.request(&["inspect", unit]);
     let untouched = common::LiveGuard::over(vec![], vec![env.home().into()]);
     env.run(env.home(), ["install", "--check"]).failure();

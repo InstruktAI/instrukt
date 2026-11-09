@@ -121,8 +121,7 @@ def serve(address: str) -> None:
                             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                             listener.bind(("127.0.0.1", int(definition["Sockets"]["instrukt"]["SockServiceName"])))
                             listener.listen()
-                            job.listener = listener
-                            launch(job)
+                            job.listener = listener  # Native socket jobs can remain cold until explicitly started.
                     elif operation == Operation.DEBUG:
                         if not ignore_debug:
                             job = jobs[args[1].split("/")[-1]]
