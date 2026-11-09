@@ -1,0 +1,24 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "stdout(&env, &init)"
+---
+project layer (instrukt.yaml): created
+project docs (docs/project/): created
+project index (docs/project/index.yaml): created
+project schema (docs/project/schema.yaml): not written: sdlc is not published on this computer, so the project follows the root rules only
+master (AGENTS.master.md): created
+editor schemas (.instrukt/schemas/): completed
+  .instrukt/schemas/general-index.schema.json: not written: a symbolic link
+  .instrukt/schemas/domain-index.schema.json: not written: a symbolic link
+  .instrukt/schemas/project-index.schema.json: not written: a symbolic link
+  .instrukt/schemas/snippet-schema.schema.json: not written: a symbolic link
+  .instrukt/schemas/instrukt.schema.json: not written: a symbolic link
+  instrukt.yaml: modeline inserted
+  docs/project/index.yaml: modeline inserted
+ignores of AGENTS.md and .instrukt/ (.gitignore): created
+hook sections: created
+  hooks directory: [TMP]/demo/.git/hooks
+  post-commit: written
+  post-merge: written
+  post-rewrite: written
+  post-checkout: written

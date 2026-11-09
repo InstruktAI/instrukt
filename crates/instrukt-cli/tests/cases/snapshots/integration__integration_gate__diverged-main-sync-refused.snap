@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/integration-gate.rs
+assertion_line: 584
+expression: lines
+---
+level=WARNING logger=instrukt_runner::runner msg="" error="cannot synchronize canonical checkout [PROJECT]: local main is not an ancestor of remote main; preserve its history and reconcile in a reviewed worktree" event=canonical_checkout_sync_failed project=demo

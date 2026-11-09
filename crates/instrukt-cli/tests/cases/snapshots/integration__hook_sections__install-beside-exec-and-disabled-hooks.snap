@@ -1,0 +1,9 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "stdout(&env, &installed)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+post-commit: written
+post-merge: written before the line running exec (line 4)
+post-rewrite: written
+post-checkout: written; the file is not executable, so git does not run it (left as it is)

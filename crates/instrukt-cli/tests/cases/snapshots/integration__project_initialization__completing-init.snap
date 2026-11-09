@@ -1,0 +1,24 @@
+---
+source: crates/instrukt-cli/tests/cases/project-initialization.rs
+expression: "stdout(&env, &completed)"
+---
+project layer (instrukt.yaml): already present
+project docs (docs/project/): already present
+project index (docs/project/index.yaml): already present
+project schema (docs/project/schema.yaml): not written: sdlc is not published on this computer, so the project follows the root rules only
+master (AGENTS.master.md): already present
+editor schemas (.instrukt/schemas/): created
+  .instrukt/schemas/general-index.schema.json: schema written
+  .instrukt/schemas/domain-index.schema.json: schema written
+  .instrukt/schemas/project-index.schema.json: schema written
+  .instrukt/schemas/snippet-schema.schema.json: schema written
+  .instrukt/schemas/instrukt.schema.json: schema written
+  instrukt.yaml: modeline inserted
+  docs/project/index.yaml: modeline inserted
+ignores of AGENTS.md and .instrukt/ (.gitignore): completed
+hook sections: created
+  hooks directory: [TMP]/demo/.git/hooks
+  post-commit: written
+  post-merge: written
+  post-rewrite: written
+  post-checkout: written

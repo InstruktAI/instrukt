@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
-assertion_line: 116
-expression: stdout
----
-[PROJECT]/instrukt.yaml: webhooks: `webhooks` expected domain-keyed source maps with required secret and optional previous_secret, verify, header, name_from or name

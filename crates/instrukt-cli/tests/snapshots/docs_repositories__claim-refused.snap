@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/docs-repositories.rs
-expression: "stderr(&env, &refused).replace(&mine.head(), \"[SHA]\")"
----
-instrukt: mydocs at [SHA] is not published: `docs/domain/sdlc/` is owned by project `doctrine`; it is free to claim once `doctrine` stops publishing it

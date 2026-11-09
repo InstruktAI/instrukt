@@ -1,0 +1,27 @@
+---
+source: crates/instrukt-cli/tests/cases/workflow-definition.rs
+expression: "redact(&format!(\"{before}=====\\n{after}\"))"
+---
+todo: tidy-config (demo)
+flow: prepare
+claim: claimed by this session
+state: plan_drafting
+transition: start -> plan_drafting (#1)
+action: draft-plan
+responsible: planner (crew/procedure/plan)
+command: instrukt docs get crew/procedure/plan
+effects: none
+instructions:
+Draft the implementation plan of tidy-config.
+=====
+todo: tidy-config (demo)
+flow: prepare
+claim: held by this session
+state: prd_drafting
+transition: start -> prd_drafting (#1)
+action: draft-prd
+responsible: prepare-lead (crew/procedure/prepare-lead)
+command: instrukt docs get crew/procedure/prepare-lead --closure
+effects: none
+instructions:
+Write down what tidy-config must achieve before planning it.

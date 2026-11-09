@@ -1,0 +1,25 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 1187
+expression: "redact(&other.ok([\"show\", \"moved-decision\"]))"
+---
+moved-decision · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 5
+intent:
+  Keep the applied decision when work moves.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: Inspect on this computer. (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  prd (1 version)
+    <digest 2> by Test Developer at <time>
+  log (1 version)
+    <digest 3> by Test Developer at <time>
+stamps:
+  #3 <time> changes requested on prd: Clarify the result. — <digest 2> — by @maintainer

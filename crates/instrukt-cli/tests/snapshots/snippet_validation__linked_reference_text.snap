@@ -1,9 +1,0 @@
----
-source: crates/instrukt-cli/tests/snippet-validation.rs
-assertion_line: 759
-expression: run.out
----
-docs/domain/acme/policy/rules.md: reference-form-invalid: Care
-docs/domain/acme/policy/rules.md: reference-form-invalid: acme
-docs/domain/acme/policy/rules.md: reference-form-invalid: acme/principle/care and more
-notice: docs/domain/acme/principle/care.md: unreferenced-snippet: acme/principle/care

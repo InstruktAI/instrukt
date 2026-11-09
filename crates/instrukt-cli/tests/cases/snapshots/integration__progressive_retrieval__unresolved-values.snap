@@ -1,0 +1,41 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &failed)"
+---
+# instrukt docs get: acme/procedure/fragile
+
+---
+id: acme/procedure/fragile
+type: procedure
+domain: acme
+scope: global
+description: Asks for values it cannot have.
+source: [TMP]/demo/docs/domain/acme/procedure/fragile.md
+---
+# Fragile — Procedure
+
+## Goal
+
+Before.
+
+> instrukt: configured value `runtime.session_id` cannot be resolved: no selected runtime caller context is available; choose runner.runtime and run inside its caller session
+
+> instrukt: configured value `no.such.setting` cannot be resolved: `no.such.setting` does not exist: no `no` in the configuration
+
+After.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

@@ -26,6 +26,7 @@
 )]
 
 pub mod github;
+pub mod progress;
 pub mod redis;
 pub mod redis_proxy;
 pub mod t3_readiness;
@@ -125,14 +126,48 @@ impl TestEnv {
         )
         .unwrap();
         std::fs::set_permissions(&t3, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tools = base.join("system-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        for tool in [
+            "git",
+            "sh",
+            "bash",
+            "env",
+            "python3",
+            "cat",
+            "rm",
+            "mkdir",
+            "mktemp",
+            "dirname",
+            "ps",
+            "tr",
+            "touch",
+            "kill",
+            "chmod",
+            "cp",
+            "mv",
+            "ln",
+            "uname",
+            "head",
+            "wc",
+            "readlink",
+            "sed",
+            "tar",
+            "gzip",
+            "find",
+            "sort",
+            "grep",
+            "id",
+            "redis-server",
+            "awk",
+            "shasum",
+        ] {
+            std::os::unix::fs::symlink(tool_executable(tool), tools.join(tool)).unwrap();
+        }
         let mut vars = BTreeMap::new();
         vars.insert(
             "PATH".into(),
-            format!(
-                "{}:{}",
-                base.join("runtime-bin").display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
+            format!("{}:{}", base.join("runtime-bin").display(), tools.display()),
         );
         vars.insert("HOME".into(), home.display().to_string());
         vars.insert("TMPDIR".into(), tmp.display().to_string());
@@ -278,7 +313,7 @@ impl TestEnv {
     /// `git` ready to run in `dir` with this test's environment, for a test
     /// that bounds how long git may take (`.timeout(…)`).
     pub fn git_command(&self, dir: &Path) -> Command {
-        let mut cmd = Command::new("git");
+        let mut cmd = Command::new(tool_executable("git"));
         cmd.env_clear().envs(&self.vars).current_dir(dir);
         cmd
     }
@@ -377,7 +412,7 @@ where
     S: AsRef<OsStr>,
 {
     let args: Vec<_> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
-    let output = StdCommand::new("git")
+    let output = StdCommand::new(tool_executable("git"))
         .env_clear()
         .envs(vars)
         .args(&args)
@@ -547,4 +582,21 @@ pub fn agent_profiles(env: &TestEnv, patch: &str) {
         serde_yaml_ng::to_string(&agents).unwrap(),
     )
     .unwrap();
+}
+
+/// Locate a declared prerequisite; subprocesses never search ambient PATH.
+pub fn tool_executable(program: &str) -> PathBuf {
+    let ambient = std::env::var_os("PATH").unwrap();
+    let system = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+    // Package-installed prerequisites may live outside the base system.
+    let directories = if matches!(program, "git" | "python3" | "redis-server" | "uv") {
+        std::env::split_paths(&ambient).collect::<Vec<_>>()
+    } else {
+        system.into_iter().map(PathBuf::from).collect::<Vec<_>>()
+    };
+    directories
+        .into_iter()
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("required test tool {program} is not installed"))
 }

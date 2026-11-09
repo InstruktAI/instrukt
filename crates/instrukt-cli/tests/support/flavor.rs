@@ -20,8 +20,8 @@ use instrukt_todos::evidence::artifact_names;
 
 use crate::common::github::FakeGitHub;
 use crate::common::{Repo, TestEnv};
-use crate::documented::{snippet, sync};
-use crate::runtime::{FakeRuntime, global_layer};
+use crate::fixtures::documented::{snippet, sync};
+use crate::fixtures::runtime::{FakeRuntime, global_layer};
 
 /// The GitHub repository the project's work is reflected to.
 pub const REPOSITORY: &str = "acme/demo";
@@ -243,9 +243,9 @@ impl Tracked {
                 "main",
             ]);
         }
-        let proof = crate::runtime::placement_evidence(
+        let proof = crate::fixtures::runtime::placement_evidence(
             &self.env,
-            &crate::runtime::NativePlacement {
+            &crate::fixtures::runtime::NativePlacement {
                 cwd: &folder,
                 slug,
                 role: "work-orchestrator",

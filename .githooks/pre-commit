@@ -1,6 +1,7 @@
 #!/bin/sh
 # instrukt repository checks: shellcheck, fmt, clippy, test
-# (docs/project/policy/testing.md). Needs shellcheck and the Rust toolchain.
+# (docs/project/policy/testing.md). Needs shellcheck, the Rust toolchain and
+# the cargo-nextest version in scripts/test-tools.env.
 # Enable once per clone with `make hooks`.
 set -e
 # Checkouts sharing one CARGO_TARGET_DIR take turns: the whole check runs
@@ -15,8 +16,10 @@ fi
 if [ -z "${INSTRUKT_BUILD_LOCKED:-}" ]; then
     exec scripts/with-build-lock.sh "$0" "$@"
 fi
-shellcheck scripts/*.sh scripts/dev-instrukt .githooks/pre-commit
+shellcheck -x scripts/*.sh scripts/dev-instrukt .githooks/pre-commit
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked --quiet
+scripts/check-test-tool.sh nextest
+cargo nextest run --workspace --locked
+cargo test --workspace --locked --doc
 scripts/check-coverage.sh

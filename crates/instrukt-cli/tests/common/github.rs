@@ -2722,33 +2722,12 @@ fn app_login(id: u64) -> &'static str {
     }
 }
 
-/// Ephemeral RSA material generated for the HTTP fake only, never real App keys.
-fn test_keys() -> &'static (String, String) {
-    static KEYS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
-    KEYS.get_or_init(|| {
-        let temp = tempfile::tempdir().unwrap();
-        let file = temp.path().join("test-app.pem");
-        assert!(
-            std::process::Command::new("openssl")
-                .args(["genrsa", "-out"])
-                .arg(&file)
-                .arg("2048")
-                .output()
-                .unwrap()
-                .status
-                .success()
-        );
-        let public = std::process::Command::new("openssl")
-            .args(["rsa", "-pubout", "-in"])
-            .arg(&file)
-            .output()
-            .unwrap();
-        assert!(public.status.success());
-        (
-            std::fs::read_to_string(file).unwrap(),
-            String::from_utf8(public.stdout).unwrap(),
-        )
-    })
+/// Publicly committed RSA fixtures used only by the isolated fake App.
+fn test_keys() -> (&'static str, &'static str) {
+    (
+        include_str!("../fixtures/test-app-private.pem"),
+        include_str!("../fixtures/test-app-public.pem"),
+    )
 }
 fn jwt_app(authorization: &str, now: jiff::Timestamp) -> Option<u64> {
     let jwt = authorization.strip_prefix("Bearer ")?;
@@ -2803,7 +2782,7 @@ pub fn configure_apps(env: &TestEnv, api: &str, clock: &std::path::Path) {
     let home = instrukt_core::home::Home::at_user_home(
         env.instrukt_home().parent().unwrap().to_path_buf(),
     );
-    instrukt_core::config::set_secret(&home, "TEST_APP_KEY", &test_keys().0).unwrap();
+    instrukt_core::config::set_secret(&home, "TEST_APP_KEY", test_keys().0).unwrap();
 }
 
 fn field_database_id(id: &str) -> u64 {

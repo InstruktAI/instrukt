@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: run.out
+---
+docs/domain/acme/procedure/work/overview.md: procedure-subprocedure-required: acme/procedure/work/overview requires acme/procedure/work/step

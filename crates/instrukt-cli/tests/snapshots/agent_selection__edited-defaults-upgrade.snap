@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/agent-selection.rs
-expression: "String::from_utf8_lossy(&result.get_output().stdout).replace(env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\")"
----
-[TMP]/home/.instrukt/agents.yaml: user edits retained; new agents defaults are available
-[TMP]/home/.instrukt/instrukt.yaml: already at the current schema; kept

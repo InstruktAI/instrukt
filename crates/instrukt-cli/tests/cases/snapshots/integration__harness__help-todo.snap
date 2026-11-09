@@ -1,0 +1,31 @@
+---
+source: crates/instrukt-cli/tests/cases/harness.rs
+assertion_line: 36
+expression: help
+---
+The work record and workflow (todos module)
+
+Usage: instrukt todo <COMMAND>
+
+Commands:
+  create      Record a new todo with its kind and intent
+  list        The project's work: active by default, or iceboxed, removed or delivered
+  show        A todo's record, evidence, holds, claim and session bindings
+  update      Change a todo's metadata, relationships, hold or claim
+  refresh     Refresh a conflicted todo from GitHub
+  freeze      Park a todo in the icebox
+  unfreeze    Return a parked todo to active consideration
+  remove      Withdraw a todo, retained for recovery
+  reactivate  Restore withdrawn work
+  deliver     Record the confirmed delivered commit
+  attempt     Reserve a native role assignment, or record no-start/failure evidence
+  bind        Bind a reserved assignment to its native shared child
+  stamp       Record an attributed fact bound to evidence
+  artifacts   List, read, write and diff a todo's artifacts
+  prepare     A todo's next preparation obligation (deliberate pickup)
+  work        A todo's next delivery obligation (deliberate pickup)
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

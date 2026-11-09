@@ -1,9 +1,0 @@
----
-source: crates/instrukt-cli/tests/event-consumers.rs
-assertion_line: 622
-expression: text
----
-docs/domain/reactions/procedure/respond.md: frontmatter-subscriptions-invalid: erp..paid
-notice: docs/domain/reactions/: domain-without-index: `reactions` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain reactions`
-notice: docs/domain/reactions/procedure/respond.md: unreferenced-snippet: reactions/procedure/respond
-instrukt: fork at [SHA] is not published: the committed documentation has 1 validation finding(s)

@@ -1,0 +1,24 @@
+---
+source: crates/instrukt-cli/tests/cases/integration-gate.rs
+assertion_line: 508
+expression: text
+---
+# instrukt docs get: project/demo/concept/remote-contract
+
+---
+id: project/demo/concept/remote-contract
+type: concept
+domain: project
+scope: project
+description: A reviewed integrated contract.
+source: [TMP]/demo/docs/project/concept/remote-contract.md
+---
+# Remote contract — Concept
+
+## What
+
+The new contract is available before build.
+
+## Why
+
+Text.

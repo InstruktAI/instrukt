@@ -1,0 +1,35 @@
+---
+source: crates/instrukt-cli/tests/cases/project-publication.rs
+expression: "without_tmp(&env, &read.get_output().stdout, &[])"
+---
+# instrukt docs get: snippets/policy/rules
+
+---
+id: snippets/policy/rules
+type: policy
+domain: snippets
+scope: global
+description: The Rules policy.
+source: [TMP]/demo/docs/domain/snippets/policy/rules.md
+---
+# Rules — Policy
+
+## Rules
+
+Follow Rules.
+
+## Rationale
+
+Because.
+
+## Scope
+
+All.
+
+## Enforcement
+
+Review.
+
+## Exceptions
+
+None.

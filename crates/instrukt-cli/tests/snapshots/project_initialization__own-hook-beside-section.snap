@@ -1,9 +1,0 @@
----
-source: crates/instrukt-cli/tests/project-initialization.rs
-expression: "repo.read(\".git/hooks/post-commit\")"
----
-#!/bin/sh
-echo "the developer's own post-commit"
-# >>> instrukt >>>
-instrukt hooks run post-commit "$@" || true
-# <<< instrukt <<<

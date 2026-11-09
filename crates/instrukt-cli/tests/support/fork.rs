@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use crate::common::{Repo, TestEnv};
-use crate::documented::{project, snippet, sync};
+use crate::fixtures::documented::{project, snippet, sync};
 
 /// The standing agent, as `resolve-start` and its anomaly name it.
 pub const STANDING_AGENT: &str = "fork/procedure/upstream-watch@fork";

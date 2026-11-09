@@ -1,0 +1,9 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "first_lines.join(\"\\n\")"
+---
+instrukt.yaml: # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
+docs/general/index.yaml: # yaml-language-server: $schema=../../.instrukt/schemas/general-index.schema.json
+docs/domain/sdlc/index.yaml: # yaml-language-server: $schema=../../../.instrukt/schemas/domain-index.schema.json
+docs/domain/sdlc/schema.yaml: # yaml-language-server: $schema=../../../.instrukt/schemas/snippet-schema.schema.json
+docs/project/index.yaml: # yaml-language-server: $schema=../../.instrukt/schemas/project-index.schema.json

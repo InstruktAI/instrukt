@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stderr(&env, &reserved)"
----
-instrukt: unknown domain: project; the published domains are: acme, beta, gamma

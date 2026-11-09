@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/logging.rs
-assertion_line: 79
-expression: records
----
-[TIME] level=INFO logger=instrukt_core::publication::_sync msg="" commit=[SHA] event=docs_published project=demo

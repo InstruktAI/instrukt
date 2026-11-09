@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/github-apps.rs
+expression: "rejected_credential(\"POST\", \"/app/installations/1/access_tokens\",\nserde_json::json!({\"token\":\"must-not-leak\",\"expires_at\":\"2099-01-01T00:00:00Z\",\"permissions\":{}}))"
+---
+wrote log of pending-app: <digest 1>
+reflection: pending: GitHub: GitHub App setup incomplete: installation credential lacks required issues permission; repair github.apps and its repository installation with the configuration skill

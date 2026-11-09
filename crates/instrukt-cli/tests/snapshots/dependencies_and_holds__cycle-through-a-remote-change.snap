@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/dependencies-and-holds.rs
-expression: refused
----
-instrukt: this change makes `nested-lists` wait on itself: nested-lists → parser-depth → nested-lists

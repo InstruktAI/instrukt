@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/procedure-subscription-routing.rs
-expression: "String::from_utf8_lossy(&result.get_output().stdout)"
----
-docs/project/procedure/invalid.md: frontmatter-subscription-reach-invalid: subscription_home: project required at project position
-notice: docs/project/procedure/invalid.md: unreferenced-snippet: project/fork/procedure/invalid

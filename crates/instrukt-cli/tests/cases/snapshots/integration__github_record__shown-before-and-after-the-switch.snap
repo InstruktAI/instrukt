@@ -1,0 +1,107 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "format!(\"{first_shown}===\\n{}\", shown(&project, &slugs))"
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 1
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+parser-depth · change · iceboxed
+identity: <id 1>
+record status: iceboxed
+created: <time> by Test Developer
+revision: 2
+intent:
+  Track list depth in the parser.
+reflection: reflected to GitHub
+issue: #2
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+renderer · change · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 2
+intent:
+  Render lists at their depth.
+reflection: reflected to GitHub
+issue: #3
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+===
+nested-lists · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 2
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+parser-depth · change · iceboxed
+identity: <id 1>
+record status: iceboxed
+created: <time> by Test Developer
+revision: 2
+intent:
+  Track list depth in the parser.
+reflection: reflected to GitHub
+issue: #2
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+renderer · change · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 3
+intent:
+  Render lists at their depth.
+reflection: reflected to GitHub
+issue: #3
+claim: not held
+hold: none
+released holds:
+  waiting (released <time> by Test Developer)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

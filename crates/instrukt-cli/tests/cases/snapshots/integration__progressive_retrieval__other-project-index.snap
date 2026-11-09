@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &others)"
+---
+# instrukt docs index: snippet ids with their descriptions
+# Filter with --domain <acme|beta|gamma> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Source of project other: [TMP]/other/docs/project/ — published commit [SHA] — remote none
+
+project/other/concept/notes: Other's notes.
+
+# Read the snippets you need: instrukt docs get <id> [<id>…]
+# Pending documentation is flagged, never hidden: `(delivered by: <slugs>)` marks a snippet not yet delivered, `(superseded by: <slugs>)` a live snippet with pending changes. `instrukt docs get` reads the current contract; `--target <slug>` on `index` and `get` shows the documentation as that todo will deliver it.

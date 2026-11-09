@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+expression: "threads[0][\"model\"]"
+---
+"claude-opus-5-5"

@@ -1,0 +1,9 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+expression: calls
+---
+[
+  "--version",
+  "auth session issue --scope orchestration:read --ttl 5m --token-only --label instrukt-readiness",
+  "auth session revoke -- 00000000-0000-4000-8000-000000000001"
+]

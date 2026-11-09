@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/work-dispatch.rs
-expression: "threads[0][\"provider\"]"
----
-"codex"

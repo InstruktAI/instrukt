@@ -1,0 +1,68 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+assertion_line: 165
+expression: "stdout(&env, &both)"
+---
+# instrukt docs get: acme/policy/rules acme/principle/care
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
+---
+# Rules — Policy
+
+## Rules
+
+Follow the rules.
+
+A reference is written `@docs/project/design/y.md`, for example:
+
+```
+- @~/.instrukt/docs/acme/principle/care.md
+```
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
+
+---
+id: acme/principle/care
+type: principle
+domain: acme
+scope: global
+description: Why care matters.
+source: [TMP]/demo/docs/domain/acme/principle/care.md
+---
+# Care — Principle
+
+## Principle
+
+Care.
+
+## Rationale
+
+Text.
+
+## Implications
+
+Text.
+
+## Tensions
+
+Text.

@@ -1,0 +1,15 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &guide)"
+---
+# instrukt docs get: third-party/tool/guide
+
+---
+id: third-party/tool/guide
+scope: project
+description: How the tool works.
+source: [TMP]/demo/docs/third-party/tool/guide.md
+---
+# Tool guide
+
+Use it.

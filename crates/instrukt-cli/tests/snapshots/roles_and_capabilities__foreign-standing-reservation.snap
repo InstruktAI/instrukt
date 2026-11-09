@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/roles-and-capabilities.rs
-assertion_line: 282
-expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
----
-instrukt: role `focused-handler` (focused) cannot perform standing-bind on events bind with its own scope; return the required action to the dispatcher in your own output or assigned artifact

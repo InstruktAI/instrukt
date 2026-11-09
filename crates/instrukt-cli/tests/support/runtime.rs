@@ -1,10 +1,8 @@
 //! The fake T3 host boundary shared by runner and work tests.
 #![allow(clippy::unwrap_used, dead_code, reason = "isolated test setup")]
-#[path = "t3.rs"]
-mod t3;
+pub use super::t3::FakeT3;
 use crate::common::TestEnv;
 use std::path::Path;
-pub use t3::FakeT3;
 
 pub struct FakeRuntime {
     pub name: String,

@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+expression: "github_check(&env, &repo, false)"
+---
+[
+  "project github-ready GitHub reflection: GitHub App setup incomplete: GitHub has no /issues/1/artifacts?per_page=100&page=1; repair github.apps and its repository installation with the configuration skill"
+]

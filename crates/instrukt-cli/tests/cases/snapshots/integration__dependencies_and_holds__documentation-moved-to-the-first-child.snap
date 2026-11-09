@@ -1,0 +1,52 @@
+---
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
+expression: "redact(&format!(\"{filed}---\\n{}\", rendered(&docs)))"
+---
+created nested-lists (change) with identity <id 1>
+documentation to commit: docs/project/spec/feature/depth.md
+documentation to commit: docs/project/spec/feature/lists.md
+documentation to commit: docs/project/spec/feature/lists.list-depth.md
+documentation to commit: docs/project/spec/feature/lists.nested-lists.md
+reflection: reflected to GitHub
+---
+== project/spec/feature/depth.md
+---
+description: List depth.
+delivered_by: [nested-lists]
+---
+
+# Depth — Spec
+
+Lists keep their depth.
+
+== project/spec/feature/lists.md
+---
+description: Lists.
+---
+
+# Lists — Spec
+
+The current lists.
+
+<!-- planned:nested-lists -->
+Depth everywhere.
+<!-- /planned:nested-lists -->
+
+== project/spec/feature/lists.nested-lists.md
+---
+description: Lists.
+---
+
+# Lists — Spec
+
+The lists as list-depth delivers them.
+
+== project/spec/feature/renderer.md
+---
+description: Rendering.
+delivered_by: [renderer]
+---
+
+# Renderer — Spec
+
+Rendered at depth.

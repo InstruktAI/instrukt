@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/docs-repositories.rs
+expression: "stdout(&env, &domains)"
+---
+# instrukt docs index: snippet ids with their descriptions
+# Filter with --domain <general|sdlc> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+
+general/policy/rules: The general rules policy.
+sdlc/policy/rules: The sdlc rules policy.
+
+# Read the snippets you need: instrukt docs get <id> [<id>…]
+# Pending documentation is flagged, never hidden: `(delivered by: <slugs>)` marks a snippet not yet delivered, `(superseded by: <slugs>)` a live snippet with pending changes. `instrukt docs get` reads the current contract; `--target <slug>` on `index` and `get` shows the documentation as that todo will deliver it.

@@ -1,0 +1,26 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: read
+---
+# instrukt docs get: beta/spec/thing
+# WARNING: publication is behind main: main is at [MAIN], the published commit is [PUBLISHED]. Run `instrukt sync` in this project to publish it.
+
+---
+id: beta/spec/thing
+type: spec
+domain: beta
+scope: global
+description: What a thing is.
+source: [TMP]/demo/docs/domain/beta/spec/thing.md
+---
+# Thing — Spec
+
+## What it is
+
+### Detail
+
+A thing.
+
+## Canonical fields
+
+Text.

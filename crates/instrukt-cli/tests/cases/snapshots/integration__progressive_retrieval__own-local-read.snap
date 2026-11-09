@@ -1,0 +1,24 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &local)"
+---
+# instrukt docs get: project/demo/spec/feature/x
+# Required reads (not loaded) that must have been read at least once: project/demo/design/y
+
+---
+id: project/demo/spec/feature/x
+type: spec
+domain: project
+scope: project
+description: The x feature.
+source: [TMP]/demo/docs/project/spec/feature/x.md
+---
+# X — Spec
+
+## What it is
+
+The x feature.
+
+## Canonical fields
+
+Text.

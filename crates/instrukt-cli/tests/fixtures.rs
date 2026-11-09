@@ -1,0 +1,23 @@
+//! Boundary fixtures shared by every CLI scenario.
+#[path = "support/documented.rs"]
+pub mod documented;
+#[path = "support/event_transport.rs"]
+pub mod event_transport;
+#[path = "support/flavor.rs"]
+pub mod flavor;
+#[path = "support/handler.rs"]
+pub mod handler;
+#[path = "support/history.rs"]
+pub mod history;
+#[path = "support/mapped.rs"]
+pub mod mapped;
+#[path = "support/runtime.rs"]
+pub mod runtime;
+#[path = "support/t3.rs"]
+pub mod t3;
+#[path = "support/webhooks.rs"]
+pub mod webhooks;
+#[path = "support/work.rs"]
+pub mod work;
+#[path = "support/workflow.rs"]
+pub mod workflow;

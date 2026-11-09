@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/conversation-links.rs
-assertion_line: 893
-expression: "discussion_log(&env, \"discuss\", &id)"
----
-level=INFO logger=instrukt_runner::links msg="" event=conversation_opened link=[LINK] position=[POSITION] source=t3:parent target=t3:child
-level=INFO logger=instrukt_runner::links::_diagnostics msg="" event=conversation_closed link=[LINK] source=t3:parent target=t3:child

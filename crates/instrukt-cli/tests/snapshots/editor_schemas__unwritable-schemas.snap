@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/editor-schemas.rs
-expression: "without_temporary_names(&stderr(&env, &failed))"
----
-instrukt: cannot write [TMP]/demo/.instrukt/schemas/instrukt.schema.json: Permission denied (os error 13) at path "[TMP]/demo/.instrukt/schemas/.tmp[RANDOM]": Permission denied (os error 13) at path "[TMP]/demo/.instrukt/schemas/.tmp[RANDOM]"

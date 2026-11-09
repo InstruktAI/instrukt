@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/work-dispatch.rs
-expression: "String::from_utf8_lossy(&refused.get_output().stderr)"
----
-instrukt: `instrukt tick` serves the todos and events modules, and both are off; switch on `modules.todos` or `modules.events`

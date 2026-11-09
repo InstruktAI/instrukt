@@ -1,0 +1,41 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+expression: marks
+---
+[
+  {
+    "profile": "claude",
+    "model": "claude-fable-5-1",
+    "status": "unavailable",
+    "until": "2030-01-01T01:00:00Z",
+    "reason": "quota: window session at 100%; one-hour default expiry (resetsAt missing)"
+  },
+  {
+    "profile": "claude",
+    "model": "claude-haiku-5-5",
+    "status": "unavailable",
+    "until": "2030-01-01T01:00:00Z",
+    "reason": "quota: window session at 100%; one-hour default expiry (resetsAt missing)"
+  },
+  {
+    "profile": "claude",
+    "model": "claude-opus-5-5",
+    "status": "unavailable",
+    "until": "2099-01-01T00:00:00Z",
+    "reason": "operator restriction"
+  },
+  {
+    "profile": "claude",
+    "model": "claude-opus-5-5",
+    "status": "unavailable",
+    "until": "2030-01-01T01:00:00Z",
+    "reason": "quota: window session at 100%; one-hour default expiry (resetsAt missing)"
+  },
+  {
+    "profile": "claude",
+    "model": "claude-sonnet-5-5",
+    "status": "unavailable",
+    "until": "2030-01-01T01:00:00Z",
+    "reason": "quota: window session at 100%; one-hour default expiry (resetsAt missing)"
+  }
+]

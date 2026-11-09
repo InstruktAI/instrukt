@@ -1,0 +1,32 @@
+---
+source: crates/instrukt-cli/tests/cases/task-timing.rs
+expression: "work::redact(&project.todo([\"show\", \"quarter-hourly-sync\"]))"
+---
+quarter-hourly-sync · task · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 12
+intent:
+  Post the weekly status summary.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: task failed: the sync target refused our credentials (automatic, by instrukt runner, <time>)
+schedule: cron:*/15 * * * * (catch up: once)
+sessions:
+  task-runner/1: t3:s1
+    key: instrukt:task:demo/<id 1>:2030-01-06T09%3A00%3A00Z
+  task-runner/2: t3:s2
+    key: instrukt:task:demo/<id 1>:2030-01-06T09%3A15%3A00Z
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  task-plan (1 version)
+    <digest 2> by Test Developer at <time>
+stamps:
+  #3 <time> task plan approved by a human — <digest 2> — by Test Developer, eval <digest 3>
+  #4 <time> task firing started — occurrence <time> — by session t3:s1 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>
+  #5 <time> task outcome success — occurrence <time> — by session t3:s1 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>
+  #6 <time> task firing started — occurrence <time> — by session t3:s2 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>
+  #7 <time> task outcome error: the sync target refused our credentials — occurrence <time> — by session t3:s2 as task-runner, model claudeAgent claude-opus-5-5, eval <digest 3>

@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/github-record.rs
-expression: "project.ok([\"artifacts\", \"read\", \"schema-change\", \"input\"])"
----
-Keep the depth of nested lists when parsing Markdown.

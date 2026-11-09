@@ -1,0 +1,15 @@
+---
+source: crates/instrukt-cli/tests/cases/todos.rs
+expression: "refusals.join(\"---\\n\")"
+---
+todo create
+instrukt: the todos module is off; switch it on with `modules.todos: true` in instrukt.yaml
+---
+todo update
+instrukt: the todos module is off; switch it on with `modules.todos: true` in instrukt.yaml
+---
+todo prepare
+instrukt: the todos module is off; switch it on with `modules.todos: true` in instrukt.yaml
+---
+todo work
+instrukt: the todos module is off; switch it on with `modules.todos: true` in instrukt.yaml

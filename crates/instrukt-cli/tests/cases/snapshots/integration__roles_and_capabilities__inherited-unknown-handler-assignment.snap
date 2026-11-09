@@ -1,0 +1,33 @@
+---
+source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+expression: h.help()
+---
+Context engineering for coding agents
+
+Usage: instrukt <COMMAND>
+
+Commands:
+  status     Read computer/repository setup, adoption and publication before changing instrukt
+  bugs       Park, inspect and remove known-issue dispositions for the log bug hunter
+  agents     Configured profiles and expiring profile/model availability
+  config     Read, edit, initialize and validate `instrukt.yaml`
+  docs       Validate, list and read documentation snippets
+  hooks      Install, remove, inspect and run instrukt's git hook sections
+  specs      Use-case coverage, reservation and trace
+  blueprint  Structural graph queries (blueprint module)
+  todo       The work record and workflow (todos module)
+  eval       Evaluation reports from the work record
+  events     Discover producer-declared event types and their schemas
+  ticks      Scheduled tick status
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Role: custom-handler · class: focused. Scope comes from assignment
+instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork. Object claims, phase and writer
+constraints apply.
+Usual capabilities: role: custom-handler; class: focused; grants: docs-read:any, todo-read:any,
+artifact-read:any, agents-read:any, config-read:any, repository-read:any, code-check:any,
+eval-read:any, events-read:any, installation-read:any

@@ -1,0 +1,150 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+assertion_line: 884
+expression: "stdout(&env, &read)"
+---
+# instrukt docs get --closure: acme/procedure/start
+# Required reads (included): acme/policy/rules, acme/principle/care, acme/concept/terms, beta, beta/spec/thing
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
+---
+# Rules — Policy
+
+## Rules
+
+Follow the rules.
+
+A reference is written `@docs/project/design/y.md`, for example:
+
+```
+- @~/.instrukt/docs/acme/principle/care.md
+```
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
+
+[Guide](https://example.test/guide)
+
+## See Also
+
+- acme/principle/care
+
+```markdown
+## See Also
+- [acme/principle/care](../principle/care.md)
+```
+
+`- [acme/principle/care](../principle/care.md)`
+
+---
+id: acme/principle/care
+type: principle
+domain: acme
+scope: global
+description: Why care matters.
+source: [TMP]/demo/docs/domain/acme/principle/care.md
+---
+# Care — Principle
+
+## Principle
+
+Care.
+
+## Rationale
+
+Text.
+
+## Implications
+
+Text.
+
+## Tensions
+
+Text.
+
+---
+id: acme/concept/terms
+type: concept
+domain: acme
+scope: global
+description: The words used.
+source: [TMP]/demo/docs/domain/acme/concept/terms.md
+---
+# Terms — Concept
+
+## What
+
+Terms.
+
+## Why
+
+Text.
+
+---
+id: beta/spec/thing
+type: spec
+domain: beta
+scope: global
+description: What a thing is.
+source: [TMP]/demo/docs/domain/beta/spec/thing.md
+---
+# Thing — Spec
+
+## What it is
+
+### Detail
+
+A thing.
+
+## Canonical fields
+
+Text.
+
+---
+id: acme/procedure/start
+type: procedure
+domain: acme
+scope: global
+description: Starts a session.
+source: [TMP]/demo/docs/domain/acme/procedure/start.md
+---
+# Start — Procedure
+
+## Goal
+
+Start.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

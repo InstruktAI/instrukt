@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/release-installer.rs
+expression: "String::from_utf8_lossy(&release.install(&[]).stderr)"
+---
+instrukt installer: unsupported platform unsupported/unsupported; supported: aarch64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu

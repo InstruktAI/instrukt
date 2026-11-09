@@ -1,0 +1,24 @@
+---
+source: crates/instrukt-cli/tests/cases/release-installer.rs
+expression: calls
+---
+release
+create
+v0.1.0
+instrukt-v0.1.0-aarch64-apple-darwin.tar.gz
+instrukt-v0.1.0-aarch64-unknown-linux-gnu.tar.gz
+instrukt-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+SHA256SUMS
+[SCRIPTS]/install.sh
+--repo
+fixture/project
+--generate-notes
+--draft
+--verify-tag
+release
+edit
+v0.1.0
+--repo
+fixture/project
+--draft=false
+--latest

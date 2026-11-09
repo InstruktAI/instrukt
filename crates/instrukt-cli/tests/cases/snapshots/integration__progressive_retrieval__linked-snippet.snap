@@ -1,0 +1,56 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+assertion_line: 870
+expression: "stdout(&env, &read)"
+---
+# instrukt docs get: acme/policy/rules
+# Required reads (not loaded) that must have been read at least once: acme/principle/care
+
+---
+id: acme/policy/rules
+type: policy
+domain: acme
+scope: global
+description: The rules of the work.
+source: [TMP]/demo/docs/domain/acme/policy/rules.md
+---
+# Rules — Policy
+
+## Rules
+
+Follow the rules.
+
+A reference is written `@docs/project/design/y.md`, for example:
+
+```
+- @~/.instrukt/docs/acme/principle/care.md
+```
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
+
+[Guide](https://example.test/guide)
+
+## See Also
+
+- acme/principle/care
+
+```markdown
+## See Also
+- [acme/principle/care](../principle/care.md)
+```
+
+`- [acme/principle/care](../principle/care.md)`

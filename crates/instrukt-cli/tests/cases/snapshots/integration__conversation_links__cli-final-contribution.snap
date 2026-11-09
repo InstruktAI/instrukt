@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/conversation-links.rs
+expression: "fake.message(\"parent\", 1).replace(source.identity(), \"t3:[SOURCE]\")"
+---
+[Peer (t3:[SOURCE]:child · agent · 2030-01-01 12:05 UTC)]
+We have reached a conclusion.
+[/Peer (t3:[SOURCE]:child · agent · 2030-01-01 12:05 UTC)]

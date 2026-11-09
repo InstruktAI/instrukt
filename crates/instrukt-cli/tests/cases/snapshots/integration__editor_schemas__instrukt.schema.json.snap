@@ -1,0 +1,307 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "String::from_utf8(bytes).unwrap()"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "instrukt.yaml (project layer)",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "project": {
+      "type": "string"
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "blueprint",
+          "todos",
+          "events",
+          "history"
+        ]
+      }
+    },
+    "board": {
+      "anyOf": [
+        {
+          "const": false
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$"
+        }
+      ]
+    },
+    "github": {
+      "type": "object",
+      "properties": {
+        "approvers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repository": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals": {
+      "type": "object",
+      "properties": {
+        "prd": {
+          "enum": [
+            "human",
+            "peer"
+          ]
+        },
+        "task": {
+          "enum": [
+            "human",
+            "peer"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "modules": {
+      "type": "object",
+      "properties": {
+        "blueprint": {
+          "type": "boolean"
+        },
+        "todos": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "boolean"
+        },
+        "history": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "properties": {
+        "watch": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "remote": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "remote",
+              "ref"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "webhooks": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "type": "string",
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+          },
+          "previous_secret": {
+            "type": "string",
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+          },
+          "verify": {
+            "enum": [
+              "native",
+              "github",
+              "hmac-sha256"
+            ],
+            "default": "native"
+          },
+          "header": {
+            "type": "string",
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          },
+          "state": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            }
+          },
+          "subject_from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name_from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "minItems": 1
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "subject_from"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "name",
+                "name_from"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "verify"
+              ],
+              "properties": {
+                "verify": {
+                  "const": "github"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "name"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "name_from"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "verify"
+              ],
+              "properties": {
+                "verify": {
+                  "const": "hmac-sha256"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "header"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "header"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "ci": {
+      "type": "object",
+      "properties": {
+        "dependency_branch_prefixes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "blueprint": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "enum": [
+            "graphify"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runner": {
+      "type": "object",
+      "properties": {
+        "autostart": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ]
+}

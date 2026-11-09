@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+expression: "stdout(&env, &validated)"
+---
+[TMP]/clone/instrukt.yaml: runner.runtime: not permitted in the project layer (global layer only)
+[TMP]/clone/instrukt.yaml: agents.order: expected a mapping
+[TMP]/clone/instrukt.yaml: agents.tier: expected a mapping

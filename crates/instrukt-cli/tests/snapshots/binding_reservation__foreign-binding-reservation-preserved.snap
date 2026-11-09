@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/binding-reservation.rs
-assertion_line: 176
-expression: "String::from_utf8_lossy(&result.get_output().stderr)"
----
-instrukt: cannot fold docs/project/spec/feature/things/thing.md: folding todo-b would lose the binding reservation of todo-a; fold todo-a first or carry it into docs/project/spec/feature/things/thing.todo-b.md

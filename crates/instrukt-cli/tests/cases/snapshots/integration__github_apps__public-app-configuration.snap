@@ -1,0 +1,36 @@
+---
+source: crates/instrukt-cli/tests/cases/github-apps.rs
+expression: public
+---
+{
+  "project": {
+    "app_id": 1,
+    "slug": "instruktai",
+    "bot": {
+      "login": "instruktai[bot]",
+      "id": 1611,
+      "node_id": "BOT_1611"
+    },
+    "private_key": "${TEST_APP_KEY}"
+  },
+  "author": {
+    "app_id": 2,
+    "slug": "instruktai-author",
+    "bot": {
+      "login": "instruktai-author[bot]",
+      "id": 2315,
+      "node_id": "BOT_2315"
+    },
+    "private_key": "${TEST_APP_KEY}"
+  },
+  "reviewer": {
+    "app_id": 3,
+    "slug": "instruktai-reviewer",
+    "bot": {
+      "login": "instruktai-reviewer[bot]",
+      "id": 2529,
+      "node_id": "BOT_2529"
+    },
+    "private_key": "${TEST_APP_KEY}"
+  }
+}

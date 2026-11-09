@@ -854,6 +854,7 @@ version = "0.1.0"
 dependencies = [
  "instrukt-core",
  "jiff",
+ "notify",
  "proptest",
  "serde",
  "serde_json",
@@ -881,6 +882,7 @@ dependencies = [
  "instrukt-todos",
  "jiff",
  "jsonwebtoken",
+ "notify",
  "predicates",
  "redis",
  "serde",

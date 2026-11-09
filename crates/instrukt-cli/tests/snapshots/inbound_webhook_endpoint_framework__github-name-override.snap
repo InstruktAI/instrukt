@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
-assertion_line: 116
-expression: stdout
----
-[PROJECT]/instrukt.yaml: webhooks: `webhooks.github` choose exactly one name source: native body, name_from, name or verify: github

@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/attributed-commit.rs
-expression: "label(stdout(&env, &approved))"
----
-<commit>: approve
-review notes pushed to origin

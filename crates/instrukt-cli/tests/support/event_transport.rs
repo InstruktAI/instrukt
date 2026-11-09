@@ -3,7 +3,7 @@
 
 use crate::common::redis::RedisServer;
 use crate::common::{Repo, TestEnv};
-use crate::documented::{project, sync};
+use crate::fixtures::documented::{project, sync};
 use instrukt_core::state_db::rusqlite::Connection;
 
 pub struct Computer {
@@ -52,7 +52,7 @@ impl Computer {
     pub fn subscribe(&self, pattern: &str) {
         self.project.write(
             "docs/domain/reactions/procedure/respond.md",
-            &crate::documented::snippet(
+            &crate::fixtures::documented::snippet(
                 "procedure",
                 "Respond",
                 "Accept the selected facts.",
@@ -64,7 +64,7 @@ impl Computer {
             ),
         );
         self.project.commit("docs: publish a reaction");
-        crate::documented::sync(&self.env, &self.project);
+        crate::fixtures::documented::sync(&self.env, &self.project);
     }
 
     pub fn computer(&self) -> String {

@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/snippet-validation.rs
-assertion_line: 711
-expression: run.out
----
-

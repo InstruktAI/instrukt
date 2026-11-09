@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: one.out
+---
+docs/domain/acme/concept/one.md: frontmatter-visibility-invalid: x
+notice: docs/domain/acme/concept/one.md: unreferenced-snippet: acme/concept/one

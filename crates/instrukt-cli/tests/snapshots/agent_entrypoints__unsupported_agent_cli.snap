@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/agent-entrypoints.rs
-expression: "stdout(&env, &refused)"
----
-docs/general/index.yaml: index-agent-unsupported: agents: cursor (the supported agent CLIs are claude, codex, gemini, deepseek)

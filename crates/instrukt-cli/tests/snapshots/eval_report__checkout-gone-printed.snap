@@ -1,8 +1,0 @@
----
-source: crates/instrukt-cli/tests/eval-report.rs
-expression: printed
----
-demo: 0 evaluation windows
-lists: 1 evaluation window
-lists: limitation: Its checkout at [TMP]/lists is not available. Only its record on this computer is shown; work reflected only to GitHub is not read.
-report: [TMP]/elsewhere/report.html

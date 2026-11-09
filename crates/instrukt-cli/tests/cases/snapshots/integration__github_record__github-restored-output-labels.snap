@@ -1,0 +1,30 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "project.github.issue(REPOSITORY, 1).unwrap()[\"labels\"]"
+---
+[
+  {
+    "id": 101300,
+    "name": "instrukt",
+    "color": "ededed",
+    "description": null
+  },
+  {
+    "id": 101301,
+    "name": "kind:feature",
+    "color": "ededed",
+    "description": null
+  },
+  {
+    "id": 101302,
+    "name": "status:active",
+    "color": "ededed",
+    "description": null
+  },
+  {
+    "id": 102103,
+    "name": "team-owned",
+    "color": "ededed",
+    "description": null
+  }
+]

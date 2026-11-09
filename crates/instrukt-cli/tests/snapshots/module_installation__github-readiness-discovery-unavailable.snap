@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/module-installation.rs
-expression: "github_check(&env, &repo, false)"
----
-[
-  "project github-ready GitHub reflection: GitHub App setup incomplete: GitHub answered POST /graphql with 200: project discovery is unavailable; repair github.apps and its repository installation with the configuration skill"
-]

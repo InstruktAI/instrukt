@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &nobody)"
+---
+# instrukt docs index: snippet ids with their descriptions
+# Filter with --domain <acme|beta|gamma> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+
+# No project `nobody` has published.

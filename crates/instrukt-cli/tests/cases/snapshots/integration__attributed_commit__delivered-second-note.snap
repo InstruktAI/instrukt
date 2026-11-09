@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/attributed-commit.rs
+expression: "timeless(&remote_note(&env, &remote, &commits[1]))"
+---
+at: <time 1>; verdict: exempt; reason: comment only

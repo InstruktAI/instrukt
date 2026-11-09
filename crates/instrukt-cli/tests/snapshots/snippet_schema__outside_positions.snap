@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/snippet-schema.rs
-expression: run.err
----
-instrukt: docs/global/spec lies outside every documentation position; the positions are docs/general/, docs/domain/<domain>/ and docs/project/

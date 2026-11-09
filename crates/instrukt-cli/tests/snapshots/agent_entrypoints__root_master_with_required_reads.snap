@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/agent-entrypoints.rs
-expression: "stdout(&env, &refused)"
----
-AGENTS.master.md: master-required-reads: the root master holds only `## Purpose`; `docs/project/index.yaml` selects what the root AGENTS.md includes

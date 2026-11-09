@@ -1,0 +1,15 @@
+---
+source: crates/instrukt-cli/tests/cases/project-initialization.rs
+expression: "stdout(&env, &next)"
+---
+project layer (instrukt.yaml): already present
+docs folders (docs/project/): already present
+master (AGENTS.master.md): created
+local baseline (docs/project/baseline.md): already present
+generated AGENTS.md ignore (.gitignore): already present
+hook sections: already present
+  hooks directory: [TMP]/demo/.git/hooks
+  post-commit: already current
+  post-merge: already current
+  post-rewrite: already current
+  post-checkout: already current

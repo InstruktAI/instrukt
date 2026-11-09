@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/procedure-event-delivery.rs
-assertion_line: 528
-expression: "work::redact(&String::from_utf8_lossy(&refused.get_output().stderr))"
----
-instrukt: standing generation already exists: t3:s1

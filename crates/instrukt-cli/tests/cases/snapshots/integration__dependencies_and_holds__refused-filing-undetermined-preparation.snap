@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
+expression: refusal
+---
+instrukt: `list-depth` cannot become a group: workflow cannot determine whether it completed preparation: the project selects no published flavor with a prepare or work flow

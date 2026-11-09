@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/github-record.rs
-expression: "redact(current[\"record\"][\"bindings\"][0][\"native_placement\"][\"title\"].as_str().unwrap())"
----
-prepare-orchestrator · legacy · instrukt:todo:demo/<id 1>:prepare-orchestrator:1

@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "instrukt-cli"
 description = "The instrukt command-line interface."
 version.workspace = true
@@ -6,6 +7,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[bin]]
 name = "instrukt"
@@ -30,6 +35,7 @@ serde_yaml_ng.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+notify.workspace = true
 jsonwebtoken.workspace = true
 tungstenite.workspace = true
 hmac.workspace = true

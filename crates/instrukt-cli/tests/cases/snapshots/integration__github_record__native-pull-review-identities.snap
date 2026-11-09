@@ -1,0 +1,19 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "serde_json::json!({\"author\":remote.iter().find(|i|i.get(\"pull_request\").is_some()).unwrap()[\"user\"],\"reviewer\":reviews.last().unwrap()[\"user\"],\"state\":reviews.last().unwrap()[\"state\"]})"
+---
+{
+  "author": {
+    "login": "instruktai-author[bot]",
+    "id": 2315,
+    "node_id": "BOT_2315",
+    "type": "Bot"
+  },
+  "reviewer": {
+    "login": "instruktai-reviewer[bot]",
+    "id": 2529,
+    "node_id": "BOT_2529",
+    "type": "Bot"
+  },
+  "state": "APPROVED"
+}

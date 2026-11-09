@@ -1,0 +1,31 @@
+---
+source: crates/instrukt-cli/tests/cases/docs-repositories.rs
+expression: claude
+---
+# General
+
+## general rules — Policy
+
+### Rules
+
+Test first.
+
+### Rationale
+
+Because.
+
+### Scope
+
+All work.
+
+### Enforcement
+
+Review.
+
+### Exceptions
+
+None.
+
+# Sdlc
+
+The sdlc doctrine — `instrukt docs get --domain sdlc`

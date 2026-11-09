@@ -1,0 +1,34 @@
+---
+source: crates/instrukt-cli/tests/cases/approvals.rs
+expression: "redact(&format!(\"{}---\\n{carried}---\\n{shown}\",\nString::from_utf8_lossy(&unreviewed.get_output().stderr)))"
+---
+instrukt: carrying an approval needs a standing `prd_review` verdict `approve` of the current prd (<digest 1>): the latest review judged other evidence
+---
+stamped nested-lists: prd approved by a human — <digest 1>, carried from <digest 2>
+reflection: reflected to GitHub
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 9
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 3> by Test Developer at <time>
+  prd (2 versions)
+    <digest 2> by Test Developer at <time>
+    <digest 1> by Test Developer at <time>
+  prd-review-findings (2 versions)
+    <digest 4> by Test Developer at <time>
+    <digest 5> by Test Developer at <time>
+stamps:
+  #4 <time> prd_review verdict approve — target <digest 2>, report <digest 4> — by Test Developer
+  #5 <time> prd approved by a human — <digest 2> — by session thread-host:thread-7, model unknown
+  #8 <time> prd_review verdict approve — target <digest 1>, report <digest 5> — by Test Developer
+  #9 <time> prd approved by a human — <digest 1>, carried from <digest 2> — by session thread-host:thread-7, model unknown

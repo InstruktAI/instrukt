@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/project-initialization.rs
+expression: "repo.read(\"docs/project/index.yaml\")"
+---
+# yaml-language-server: $schema=../../.instrukt/schemas/project-index.schema.json
+expanded: [project/demo/policy/house-rules]

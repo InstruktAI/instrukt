@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "stderr(&env, &refused)"
+---
+instrukt: [TMP]/demo/.instrukt/schemas is a symbolic link or lies behind one; publication writes only inside its root

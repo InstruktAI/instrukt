@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/task-timing.rs
-expression: "String::from_utf8_lossy(&replayed.get_output().stderr)"
----
-instrukt: this firing start is stale: that occurrence already has its outcome; a start is recorded for the current occurrence only

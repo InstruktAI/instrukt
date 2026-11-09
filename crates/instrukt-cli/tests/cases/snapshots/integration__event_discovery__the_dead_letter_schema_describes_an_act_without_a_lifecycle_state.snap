@@ -1,0 +1,54 @@
+---
+source: crates/instrukt-cli/tests/cases/event-discovery.rs
+assertion_line: 64
+expression: "String::from_utf8_lossy(&run.get_output().stdout)"
+---
+{
+  "name": "instrukt.system.event.dead_lettered",
+  "delivery_kind": "occurrence",
+  "version": 1,
+  "description": "A persistently failing stream entry was parked in a dead letter destination.",
+  "subject_kind": "stream_entry",
+  "home_kinds": [],
+  "data_fields": [
+    {
+      "name": "attempt_count",
+      "kind": "string",
+      "nullable": false
+    },
+    {
+      "name": "consumer",
+      "kind": "string",
+      "nullable": false
+    },
+    {
+      "name": "consumer_id",
+      "kind": "string",
+      "nullable": false
+    },
+    {
+      "name": "dlq_destination",
+      "kind": "string",
+      "nullable": false
+    },
+    {
+      "name": "failing_stage",
+      "kind": "string",
+      "nullable": false
+    },
+    {
+      "name": "original_entry_id",
+      "kind": "string",
+      "nullable": false
+    },
+    {
+      "name": "original_stream",
+      "kind": "string",
+      "nullable": false
+    }
+  ],
+  "related_kinds": [
+    "session"
+  ],
+  "state": null
+}

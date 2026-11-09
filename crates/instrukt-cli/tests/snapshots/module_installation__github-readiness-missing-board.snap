@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/module-installation.rs
-expression: "github_check(&env, &repo, false)"
----
-[
-  "project github-ready GitHub reflection: GitHub App setup incomplete: GitHub's answer to project cockpit is not readable: configured board or its fields are unavailable; repair github.apps and its repository installation with the configuration skill"
-]

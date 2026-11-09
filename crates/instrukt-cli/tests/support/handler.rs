@@ -4,7 +4,10 @@
     clippy::unwrap_used,
     reason = "shared isolated handler scenarios"
 )]
-use crate::{common::redis::RedisServer, documented, runtime::FakeT3, transport::Computer};
+use crate::{
+    common::redis::RedisServer,
+    fixtures::{documented, event_transport::Computer, runtime::FakeT3},
+};
 use instrukt_runner::transport::EVENT_STREAM;
 
 pub struct Handler {

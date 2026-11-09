@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "stdout(&env, &read)"
----
-# instrukt docs get --domain gamma
-# The domain `gamma` has no index.yaml: list its snippets with `instrukt docs index --domain gamma`.

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/conversation-links.rs
+expression: directions.join("\n")
+---
+conversation_relay_failed link=[LINK] position=[POSITION] source=t3:child target=t3:parent turn=None
+conversation_relay_failed link=[LINK] position=[POSITION] source=t3:parent target=t3:child turn=None

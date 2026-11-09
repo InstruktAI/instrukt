@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "stdout(&env, &synced).replace(&platform.head(), \"[SHA]\")"
+---
+published platform at [SHA]
+kept [TMP]/home/.claude/CLAUDE.md: its content is no longer what instrukt wrote; move it out of the way

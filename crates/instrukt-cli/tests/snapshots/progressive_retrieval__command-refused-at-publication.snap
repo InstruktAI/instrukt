@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/progressive-retrieval.rs
-expression: "format!(\"{}{}\", stdout(&env, &refused),\nstderr(&env, &refused)).replace(&demo.head(), \"[SHA]\")"
----
-docs/domain/acme/procedure/runs.md: directive-exec: touch [TMP]/command-ran
-instrukt: demo at [SHA] is not published: the committed documentation has 1 validation finding(s)

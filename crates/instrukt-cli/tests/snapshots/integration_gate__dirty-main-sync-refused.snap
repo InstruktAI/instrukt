@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/integration-gate.rs
-assertion_line: 545
-expression: lines
----
-level=WARNING logger=instrukt_runner::runner msg="" error="cannot synchronize canonical checkout [PROJECT]: project checkout is dirty; preserve its changes and retry after their owner clears the checkout" event=canonical_checkout_sync_failed project=demo

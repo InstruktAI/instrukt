@@ -1,0 +1,62 @@
+---
+source: crates/instrukt-cli/tests/cases/pending-documentation.rs
+expression: "stdout(&env, &current)"
+---
+# instrukt docs get: acme/spec/live acme/policy/reworked
+
+---
+id: acme/spec/live
+type: spec
+domain: acme
+scope: global
+description: A live contract with pending additions.
+source: [TMP]/demo/docs/domain/acme/spec/live.md
+---
+# Live — Spec
+
+## What it is
+
+The current text.
+
+
+- field: current
+
+## Canonical fields
+
+Text.
+
+# NOTE: This snippet has pending changes owned by: build-it, other-work. The text above is the current contract.
+# Read a todo's view of it: instrukt docs get acme/spec/live --target <slug>
+
+---
+id: acme/policy/reworked
+type: policy
+domain: acme
+scope: global
+description: A live policy with a next version.
+source: [TMP]/demo/docs/domain/acme/policy/reworked.md
+---
+# Reworked — Policy
+
+## Rules
+
+The current rules.
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
+
+# NOTE: This snippet has pending changes owned by: build-it. The text above is the current contract.
+# Read a todo's view of it: instrukt docs get acme/policy/reworked --target <slug>

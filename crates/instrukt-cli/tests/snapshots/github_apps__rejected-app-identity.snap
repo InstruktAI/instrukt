@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/github-apps.rs
-expression: "rejected_credential(\"GET\", \"/app\",\nserde_json::json!({\"id\":99,\"slug\":\"wrong-app\"}))"
----
-wrote log of pending-app: <digest 1>
-reflection: pending: GitHub: GitHub App setup incomplete: selected key's App identity does not match configuration; repair github.apps and its repository installation with the configuration skill

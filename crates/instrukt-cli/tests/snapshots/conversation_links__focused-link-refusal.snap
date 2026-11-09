@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/conversation-links.rs
-expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
----
-instrukt: conversation link: focused role `plan-reviewer` on t3:plan-reviewer-1 reports through its own output and assigned artifacts

@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "board_state(&project, \"acme\", 2, &[(1, issue_node(&project, 1).as_str())])"
+---
+field Needs you: [Yes]
+field User field: [theirs]
+field Record status: [active, iceboxed, held, delivered, withdrawn]
+item #1: Record status = active

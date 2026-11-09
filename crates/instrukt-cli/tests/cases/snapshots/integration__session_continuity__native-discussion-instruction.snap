@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/session-continuity.rs
+expression: "String::from_utf8_lossy(&out.get_output().stdout)"
+---
+When asked to open a discussion, use instrukt discuss open <thread> with optional --message <text>. The native caller is your thread. Use instrukt discuss close with optional --message <text> to send a final contribution before closing for both members. These commands manage the conversation link; the long-lived instrukt runner automatically relays finished human and agent turns. Focused roles report through their own output/artifacts; workers report upward through native child-result delivery.

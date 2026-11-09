@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/single-ingress-webhook-termination.rs
-expression: "String::from_utf8_lossy(&result.get_output().stderr)"
----
-instrukt: this computer is not the configured ingress

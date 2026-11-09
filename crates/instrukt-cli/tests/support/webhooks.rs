@@ -16,7 +16,7 @@ use instrukt_runner::transport::EVENT_STREAM;
 use sha2::Sha256;
 
 use crate::common::redis::RedisServer;
-use crate::support::Computer;
+use crate::fixtures::event_transport::Computer;
 
 pub const SECRET: &str = "declaring-project-key";
 pub const OLD: &str = "previous-project-key";
@@ -72,8 +72,11 @@ impl Receiver {
             .spawn()
             .unwrap();
         let mut receiver = Self { child, port };
+        let mut progress =
+            crate::common::progress::Progress::new(log.parent().unwrap(), Duration::from_secs(15));
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
+            progress.watch_file(&log);
             if receiver.child.try_wait().unwrap().is_some() {
                 let mut error = String::new();
                 receiver
@@ -102,7 +105,7 @@ impl Receiver {
             if Instant::now() >= deadline {
                 return Err("receiver readiness was not observed in its log".into());
             }
-            std::thread::sleep(Duration::from_millis(20));
+            progress.wait();
         }
     }
 

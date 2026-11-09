@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/event-discovery.rs
-assertion_line: 35
-expression: "String::from_utf8_lossy(&run.get_output().stderr)"
----
-instrukt: unknown event type `external.undeclared`; use `instrukt events list` to discover declared types

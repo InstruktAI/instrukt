@@ -1,0 +1,50 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &first)"
+---
+# instrukt docs get: acme/procedure/report
+
+---
+id: acme/procedure/report
+type: procedure
+domain: acme
+scope: global
+description: Reports into the session.
+source: [TMP]/demo/docs/domain/acme/procedure/report.md
+---
+# Report — Procedure
+
+## Goal
+
+Your session:
+
+```
+session-one
+```
+
+The modules:
+
+```
+blueprint: false
+todos: false
+events: false
+history: true
+```
+
+Then report.
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

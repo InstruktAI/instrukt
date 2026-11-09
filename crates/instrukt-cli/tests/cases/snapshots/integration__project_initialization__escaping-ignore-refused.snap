@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/project-initialization.rs
+expression: "stderr(&env, &refused)"
+---
+instrukt: [TMP]/demo/.gitignore resolves to [TMP]/elsewhere/ignore-list, outside the repository; instrukt does not write there and changed nothing

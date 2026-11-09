@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/inbound-webhook-endpoint-framework.rs
-assertion_line: 116
-expression: stdout
----
-[PROJECT]/instrukt.yaml: webhooks: `webhooks.erp` state names require a nonempty dotted subject_from payload field

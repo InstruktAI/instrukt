@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: run.out
+---
+docs/domain/acme/concept/paths.md: reference-by-path: docs/domain/acme/principle/care.md
+docs/domain/acme/concept/paths.md: reference-by-path: ~/.instrukt/docs/acme/principle/care.md
+docs/domain/acme/concept/paths.md: reference-form-invalid: two words
+docs/domain/acme/concept/paths.md: reference-unresolved: acme/principle/gone
+docs/domain/acme/concept/paths.md: reference-unresolved: acme/principle/nothing
+notice: docs/domain/acme/concept/paths.md: unreferenced-snippet: acme/concept/paths

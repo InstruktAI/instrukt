@@ -1,0 +1,23 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stdout(&env, &read)"
+---
+# instrukt docs get: project/other/concept/notes
+
+---
+id: project/other/concept/notes
+type: concept
+domain: project
+scope: project
+description: Other's notes.
+source: [TMP]/other/docs/project/concept/notes.md
+---
+# Notes — Concept
+
+## What
+
+Notes.
+
+## Why
+
+Text.

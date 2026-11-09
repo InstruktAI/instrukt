@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/project-initialization.rs
-expression: "repo.read(\"docs/project/schema.yaml\")"
----
-# yaml-language-server: $schema=../../.instrukt/schemas/snippet-schema.schema.json
-spec/feature:
-  required: [Use cases]

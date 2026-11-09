@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/attributed-commit.rs
+expression: "stderr(&env, &refused)"
+---
+instrukt: line 3 of the message (`session: t3:thread-7`) carries the `Session` trailer, which instrukt writes itself; remove it and supply the fact through the active runtime's session variable (instrukt writes it when one is set)

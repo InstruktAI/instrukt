@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "format!(\"{}---\\n{}\", told(&env, &listed), told(&env, &validated))"
+---
+instrukt: todos need the project's code on GitHub: the remote `origin` (https://gitlab.com/acme/demo.git) is not a GitHub repository on github.com and `github.repository` is not set; when the remote reaches a GitHub repository through an address that does not read as one, name it with `github.repository: <owner>/<repo>` in the project's instrukt.yaml
+---
+[TMP]/demo/instrukt.yaml: modules.todos: todos need the project's code on GitHub: the remote `origin` (https://gitlab.com/acme/demo.git) is not a GitHub repository on github.com and `github.repository` is not set; when the remote reaches a GitHub repository through an address that does not read as one, name it with `github.repository: <owner>/<repo>` in the project's instrukt.yaml

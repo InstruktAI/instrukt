@@ -1,0 +1,9 @@
+---
+source: crates/instrukt-cli/tests/cases/todos.rs
+expression: "redact(&format!(\"{}---\\n{}{}\",\nString::from_utf8_lossy(&restore.get_output().stderr),\nString::from_utf8_lossy(&withdrawn.get_output().stderr), stdout(&withdrawn)))"
+---
+instrukt: clock overridden to <time>
+instrukt: no withdrawn todo `nested-lists` within its recovery window
+---
+instrukt: clock overridden to <time>
+no todos

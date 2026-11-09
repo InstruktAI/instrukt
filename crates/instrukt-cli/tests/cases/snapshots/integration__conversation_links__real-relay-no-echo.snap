@@ -1,0 +1,21 @@
+---
+source: crates/instrukt-cli/tests/cases/conversation-links.rs
+assertion_line: 620
+expression: "fake.message(\"parent\", 1).replace(source.identity(), \"t3:[SOURCE]\")"
+---
+[Peer (t3:[SOURCE]:child · human · 2026-11-08 10:00 UTC)]
+New leading human clarification.
+
+[/Peer (t3:[SOURCE]:child · human · 2026-11-08 10:00 UTC)]
+
+[Peer (t3:earlier:peer · human:earlier · unknown)]
+Keep this original human attribution.
+[/Peer (t3:earlier:peer · human:earlier · unknown)]
+
+[Peer (t3:[SOURCE]:child · human · 2026-11-08 10:00 UTC)]
+New trailing human clarification.
+[/Peer (t3:[SOURCE]:child · human · 2026-11-08 10:00 UTC)]
+
+[Peer (t3:[SOURCE]:child · agent:fixture/fixture · 2026-11-08 10:00 UTC)]
+A new agent reply.
+[/Peer (t3:[SOURCE]:child · agent:fixture/fixture · 2026-11-08 10:00 UTC)]

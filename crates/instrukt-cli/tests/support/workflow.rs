@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use instrukt_core::config::CURRENT_SCHEMA_VERSION;
 
 use crate::common::{Repo, TestEnv};
-use crate::runtime::FakeRuntime;
-use crate::support::{Project, REPOSITORY, stdout};
+use crate::fixtures::runtime::FakeRuntime;
+use crate::fixtures::work::{Project, REPOSITORY, stdout};
 
 /// The flavor's procedures: path below `procedure/`, and the role each
 /// declares.
@@ -458,9 +458,9 @@ impl Crew {
         let mut command = self.project.env.instrukt(cwd);
         command.args(["todo", flow, slug]);
         if in_phase {
-            let proof = crate::runtime::placement_evidence(
+            let proof = crate::fixtures::runtime::placement_evidence(
                 &self.project.env,
-                &crate::runtime::NativePlacement {
+                &crate::fixtures::runtime::NativePlacement {
                     cwd,
                     slug,
                     role: if flow == "prepare" {

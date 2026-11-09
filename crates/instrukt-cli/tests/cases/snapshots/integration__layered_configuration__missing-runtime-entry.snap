@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+expression: "stderr(&env, &missing)"
+---
+instrukt: `runtimes.2` does not exist: no `2` in `runtimes`

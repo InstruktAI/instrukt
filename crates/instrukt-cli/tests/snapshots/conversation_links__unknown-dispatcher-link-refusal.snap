@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/conversation-links.rs
-assertion_line: 368
-expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
----
-instrukt: conversation link: worker t3:plan-reviewer-1 is missing dispatcher evidence; a fresh assignment must record its dispatcher before linking

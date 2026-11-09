@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "repo.read(\"AGENTS.md\")"
+---
+## Purpose
+
+The demo project.
+
+# Project
+
+- project/demo/procedure/release: About Release. — when: When cutting a release. — `instrukt docs get project/demo/procedure/release --closure`

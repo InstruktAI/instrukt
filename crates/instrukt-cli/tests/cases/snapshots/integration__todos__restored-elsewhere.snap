@@ -1,0 +1,25 @@
+---
+source: crates/instrukt-cli/tests/cases/todos.rs
+expression: "redact(&format!(\"{restored}---\\n{shown}\"))"
+---
+restored nested-lists (<id 1>) as active
+reflection: reflected to GitHub
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  prd (1 version)
+    <digest 2> by Test Developer at <time>
+stamps:
+  none

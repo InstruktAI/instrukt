@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: shellcheck
-        run: shellcheck scripts/*.sh .githooks/pre-commit
+        run: shellcheck -x scripts/*.sh .githooks/pre-commit
 
   check:
     name: fmt, clippy, test (${{ matrix.os }})
@@ -34,9 +34,15 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
       - name: Install disposable-test Redis (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y redis-server
+        run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Install disposable-test Redis (macOS)
         if: runner.os == 'macOS'
         run: brew install redis
@@ -45,9 +51,26 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: test
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --profile ci
+      - name: doctests
+        run: cargo test --workspace --locked --doc
       - name: use-case coverage
         run: scripts/check-coverage.sh
+
+  dependencies:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-deny@${{ steps.test-tools.outputs.DENY_VERSION }}
+      - name: dependency audit
+        run: cargo deny --locked check
 
   graphify-contract:
     name: pinned Graphify contract
@@ -56,6 +79,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: ${{ steps.test-tools.outputs.UV_VERSION }}
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
+      - name: Install disposable-test Redis
+        run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Install and check the release pin against the real graph contract
-        run: cargo test --locked -p instrukt-cli --features graphify-contract --test graph-engine real_pinned_graphify_contract -- --exact
+        run: cargo nextest run --locked -p instrukt-cli --features graphify-contract --test integration -E 'test(=graph_engine::real_pinned_graphify_contract)'

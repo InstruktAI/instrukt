@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/configuration-editing.rs
+expression: written
+---
+schema_version: 5
+ticks: 'off'

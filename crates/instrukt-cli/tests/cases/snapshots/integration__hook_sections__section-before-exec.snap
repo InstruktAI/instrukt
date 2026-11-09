@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "std::fs::read_to_string(hook_path(&repo, \"post-merge\")).unwrap()"
+---
+#!/bin/sh
+exec 1>&2
+echo merging
+# >>> instrukt >>>
+instrukt hooks run post-merge "$@" || true
+# <<< instrukt <<<
+exec other-tool post-merge "$@"

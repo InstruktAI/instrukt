@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/work-dispatch.rs
-expression: "String::from_utf8_lossy(&result.get_output().stdout).replace(p.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\")"
----
-[TMP]/home/.instrukt/agents.yaml: agents: `agents.yaml` unknown variant `imaginary`, expected one of `default`, `priority`, `flex`

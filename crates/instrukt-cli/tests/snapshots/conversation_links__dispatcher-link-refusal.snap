@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/conversation-links.rs
-expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
----
-instrukt: conversation link: a worker reports to its dispatcher through native child-result delivery

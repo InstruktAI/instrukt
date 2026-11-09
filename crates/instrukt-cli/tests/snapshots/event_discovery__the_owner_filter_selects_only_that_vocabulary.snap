@@ -1,9 +1,0 @@
----
-source: crates/instrukt-cli/tests/event-discovery.rs
-assertion_line: 32
-expression: "String::from_utf8_lossy(&run.get_output().stdout)"
----
-workflow.finalized v1 — A finalize-ready todo was handed off to integration. (subject: todo, delivery: Occurrence)
-  instrukt events schema workflow.finalized
-workflow.preparation_reviewed v1 — Reviewed preparation documentation is ready for immediate integration. (subject: todo, delivery: Occurrence)
-  instrukt events schema workflow.preparation_reviewed

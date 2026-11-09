@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 1091
+expression: "redact(&crew.next(\"prepare\", \"approval-work\"))"
+---
+todo: approval-work (demo)
+flow: prepare
+claim: held by this session
+state: plan_drafting
+transition: prd_approval -> plan_drafting (#5)
+action: draft-plan
+responsible: planner (crew/procedure/plan)
+command: instrukt docs get crew/procedure/plan
+effects: none
+instructions:
+Draft the implementation plan of approval-work.

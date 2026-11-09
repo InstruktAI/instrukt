@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-schema.rs
+expression: run.out
+---
+docs/project/schema.yaml: schema-key-invalid: feature
+docs/project/schema.yaml: schema-section-dropped: spec/feature: optional What it is, required by instrukt root rules

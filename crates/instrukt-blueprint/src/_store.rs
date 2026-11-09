@@ -375,6 +375,7 @@ fn write(path: &Path) -> impl Fn(io::Error) -> StoreError + '_ {
 
 #[cfg(test)]
 mod tests {
+    use notify::Watcher;
     use serde_json::json;
 
     use super::*;
@@ -545,6 +546,19 @@ mod tests {
             std::time::Duration::from_secs(5),
         )
         .unwrap();
+        // Arm before publication so even an immediate pointer swap is observed.
+        let (send, events) = std::sync::mpsc::channel();
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                if !event.as_ref().is_ok_and(|event| event.kind.is_access()) {
+                    // The test may have completed when a final event is delivered.
+                    let _ = send.send(event);
+                }
+            })
+            .unwrap();
+        watcher
+            .watch(store.dir(), notify::RecursiveMode::NonRecursive)
+            .unwrap();
         // Publishing `c` would prune `a`.
         let publisher = store.clone();
         let publication = std::thread::spawn(move || publisher.publish(&sha('c'), &graph("c")));
@@ -556,7 +570,10 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "the publication never swapped"
             );
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .unwrap()
+                .unwrap();
         }
         // Pruning waits behind the reader: `a` is still a complete graph.
         assert!(store.has_graph(&sha('a')).unwrap());

@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "stdout(&env, &status)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+post-commit: absent
+  add this line to the tool that manages [TMP]/demo/.git/hooks/post-commit: instrukt hooks run post-commit "$@" || true
+  last run: none
+post-merge: absent
+  add this line to the tool that manages [TMP]/demo/.git/hooks/post-merge: instrukt hooks run post-merge "$@" || true
+  last run: none
+post-rewrite: absent
+  add this line to the tool that manages [TMP]/demo/.git/hooks/post-rewrite: instrukt hooks run post-rewrite "$@" || true
+  last run: none
+post-checkout: absent
+  add this line to the tool that manages [TMP]/demo/.git/hooks/post-checkout: instrukt hooks run post-checkout "$@" || true
+  the file is not executable, so git does not run it
+  last run: none

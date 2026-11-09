@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/conversation-links.rs
-assertion_line: 777
-expression: "discussion_log(&env, \"discuss\", &status.id)"
----
-level=INFO logger=instrukt_runner::links msg="" event=conversation_opened link=[LINK] position=[POSITION] source=t3:parent target=t3:child
-level=ERROR logger=instrukt_runner::links::_diagnostics msg="" error="conversation link: native send failed: t3 send: native server unreachable (ECONNREFUSED) [diagnostic:REF]; handover remains uncertain" event=discussion_management_failed link=[LINK] position=[POSITION] source=t3:parent target=t3:child turn="Some(\"closing:[LINK]\")"

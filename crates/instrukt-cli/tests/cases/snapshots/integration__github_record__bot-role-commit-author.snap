@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "project.env.git(&workspace, [\"log\", \"-1\", \"--format=%an <%ae>\"])"
+---
+instruktai-author[bot] <2315+instruktai-author[bot]@users.noreply.github.com>

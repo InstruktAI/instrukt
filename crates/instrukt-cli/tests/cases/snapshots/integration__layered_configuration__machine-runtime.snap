@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+expression: "read(&[\"config\", \"get\", \"runner.runtime\"])"
+---
+t3

@@ -1,0 +1,45 @@
+---
+source: crates/instrukt-cli/tests/cases/docs-repositories.rs
+expression: "app.read(\"AGENTS.md\")"
+---
+## Purpose
+
+The app.
+
+# Project
+
+# Sdlc
+
+## sdlc rules — Policy
+
+### Rules
+
+Test first.
+
+### Rationale
+
+Because.
+
+### Scope
+
+All work.
+
+### Enforcement
+
+Review.
+
+### Exceptions
+
+None.
+
+# Project
+
+## Way — Concept
+
+### What
+
+Our way.
+
+### Why
+
+To ship.

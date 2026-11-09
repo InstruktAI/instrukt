@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/attributed-commit.rs
-expression: "stderr(&env, &without_reason)"
----
-instrukt: --verdict exempt takes --reason <text> and no --report

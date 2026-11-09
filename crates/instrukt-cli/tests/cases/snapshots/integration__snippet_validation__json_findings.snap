@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: run.out
+---
+[
+  {
+    "path": "docs/domain/acme/concept/fields.md",
+    "code": "frontmatter-visibility-invalid",
+    "value": "secret"
+  }
+]

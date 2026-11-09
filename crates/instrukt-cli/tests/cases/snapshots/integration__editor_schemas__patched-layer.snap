@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "repo.read(\"instrukt.yaml\")"
+---
+# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
+schema_version: 5
+project: demo
+board: false

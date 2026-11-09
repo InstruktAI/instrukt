@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: run.out
+---
+docs/project/procedure/haunt.md: procedure-role-undeclared: haunter
+notice: docs/project/procedure/check.md: unreferenced-snippet: project/demo/procedure/check
+notice: docs/project/procedure/haunt.md: unreferenced-snippet: project/demo/procedure/haunt

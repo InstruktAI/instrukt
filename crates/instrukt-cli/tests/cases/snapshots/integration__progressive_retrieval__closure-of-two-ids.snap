@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+expression: "stderr(&env, &two)"
+---
+instrukt: cannot read acme/procedure/start acme/procedure/work as a closure: a closure is read for exactly one snippet; 2 ids were given

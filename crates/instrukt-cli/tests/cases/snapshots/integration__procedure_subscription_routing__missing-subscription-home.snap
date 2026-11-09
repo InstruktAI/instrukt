@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-subscription-routing.rs
+expression: "String::from_utf8_lossy(&result.get_output().stdout)"
+---
+docs/domain/reactions/procedure/invalid.md: frontmatter-subscription-home-missing: subscription_home
+notice: docs/domain/reactions/procedure/invalid.md: unreferenced-snippet: reactions/procedure/invalid

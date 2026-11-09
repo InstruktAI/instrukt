@@ -17,10 +17,10 @@ repository = "https://github.com/InstruktAI/instrukt"
 
 [workspace.dependencies]
 jsonwebtoken = "=9.3.1"
-instrukt-core = { path = "crates/instrukt-core" }
-instrukt-blueprint = { path = "crates/instrukt-blueprint" }
-instrukt-runner = { path = "crates/instrukt-runner" }
-instrukt-todos = { path = "crates/instrukt-todos" }
+instrukt-core = { path = "crates/instrukt-core", version = "0.1.0" }
+instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
+instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }
+instrukt-todos = { path = "crates/instrukt-todos", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.0"
 
 anyhow = "1"

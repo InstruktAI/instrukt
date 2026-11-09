@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/attributed-commit.rs
-expression: "timeless(&remote_note(&env, &remote, &commit))"
----
-at: <time 1>; verdict: approve; report_sha256: b8ebf40a88710065985528b6006707498eec3df6d6603576b782e647657682e5
-at: <time 2>; verdict: exempt; reason: generated file

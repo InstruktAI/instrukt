@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/conversation-links.rs
+expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
+---
+instrukt: conversation link: selected conversation source changed; restore the recorded source

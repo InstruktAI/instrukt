@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-subscription-routing.rs
+expression: "String::from_utf8_lossy(&result.get_output().stdout)"
+---
+# instrukt docs get --domain reactions
+
+# Reactions
+
+## Configured Responsibilities — started when their events arrive
+
+- reactions/procedure/answer: Answer the selected facts. — answers: example.*

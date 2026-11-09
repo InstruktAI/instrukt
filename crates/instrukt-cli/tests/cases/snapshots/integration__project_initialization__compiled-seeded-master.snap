@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/project-initialization.rs
+expression: "repo.read(\"AGENTS.md\")"
+---
+## Purpose
+
+my-demo

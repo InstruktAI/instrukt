@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: options
+---
+[
+  {
+    "name": "Yes",
+    "color": "RED",
+    "description": "Waiting on a person; instrukt will not move it."
+  }
+]

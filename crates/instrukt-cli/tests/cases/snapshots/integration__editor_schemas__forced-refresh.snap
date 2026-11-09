@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "stdout(&env, &forced).replace(&repo.head(), \"[SHA]\")"
+---
+published demo at [SHA]
+.instrukt/schemas/domain-index.schema.json: schema written
+instrukt.yaml: modeline updated

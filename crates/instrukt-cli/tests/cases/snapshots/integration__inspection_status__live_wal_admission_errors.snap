@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/inspection-status.rs
+expression: errors
+---
+[
+  {
+    "path": "[TMP]home/.instrukt",
+    "reason": "the state database at [TMP]home/.instrukt/state/instrukt.db holds a value this build cannot read: t3:caller has a known start but lost its assignment; recover the affected binding/attempt or standing key"
+  }
+]

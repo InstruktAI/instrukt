@@ -1,0 +1,20 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: gemini_after
+---
+{
+  "context": {
+    "includeDirectories": [
+      "/"
+    ],
+    "fileName": [
+      "AGENTS.md",
+      "GEMINI.md"
+    ]
+  },
+  "general": {
+    "checkpointing": {
+      "enabled": true
+    }
+  }
+}

@@ -1,7 +1,0 @@
----
-source: crates/instrukt-cli/tests/module-installation.rs
-expression: "github_check(&env, &repo, false)"
----
-[
-  "project github-ready GitHub reflection: GitHub App setup incomplete: issued credential's actor does not match the selected App bot; repair github.apps and its repository installation with the configuration skill"
-]

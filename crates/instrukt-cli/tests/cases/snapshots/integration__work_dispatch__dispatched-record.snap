@@ -1,0 +1,26 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+assertion_line: 39
+expression: "work::redact(&project.todo([\"show\", \"tidy-imports\"]))"
+---
+tidy-imports · change · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 4
+intent:
+  Sort the imports of every module.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:s1
+hold: none
+sessions:
+  prepare-orchestrator/1: t3:s1
+    key: instrukt:todo:demo/<id 1>:prepare-orchestrator:1
+    branch: tidy-imports/prepare; base: <commit 1>
+    worktree: [TMP]/t3-state/worktrees/s1
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

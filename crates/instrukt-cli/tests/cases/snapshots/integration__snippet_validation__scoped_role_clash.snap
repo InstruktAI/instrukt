@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: rival.out
+---
+docs/domain/acme/procedure/rival.md: procedure-role-shared: worker (acme/procedure/rival, acme/procedure/work/overview)
+docs/domain/acme/procedure/work/overview.md: procedure-role-shared: worker (acme/procedure/rival, acme/procedure/work/overview)
+notice: docs/domain/acme/procedure/rival.md: unreferenced-snippet: acme/procedure/rival

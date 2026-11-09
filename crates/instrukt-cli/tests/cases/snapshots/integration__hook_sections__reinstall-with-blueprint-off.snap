@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "stdout(&env, &reinstalled)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+post-commit: already current
+post-merge: already current
+post-rewrite: already current
+post-checkout: already current
+pre-push: removed (blueprint is off)

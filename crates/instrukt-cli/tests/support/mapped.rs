@@ -15,6 +15,7 @@
     reason = "test setup: a failed step fails the test; each test crate uses what it needs"
 )]
 
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -39,7 +40,7 @@ pub fn machine() -> TestEnv {
     let path = format!(
         "{}:{}",
         instrukt_dir().display(),
-        std::env::var("PATH").unwrap_or_default()
+        env.injected("PATH").unwrap()
     );
     env.set_env("PATH", &path);
     env
@@ -52,7 +53,7 @@ pub fn machine_without_graphify() -> TestEnv {
     let tools = env.path("tools");
     std::fs::create_dir_all(&tools).unwrap();
     for tool in ["git", "kill", "cat", "rm", "mkdir", "mktemp", "dirname"] {
-        std::os::unix::fs::symlink(which(tool), tools.join(tool)).unwrap();
+        std::os::unix::fs::symlink(crate::common::tool_executable(tool), tools.join(tool)).unwrap();
     }
     std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_instrukt"), tools.join("instrukt")).unwrap();
     let path = tools.display().to_string();
@@ -65,14 +66,6 @@ fn instrukt_dir() -> PathBuf {
         .parent()
         .unwrap()
         .to_path_buf()
-}
-
-fn which(program: &str) -> PathBuf {
-    let path = std::env::var_os("PATH").unwrap();
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(program))
-        .find(|candidate| candidate.is_file())
-        .unwrap_or_else(|| panic!("{program} is not on the test's PATH"))
 }
 
 /// Writes an executable shell script at `<test dir>/<name>`.
@@ -94,6 +87,14 @@ pub fn engine(env: &TestEnv) -> PathBuf {
     )
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GateState {
+    Closed,
+    Open,
+    Aborted,
+    Stopped,
+}
+
 /// A gated engine and the directory controlling it. It closes its standard
 /// input first, as an engine may. For each run it marks its start
 /// (`started-<rev>`) and the instrukt worker that started it
@@ -104,6 +105,9 @@ pub fn engine(env: &TestEnv) -> PathBuf {
 pub struct Gate {
     dir: PathBuf,
     pub engine: PathBuf,
+    signal: std::sync::Arc<(std::sync::Mutex<GateState>, std::sync::Condvar)>,
+    address: std::net::SocketAddr,
+    server: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Gate {
@@ -111,6 +115,53 @@ impl Gate {
         let dir = env.path("gate");
         std::fs::create_dir_all(&dir).unwrap();
         let control = dir.display();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let signal = std::sync::Arc::new((
+            std::sync::Mutex::new(GateState::Closed),
+            std::sync::Condvar::new(),
+        ));
+        let shared = signal.clone();
+        let server = std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                if *shared.0.lock().unwrap() == GateState::Stopped {
+                    break;
+                }
+                let shared = shared.clone();
+                workers.push(std::thread::spawn(move || {
+                    let state = shared
+                        .1
+                        .wait_while(shared.0.lock().unwrap(), |state| {
+                            *state == GateState::Closed
+                        })
+                        .unwrap();
+                    let reply = if *state == GateState::Open {
+                        b'o'
+                    } else {
+                        b'a'
+                    };
+                    // An interrupted engine may have disconnected already.
+                    if let Err(error) = stream.write_all(&[reply]) {
+                        assert!(
+                            matches!(
+                                error.kind(),
+                                std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::ConnectionReset
+                            ),
+                            "gate reply failed: {error}"
+                        );
+                    }
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+
+        let ip = address.ip();
+        let port = address.port();
         let engine = script(
             env,
             "gated-engine",
@@ -124,20 +175,22 @@ impl Gate {
                  \x20 esac\n\
                  \x20 p=$(ps -o ppid= -p \"$p\" | tr -d ' ')\n\
                  done\n\
-                 touch \"{control}/started-$rev\"\n\
                  if [ -e \"{control}/running\" ] && kill -0 \"$(cat \"{control}/running\")\" 2>/dev/null; then exit 70; fi\n\
                  echo $$ > \"{control}/running\"\n\
+                 touch \"{control}/started-$rev\"\n\
                  trap 'rm -f \"{control}/running\"' EXIT\n\
-                 i=0\n\
-                 while [ ! -e \"{control}/open\" ]; do\n\
-                 \x20 [ ! -e \"{control}/abort\" ] || exit 9\n\
-                 \x20 i=$((i + 1)); [ \"$i\" -lt 6000 ] || exit 71; sleep 0.01\n\
-                 done\n\
+                 python3 -c \"import socket; s=socket.create_connection(('{ip}', {port})); raise SystemExit(0 if s.recv(1) == b'o' else 9)\"\n\
                  cat \"$1/map.json\"\n\
                  touch \"{control}/finished-$rev\"\n"
             ),
         );
-        Self { dir, engine }
+        Self {
+            dir,
+            engine,
+            signal,
+            address,
+            server: Some(server),
+        }
     }
 
     /// Whether the engine started for the revision named `rev`.
@@ -147,7 +200,7 @@ impl Gate {
 
     /// Waits until the engine started for `rev`.
     pub fn wait_started(&self, rev: &str) {
-        wait_until(&format!("the engine to start for {rev}"), || {
+        wait_until(&self.dir, &format!("the engine to start for {rev}"), || {
             self.started(rev)
         });
     }
@@ -159,48 +212,51 @@ impl Gate {
 
     /// Waits until the engine run for `rev` printed its map.
     pub fn wait_finished(&self, rev: &str) {
-        wait_until(&format!("the engine to finish for {rev}"), || {
-            self.dir.join(format!("finished-{rev}")).exists()
-        });
+        wait_until(
+            &self.dir,
+            &format!("the engine to finish for {rev}"),
+            || self.dir.join(format!("finished-{rev}")).exists(),
+        );
     }
 
     /// Kills the instrukt worker that started the engine for `rev`, as an
     /// interruption would; its engine keeps running.
     pub fn kill_worker(&self, rev: &str) {
         let marker = self.dir.join(format!("worker-{rev}"));
-        wait_until(&format!("the worker of {rev} to be known"), || {
-            std::fs::read_to_string(&marker).is_ok_and(|pid| !pid.trim().is_empty())
-        });
+        wait_until(
+            &self.dir,
+            &format!("the worker of {rev} to be known"),
+            || std::fs::read_to_string(&marker).is_ok_and(|pid| !pid.trim().is_empty()),
+        );
         let pid = std::fs::read_to_string(&marker).unwrap();
-        let killed = std::process::Command::new("kill")
+        let killed = std::process::Command::new(crate::common::tool_executable("kill"))
             .args(["-s", "KILL", pid.trim()])
             .status()
             .unwrap();
         assert!(killed.success(), "the worker was killed");
         // Gone, not merely signalled: its locks are released only once it
         // has exited.
-        wait_until(&format!("the worker of {rev} to have exited"), || {
-            !std::process::Command::new("kill")
-                .args(["-0", pid.trim()])
-                .stderr(std::process::Stdio::null())
-                .status()
-                .unwrap()
-                .success()
-        });
+        wait_for_exit(pid.trim());
     }
 
     pub fn open(&self) {
-        std::fs::write(self.dir.join("open"), b"").unwrap();
+        *self.signal.0.lock().unwrap() = GateState::Open;
+        self.signal.1.notify_all();
     }
 
     /// Closes the gate again for the runs that start from now on.
     pub fn close(&self) {
-        std::fs::remove_file(self.dir.join("open")).unwrap();
+        *self.signal.0.lock().unwrap() = GateState::Closed;
     }
 
     /// Makes a waiting run end without output.
     pub fn abort(&self) {
-        std::fs::write(self.dir.join("abort"), b"").unwrap();
+        let pid = std::fs::read_to_string(self.dir.join("running")).unwrap();
+        *self.signal.0.lock().unwrap() = GateState::Aborted;
+        self.signal.1.notify_all();
+        // Interrupted status depends on the OS process group being gone,
+        // even though no worker remains to write another generation record.
+        wait_for_exit(pid.trim());
     }
 }
 
@@ -275,12 +331,13 @@ pub fn push(env: &TestEnv, repo: &Repo) {
         .success();
 }
 
-/// Polls `condition` until it holds, failing the test after a bound.
-pub fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+/// Rechecks the condition on filesystem progress, within a fixed bound.
+pub fn wait_until(root: &Path, what: &str, mut condition: impl FnMut() -> bool) {
+    let progress = crate::common::progress::Progress::new(root, WAIT);
     let deadline = Instant::now() + WAIT;
     while !condition() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(20));
+        progress.wait();
     }
 }
 
@@ -309,17 +366,21 @@ pub fn last_generation(env: &TestEnv) -> Option<LastGeneration> {
 pub fn wait_generated(env: &TestEnv, of: &str) -> LastGeneration {
     let of = sha(of);
     let mut ended = None;
-    wait_until(&format!("the generation of {of} to end"), || {
-        ended = last_generation(env).filter(|last| {
-            last.sha == of
-                && !matches!(
-                    last.state,
-                    instrukt_blueprint::GenerationState::Running
-                        | instrukt_blueprint::GenerationState::Orphaned
-                )
-        });
-        ended.is_some()
-    });
+    wait_until(
+        store(env).dir(),
+        &format!("the generation of {of} to end"),
+        || {
+            ended = last_generation(env).filter(|last| {
+                last.sha == of
+                    && !matches!(
+                        last.state,
+                        instrukt_blueprint::GenerationState::Running
+                            | instrukt_blueprint::GenerationState::Orphaned
+                    )
+            });
+            ended.is_some()
+        },
+    );
     ended.unwrap()
 }
 
@@ -341,4 +402,27 @@ pub fn map(nodes: &[(&str, &str)], links: &[(&str, &str, &str)]) -> Value {
         "nodes": nodes.iter().map(|(id, file)| json!({"id": id, "source_file": file})).collect::<Vec<_>>(),
         "links": links.iter().map(|(s, t, r)| json!({"source": s, "target": t, "relation": r})).collect::<Vec<_>>(),
     })
+}
+
+impl Drop for Gate {
+    fn drop(&mut self) {
+        *self.signal.0.lock().unwrap() = GateState::Stopped;
+        self.signal.1.notify_all();
+        std::net::TcpStream::connect(self.address).unwrap();
+        self.server.take().unwrap().join().unwrap();
+    }
+}
+
+fn wait_for_exit(pid: &str) {
+    let deadline = Instant::now() + WAIT;
+    while std::process::Command::new(crate::common::tool_executable("kill"))
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+    {
+        assert!(Instant::now() < deadline, "process {pid} did not exit");
+        std::thread::yield_now();
+    }
 }

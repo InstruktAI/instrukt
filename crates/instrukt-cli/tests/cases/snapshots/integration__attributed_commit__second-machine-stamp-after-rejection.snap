@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/attributed-commit.rs
+expression: "label(stdout(&env, &merged))"
+---
+<commit>: exempt
+review notes pushed to origin

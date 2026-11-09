@@ -1,0 +1,89 @@
+---
+source: crates/instrukt-cli/tests/cases/pending-documentation.rs
+assertion_line: 193
+expression: "stdout(&env, &lens).replace(&github.url(), \"[GITHUB_API]\")"
+---
+# instrukt docs get --target build-it: acme/spec/fresh acme/policy/reworked acme/spec/live acme/concept/old
+# Required reads (not loaded) that must have been read at least once: acme/spec/later
+
+---
+id: acme/spec/fresh
+type: spec
+domain: acme
+scope: global
+description: A new contract build-it delivers.
+source: [TMP]/build-it-prepare/docs/domain/acme/spec/fresh.md
+---
+# Fresh — Spec
+
+## What it is
+
+New with build-it.
+
+## Canonical fields
+
+Text.
+
+---
+id: acme/policy/reworked
+type: policy
+domain: acme
+scope: global
+description: A live policy with a next version.
+source: [TMP]/build-it-prepare/docs/domain/acme/policy/reworked.md
+---
+# Reworked — Policy
+
+## Rules
+
+The rules as build-it delivers them.
+
+## Rationale
+
+Text.
+
+## Scope
+
+Text.
+
+## Enforcement
+
+Text.
+
+## Exceptions
+
+Text.
+
+---
+id: acme/spec/live
+type: spec
+domain: acme
+scope: global
+description: A live contract with pending additions.
+source: [TMP]/build-it-prepare/docs/domain/acme/spec/live.md
+---
+# Live — Spec
+
+## What it is
+
+The current text.
+
+Added by build-it.
+```
+[GITHUB_API]
+```
+
+- field: replaced by build-it
+
+## Canonical fields
+
+Text.
+
+---
+id: acme/concept/old
+type: concept
+domain: acme
+scope: global
+description: A concept build-it retires.
+source: [TMP]/build-it-prepare/docs/domain/acme/concept/old.md
+---

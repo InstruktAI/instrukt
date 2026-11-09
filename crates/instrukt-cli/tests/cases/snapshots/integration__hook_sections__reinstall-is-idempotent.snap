@@ -1,0 +1,9 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "stdout(&env, &reinstalled)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+post-commit: already current
+post-merge: already current
+post-rewrite: already current
+post-checkout: already current; the file is not executable, so git does not run it (left as it is)

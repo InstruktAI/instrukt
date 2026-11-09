@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/dependencies-and-holds.rs
-expression: refusal
----
-instrukt: transferring pending documentation failed: cannot write [TMP]/demo/docs/project/spec/locked/late.md: Permission denied (os error 13) at path "[TMP]/demo/docs/project/spec/locked/.tmp<name>"; every file already changed was restored

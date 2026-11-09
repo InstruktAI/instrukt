@@ -1,9 +1,0 @@
----
-source: crates/instrukt-cli/tests/hook-sections.rs
-expression: "stdout(&env, &installed)"
----
-hooks directory: [TMP]/demo/.manager-hooks (set by core.hooksPath)
-post-commit: written
-post-merge: written
-post-rewrite: written
-post-checkout: written

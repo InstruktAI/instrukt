@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/inbound-webhook-endpoint-framework.rs
+assertion_line: 116
+expression: stdout
+---
+[PROJECT]/instrukt.yaml: webhooks: `webhooks.verify` unknown verification scheme stripe

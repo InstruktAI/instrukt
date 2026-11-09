@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/github-apps.rs
-expression: "rejected_credential(\"POST\", \"/graphql\",\nserde_json::json!({\"data\":{\"viewer\":{\"id\":\"wrong\",\"databaseId\":99,\"login\":\"wrong[bot]\"}}}))"
----
-wrote log of pending-app: <digest 1>
-reflection: pending: GitHub: GitHub App setup incomplete: issued credential's actor does not match the selected App bot; repair github.apps and its repository installation with the configuration skill

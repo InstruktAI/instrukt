@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+expression: rendered
+---
+[TMP]/replacement-instrukt webhooks serve --socket-activation GIT_CONFIG_GLOBAL=[TMP]/home/.gitconfig GIT_CONFIG_NOSYSTEM=1 HOME=[TMP]/home INSTRUKT_DEVELOPMENT=0 INSTRUKT_HOME=[TMP]/home/.instrukt INSTRUKT_RECEIVER_APPLIED=[INVOCATION] INSTRUKT_RECEIVER_FD=3 LANG=C.UTF-8 LISTEN_FDNAMES=instrukt LISTEN_FDS=1 LISTEN_PID=[PID] PATH=[TMP]/runtime-bin:/usr/bin:/bin:/effective-runtime TMPDIR=[TMP]/tmp XDG_CONFIG_HOME=[TMP]/home/.config

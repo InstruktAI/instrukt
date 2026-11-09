@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/procedure-subscription-routing.rs
-expression: "String::from_utf8_lossy(&result.get_output().stdout)"
----
-docs/domain/reactions/procedure/invalid.md: frontmatter-delivery-setting-invalid: subscription_attendance: public
-notice: docs/domain/reactions/procedure/invalid.md: unreferenced-snippet: reactions/procedure/invalid

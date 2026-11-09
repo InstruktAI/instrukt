@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "stdout(&env, &synced).replace(&platform.head(), \"[SHA]\")"
+---
+published platform at [SHA]
+notice: docs/domain/ops/: domain-without-index: `ops` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain ops`
+.instrukt/schemas/general-index.schema.json: schema written
+.instrukt/schemas/domain-index.schema.json: schema written
+.instrukt/schemas/project-index.schema.json: schema written
+.instrukt/schemas/snippet-schema.schema.json: schema written
+.instrukt/schemas/instrukt.schema.json: schema written
+instrukt.yaml: modeline inserted
+docs/general/index.yaml: modeline inserted

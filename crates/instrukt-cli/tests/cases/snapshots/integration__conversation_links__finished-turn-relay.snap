@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/conversation-links.rs
+assertion_line: 107
+expression: delivered
+---
+[Peer (t3:[SOURCE]:child · human · 2026-11-08 10:00 UTC)]
+Useritemtoken text.
+[/Peer (t3:[SOURCE]:child · human · 2026-11-08 10:00 UTC)]
+
+[Peer (t3:[SOURCE]:child · agent:fixture/fixture · 2026-11-08 10:00 UTC)]
+Assistantitemtoken text.
+[/Peer (t3:[SOURCE]:child · agent:fixture/fixture · 2026-11-08 10:00 UTC)]

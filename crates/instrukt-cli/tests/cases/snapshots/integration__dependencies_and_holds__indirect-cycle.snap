@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
+expression: refused
+---
+instrukt: this change makes `lexer-depth` wait on itself: lexer-depth → nested-lists → parser-depth → lexer-depth

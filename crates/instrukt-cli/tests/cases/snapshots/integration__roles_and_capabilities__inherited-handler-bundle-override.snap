@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+assertion_line: 513
+expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
+---
+instrukt: role `builder` (focused) cannot perform docs-write on docs fold (unused-delivery) with its ungranted scope; return the required action to the dispatcher in your own output or assigned artifact
