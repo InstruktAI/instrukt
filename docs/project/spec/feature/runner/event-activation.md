@@ -157,6 +157,17 @@ Procedure-event-delivery owns selection, combining and untrusted data framing.
   And offers reconciliation that retains the fork's local modifications
 ```
 
+### UC-EA2: A developer's integrator learns of failed dependency checks
+
+```gherkin
+Given a developer has selected dependency-update branches for CI observation
+And their integrator subscribes to dependency-check failure evidence
+When a required check fails on a current selected branch head
+Then their integrator receives that exact branch, commit and failed check result
+And repeated observation of that same failure creates no duplicate delivery
+But unrelated branches and successful or unfinished checks do not produce this failure delivery
+```
+
 ## Known caveats
 
 - Company/person origins and references travel intact, but resolving those homes

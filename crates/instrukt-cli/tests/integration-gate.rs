@@ -640,7 +640,7 @@ fn app_issuance_retry_deadlines_defer_credentials_and_ci_requests_across_ticks()
     assert_eq!(project.github.requests_to("GET", "/check-runs").len(), 1);
 }
 
-// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG6
+// spec: project/instrukt/spec/feature/runner/event-activation UC-EA2
 #[test]
 fn failed_dependency_checks_reach_the_integrator_once_with_their_exact_evidence() {
     let project = Tracked::integrating();
@@ -695,7 +695,7 @@ fn failed_dependency_checks_reach_the_integrator_once_with_their_exact_evidence(
     assert_eq!(project.rt.sent_count("s1"), 1);
 }
 
-// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG6
+// spec: project/instrukt/spec/feature/runner/event-activation UC-EA2
 #[test]
 fn dependency_observation_uses_project_prefixes_and_ignores_other_or_disabled_branches() {
     let project = Tracked::integrating();
@@ -742,7 +742,7 @@ fn dependency_observation_uses_project_prefixes_and_ignores_other_or_disabled_br
     assert_eq!(project.rt.sent_count("s1"), 0);
 }
 
-// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG6
+// spec: project/instrukt/spec/feature/runner/event-activation UC-EA2
 #[test]
 fn a_required_dependency_check_on_a_later_github_page_reaches_the_integrator() {
     let project = Tracked::integrating();

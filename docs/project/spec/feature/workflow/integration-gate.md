@@ -198,12 +198,10 @@ And work starts separately from freshly fetched remote main
 ### UC-IG6: A developer gets failed dependency updates assessed without watching every bot PR
 
 ```gherkin
-Given a developer has enabled their project's integrator and CI observation for dependency-update branches
-When a required check fails on a current dependency-update branch head
-Then their integrator receives that exact branch, commit and failed check result
-And repeated observation of that same failure creates no duplicate response
-And their integrator assesses whether it warrants a bug and deduplicates any bug it files
-But unrelated branches and successful or unfinished checks do not trigger this failure response
+Given a developer has dependency-update failure evidence for their integrator to assess
+When their integrator assesses that evidence
+Then it judges whether the failure warrants a bug
+And when warranted it records the bug work once, reusing matching existing work
 ```
 
 ## Known caveats

@@ -35,7 +35,8 @@ failure interpretation, promotion and recovery.
 - `workflow.preparation_reviewed` identifies an approved preparation head and report,
   or `workflow.finalized` identifies a todo and finalized commit, or
   `runner.ci_completed` identifies the submitted candidate and result, or
-  `runner.main_failing` identifies remote main's head commit whose CI completed red.
+  `runner.main_failing` identifies remote main's head commit whose CI completed red,
+  or `runner.dependency_failing` identifies a dependency branch, commit and failed check run for assessment.
 - One standing integrator session is recorded per subscribing procedure and
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
