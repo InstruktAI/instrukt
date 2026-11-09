@@ -89,12 +89,18 @@ fn protected_secrets_are_shared_by_commands_and_noninteractive_reads() {
 
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 #[test]
-fn ordinary_reads_migrate_old_configuration_and_preserve_supported_values() {
+fn ordinary_reads_convert_in_memory_and_writing_commands_preserve_supported_values() {
     let env = TestEnv::new();
     let home = Home::at_user_home(env.home().into());
     std::fs::create_dir_all(home.root()).unwrap();
     std::fs::write(home.global_config(), "schema_version: 1\nticks: off\n").unwrap();
     env.run(env.home(), ["config", "get", "ticks", "--global"])
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(home.global_config()).unwrap(),
+        "schema_version: 1\nticks: off\n"
+    );
+    env.run(env.home(), ["config", "init", "--global"])
         .success();
     let stored: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(home.global_config()).unwrap()).unwrap();
@@ -310,7 +316,7 @@ fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_mac
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
 #[test]
-fn retired_project_actions_migrate_before_reads_and_an_unchanged_sync() {
+fn retired_project_actions_convert_for_inspection_and_persist_before_an_unchanged_sync() {
     let env = TestEnv::new();
     let repo = env.git_repo("retired-actions");
     let old = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: retired-actions\nactions: {test: make test}\napprovals: {prd: peer}\n";
@@ -319,18 +325,8 @@ fn retired_project_actions_migrate_before_reads_and_an_unchanged_sync() {
     let read = env
         .run(repo.path(), ["config", "get", "approvals.prd"])
         .success();
-    let stored: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
-    assert!(stored.get("actions").is_none());
+    assert_eq!(repo.read("instrukt.yaml"), old);
     insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stdout), @"peer");
-    assert_eq!(
-        stored["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
-    );
-    assert_eq!(
-        repo.read("instrukt.yaml").lines().next(),
-        old.lines().next()
-    );
     env.run(repo.path(), ["sync"]).success();
     repo.write("instrukt.yaml", old);
     env.run(repo.path(), ["sync"]).success();

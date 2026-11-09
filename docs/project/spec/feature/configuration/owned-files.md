@@ -38,12 +38,18 @@ resolves current and previous signing references at each request for rotation.
 ### Owned-shape migration
 
 Owned file shapes are versioned and migrated when they change. Configuration
-migration runs before refusal or skip on every path, including ordinary reads,
-patches, validation, publication, installation and ticks. A skip due to unchanged
-publication is considered only after migration. A conversion preserves supported user
-settings and writes atomically; a failed conversion leaves its source intact
+migration runs before refusal or skip on every path. Read-only inspection commands
+convert older configuration in memory, leave files and locks untouched, and report
+that the file migrates on the next writing command. Writing commands, publication,
+installation convergence and ticks persist the conversion before proceeding; a skip
+due to unchanged publication is considered only after migration. A conversion
+preserves supported user settings and writes atomically; a failed conversion leaves its source intact
 and reports the cause. Existing rejection of a configuration version newer
-than the binary remains the upgrade door.
+than the binary remains the upgrade door. A revision read during inspection names
+the bytes on disk. A revision-checked writing patch verifies those bytes and
+performs conversion under the same configuration write lock. Receiver inspection
+and signature rejection use the in-memory view; a verified valid delivery persists
+conversion before event publication.
 
 Other owned files gain a version when their shape first changes. Their readers
 use the owned migration path rather than treating prior data as malformed or
@@ -88,7 +94,8 @@ Given the machine and project configurations use an older owned schema
 And canonical main equals the last published commit
 When sync runs after an instrukt upgrade
 Then configuration migrates before the unchanged-publication decision
-And ordinary reads and ticks also migrate before schema-based refusal or skip
+And ordinary reads inspect the converted configuration without writing it and report the pending migration
+And ticks persist migration before schema-based refusal or skip
 And a failed conversion preserves the source and reports the failure
 ```
 

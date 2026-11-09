@@ -288,6 +288,9 @@ pub fn run_install(args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode>
     if args.json {
         ctx.out.json(&report)?;
     } else {
+        for notice in &report.notices {
+            ctx.out.line(&format!("notice: {notice}"))?;
+        }
         if report.resources.is_empty() && report.findings.is_empty() {
             ctx.out
                 .line("no enabled adopted project demands background infrastructure")?;

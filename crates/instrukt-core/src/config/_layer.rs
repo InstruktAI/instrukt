@@ -170,6 +170,9 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
 /// Reads a layer for a read command: absent is `None`; an unusable schema
 /// version is refused.
 pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, ConfigError> {
+    if home.is_inspection() {
+        return Ok(inspect_layer(home, layer)?.value);
+    }
     migrate_if_needed(home, layer)?;
     let path = layer.path(home);
     match read(&path)? {
@@ -182,6 +185,9 @@ pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, C
 }
 
 pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
+    if home.is_inspection() {
+        return Ok(());
+    }
     if read(&layer.path(home))?.is_some_and(|doc| matches!(version(&doc.value), Version::Older(_)))
     {
         migrate(home, layer)?;
@@ -189,13 +195,85 @@ pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), Config
     Ok(())
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct LayerInspection {
+    pub path: PathBuf,
+    pub present: bool,
+    pub schema_version: Option<u64>,
+    pub migration: Option<String>,
+    #[serde(skip)]
+    pub(crate) value: Option<Value>,
+}
+impl LayerInspection {
+    pub fn module_setting(&self, module: super::Module) -> Result<Option<bool>, ConfigError> {
+        match self
+            .value
+            .as_ref()
+            .and_then(|v| v.get("modules"))
+            .and_then(|v| v.get(module.key()))
+        {
+            None => Ok(None),
+            Some(Value::Bool(value)) => Ok(Some(*value)),
+            Some(_) => Err(ConfigError::InvalidValue {
+                key: format!("modules.{}", module.key()),
+                message: "expected boolean".into(),
+            }),
+        }
+    }
+    pub fn project(&self) -> Result<Option<ProjectSlug>, ConfigError> {
+        let Some(value) = self.value.as_ref().and_then(|v| v.get("project")) else {
+            return Ok(None);
+        };
+        let text = value.as_str().unwrap_or_default();
+        ProjectSlug::parse(text)
+            .map(Some)
+            .map_err(|source| ConfigError::Slug {
+                path: self.path.clone(),
+                source,
+            })
+    }
+}
+/// A current in-memory view, retaining the on-disk version and migration notice.
+pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, ConfigError> {
+    let path = layer.path(home);
+    let document = read(&path)?;
+    let mut view = LayerInspection {
+        path: path.clone(),
+        present: document.is_some(),
+        schema_version: None,
+        migration: None,
+        value: None,
+    };
+    if let Some(document) = document {
+        let mut value = document.value;
+        view.schema_version = value.get("schema_version").and_then(Value::as_u64);
+        if let Version::Older(from) = version(&value) {
+            super::_migrate::selection(home, layer, &mut value, false)?;
+            value = migrate_value(value, from, layer.kind());
+            view.migration = Some(format!(
+                "{}: schema_version {from} inspected as {}; file migrates on the next writing command",
+                path.display(),
+                CURRENT_SCHEMA_VERSION
+            ));
+        }
+        require_usable(layer, &path, &value)?;
+        view.value = Some(value);
+    }
+    Ok(view)
+}
+
 /// The current revision of `layer`.
 pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
+    if home.is_inspection() {
+        inspect_layer(home, layer)?;
+    }
     migrate_if_needed(home, layer)?;
     let path = layer.path(home);
     match read(&path)? {
         Some(doc) => {
-            require_usable(layer, &path, &doc.value)?;
+            if !home.is_inspection() {
+                require_usable(layer, &path, &doc.value)?;
+            }
             Ok(Revision::of(&doc.bytes))
         }
         None => Err(ConfigError::NoLayer {
@@ -228,19 +306,31 @@ pub fn patch(
     if !patch.is_mapping() {
         return Err(ConfigError::PatchNotAMapping);
     }
-    migrate_if_needed(home, layer)?;
+    if matches!(layer, Layer::Project(_)) {
+        migrate_if_needed(home, &Layer::Global)?;
+    }
     let started = Instant::now();
     let path = layer.path(home);
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    let Some(doc) = read(&path)? else {
+    let Some(mut doc) = read(&path)? else {
         return Err(ConfigError::NoLayer {
             path,
             door: layer.init_door(),
         });
     };
+    let inspected_revision = Revision::of(&doc.bytes);
+    if let Version::Older(from) = version(&doc.value) {
+        super::_migrate::selection(home, layer, &mut doc.value, true)?;
+        doc.value = migrate_value(doc.value, from, layer.kind());
+        write(&path, &doc.bytes, &doc.value)?;
+        doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
+            path: path.clone(),
+            door: layer.init_door(),
+        })?;
+    }
     require_usable(layer, &path, &doc.value)?;
     let current = Revision::of(&doc.bytes);
-    if &current != expected {
+    if &inspected_revision != expected {
         return Err(ConfigError::RevisionMismatch {
             expected: expected.to_string(),
             current: current.to_string(),
@@ -249,7 +339,7 @@ pub fn patch(
     let before = doc.value;
     let mut next = before.clone();
     merge_patch(&mut next, patch);
-    let mut findings = findings_for(home, layer, &path, &next)?;
+    let mut findings = findings_for(&home.for_inspection(), layer, &path, &next)?;
     // Todos already on stay a validation finding; only a write that
     // switches them on is refused for it.
     if layer.kind() == LayerKind::Project {
@@ -316,7 +406,7 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
             let mut migrated = doc.value;
-            super::_migrate::selection(home, layer, &mut migrated)?;
+            super::_migrate::selection(home, layer, &mut migrated, true)?;
             let migrated = migrate_value(migrated, from, layer.kind());
             let revision = write(&path, &doc.bytes, &migrated)?;
             tracing::debug!(

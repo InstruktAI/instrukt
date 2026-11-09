@@ -211,6 +211,30 @@ fn private_socket(endpoint: &config::RedisEndpoint) -> anyhow::Result<()> {
     Ok(())
 }
 fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
+    let server: redis::InfoDict =
+        redis::cmd("INFO")
+            .arg("server")
+            .query(connection)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot inspect Redis version ({:?}); grant INFO and use Redis 7.0 or later",
+                    e.kind()
+                )
+            })?;
+    let version = server.get::<String>("redis_version").ok_or_else(|| {
+        anyhow::anyhow!("Redis server did not report a version; Redis 7.0 or later is required")
+    })?;
+    let major = version
+        .split('.')
+        .next()
+        .and_then(|s| s.parse::<u64>().ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!("unrecognized Redis version; Redis 7.0 or later is required")
+        })?;
+    anyhow::ensure!(
+        major >= 7,
+        "Redis 7.0 or later is required (server reports {version}); upgrade Redis before installation"
+    );
     let commands = [
         "XADD",
         "XGROUP",
@@ -238,6 +262,10 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
         .arg("WHOAMI")
         .query(connection)
         .map_err(|e| anyhow::anyhow!("Redis ACL inspection failed ({:?})", e.kind()))?;
+    let claim_key = format!(
+        "instrukt:ingress:claim:{}",
+        crate::events::occurrence_id(&["installation-check"])
+    );
     for args in [
         vec!["XADD", "instrukt:diagnostic:check", "*", "event", "check"],
         vec![
@@ -267,6 +295,10 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
         ],
         vec!["EVAL", "return 1", "0"],
         vec!["DEL", "instrukt:diagnostic:check"],
+        vec!["GET", &claim_key],
+        vec!["SET", &claim_key, "diagnostic", "EX", "1"],
+        vec!["XACK", "instrukt:events", "diagnostic", "0-0"],
+        vec!["XPENDING", "instrukt:events", "diagnostic"],
     ] {
         let result: redis::RedisResult<String> = redis::cmd("ACL")
             .arg("DRYRUN")

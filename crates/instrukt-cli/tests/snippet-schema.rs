@@ -26,7 +26,7 @@ fn spec(extra: &[&str]) -> String {
 /// carry `Use cases`.
 fn project(env: &TestEnv) -> Repo {
     let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n")
+    repo.write("instrukt.yaml", "schema_version: 3\nproject: demo\n")
         .write(
             "docs/project/schema.yaml",
             "spec/feature:\n  required: [Use cases]\n  optional: [Examples]\n",

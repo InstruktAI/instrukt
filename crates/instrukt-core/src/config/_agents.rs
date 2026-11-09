@@ -6,6 +6,7 @@ use crate::{
     ids::{ProfileName, ProviderInstanceId},
 };
 use serde::{Deserialize, Serialize};
+use serde_yaml_ng::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 
@@ -337,7 +338,64 @@ impl Agents {
         }
     }
 
+    /// Explain a supported pending shape conversion without deploying defaults.
+    pub fn inspection_notice(home: &Home) -> Result<Option<String>, ConfigError> {
+        let path = home.agents_file();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(ConfigError::Read { path, source }),
+        };
+        Ok(super::_agents_migrate::current(&bytes)?.map(|_|format!("{}: selection configuration inspected in memory; file migrates on the next writing command",path.display())))
+    }
+
     pub fn load(home: &Home) -> Result<Self, ConfigError> {
+        if home.is_inspection() {
+            let path = home.agents_file();
+            let existing = match std::fs::read(&path) {
+                Ok(bytes) => Some(super::_agents_migrate::current(&bytes)?.unwrap_or(bytes)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(source) => return Err(ConfigError::Read { path, source }),
+            };
+            let legacy = match super::_layer::read(&home.global_config())? {
+                Some(mut doc)
+                    if doc
+                        .value
+                        .get("schema_version")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|v| v < super::CURRENT_SCHEMA_VERSION) =>
+                {
+                    super::_migrate::selection(home, &super::Layer::Global, &mut doc.value, false)?
+                }
+                _ => None,
+            };
+            if let Some(value) = legacy {
+                let text = super::render_yaml(&value).map_err(|source| ConfigError::Render {
+                    path: path.clone(),
+                    source,
+                })?;
+                if let Some(existing) = existing
+                    && serde_yaml_ng::from_slice::<Value>(&existing).map_err(|source| {
+                        ConfigError::Parse {
+                            path: path.clone(),
+                            source,
+                        }
+                    })? != value
+                {
+                    return Err(ConfigError::InvalidValue {key:"configuration migration".into(),message:"agents.yaml differs from old global selection; reconcile before writing".into()});
+                }
+                return Self::parse(&text);
+            }
+            return match existing {
+                Some(bytes) => Self::parse(std::str::from_utf8(&bytes).map_err(|_| {
+                    ConfigError::InvalidValue {
+                        key: "agents.yaml".into(),
+                        message: "expected UTF-8".into(),
+                    }
+                })?),
+                None => Self::parse(SHIPPED_AGENTS),
+            };
+        }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
         if let Some(notice) = Self::deploy(home, SHIPPED_AGENTS)? {
             tracing::warn!(event="agents_defaults_available", message=%notice);

@@ -6,6 +6,15 @@ use instrukt_core::{
     config::{Agents, Configuration},
 };
 
+#[derive(Debug)]
+pub struct PermissionRefused(String);
+impl std::fmt::Display for PermissionRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for PermissionRefused {}
+
 pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
     let config = Configuration::load_global(&ctx.home)?;
     let env = wiring::environment(ctx)?;
@@ -28,6 +37,7 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
 pub fn action(path: &[&str]) -> Option<Action> {
     use Action::*;
     Some(match path {
+        ["status"] => ConfigRead,
         ["bugs", "suppressions"] => TodoRead,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
         ["docs", "fold"] => DocsWrite,
@@ -76,6 +86,53 @@ pub fn action(path: &[&str]) -> Option<Action> {
     })
 }
 
+pub fn strict_inspection(matches: &ArgMatches) -> bool {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    matches!(
+        path.as_slice(),
+        ["events", "status" | "dead-letters"] | ["ticks", "status"] | ["status"]
+    ) || (path == ["install"] && leaf.get_flag("check"))
+}
+pub fn read_only(matches: &ArgMatches) -> bool {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    if path == ["webhooks", "serve"] {
+        return true;
+    }
+    if path == ["install"] {
+        return leaf.get_flag("check");
+    }
+    matches!(
+        path.as_slice(),
+        ["status"]
+            | ["bugs", "suppressions"]
+            | ["config", "get" | "show" | "validate"]
+            | ["docs", "get" | "index" | "schema" | "validate"]
+            | ["events", "list" | "schema" | "status" | "dead-letters"]
+            | ["agents", "list" | "availability"]
+            | ["hooks", "status"]
+            | ["ticks", "status"]
+            | ["sessions", "list"]
+            | ["history", "search" | "show"]
+            | ["todo", "list" | "show"]
+            | ["todo", "artifacts", "list" | "read" | "diff"]
+            | ["specs", "coverage" | "trace"]
+            | [
+                "blueprint",
+                "status" | "query" | "path" | "explain" | "affected"
+            ]
+    )
+}
+
 pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     let mut path = Vec::new();
     let mut leaf = matches;
@@ -98,6 +155,12 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         return Ok(());
     };
     if grants.class != RoleClass::Focused {
+        return Ok(());
+    }
+    if action == Action::ConfigRead {
+        if !grants.admits(action, false) {
+            return Err(PermissionRefused(grants.refusal(action, &path.join(" "))).into());
+        }
         return Ok(());
     }
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
@@ -181,17 +244,15 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         _ => false,
     };
     if !grants.admits(action, owned) {
-        anyhow::bail!(
-            "{}",
-            grants.refusal(
-                action,
-                &format!(
-                    "{}{}",
-                    path.join(" "),
-                    target.map(|s| format!(" ({s})")).unwrap_or_default()
-                )
-            )
-        );
+        return Err(PermissionRefused(grants.refusal(
+            action,
+            &format!(
+                "{}{}",
+                path.join(" "),
+                target.map(|s| format!(" ({s})")).unwrap_or_default()
+            ),
+        ))
+        .into());
     }
     Ok(())
 }

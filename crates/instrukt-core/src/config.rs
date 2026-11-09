@@ -34,10 +34,10 @@ pub use _agents::{
 
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
-pub use _features::{Feature, Unavailable};
+pub use _features::{Feature, Unavailable, availability as feature_availability};
 pub use _layer::{
-    CONFIG_FILE_NAME, InitOutcome, Layer, MigrationOutcome, Revision, init, migrate, parse_patch,
-    patch, revision,
+    CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision, init,
+    inspect_layer, migrate, parse_patch, patch, revision,
 };
 pub use _module::Module;
 pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
@@ -63,12 +63,11 @@ pub use _secrets::{generate_secret, resolve_secret, set_secret};
 /// signature.
 pub fn project_slug(repo_root: &Path) -> Result<Option<ProjectSlug>, ConfigError> {
     let layer = Layer::Project(repo_root.to_path_buf());
-    _layer::migrate_if_needed(&Home::at_user_home(repo_root.into()), &layer)?;
+    let home = Home::at_user_home(repo_root.into()).for_inspection();
     let path = repo_root.join(CONFIG_FILE_NAME);
-    let Some(value) = _layer::read(&path)?.map(|doc| doc.value) else {
+    let Some(value) = _layer::inspect_layer(&home, &layer)?.value else {
         return Ok(None);
     };
-    _layer::require_usable(&layer, &path, &value)?;
     match value.get("project") {
         None | Some(serde_yaml_ng::Value::Null) => Ok(None),
         Some(raw) => {

@@ -10,7 +10,7 @@ use super::_effective::effective_value;
 use super::_error::{ConfigError, Finding, FindingKind};
 use super::_features::{Feature, Unavailable, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
-use super::_layer::{Layer, read, read_usable, require_usable};
+use super::_layer::{Layer, read_usable};
 use super::_module::Module;
 use super::_runtime::Runtime;
 use super::_schema::{self, CURRENT_SCHEMA_VERSION, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
@@ -142,14 +142,13 @@ fn code_on_github(
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
     let path = layer.path(home);
-    let Some(doc) = read(&path)? else {
+    let Some(value) = super::_layer::inspect_layer(home, layer)?.value else {
         return Err(ConfigError::NoLayer {
             path,
             door: layer.init_door(),
         });
     };
-    require_usable(layer, &path, &doc.value)?;
-    let mut findings = findings_for(home, layer, &path, &doc.value)?;
+    let mut findings = findings_for(home, layer, &path, &value)?;
     if layer.kind() == LayerKind::Global
         && let Err(error) = super::Agents::load(home)
     {

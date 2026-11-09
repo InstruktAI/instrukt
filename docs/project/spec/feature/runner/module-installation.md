@@ -51,7 +51,7 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt config patch --revision <rev> [--global] --from-file <file>` | Validate and atomically record desired configuration; standard input and `--yaml` retain their existing alternatives. Installs nothing. |
 | `instrukt config validate [--global]` | Validate layer, effective module/runtime prerequisites and source references; names findings without exposing secret values. |
 | `instrukt install [--module todos\|events]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
-| `instrukt install --check [--module todos\|events]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. No package, service, configuration, group-position or data mutation. |
+| `instrukt install --check [--module todos\|events]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. No package, service, configuration, group-position or data mutation. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
 | `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures and receiver placement/health; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
@@ -107,10 +107,12 @@ systemd service survives runner exit. Package provisioning must preserve foreign
 service state; inability to do that is a prerequisite finding, never permission
 to stop or reconfigure another Redis.
 
-Verify executable/version and required Streams, groups, stale-pending reclaim,
-Lua and ACL operations using disposable diagnostic keys. Authenticate and check
-socket permissions before recording the new local endpoint. Check cluster URL,
-logical namespace, reachability and permissions separately. A lone computer may
+Redis 7.0 or later is required. Verify executable/version and required Streams,
+groups, stale-pending reclaim, Lua and ACL operations using disposable diagnostic
+keys. Read-only checks use `ACL DRYRUN` as their non-mutating permission proof;
+older servers are an unmet prerequisite, with the Redis upgrade door. Authenticate and check
+socket permissions before recording the new local endpoint. Check cluster endpoint/database, reachability and permissions separately.
+The logical key namespace is the code-owned `instrukt:*`; there is no user namespace setting. A lone computer may
 explicitly use the same instance for both scopes; identical connection identity
 is read once. No cluster host is selected or provisioned on another computer.
 
@@ -131,7 +133,7 @@ values fail with the project/reference named. Signing material resolves only
 from the ingress computer's owner-only `~/.instrukt/secrets.env`; other
 computers need no signing values. Ticks and interactive paths use that same
 file for their required signing, Redis and other instrukt secrets.
-All participants agree on ingress ID and logical cluster Redis/namespace;
+All participants agree on ingress ID and cluster Redis endpoint plus database;
 local sockets, runtime and tick policy remain local. Configuration management
 distributes those facts; instrukt has no shared configuration layer.
 
@@ -148,7 +150,11 @@ before serving after loss of ingress designation; a later convergence removes
 only its obsolete owned units. Valid source edits are read per request without
 restart. Invalid changes do not replace a working validated listener config.
 Owned configuration changes that require receiver restart keep socket custody;
-port changes are reported as an edge-route change requiring operator alignment.
+same-port process restarts retain the registered listening socket. A port change
+registers and checks the replacement listener before withdrawing the prior owned
+units, and reports the edge-route change for operator alignment without waiting
+for the operator. Interrupted replacement retains its recorded ownership for
+reconciliation on the next installation run.
 
 Prepare all new retained groups at the current tail before admitting relevant
 producers or enabling intake. Existing groups keep their own progress; startup

@@ -17,6 +17,7 @@ pub struct DeliveryGate {
 
 #[derive(Default)]
 struct Gate {
+    version: Option<String>,
     armed: AtomicBool,
     intercepted: AtomicBool,
     stopping: AtomicBool,
@@ -26,14 +27,25 @@ struct Gate {
 
 impl DeliveryGate {
     pub fn new(server: &super::redis::RedisServer) -> Self {
+        Self::build(server, None)
+    }
+    pub fn reporting_version(server: &super::redis::RedisServer, version: &str) -> Self {
+        Self::build(server, Some(version.into()))
+    }
+    fn build(server: &super::redis::RedisServer, version: Option<String>) -> Self {
         let dir = tempfile::Builder::new()
             .prefix("instrukt-gate-")
             .tempdir_in("/tmp")
             .unwrap();
         let socket = dir.path().join("redis.sock");
         let listener = UnixListener::bind(&socket).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o700)).unwrap();
         let target = server.url.strip_prefix("unix://").unwrap().to_owned();
-        let state = Arc::new(Gate::default());
+        let state = Arc::new(Gate {
+            version,
+            ..Gate::default()
+        });
         let sockets = Arc::new(Mutex::new(Vec::new()));
         let worker_state = Arc::clone(&state);
         let worker_sockets = Arc::clone(&sockets);
@@ -59,7 +71,7 @@ impl DeliveryGate {
                                 if back.get_mut().write_all(&command).is_err() {
                                     break;
                                 }
-                                let Ok(response) = frame(&mut back) else {
+                                let Ok(mut response) = frame(&mut back) else {
                                     break;
                                 };
                                 let arguments = redis::parse_redis_value(&command)
@@ -68,6 +80,15 @@ impl DeliveryGate {
                                         redis::from_redis_value::<Vec<Vec<u8>>>(value).ok()
                                     })
                                     .unwrap_or_default();
+                                if arguments
+                                    .first()
+                                    .is_some_and(|name| name.eq_ignore_ascii_case(b"INFO"))
+                                    && let Some(version) = &state.version
+                                {
+                                    let body = format!("redis_version:{version}\r\n");
+                                    response =
+                                        format!("${}\r\n{}\r\n", body.len(), body).into_bytes();
+                                }
                                 let has_delivery = redis::parse_redis_value(&response)
                                     .ok()
                                     .and_then(|value| {

@@ -62,8 +62,9 @@ pub fn serve_with_socket(
     clock: std::sync::Arc<dyn Fn() -> Timestamp + Send + Sync>,
     socket_activation: bool,
 ) -> Result<(), WebhookError> {
+    let inspection = home.for_inspection();
     let computer = machine_id(home)?;
-    let ingress = Configuration::load_global(home)?.ingress()?;
+    let ingress = Configuration::load_global(&inspection)?.ingress()?;
     if ingress.computer != computer {
         return Err(WebhookError::Placement);
     }
@@ -71,7 +72,7 @@ pub fn serve_with_socket(
     let mut invalid = None;
     for record in PublishedRecord::load_all(home)? {
         let declaration = (|| -> Result<bool, String> {
-            let config = Configuration::load(home, Some(&record.checkout))
+            let config = Configuration::load(&inspection, Some(&record.checkout))
                 .map_err(|_| "cannot read webhook configuration".to_owned())?;
             let sources = config.webhooks().map_err(|error| error.to_string())?;
             if !config
@@ -153,7 +154,7 @@ pub fn serve_with_socket(
     );
     loop {
         // A valid placement change withdraws this receiver even when no requests arrive.
-        match Configuration::load_global(home).and_then(|config| config.ingress()) {
+        match Configuration::load_global(&inspection).and_then(|config| config.ingress()) {
             Ok(current) if current.computer != computer => return Err(WebhookError::Placement),
             Err(error) => tracing::warn!(event = "webhook_configuration_invalid", error = %error),
             _ => {}
@@ -217,7 +218,8 @@ fn receive(
     if !record.checkout.join("instrukt.yaml").is_file() {
         return fail_config();
     }
-    let Ok(config) = Configuration::load(home, Some(&record.checkout)) else {
+    let inspection = home.for_inspection();
+    let Ok(config) = Configuration::load(&inspection, Some(&record.checkout)) else {
         return fail_config();
     };
     if !config
@@ -337,7 +339,10 @@ fn receive(
         }
     };
     let result = (|| -> Result<(), crate::transport::TransportError> {
-        let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(home))?;
+        let writing = home.for_writing();
+        // Only a verified, valid delivery reaches the writing migration boundary.
+        Configuration::load(&writing, Some(&record.checkout))?;
+        let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(&writing))?;
         transport.publish_claimed(&event, &claim, CLAIM_TTL)?;
         Ok(())
     })();

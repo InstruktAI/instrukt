@@ -14,8 +14,31 @@ pub(super) struct Definition {
     pub files: BTreeMap<PathBuf, String>,
     #[serde(default)]
     pub registered: bool,
+    #[serde(skip)]
+    probe: Option<(u16, String)>,
 }
 impl Definition {
+    fn stem(&self) -> String {
+        if self.scheduler == "launchd" {
+            self.unit.trim_start_matches("ai.instrukt.").into()
+        } else {
+            self.unit
+                .trim_start_matches("instrukt-")
+                .trim_end_matches(".socket")
+                .into()
+        }
+    }
+    fn port(&self) -> Option<u16> {
+        for contents in self.files.values() {
+            if let Some((_, tail)) = contents.split_once("ListenStream=127.0.0.1:") {
+                return tail.lines().next()?.parse().ok();
+            }
+            if let Some((_, tail)) = contents.split_once("<key>SockServiceName</key><string>") {
+                return tail.split_once("</string>")?.0.parse().ok();
+            }
+        }
+        None
+    }
     fn label(&self) -> String {
         let unit = if self.scheduler == "cron" {
             "# instrukt-tick"
@@ -31,20 +54,23 @@ pub(super) struct Owned {
     resources: BTreeMap<String, Definition>,
     #[serde(default)]
     assets: BTreeMap<PathBuf, String>,
+    #[serde(default)]
+    pending_receiver: Option<Definition>,
 }
 impl Owned {
     pub fn load(home: &Home) -> anyhow::Result<Self> {
         match std::fs::read(home.state_dir().join("installation/owned.json")) {
             Ok(bytes) => {
-                let owned: Self = serde_json::from_slice(&bytes)?;
+                let mut owned: Self = serde_json::from_slice(&bytes)?;
                 anyhow::ensure!(
-                    owned.schema_version == 1,
+                    matches!(owned.schema_version, 1 | 2),
                     "unsupported installation ownership version; upgrade instrukt"
                 );
+                owned.schema_version = 2;
                 Ok(owned)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self {
-                schema_version: 1,
+                schema_version: 2,
                 ..Self::default()
             }),
             Err(e) => Err(e.into()),
@@ -109,6 +135,9 @@ impl Owned {
     ) -> anyhow::Result<()> {
         if !required {
             return self.withdraw_named(request, &desired.name, complete, report);
+        }
+        if desired.name == "receiver" {
+            return self.receiver_resource(request, desired, complete, projects, report);
         }
         let previous = self.resources.get(&desired.name);
         if let Some(previous) = previous {
@@ -198,13 +227,6 @@ impl Owned {
             );
             return Ok(());
         }
-        // Keep receiver socket custody when the process is restarted. A port change
-        // crosses the operator's edge route, so require alignment before replacing it.
-        if desired.name == "receiver" && active && changed {
-            anyhow::bail!(
-                "receiver definition/port changed; align the edge route and stop the owned receiver socket before rerunning instrukt install"
-            );
-        }
         let repaired = previous.is_some();
         self.resources.insert(desired.name.clone(), desired.clone());
         self.save(request.home)?;
@@ -233,6 +255,182 @@ impl Owned {
         );
         Ok(())
     }
+    pub fn receiver_definition(
+        &self,
+        request: &Request<'_>,
+        port: u16,
+        route: String,
+    ) -> Definition {
+        // Keep an existing listener identity when its address is unchanged.
+        let stem = self
+            .resources
+            .get("receiver")
+            .filter(|d| d.port() == Some(port))
+            .map(|d| d.stem())
+            .unwrap_or_else(|| format!("webhooks-{port}"));
+        let mut definition = native(
+            request,
+            &stem,
+            &[
+                request.wake.executable.display().to_string(),
+                "webhooks".into(),
+                "serve".into(),
+                "--socket-activation".into(),
+            ],
+            Some(port),
+        );
+        definition.probe = Some((port, route));
+        definition
+    }
+    fn receiver_resource(
+        &mut self,
+        request: &Request<'_>,
+        desired: &Definition,
+        complete: bool,
+        projects: &[String],
+        report: &mut Report,
+    ) -> anyhow::Result<()> {
+        let previous = self.resources.get("receiver").cloned();
+        if let Some(old) = &previous {
+            anyhow::ensure!(
+                old.scheduler == desired.scheduler,
+                "receiver manager changed; restore its recorded manager before installation"
+            );
+        }
+        if self
+            .pending_receiver
+            .as_ref()
+            .is_some_and(|pending| pending.unit != desired.unit)
+        {
+            anyhow::ensure!(
+                !request.check,
+                "incomplete receiver transition; run instrukt install to reconcile it"
+            );
+            anyhow::ensure!(
+                complete,
+                "complete project demand is required before withdrawing a pending receiver"
+            );
+            let pending = self
+                .pending_receiver
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing pending receiver identity"))?;
+            validate_files(pending)?;
+            stop(pending)?;
+            remove_files(pending)?;
+            self.pending_receiver = None;
+            self.save(request.home)?;
+        }
+        let proof = self
+            .pending_receiver
+            .as_ref()
+            .filter(|d| d.unit == desired.unit)
+            .or(previous.as_ref().filter(|d| d.unit == desired.unit));
+        let mut changed = false;
+        for (file, content) in &desired.files {
+            match read(file)? {
+                None => changed = true,
+                Some(actual) => {
+                    anyhow::ensure!(
+                        proof.and_then(|d| d.files.get(file)) == Some(&actual),
+                        "receiver ownership conflict at {}; restore the recorded definition before installation",
+                        file.display()
+                    );
+                    changed |= actual != *content;
+                }
+            }
+        }
+        let same_unit = previous.as_ref().is_some_and(|d| d.unit == desired.unit);
+        let active = running(desired)?;
+        anyhow::ensure!(
+            !active || proof.is_some(),
+            "receiver {} is already registered without matching ownership",
+            desired.unit
+        );
+        let incomplete = self.pending_receiver.is_some();
+        if request.check {
+            if changed || !active || !same_unit || incomplete {
+                report.finding(
+                    "receiver",
+                    "missing, stale or incomplete owned receiver; run instrukt install",
+                );
+            }
+            report.resource(
+                "receiver",
+                if changed || !active || !same_unit || incomplete {
+                    "unmet"
+                } else {
+                    "reused"
+                },
+                desired.files.keys().cloned().collect(),
+                projects,
+                format!("{}: checked owned listener", desired.label()),
+            );
+            return Ok(());
+        }
+        if !changed && active && same_unit && !incomplete {
+            report.resource(
+                "receiver",
+                "reused",
+                desired.files.keys().cloned().collect(),
+                projects,
+                format!("{}: listener retained", desired.label()),
+            );
+            return Ok(());
+        }
+        if !same_unit {
+            anyhow::ensure!(
+                complete,
+                "complete project demand is required before changing receiver placement"
+            );
+        }
+        if let Some(old) = &previous
+            && !same_unit
+        {
+            validate_files(old)?;
+        }
+        self.pending_receiver = Some(desired.clone());
+        self.save(request.home)?;
+        for (file, content) in &desired.files {
+            atomic_write_with_permissions(
+                file,
+                content.as_bytes(),
+                std::fs::Permissions::from_mode(0o600),
+            )?;
+        }
+        if active {
+            restart_receiver(desired)?;
+        } else {
+            start(desired)?;
+        }
+        if let Some((port, route)) = &desired.probe {
+            super::receiver_health(*port, route)?;
+        }
+        if let Some(old) = &previous
+            && !same_unit
+        {
+            validate_files(old)?;
+            stop(old)?;
+            remove_files(old)?;
+            report.notices.push(format!("receiver edge route changed from port {} to {}; align the operator's external route",old.port().map(|p|p.to_string()).unwrap_or_else(||"unknown".into()),desired.port().map(|p|p.to_string()).unwrap_or_else(||"unknown".into())));
+        }
+        let mut recorded = desired.clone();
+        recorded.registered = true;
+        self.resources.insert("receiver".into(), recorded);
+        self.pending_receiver = None;
+        self.save(request.home)?;
+        report.resource(
+            "receiver",
+            if previous.is_some() {
+                "repaired"
+            } else {
+                "installed"
+            },
+            desired.files.keys().cloned().collect(),
+            projects,
+            format!("{}: receiver ready with socket custody", desired.label()),
+        );
+        Ok(())
+    }
     pub fn withdraw_named(
         &mut self,
         request: &Request<'_>,
@@ -240,6 +438,44 @@ impl Owned {
         complete: bool,
         report: &mut Report,
     ) -> anyhow::Result<()> {
+        if name == "receiver"
+            && let Some(pending) = self.pending_receiver.clone()
+        {
+            anyhow::ensure!(
+                complete,
+                "incomplete project demand; restore unreadable projects before receiver withdrawal"
+            );
+            validate_files(&pending)?;
+            if request.check {
+                report.finding(
+                    name,
+                    "obsolete pending receiver; run instrukt install to withdraw it",
+                );
+                return Ok(());
+            }
+            stop(&pending)?;
+            remove_files(&pending)?;
+            if pending.scheduler == "systemd" {
+                required(&["systemctl", "--user", "daemon-reload"])?;
+            }
+            if let Some(current) = self.resources.get_mut(name)
+                && current.unit == pending.unit
+            {
+                current.registered = false;
+            }
+            self.pending_receiver = None;
+            self.save(request.home)?;
+            report.resource(
+                name,
+                "withdrawn",
+                pending.files.keys().cloned().collect(),
+                &[],
+                format!(
+                    "{}: pending receiver withdrawn; retained data unchanged",
+                    pending.label()
+                ),
+            );
+        }
         let Some(record) = self.resources.get(name) else {
             return Ok(());
         };
@@ -290,6 +526,47 @@ impl Owned {
         }
         self.save(request.home)?;
         Ok(())
+    }
+}
+fn validate_files(definition: &Definition) -> anyhow::Result<()> {
+    for (file, expected) in &definition.files {
+        if let Some(actual) = read(file)? {
+            anyhow::ensure!(
+                actual == *expected,
+                "ownership conflict at {}; restore the recorded definition",
+                file.display()
+            );
+        }
+    }
+    Ok(())
+}
+fn remove_files(definition: &Definition) -> anyhow::Result<()> {
+    for file in definition.files.keys() {
+        if read(file)?.is_some() {
+            std::fs::remove_file(file)?;
+        }
+    }
+    Ok(())
+}
+fn restart_receiver(definition: &Definition) -> anyhow::Result<()> {
+    if definition.scheduler == "launchd" {
+        let uid = Invocation::program("id", &["-u"]).run(Duration::from_secs(10))?;
+        anyhow::ensure!(uid.success, "cannot identify the launchd user domain");
+        let uid = uid.stdout.trim().parse::<u32>()?;
+        required(&[
+            "launchctl",
+            "kickstart",
+            "-k",
+            &format!("gui/{uid}/{}", definition.unit),
+        ])
+    } else {
+        required(&["systemctl", "--user", "daemon-reload"])?;
+        required(&[
+            "systemctl",
+            "--user",
+            "restart",
+            &format!("{}.service", definition.unit.trim_end_matches(".socket")),
+        ])
     }
 }
 fn read(file: &Path) -> anyhow::Result<Option<String>> {
@@ -381,8 +658,15 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
             if systemd_loaded(&d.unit)? {
                 required(&["systemctl", "--user", "disable", "--now", &d.unit])?;
             }
-            if d.name == "receiver" && systemd_loaded("instrukt-webhooks.service")? {
-                required(&["systemctl", "--user", "stop", "instrukt-webhooks.service"])?;
+            if d.name == "receiver"
+                && systemd_loaded(&format!("{}.service", d.unit.trim_end_matches(".socket")))?
+            {
+                required(&[
+                    "systemctl",
+                    "--user",
+                    "stop",
+                    &format!("{}.service", d.unit.trim_end_matches(".socket")),
+                ])?;
             }
         }
         "cron" => {
@@ -424,6 +708,7 @@ pub(super) fn tick(request: &Request<'_>) -> Definition {
         scheduler: request.scheduler.name().into(),
         files,
         registered: false,
+        probe: None,
     }
 }
 fn xml(s: &str) -> String {
@@ -474,25 +759,18 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
         };
     }
     Definition {
-        name: if name == "webhooks" { "receiver" } else { name }.into(),
+        name: if name.starts_with("webhooks") {
+            "receiver"
+        } else {
+            name
+        }
+        .into(),
         unit,
         scheduler: request.scheduler.name().into(),
         files,
         registered: false,
+        probe: None,
     }
-}
-pub(super) fn receiver(request: &Request<'_>, port: u16) -> Definition {
-    native(
-        request,
-        "webhooks",
-        &[
-            request.wake.executable.display().to_string(),
-            "webhooks".into(),
-            "serve".into(),
-            "--socket-activation".into(),
-        ],
-        Some(port),
-    )
 }
 pub(super) fn redis(request: &Request<'_>, executable: &Path, config: &Path) -> Definition {
     native(

@@ -33,6 +33,8 @@ struct Cli {
 enum Command {
     #[command(hide = true)]
     DevSeed,
+    /// Read computer/repository setup, adoption and publication before changing instrukt.
+    Status(commands::status::StatusArgs),
     /// Park, inspect and remove known-issue dispositions for the log bug hunter.
     Bugs(bugs::BugsArgs),
     /// Open or close this native thread's conversation link.
@@ -84,7 +86,7 @@ fn main() -> ExitCode {
         Ok(matches) => matches,
         Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
             let result = (|| -> anyhow::Result<Option<clap::Error>> {
-                let ctx = Ctx::from_process()?;
+                let ctx = Ctx::inspection()?;
                 let Some((assignment, caps)) = authorization::caller(&ctx)? else {
                     return Ok(None);
                 };
@@ -104,18 +106,69 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(error) => error.exit(),
     };
+    if let Command::Status(args) = &cli.command {
+        return match Ctx::inspection().and_then(|mut ctx| {
+            let caller_error = match authorization::check(&ctx, &matches) {
+                Ok(()) => None,
+                Err(error) if error.is::<authorization::PermissionRefused>() => return Err(error),
+                Err(error) => Some(error.to_string()),
+            };
+            commands::status::run(args, &mut ctx, caller_error)
+        }) {
+            Ok(code) => code,
+            Err(error) => report(&error),
+        };
+    }
     if let Err(err) = init_tracing(&cli.command) {
         return report(&err);
     }
-    let mut ctx = match Ctx::from_process() {
+    let deferred_patch = matches
+        .subcommand()
+        .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
+    let mut ctx = match if deferred_patch || authorization::strict_inspection(&matches) {
+        Ctx::inspection()
+    } else if authorization::read_only(&matches) {
+        Ctx::configuration_read()
+    } else {
+        Ctx::from_process()
+    } {
         Ok(ctx) => ctx,
         Err(err) => return report(&err),
     };
+    if authorization::read_only(&matches) && !matches!(&cli.command, Command::Install(_)) {
+        let notice_result = (|| -> anyhow::Result<()> {
+            let mut layers = vec![instrukt_core::config::Layer::Global];
+            if let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)? {
+                layers.push(instrukt_core::config::Layer::Project(root));
+            }
+            if matches.subcommand().is_some_and(|(name, args)| {
+                name == "agents" || (name == "config" && args.subcommand_name() == Some("show"))
+            }) && let Some(notice) = instrukt_core::config::Agents::inspection_notice(&ctx.home)?
+            {
+                eprintln!("instrukt: {notice}");
+            }
+            for layer in layers {
+                if let Some(notice) =
+                    instrukt_core::config::inspect_layer(&ctx.home, &layer)?.migration
+                {
+                    eprintln!("instrukt: {notice}");
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = notice_result {
+            return report(&error);
+        }
+    }
     if let Err(error) = authorization::check(&ctx, &matches) {
         return report(&error);
     }
+    if deferred_patch {
+        ctx.home = ctx.home.for_writing();
+    }
     let outcome = match cli.command {
         Command::Bugs(args) => bugs::run(args, &mut ctx),
+        Command::Status(args) => commands::status::run(&args, &mut ctx, None),
         Command::DevSeed => seed_development(&mut ctx),
         Command::Discuss(args) => discuss::run(args, &mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
@@ -156,6 +209,7 @@ fn report(err: &anyhow::Error) -> ExitCode {
 fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let source = match command {
         Command::DevSeed => "dev-seed",
+        Command::Status(_) => "status",
         Command::Bugs(_) => "bugs",
         Command::Discuss(_) => "discuss",
         Command::Agents(_) => "agents",

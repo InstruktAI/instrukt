@@ -51,6 +51,7 @@ pub struct Resource {
 pub struct Report {
     pub resources: Vec<Resource>,
     pub findings: Vec<String>,
+    pub notices: Vec<String>,
 }
 impl Report {
     pub fn healthy(&self) -> bool {
@@ -108,6 +109,12 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     let mut owned = _services::Owned::load(request.home)
         .map_err(|e| InstallationError::Ownership(e.to_string()))?;
     let global = Configuration::load_global(request.home)?;
+    if let Some(notice) =
+        instrukt_core::config::inspect_layer(request.home, &instrukt_core::config::Layer::Global)?
+            .migration
+    {
+        report.notices.push(notice);
+    }
     if request.module != Some(Module::Events) || !demand.events.is_empty() {
         let required = !demand.projects().is_empty() && global.ticks_enabled()?;
         let projects = demand.projects();
@@ -197,7 +204,10 @@ fn receiver(
             !report.findings.iter().any(|f| f.starts_with("Redis")),
             "event transport/reader prerequisites are unmet; resolve Redis findings and rerun instrukt install"
         );
-        let receiver = _services::receiver(request, port);
+        let route = health_route
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("receiver has no valid health route"))?;
+        let receiver = owned.receiver_definition(request, port, route);
         owned.reconcile(request, &receiver, true, demand.complete, &projects, report)?;
         if let Some(route) = health_route {
             receiver_health(port, &route)?;

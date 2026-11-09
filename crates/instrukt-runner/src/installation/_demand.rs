@@ -31,6 +31,12 @@ pub(super) fn read(home: &Home, report: &mut Report) -> anyhow::Result<Demand> {
                 "declaring checkout/configuration unavailable at {}; restore it before shared withdrawal",
                 record.checkout.display()
             );
+            let layer = instrukt_core::config::Layer::Project(record.checkout.clone());
+            if home.is_inspection()
+                && let Some(notice) = instrukt_core::config::inspect_layer(home, &layer)?.migration
+            {
+                report.notices.push(notice);
+            }
             let config = Configuration::load(home, Some(&record.checkout))?;
             anyhow::ensure!(
                 config.project()?.as_ref() == Some(&record.project),

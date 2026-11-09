@@ -139,7 +139,7 @@ pub enum ConfigError {
     #[error("`{key}` {message}")]
     InvalidValue { key: String, message: String },
     #[error(
-        "the configuration changed since revision {expected} (current revision {current}); nothing was written — read it again"
+        "the configuration changed since revision {expected} (current revision {current}); the patch was not applied — read it again"
     )]
     RevisionMismatch { expected: String, current: String },
     #[error("the patch is not a YAML mapping")]

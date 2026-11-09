@@ -7,6 +7,7 @@ Context engineering for coding agents
 Usage: instrukt <COMMAND>
 
 Commands:
+  status     Read computer/repository setup, adoption and publication before changing instrukt
   bugs       Park, inspect and remove known-issue dispositions for the log bug hunter
   agents     Configured profiles and expiring profile/model availability
   config     Read, edit, initialize and validate `instrukt.yaml`

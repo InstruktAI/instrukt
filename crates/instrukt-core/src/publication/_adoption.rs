@@ -159,7 +159,7 @@ fn rendered_global_files(
 }
 
 /// Whether `dir` holds at least one file, at any depth.
-fn holds_files(dir: &Path) -> Result<bool, PublicationError> {
+pub(super) fn holds_files(dir: &Path) -> Result<bool, PublicationError> {
     if !dir.is_dir() {
         return Ok(false);
     }

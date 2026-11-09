@@ -208,7 +208,11 @@ impl StateRead {
         }
         let conn = Connection::open_with_flags(
             &path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            (if home.is_state_read_only() {
+                OpenFlags::SQLITE_OPEN_READ_ONLY
+            } else {
+                OpenFlags::SQLITE_OPEN_READ_WRITE
+            }) | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(StateDbError::sqlite(&path))?;
         configure(&conn, &path)?;
@@ -221,6 +225,9 @@ impl StateRead {
             return Err(StateDbError::Newer { path, found, known });
         }
         if found < known {
+            if home.is_state_read_only() {
+                return Err(StateDbError::Older { path, found, known });
+            }
             drop(conn);
             drop(StateDb::open(home)?);
             return Self::open(home);

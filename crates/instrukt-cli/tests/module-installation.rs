@@ -245,11 +245,15 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     );
     env.run(env.home(), ["install"]).success();
     let receiver = if cfg!(target_os = "macos") {
-        env.home()
-            .join("Library/LaunchAgents/ai.instrukt.webhooks.plist")
+        env.home().join(format!(
+            "Library/LaunchAgents/ai.instrukt.webhooks-{}.plist",
+            health.port
+        ))
     } else {
-        env.home()
-            .join(".config/systemd/user/instrukt-webhooks.socket")
+        env.home().join(format!(
+            ".config/systemd/user/instrukt-webhooks-{}.socket",
+            health.port
+        ))
     };
     assert!(!receiver.exists());
     env.run(env.home(), ["webhooks", "serve", "--socket-activation"])
@@ -510,6 +514,9 @@ struct ReceiverHealth {
 }
 impl ReceiverHealth {
     fn new() -> Self {
+        Self::with_response(401)
+    }
+    fn with_response(code: u16) -> Self {
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let port = server.server_addr().to_ip().unwrap().port();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -519,7 +526,7 @@ impl ReceiverHealth {
             while !stopping.load(std::sync::atomic::Ordering::Acquire) {
                 match reader.recv() {
                     Ok(request) => {
-                        request.respond(tiny_http::Response::empty(401)).unwrap();
+                        request.respond(tiny_http::Response::empty(code)).unwrap();
                     }
                     Err(_) => break,
                 }
@@ -564,4 +571,189 @@ fn shared_local_cluster_identity_still_checks_local_socket_permissions() {
     );
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o700)).unwrap();
     env.run(env.home(), ["install", "--check"]).success();
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let _repo = project(&env, "events", "{events: true}");
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, Some(&redis.url), &redis.url, None);
+    env.run(env.home(), ["install"]).success();
+    let old = common::redis_proxy::DeliveryGate::reporting_version(&redis, "6.2.16");
+    event_config(&env, Some(&old.url), &old.url, None);
+    let before: redis::Value = redis::cmd("XINFO")
+        .arg("GROUPS")
+        .arg("instrukt:events")
+        .query(&mut redis.connection())
+        .unwrap();
+    let result = env
+        .run(env.home(), ["install", "--check", "--json"])
+        .failure();
+    let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!(report["findings"], @r#"
+    [
+      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
+    ]
+    "#);
+    let after: redis::Value = redis::cmd("XINFO")
+        .arg("GROUPS")
+        .arg("instrukt:events")
+        .query(&mut redis.connection())
+        .unwrap();
+    assert_eq!(before, after);
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("probe-user")
+        .arg("on")
+        .arg(">test-password")
+        .arg("~instrukt:*")
+        .arg("+@all")
+        .arg("-SET")
+        .query::<()>(&mut redis.connection())
+        .unwrap();
+    for (name, value) in [
+        ("PROBE_USER", "probe-user"),
+        ("PROBE_PASSWORD", "test-password"),
+    ] {
+        env.instrukt(env.home())
+            .args(["secrets", "set", name])
+            .write_stdin(value)
+            .assert()
+            .success();
+    }
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 3\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
+    env.run(env.home(), ["install", "--check"]).failure();
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("probe-user")
+        .arg("+SET")
+        .query::<()>(&mut redis.connection())
+        .unwrap();
+    env.run(env.home(), ["install", "--check"]).success();
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI8
+#[test]
+fn receiver_restart_preserves_registration_and_port_change_starts_replacement_first() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let repo = project(&env, "events", "{events: true}");
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, Some(&redis.url), &redis.url, None);
+    env.run(env.home(), ["install"]).success();
+    let machine = std::fs::read_to_string(env.instrukt_home().join("state/machine-id")).unwrap();
+    env.instrukt(env.home())
+        .args(["secrets", "set", "SIGNING_KEY"])
+        .write_stdin("test signing material")
+        .assert()
+        .success();
+    repo.write("instrukt.yaml","schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    let first = ReceiverHealth::new();
+    event_config(
+        &env,
+        Some(&redis.url),
+        &redis.url,
+        Some(&format!(
+            "ingress: {{computer: '{}', port: {}}}\n",
+            machine.trim(),
+            first.port
+        )),
+    );
+    env.run(env.home(), ["install"]).success();
+    for name in ["launchctl", "systemctl"] {
+        let file = env.path(&format!("runtime-bin/{name}"));
+        let before = std::fs::read_to_string(&file).unwrap();
+        let guard = r#"
+case "$*" in *webhooks*)
+case "${FORBID_SOCKET_STOP:-}:$*" in
+    1:*unload*|1:*disable*) exit 57;;
+esac
+if [ -n "${REPLACEMENT_UNIT:-}" ]; then
+    case "$*" in *unload*|*disable*) [ -f "$REPLACEMENT_UNIT" ] || exit 58;; esac
+fi
+;; esac
+"#;
+        std::fs::write(
+            file,
+            before.replacen("#!/bin/sh\n", &format!("#!/bin/sh\n{guard}"), 1),
+        )
+        .unwrap();
+    }
+    env.set_env("FORBID_SOCKET_STOP", "1");
+    let new_path = format!(
+        "{}:/additional-runtime-tools",
+        env.injected("PATH").unwrap()
+    );
+    env.set_env("PATH", &new_path);
+    env.run(env.home(), ["install"]).success();
+    env.run(env.home(), ["install", "--check"]).success();
+    env.remove_env("FORBID_SOCKET_STOP");
+    let next = ReceiverHealth::new();
+    let next_unit = if cfg!(target_os = "macos") {
+        format!("ai.instrukt.webhooks-{}", next.port)
+    } else {
+        format!("instrukt-webhooks-{}.socket", next.port)
+    };
+    env.set_env(
+        "REPLACEMENT_UNIT",
+        env.path(&format!("runtime-bin/unit-{next_unit}"))
+            .to_str()
+            .unwrap(),
+    );
+    event_config(
+        &env,
+        Some(&redis.url),
+        &redis.url,
+        Some(&format!(
+            "ingress: {{computer: '{}', port: {}}}\n",
+            machine.trim(),
+            next.port
+        )),
+    );
+    let groups: redis::Value = redis::cmd("XINFO")
+        .arg("GROUPS")
+        .arg("instrukt:events")
+        .query(&mut redis.connection())
+        .unwrap();
+    env.run(env.home(), ["install"]).success();
+    env.run(env.home(), ["install", "--check"]).success();
+    assert_eq!(
+        groups,
+        redis::cmd("XINFO")
+            .arg("GROUPS")
+            .arg("instrukt:events")
+            .query::<redis::Value>(&mut redis.connection())
+            .unwrap()
+    );
+    let broken = ReceiverHealth::with_response(503);
+    event_config(
+        &env,
+        Some(&redis.url),
+        &redis.url,
+        Some(&format!(
+            "ingress: {{computer: '{}', port: {}}}\n",
+            machine.trim(),
+            broken.port
+        )),
+    );
+    env.run(env.home(), ["install"]).failure();
+    let pending = if cfg!(target_os = "macos") {
+        format!("ai.instrukt.webhooks-{}", broken.port)
+    } else {
+        format!("instrukt-webhooks-{}.socket", broken.port)
+    };
+    let pending = env.path(&format!("runtime-bin/unit-{pending}"));
+    assert!(pending.is_file());
+    let current = env.path(&format!("runtime-bin/unit-{next_unit}"));
+    assert!(current.is_file());
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 3\nproject: events\nmodules: {events: false}\n",
+    );
+    env.run(env.home(), ["install"]).success();
+    assert!(!pending.exists());
+    assert!(!current.exists());
 }
