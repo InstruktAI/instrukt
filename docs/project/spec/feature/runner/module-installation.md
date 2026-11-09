@@ -87,17 +87,12 @@ expanded credentials. A failed prerequisite never produces an overall success.
 ### GitHub reflection readiness
 
 For enabled todos, inspection consumes work's CLI-composed GitHub readiness
-port. Work verifies the project App, protected key, repository installation,
-record and account-board permission scopes, expiry and stable bot identities.
-It reads repository issues, existing issue artifacts when an issue is available,
-and the configured board or its account's project listing. Unavailable access
-or reflection capabilities are unmet findings with the configuration repair door.
-Inspection neither reflects pending work nor creates issues, artifacts, boards,
-fields or views, and it writes no local state. Other projects use only this
-machine's retained repository and board settings; their checkouts are not read.
-Read-only readiness establishes declared write permissions and available read
-surfaces; it cannot prove a future remote write, or artifact access on an empty
-repository, without performing a mutation.
+port and surfaces unmet findings with their configuration repair door and any
+available retry boundary. Readiness follows the owning contract in
+`project/instrukt/spec/feature/work/github-apps`.
+Inspection writes no local state and reflects no pending work. Other projects
+use only this machine's retained repository and board settings; their checkouts
+are not read.
 
 ### Shared minute wake-up
 

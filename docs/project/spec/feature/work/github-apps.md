@@ -93,6 +93,18 @@ pending reflection survive; no credential failure is reported as remote success
 or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.
 
+### Read-only reflection readiness
+
+Work verifies the project App, protected key, repository installation,
+record and account-board permission scopes, expiry and stable bot identities.
+It reads repository issues, existing issue artifacts when an issue is available,
+and the configured board or its account's project listing. Unavailable access
+or reflection capabilities are unmet findings with the configuration repair door.
+Read-only readiness creates no issues, artifacts, boards, fields or views.
+It establishes declared write permissions and available read surfaces; it cannot
+prove a future remote write, or artifact access on an empty repository, without
+performing a mutation.
+
 ### Restore trust and commit authorship
 
 Record restoration accepts an author matching a configured App's verified
