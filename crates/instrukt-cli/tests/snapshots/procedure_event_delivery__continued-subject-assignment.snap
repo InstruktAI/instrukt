@@ -11,7 +11,7 @@ Composed: <time>
 instrukt system-origin procedure assignment
 Procedure: reactions/procedure/respond
 Role: responder
-Resolved role capabilities: role: responder; class: agent; grants: docs-read:any, docs-write:any, todo-read:any, todo-write:any, artifact-read:any, artifact-write:any, stamp:any, todo-orchestration:any, assignment-write:any, integration:any, session-observe:any, history-read:any, session-recover:any, standing-bind:any, agents-read:any, agents-write:any, config-read:any, config-write:any, secrets-write:any, repository-read:any, repository-write:any, code-commit:any, publication:any, code-check:any, eval-read:any, events-read:any, installation-read:any, installation-write:any, runner-execute:any
+Resolved role capabilities: role: responder; class: agent; grants: docs-read:any, docs-write:any, todo-read:any, todo-write:any, artifact-read:any, artifact-write:any, stamp:any, todo-orchestration:any, assignment-write:any, integration:any, session-observe:any, history-read:any, session-recover:any, standing-bind:any, conversation-link:any, agents-read:any, agents-write:any, config-read:any, config-write:any, secrets-write:any, repository-read:any, repository-write:any, code-commit:any, publication:any, code-check:any, eval-read:any, events-read:any, installation-read:any, installation-write:any, runner-execute:any
 Home: project:fork
 Assignment facts: {"procedure":"reactions/procedure/respond","home":"project:fork","subject":"todo:one","role":"responder","attendance":"attended","interruptible":true,"system_origin":true}
 Subject: todo:one

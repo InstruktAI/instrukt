@@ -132,6 +132,11 @@ those use the work record's `todo attempt`/`todo bind` contract. Standing home
 shorthand `<procedure>@<project>` remains available; subjects and successors use
 the full key.
 
+`runtime.discuss` directs the agent to `instrukt discuss open <thread> [--message <text>]`
+and `instrukt discuss close [--message <text>]`, using the native caller identity
+and runner-owned links. This is the instrukt route for a runtime without native
+linking; automatic turn-end relay remains with the runner.
+
 Agent-native `run`, `send`, `alive`, `conversation` and `link` facades are absent
 from this surface. Explicit capability-gap fallbacks, if a runtime needs one,
 are named in its configuration instruction; no fallback is enabled for a native

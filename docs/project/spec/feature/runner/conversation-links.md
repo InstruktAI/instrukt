@@ -18,6 +18,33 @@ target's native input boundary.
 
 ### Opening, participation and closure
 
+A person asks their agent to open a discussion. The agent invokes
+`instrukt discuss open <thread> [--message <text>]`; its selected runtime's
+caller identity supplies the other member. The target is a native thread id or
+`<runtime>:<native-id>` in the selected runtime and endpoint. No caller/thread
+or role override is accepted. Missing native caller context refuses before
+mutation. Both operations retain the recorded runtime-source boundary; selecting
+another source does not reidentify a link's members. `runtime.discuss` directs
+agents to these commands.
+
+An optional opening message is a contribution by the calling agent, framed in
+the shared identity vocabulary with the recorded provider/model identity when
+available and the command occurrence time. Native send delivers it once for a
+new link. Reopening an active pair reuses its retained opening contribution,
+including any unresolved handover, and sends no new opening message.
+
+`instrukt discuss close [--message <text>]` closes the caller's active link for
+both members. An optional final contribution is accepted through native send
+before closure. Failure leaves the link open with retained, visible handover
+evidence; retry observes acceptance before sending again. A retained final
+contribution completes closure atomically with its acceptance receipt, including
+when ordinary runner startup recovers an interrupted command. Closing without
+a message closes immediately. Closing an already closed/unlinked caller changes
+nothing and sends no additional final contribution.
+
+These operations manage conversation membership. They do not relay a turn or
+provide an agent relay tool; finished-turn relay remains automatic.
+
 Opening identifies two distinct runtime-scoped native threads and records one
 active link between them. Subsequent completed turns are shared automatically;
 participants continue by speaking in either thread. Positions start at link
@@ -138,7 +165,7 @@ recorded work; no second timer-driven delivery path is introduced.
 
 ```gherkin
 Given a developer wants two peer agents to discuss a problem with them
-When they link the agents' conversations
+When they ask one agent to open the discussion with the other through instrukt discuss open
 Then each agent receives the other agent's finished replies under that agent's identity
 And contributions are not echoed back to their original speaker
 ```
@@ -152,7 +179,7 @@ conversation or change an existing one.
 
 ```gherkin
 Given a developer is participating in a linked conversation with two agents
-When any participant closes the link
+When either agent closes its link through instrukt discuss close
 Then further contributions stop crossing between the conversations for everyone
 And the developer can continue separately in either conversation
 ```
@@ -162,7 +189,6 @@ And the developer can continue separately in either conversation
 - Target acceptance is not target consumption. An interrupted handover with no
   native acceptance evidence remains visibly uncertain; this contract does not
   claim exactly-once delivery across an ambiguous external send.
-- Link opening and closure are defined at the runner API; the user/runtime entrypoint for invoking them is not specified. `runtime.discuss` must report that entrypoint gap rather than invent a native T3 linking operation.
 - Continuous relay requires `instrukt run`. A scheduled-only computer's ticks
   do not substitute for the stream reader.
 

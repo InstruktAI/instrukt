@@ -1,10 +1,12 @@
 //! Admit two-thread conversations and relay finished turns with durable handover evidence.
+mod _management;
 mod _turns;
 mod _watch;
 use crate::runtime::{
     RuntimeAdapter,
     conversations::{ConversationSource, SourcePosition},
 };
+pub use _management::{Discussion, Operation, manage};
 pub use _turns::human_contributions;
 pub(crate) use _watch::{Worker, record as record_failure};
 use instrukt_core::{
@@ -74,6 +76,19 @@ struct Pending {
     turn: String,
     content: String,
     sending: bool,
+    origin: Origin,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum Origin {
+    Turn,
+    Opening { message: String },
+    Closing { message: String },
+}
+#[derive(Clone, Copy)]
+enum DeliveryMode {
+    Relay,
+    Management,
 }
 struct Direction {
     link: String,
@@ -92,6 +107,27 @@ pub fn open(
     work: crate::assignments::WorkLookup,
     request: &Opening<'_>,
 ) -> Result<String, LinkError> {
+    open_plan(
+        home,
+        source,
+        work,
+        &OpeningPlan {
+            pair: request,
+            contribution: None,
+        },
+    )
+}
+struct OpeningPlan<'a> {
+    pair: &'a Opening<'a>,
+    contribution: Option<&'a dyn Fn() -> Result<Pending, LinkError>>,
+}
+fn open_plan(
+    home: &Home,
+    source: &dyn ConversationSource,
+    work: crate::assignments::WorkLookup,
+    plan: &OpeningPlan<'_>,
+) -> Result<String, LinkError> {
+    let request = plan.pair;
     if request.a == request.b || request.a.runtime != request.b.runtime {
         return Err(LinkError::Refused(
             "a link needs two distinct threads in the same runtime source".into(),
@@ -182,6 +218,7 @@ pub fn open(
     }
     let position =
         position.ok_or_else(|| LinkError::Refused("source supplied no opening position".into()))?;
+    let contribution = plan.contribution.map(|prepare| prepare()).transpose()?;
     let id = crate::keyed::request_id()?;
     let mut db = StateDb::open(home)?;
     db.write::<_,LinkError>(|tx| {
@@ -193,7 +230,8 @@ pub fn open(
         }
         tx.execute("INSERT INTO conversation_links VALUES (?1,?2,?3,?4,1,NULL)",params![id,source.identity(),a.to_string(),b.to_string()])?;
         for (from,to) in [(a,b),(b,a)] {
-            tx.execute("INSERT INTO conversation_relay_positions(link,source,target,position_json,seen_json,pending_json) VALUES (?1,?2,?3,?4,?5,'[]')",params![id,from.to_string(),to.to_string(),serde_json::to_string(&position)?,serde_json::to_string(&seen.get(from.id.as_str()).cloned().unwrap_or_default())?])?;
+            let pending=if from==request.a {contribution.as_ref().map(|pending| {let mut pending=pending.clone();pending.turn=format!("opening:{id}");vec![pending]}).unwrap_or_default()}else{Vec::new()};
+            tx.execute("INSERT INTO conversation_relay_positions(link,source,target,position_json,seen_json,pending_json) VALUES (?1,?2,?3,?4,?5,?6)",params![id,from.to_string(),to.to_string(),serde_json::to_string(&position)?,serde_json::to_string(&seen.get(from.id.as_str()).cloned().unwrap_or_default())?,serde_json::to_string(&pending)?])?;
         }
         Ok(id)
     })
@@ -206,17 +244,21 @@ pub fn close(home: &Home, member: &SessionRef) -> Result<(), LinkError> {
     let Some(current) = current else {
         return Ok(());
     };
-    let _lock = instrukt_core::fsx::LockGuard::acquire(
-        &home
-            .locks_dir()
-            .join(format!("conversation-{}.lock", current.id)),
+    let _lock = link_lock(home, &current.id)?;
+    close_link(home, &current.id, member)
+}
+fn link_lock(home: &Home, id: &str) -> Result<instrukt_core::fsx::LockGuard, LinkError> {
+    Ok(instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!("conversation-{id}.lock")),
         std::time::Duration::from_secs(120),
-    )?;
+    )?)
+}
+fn close_link(home: &Home, id: &str, member: &SessionRef) -> Result<(), LinkError> {
     let mut db = StateDb::open(home)?;
     db.write::<_, LinkError>(|tx| {
         tx.execute(
-            "UPDATE conversation_links SET active=0 WHERE active=1 AND (a=?1 OR b=?1)",
-            [member.to_string()],
+            "UPDATE conversation_links SET active=0 WHERE id=?1 AND active=1 AND (a=?2 OR b=?2)",
+            params![id, member.to_string()],
         )?;
         Ok(())
     })
@@ -327,9 +369,17 @@ fn directions(home: &Home) -> Result<Vec<Direction>, LinkError> {
         .collect()
 }
 fn retain(home: &Home, d: &Direction) -> Result<(), LinkError> {
-    let mut db = StateDb::open(home)?;
-    db.write::<_,LinkError>(|tx| {tx.execute("UPDATE conversation_relay_positions SET position_json=?3,seen_json=?4,pending_json=?5,delivered_turn=?6,receipts_json=?7,failure=NULL WHERE link=?1 AND source=?2",params![d.link,d.source.to_string(),serde_json::to_string(&d.position)?,serde_json::to_string(&d.seen)?,serde_json::to_string(&d.pending)?,d.delivered,serde_json::to_string(&d.receipts)?])?;Ok(())})
+    write_direction(home, d, None)
 }
+fn write_direction(home: &Home, d: &Direction, origin: Option<&Origin>) -> Result<(), LinkError> {
+    let mut db = StateDb::open(home)?;
+    db.write::<_,LinkError>(|tx| {
+        tx.execute("UPDATE conversation_relay_positions SET position_json=?3,seen_json=?4,pending_json=?5,delivered_turn=?6,receipts_json=?7,failure=NULL WHERE link=?1 AND source=?2",params![d.link,d.source.to_string(),serde_json::to_string(&d.position)?,serde_json::to_string(&d.seen)?,serde_json::to_string(&d.pending)?,d.delivered,serde_json::to_string(&d.receipts)?])?;
+        if matches!(origin,Some(Origin::Closing{..})) {tx.execute("UPDATE conversation_links SET active=0 WHERE id=?1",[&d.link])?;}
+        Ok(())
+    })
+}
+
 fn active(home: &Home, id: &str) -> Result<bool, LinkError> {
     let Some(db) = StateRead::open(home)? else {
         return Ok(false);
@@ -355,12 +405,7 @@ pub fn relay(
     adapter: &dyn RuntimeAdapter,
 ) -> Result<(), LinkError> {
     for initial in directions(home)? {
-        let _lock = instrukt_core::fsx::LockGuard::acquire(
-            &home
-                .locks_dir()
-                .join(format!("conversation-{}.lock", initial.link)),
-            std::time::Duration::from_secs(120),
-        )?;
+        let _lock = link_lock(home, &initial.link)?;
         let Some(mut d) = directions(home)?
             .into_iter()
             .find(|d| d.link == initial.link && d.source == initial.source)
@@ -410,7 +455,7 @@ fn relay_direction(
             ));
         }
     }
-    deliver(home, adapter, d)?;
+    deliver(home, adapter, d, DeliveryMode::Relay)?;
     loop {
         if !active(home, &d.link)? {
             return Ok(());
@@ -452,23 +497,38 @@ fn relay_direction(
                         turn: id,
                         content,
                         sending: false,
+                        origin: Origin::Turn,
                     });
                 }
             }
         }
         d.position = batch.position;
         retain(home, d)?;
-        deliver(home, adapter, d)?;
+        deliver(home, adapter, d, DeliveryMode::Relay)?;
         if !batch.has_more {
             break;
         }
     }
     Ok(())
 }
-fn deliver(home: &Home, adapter: &dyn RuntimeAdapter, d: &mut Direction) -> Result<(), LinkError> {
+fn deliver(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    d: &mut Direction,
+    mode: DeliveryMode,
+) -> Result<(), LinkError> {
     while let Some(p) = d.pending.first() {
+        if matches!(mode, DeliveryMode::Management) && matches!(p.origin, Origin::Turn) {
+            return Ok(());
+        }
         if !active(home, &d.link)? {
             return Ok(());
+        }
+        if p.content.is_empty() && !matches!(p.origin, Origin::Turn) {
+            return Err(LinkError::Refused(
+                "retained management contribution lost its framing; recover the link handover"
+                    .into(),
+            ));
         }
         if p.content.is_empty() {
             let completed = d.pending.remove(0);
@@ -502,8 +562,10 @@ fn deliver(home: &Home, adapter: &dyn RuntimeAdapter, d: &mut Direction) -> Resu
                 at: jiff::Timestamp::now(),
             },
         );
-        d.delivered = Some(completed.turn);
-        retain(home, d)?;
+        if matches!(completed.origin, Origin::Turn) {
+            d.delivered = Some(completed.turn);
+        }
+        write_direction(home, d, Some(&completed.origin))?;
     }
     Ok(())
 }

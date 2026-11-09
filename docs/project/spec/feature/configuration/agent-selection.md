@@ -60,6 +60,13 @@ it was edited is established against the deployed version, never guessed from
 its age. Owned-shape migrations remain distinct from default replacement and
 follow `project/instrukt/spec/feature/configuration/owned-files`.
 
+Omitted role capability fields resolve at read time under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`: known roles
+use their shipped class/can defaults and unknown roles use effective `default`.
+Explicit capability values and bundle definitions win. This preserves customized
+pre-capability files and their model order/tier choices without rewriting them
+as a default-file upgrade.
+
 ### Validation and inspection
 
 Shape is strict: known kinds, the four tier names, declared profile references,

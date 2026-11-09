@@ -59,6 +59,7 @@ bundles:
     - {action: session-observe, scope: own}
     - {action: session-recover, scope: own}
     - {action: standing-bind, scope: own}
+    - {action: conversation-link, scope: own}
   integrate:
     - {action: integration, scope: own}
     - {action: publication, scope: own}
@@ -84,6 +85,7 @@ bundles:
     - {action: history-read, scope: any}
     - {action: session-recover, scope: any}
     - {action: standing-bind, scope: any}
+    - {action: conversation-link, scope: any}
     - {action: agents-read, scope: any}
     - {action: agents-write, scope: any}
     - {action: config-read, scope: any}

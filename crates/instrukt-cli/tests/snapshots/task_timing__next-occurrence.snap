@@ -11,6 +11,6 @@ $ARGUMENTS: quarter-hourly-sync
 occurrence: 2030-01-06T09:15:00Z
 [/Instrukt Assignment]
 [Instrukt Assignment]
-Resolved role capabilities: role: task-runner; class: agent; grants: docs-read:any, docs-write:own, todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, todo-orchestration:own, assignment-write:own, session-observe:own, session-recover:own, standing-bind:own, agents-read:any, config-read:any, repository-read:any, code-commit:own, code-check:any, eval-read:any, events-read:any, installation-read:any
+Resolved role capabilities: role: task-runner; class: agent; grants: docs-read:any, docs-write:own, todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, todo-orchestration:own, assignment-write:own, session-observe:own, session-recover:own, standing-bind:own, conversation-link:own, agents-read:any, config-read:any, repository-read:any, code-commit:own, code-check:any, eval-read:any, events-read:any, installation-read:any
 Assignment scope: the fixed todo, home and workspace evidence supplied with this assignment. Object claims, phase and writer constraints apply.
 [/Instrukt Assignment]

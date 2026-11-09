@@ -16,8 +16,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, config, docs, eval, events, history, repository, runner, secrets, specs,
-    sync, todo, webhooks,
+    agents, blueprint, config, discuss, docs, eval, events, history, repository, runner, secrets,
+    specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -33,6 +33,8 @@ struct Cli {
 enum Command {
     #[command(hide = true)]
     DevSeed,
+    /// Open or close this native thread's conversation link.
+    Discuss(discuss::DiscussArgs),
     /// Configured profiles and expiring profile/model availability.
     Agents(agents::AgentsArgs),
     /// Store or generate protected machine-local secrets.
@@ -112,6 +114,7 @@ fn main() -> ExitCode {
     }
     let outcome = match cli.command {
         Command::DevSeed => seed_development(&mut ctx),
+        Command::Discuss(args) => discuss::run(args, &mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
         Command::Secrets(args) => secrets::run(args, &mut ctx),
         Command::Config(args) => config::run(args, &mut ctx),
@@ -150,6 +153,7 @@ fn report(err: &anyhow::Error) -> ExitCode {
 fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let source = match command {
         Command::DevSeed => "dev-seed",
+        Command::Discuss(_) => "discuss",
         Command::Agents(_) => "agents",
         Command::Secrets(_) => "secrets",
         Command::Config(_) => "config",

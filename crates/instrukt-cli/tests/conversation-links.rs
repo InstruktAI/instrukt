@@ -23,22 +23,18 @@ fn either_member_closes_the_whole_link_and_retains_progress() {
     let env = common::TestEnv::new();
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
     let _store = history::T3Store::new(&env);
-    let a: instrukt_core::ids::SessionRef = "t3:parent".parse().unwrap();
-    let b = "t3:child".parse().unwrap();
-    let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
-    let source = adapter
-        .conversation_source(&home, &instrukt_core::config::Env::default())
-        .unwrap();
-    let request = links::Opening { a: &a, b: &b };
-    let id = links::open(
-        &home,
-        source.as_ref(),
-        instrukt_todos::work::recorded_assignment,
-        &request,
-    )
-    .unwrap();
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let id = links::status(&home).unwrap()[0].id.clone();
     assert_eq!(links::status(&home).unwrap().len(), 1);
-    links::close(&home, &b).unwrap();
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "child")
+        .args(["discuss", "close"])
+        .assert()
+        .success();
     let statuses = links::status(&home).unwrap();
     assert_eq!(statuses[0].id, id);
     assert!(!statuses[0].active);
@@ -98,14 +94,12 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
         .conversation_source(&home, &instrukt_core::config::Env::default())
         .unwrap();
     let a: instrukt_core::ids::SessionRef = "t3:parent".parse().unwrap();
-    let b = "t3:child".parse().unwrap();
-    let id = links::open(
-        &home,
-        source.as_ref(),
-        instrukt_todos::work::recorded_assignment,
-        &links::Opening { a: &a, b: &b },
-    )
-    .unwrap();
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", a.id.as_str())
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let id = links::status(&home).unwrap()[0].id.clone();
     let run = || {
         Running(
             env.instrukt_process(env.home())
@@ -168,7 +162,11 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
             .any(|d| d.delivered_turn.as_deref() == Some("empty-run"))
     });
     assert_eq!(fake.message_count("parent"), 3);
-    links::close(&home, &a).unwrap();
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", a.id.as_str())
+        .args(["discuss", "close"])
+        .assert()
+        .success();
     assert!(!links::status(&home).unwrap()[0].active);
     assert_eq!(links::status(&home).unwrap()[0].id, id);
     drop(runner);
@@ -218,6 +216,11 @@ fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
             .any(|d| d.uncertain)
     );
     drop(runner);
+    // Upgrade the retained native handover from the preceding owned schema.
+    let previous =
+        instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
+    previous.execute_batch("UPDATE conversation_relay_positions SET pending_json=(SELECT json_group_array(json(json_remove(value,'$.origin'))) FROM json_each(conversation_relay_positions.pending_json)); PRAGMA user_version=11;").unwrap();
+    drop(previous);
     let runner = run();
     wait_for(|| {
         links::status(&home).unwrap()[0]
@@ -236,10 +239,9 @@ fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
 }
 
 struct AdmissionFixture {
-    _crew: workflow::Crew,
+    crew: workflow::Crew,
     _store: history::T3Store,
     home: instrukt_core::home::Home,
-    source: Box<dyn instrukt_runner::runtime::conversations::ConversationSource>,
     a: instrukt_core::ids::SessionRef,
     b: instrukt_core::ids::SessionRef,
 }
@@ -255,10 +257,6 @@ fn admission_fixture() -> AdmissionFixture {
     let env = &crew.project.env;
     let store = history::T3Store::new(env);
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
-    let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
-    let source = adapter
-        .conversation_source(&home, &instrukt_core::config::Env::default())
-        .unwrap();
     let a: instrukt_core::ids::SessionRef = "t3:lead-1".parse().unwrap();
     let b: instrukt_core::ids::SessionRef = worker["session"].as_str().unwrap().parse().unwrap();
     store.thread(a.id.as_str(), None, None, "2026-11-08T10:00:00Z");
@@ -269,10 +267,9 @@ fn admission_fixture() -> AdmissionFixture {
         "2026-11-08T10:00:00Z",
     );
     AdmissionFixture {
-        _crew: crew,
+        crew,
         _store: store,
         home,
-        source,
         a,
         b,
     }
@@ -282,14 +279,19 @@ fn admission_fixture() -> AdmissionFixture {
 #[test]
 fn a_focused_recorded_assignment_reports_through_its_own_output() {
     let f = admission_fixture();
-    let error = links::open(
-        &f.home,
-        f.source.as_ref(),
-        instrukt_todos::work::recorded_assignment,
-        &links::Opening { a: &f.a, b: &f.b },
-    )
-    .unwrap_err();
-    insta::assert_snapshot!("focused-link-refusal", error.to_string());
+    let denied = f
+        .crew
+        .project
+        .env
+        .instrukt(f.crew.project.env.home())
+        .env("T3CODE_THREAD_ID", f.a.id.as_str())
+        .args(["discuss", "open", f.b.id.as_str()])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "focused-link-refusal",
+        String::from_utf8_lossy(&denied.get_output().stderr)
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
@@ -303,38 +305,41 @@ fn a_workers_recorded_dispatcher_relationship_survives_a_later_claim_change() {
     std::fs::write(agents, serde_yaml_ng::to_string(&configured).unwrap()).unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(f.home.state_db_file()).unwrap();
     db.execute("UPDATE todos SET claim_session='t3:later-claimant' WHERE id=(SELECT todo_id FROM session_bindings WHERE session=?1)",[f.b.to_string()]).unwrap();
-    let error = links::open(
-        &f.home,
-        f.source.as_ref(),
-        instrukt_todos::work::recorded_assignment,
-        &links::Opening { a: &f.a, b: &f.b },
-    )
-    .unwrap_err();
-    insta::assert_snapshot!("dispatcher-link-refusal", error.to_string());
+    let denied = f
+        .crew
+        .project
+        .env
+        .instrukt(f.crew.project.env.home())
+        .env("T3CODE_THREAD_ID", f.a.id.as_str())
+        .args(["discuss", "open", f.b.id.as_str()])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "dispatcher-link-refusal",
+        String::from_utf8_lossy(&denied.get_output().stderr)
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn a_third_peer_is_refused_without_changing_the_active_conversation() {
     let f = admission_fixture();
-    let peer = "t3:parent".parse().unwrap();
-    let lookup = instrukt_todos::work::recorded_assignment;
-    links::open(
-        &f.home,
-        f.source.as_ref(),
-        lookup,
-        &links::Opening { a: &f.a, b: &peer },
-    )
-    .unwrap();
-    let third = "t3:third".parse().unwrap();
-    let error = links::open(
-        &f.home,
-        f.source.as_ref(),
-        lookup,
-        &links::Opening { a: &f.a, b: &third },
-    )
-    .unwrap_err();
-    insta::assert_snapshot!("third-peer-refusal", error.to_string());
+    let env = &f.crew.project.env;
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", f.a.id.as_str())
+        .args(["discuss", "open", "parent"])
+        .assert()
+        .success();
+    let denied = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", f.a.id.as_str())
+        .args(["discuss", "open", "third"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "third-peer-refusal",
+        String::from_utf8_lossy(&denied.get_output().stderr)
+    );
     assert_eq!(links::status(&f.home).unwrap().len(), 1);
 }
 
@@ -342,13 +347,231 @@ fn a_third_peer_is_refused_without_changing_the_active_conversation() {
 #[test]
 fn opening_an_existing_pair_reuses_its_link_and_positions() {
     let f = admission_fixture();
-    let peer = "t3:parent".parse().unwrap();
-    let lookup = instrukt_todos::work::recorded_assignment;
-    let pair = links::Opening { a: &f.a, b: &peer };
-    let id = links::open(&f.home, f.source.as_ref(), lookup, &pair).unwrap();
-    assert_eq!(
-        links::open(&f.home, f.source.as_ref(), lookup, &pair).unwrap(),
-        id
-    );
+    let env = &f.crew.project.env;
+    let open = || {
+        env.instrukt(env.home())
+            .env("T3CODE_THREAD_ID", f.a.id.as_str())
+            .args(["discuss", "open", "parent"])
+            .assert()
+            .success()
+    };
+    open();
+    let before = links::status(&f.home).unwrap().remove(0);
+    open();
+    let after = links::status(&f.home).unwrap().remove(0);
+    assert_eq!(before.id, after.id);
+    assert_eq!(before.directions[0].observed, after.directions[0].observed);
     assert_eq!(links::status(&f.home).unwrap().len(), 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+#[test]
+fn an_agent_opens_the_requested_discussion_and_reuses_its_one_opening_contribution() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "peer-a", "opening a");
+    fake.seed("child", env.home(), "peer-b", "opening b");
+    fake.change("parent", "providerInstanceId", serde_json::json!("codex"));
+    fake.change("parent", "model", serde_json::json!("native-model"));
+    let open = || {
+        env.instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "parent")
+            .env("INSTRUKT_NOW", "2030-01-01T12:00:00Z")
+            .args([
+                "discuss",
+                "open",
+                "child",
+                "--message",
+                "Discuss the parser with me.",
+            ])
+            .assert()
+            .success()
+    };
+    open();
+    open();
+    assert_eq!(fake.message_count("child"), 2);
+    assert_eq!(fake.message_count("parent"), 1);
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let source = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
+        .conversation_source(&home, &instrukt_core::config::Env::default())
+        .unwrap();
+    insta::assert_snapshot!(
+        "cli-opening-contribution",
+        fake.message("child", 1)
+            .replace(source.identity(), "t3:[SOURCE]")
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
+#[test]
+fn either_agent_sends_a_final_contribution_then_closes_the_discussion_for_everyone() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "peer-a", "opening a");
+    fake.seed("child", env.home(), "peer-b", "opening b");
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "t3:child"])
+        .assert()
+        .success();
+    let close = || {
+        env.instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "child")
+            .env("INSTRUKT_NOW", "2030-01-01T12:05:00Z")
+            .args([
+                "discuss",
+                "close",
+                "--message",
+                "We have reached a conclusion.",
+            ])
+            .assert()
+            .success()
+    };
+    close();
+    close();
+    assert_eq!(fake.message_count("parent"), 2);
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    assert!(!links::status(&home).unwrap()[0].active);
+    let source = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
+        .conversation_source(&home, &instrukt_core::config::Env::default())
+        .unwrap();
+    insta::assert_snapshot!(
+        "cli-final-contribution",
+        fake.message("parent", 1)
+            .replace(source.identity(), "t3:[SOURCE]")
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+#[test]
+fn opening_requires_a_native_caller_before_creating_a_link() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let denied = env
+        .instrukt(env.home())
+        .args(["discuss", "open", "child"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "cli-native-caller-required",
+        String::from_utf8_lossy(&denied.get_output().stderr)
+    );
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    assert!(links::status(&home).unwrap().is_empty());
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+#[test]
+fn retrying_an_interrupted_open_observes_its_original_contribution_without_resending() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "peer-a", "opening a");
+    fake.seed("child", env.home(), "peer-b", "opening b");
+    fake.flag("die-after-send", true);
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args([
+            "discuss",
+            "open",
+            "child",
+            "--message",
+            "Retain this contribution.",
+        ])
+        .assert()
+        .failure();
+    assert_eq!(fake.message_count("child"), 2);
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    assert!(
+        links::status(&home).unwrap()[0]
+            .directions
+            .iter()
+            .any(|d| d.uncertain)
+    );
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args([
+            "discuss",
+            "open",
+            "child",
+            "--message",
+            "Retain this contribution.",
+        ])
+        .assert()
+        .success();
+    assert_eq!(fake.message_count("child"), 2);
+    assert!(
+        links::status(&home).unwrap()[0]
+            .directions
+            .iter()
+            .all(|d| !d.uncertain)
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
+#[test]
+fn startup_recovers_an_accepted_final_contribution_and_completes_its_closure() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "peer-a", "opening a");
+    fake.seed("child", env.home(), "peer-b", "opening b");
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    fake.flag("die-after-send", true);
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "child")
+        .args(["discuss", "close", "--message", "Final result."])
+        .assert()
+        .failure();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    assert!(links::status(&home).unwrap()[0].active);
+    assert_eq!(fake.message_count("parent"), 2);
+    let runner = Running(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_for(|| !links::status(&home).unwrap()[0].active);
+    assert_eq!(fake.message_count("parent"), 2);
+    assert!(
+        links::status(&home).unwrap()[0]
+            .directions
+            .iter()
+            .all(|d| !d.uncertain)
+    );
+    drop(runner);
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
+#[test]
+fn changing_the_runtime_source_does_not_reidentify_a_links_members() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let denied = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .env("T3CODE_HOME", env.path("another-t3"))
+        .args(["discuss", "close"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "cli-source-membership-preserved",
+        String::from_utf8_lossy(&denied.get_output().stderr)
+    );
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    assert!(links::status(&home).unwrap()[0].active);
 }

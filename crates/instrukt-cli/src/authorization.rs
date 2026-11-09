@@ -41,6 +41,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "todo",
             "create" | "update" | "freeze" | "unfreeze" | "remove" | "reactivate",
         ] => TodoWrite,
+        ["discuss", "open" | "close"] => ConversationLink,
         ["sessions", "list"] => SessionObserve,
         ["sessions", "resolve-start"] => SessionRecover,
         ["history", "search" | "show"] => HistoryRead,
@@ -147,7 +148,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
-        SessionObserve => true,
+        SessionObserve | ConversationLink => true,
         SessionRecover => raw("key") == Some(assignment.key.as_str()),
         StandingBind => {
             raw("procedure") == assignment.procedure.as_deref() && assignment.procedure.is_some()
@@ -181,7 +182,11 @@ pub fn help(mut command: Command, path: &mut Vec<String>, caps: &Capabilities) -
     }
     if let Some(action) = action(&path.iter().map(String::as_str).collect::<Vec<_>>()) {
         let scope = caps.scope(action);
-        if scope.is_none() && caps.class == RoleClass::Focused {
+        if caps.class == RoleClass::Focused
+            && (scope.is_none()
+                || (action == Action::ConversationLink
+                    && path.last().is_some_and(|name| name == "open")))
+        {
             command = command.hide(true);
         } else {
             command = command.after_help(format!(

@@ -11,7 +11,7 @@ Composed: <time>
 instrukt system-origin procedure assignment
 Procedure: acme/procedure/integrate
 Role: integrator
-Resolved role capabilities: role: integrator; class: standing; grants: docs-read:any, todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, todo-orchestration:own, assignment-write:own, integration:own, session-observe:own, session-recover:own, standing-bind:own, agents-read:any, config-read:any, repository-read:any, repository-write:own, publication:own, code-check:any, eval-read:any, events-read:any, installation-read:any
+Resolved role capabilities: role: integrator; class: standing; grants: docs-read:any, todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, todo-orchestration:own, assignment-write:own, integration:own, session-observe:own, session-recover:own, standing-bind:own, conversation-link:own, agents-read:any, config-read:any, repository-read:any, repository-write:own, publication:own, code-check:any, eval-read:any, events-read:any, installation-read:any
 Home: project:demo
 Assignment facts: {"procedure":"acme/procedure/integrate","home":"project:demo","subject":null,"role":"integrator","attendance":"attended","interruptible":false,"system_origin":true}
 Subject: none

@@ -4,14 +4,6 @@ use crate::{
     envelopes::{self, Span},
     runtime::conversations::{ConversationRecord, RecordKind, Role},
 };
-fn minute(at: Option<jiff::Timestamp>) -> String {
-    at.map(|at| {
-        at.to_zoned(jiff::tz::TimeZone::UTC)
-            .strftime("%Y-%m-%d %H:%M UTC")
-            .to_string()
-    })
-    .unwrap_or_else(|| "unknown".into())
-}
 pub fn human_contributions(
     source: &str,
     target: &str,
@@ -21,9 +13,12 @@ pub fn human_contributions(
     let mut contributions = Vec::new();
     for span in envelopes::segment(text) {
         match span {
-            Span::Ordinary(body) if !body.trim().is_empty() => {
-                contributions.push(envelopes::peer(source, "human", &minute(at), body))
-            }
+            Span::Ordinary(body) if !body.trim().is_empty() => contributions.push(envelopes::peer(
+                source,
+                "human",
+                &envelopes::minute(at),
+                body,
+            )),
             Span::Identity {
                 source,
                 author,
@@ -41,15 +36,10 @@ fn shape(message: &str) -> LinkError {
     ))
 }
 fn author(run: &ConversationRecord) -> String {
-    let provider = run.native["providerInstanceId"].as_str();
-    let model = run.native["modelSelection"]["model"].as_str();
-    match provider.zip(model) {
-        Some((provider, model)) => {
-            format!("agent:{}/{}", provider.escape_debug(), model.escape_debug())
-                .replace(" · ", " ")
-        }
-        None => "agent".into(),
-    }
+    envelopes::agent(
+        run.native["providerInstanceId"].as_str(),
+        run.native["modelSelection"]["model"].as_str(),
+    )
 }
 pub(super) fn finished(
     batch: &crate::runtime::conversations::ConversationChanges,
@@ -176,7 +166,7 @@ pub(super) fn finished(
                     contributions.push(envelopes::peer(
                         source,
                         &author(run),
-                        &minute(message.created_at),
+                        &envelopes::minute(message.created_at),
                         text,
                     ))
                 }

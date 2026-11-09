@@ -28,8 +28,16 @@ to the object's claim, phase and writer invariants
 | `default` | Fallback class, grants and model selection: shipped class `agent`, `can: [all]`, model order and tier. An unknown named role uses this entry; its unmapped App identity is the project identity. |
 
 The file contains the existing provider `profiles` beside these fields; there
-is one `roles` map, not a parallel capabilities or GitHub role map. Every
-configured entry declares its class and grants; model inputs inherit from
+is one `roles` map, not a parallel capabilities or GitHub role map. Missing
+`class` and `can` fields resolve independently from the shipped entry
+for a known role. Unknown configured roles inherit those fields from the effective
+`default`; missing fields on `default` inherit the shipped default. Explicit
+values, including an empty `can` list, win. Explicit malformed/null values are
+validation errors, not missing fields. This read-time resolution preserves the
+edited file. Shipped named bundle definitions supply omitted definitions needed
+by resolved grants; an explicitly configured bundle wins.
+
+Every effective entry has a class and grants; model inputs inherit from
 `default` as agent-selection specifies. The shipped `default` and
 `event-handler` are unrestricted, awareness-only entries. A role absent from
 the map keeps its recorded name while using `default`; it is distinguishable
@@ -49,7 +57,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Work records | `todo-read`, `todo-write` | Todos and bugs: `todo list|show|refresh`; create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes. Creation addresses the containing project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo prepare|work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
-| Session observation and recovery | `session-observe`, `history-read`, `session-recover`, `standing-bind` | `sessions list`, extracted history search/read, `sessions resolve-start`, and `events bind` reservation/binding/no-start resolution. These do not add a session messaging API. |
+| Session observation and recovery | `session-observe`, `history-read`, `session-recover`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `sessions resolve-start`, and `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
 | Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
 | Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
 | Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |
@@ -111,7 +119,7 @@ composition is:
 | `worker` | `artifact-write`, `stamp`, `code-commit`, `docs-write`, each at `own`. |
 | `review` | `artifact-write`, `stamp`, each at `own`. |
 | `record` | `todo-write`, `artifact-write`, `stamp`, each at `own`. |
-| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `session-recover`, `standing-bind`, each at `own`. |
+| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `session-recover`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
 | `all` | Every catalog action at `any`. |

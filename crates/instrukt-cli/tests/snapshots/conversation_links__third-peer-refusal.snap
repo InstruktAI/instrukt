@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/conversation-links.rs
-assertion_line: 287
-expression: error.to_string()
+expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
 ---
-conversation link: t3:lead-1 is already linked with t3:parent; close that conversation before adding a third peer
+instrukt: conversation link: t3:lead-1 is already linked with t3:parent; close that conversation before adding a third peer

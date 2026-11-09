@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
 const V7: &str = r#"
@@ -641,4 +641,13 @@ CREATE TABLE conversation_relay_positions (
  delivered_turn TEXT, receipts_json TEXT NOT NULL DEFAULT '{}', failure TEXT,
  PRIMARY KEY(link,source)
 );
+"#;
+
+/// Version 12: explicit native/opening/closing origins on retained link handovers.
+const V12: &str = r#"
+UPDATE conversation_relay_positions
+SET pending_json=(SELECT json_group_array(json(
+ CASE WHEN json_type(value,'$.origin') IS NULL
+ THEN json_set(value,'$.origin',json_object('kind','turn')) ELSE value END
+)) FROM json_each(conversation_relay_positions.pending_json));
 "#;

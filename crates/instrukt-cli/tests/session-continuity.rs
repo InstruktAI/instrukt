@@ -107,14 +107,14 @@ fn conflicting_keyed_threads_never_admit_a_replacement() {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
 #[test]
-fn native_discussion_reports_the_link_gap_without_rebuilding_it() {
+fn native_discussion_directs_agents_to_the_membership_commands() {
     let p = Tracked::new(false);
     let out = p
         .env
         .run(p.repo.path(), ["config", "get", "runtime.discuss"])
         .success();
     insta::assert_snapshot!(
-        "native-discussion-gap",
+        "native-discussion-instruction",
         String::from_utf8_lossy(&out.get_output().stdout)
     );
     assert_eq!(p.rt.calls().len(), 0);

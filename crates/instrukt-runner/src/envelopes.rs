@@ -127,6 +127,24 @@ pub fn peer(source: &str, author: &str, at: &str, body: &str) -> String {
     )
 }
 
+pub fn minute(at: Option<jiff::Timestamp>) -> String {
+    at.map(|at| {
+        at.to_zoned(jiff::tz::TimeZone::UTC)
+            .strftime("%Y-%m-%d %H:%M UTC")
+            .to_string()
+    })
+    .unwrap_or_else(|| "unknown".into())
+}
+pub fn agent(provider: Option<&str>, model: Option<&str>) -> String {
+    match provider.zip(model) {
+        Some((provider, model)) => {
+            format!("agent:{}/{}", provider.escape_debug(), model.escape_debug())
+                .replace(" · ", " ")
+        }
+        None => "agent".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Control, Span, peer, segment};

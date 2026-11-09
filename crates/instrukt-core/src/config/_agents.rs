@@ -100,9 +100,70 @@ fn invalid(message: impl Into<String>) -> ConfigError {
     }
 }
 
+/// Fill only absent capability fields; authored values and files remain unchanged.
+fn inherit_capabilities(value: &mut serde_yaml_ng::Value) -> Result<(), ConfigError> {
+    use serde_yaml_ng::{Mapping, Value};
+    let shipped: Value =
+        serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))?;
+    fn fill(entry: &mut Value, fallback: &Value) {
+        if let Some(fields) = entry.as_mapping_mut() {
+            for field in ["class", "can"] {
+                if !fields.contains_key(field)
+                    && let Some(default) = fallback.get(field)
+                {
+                    fields.insert(field.into(), default.clone());
+                }
+            }
+        }
+    }
+    if let Some(default) = value.get_mut("default") {
+        fill(default, &shipped["default"]);
+    }
+    let effective_default = value.get("default").cloned().unwrap_or(Value::Null);
+    if let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) {
+        for (name, entry) in roles {
+            let fallback = shipped["roles"].get(name).unwrap_or(&effective_default);
+            fill(entry, fallback);
+        }
+    }
+    let entries = value.get("default").into_iter().chain(
+        value
+            .get("roles")
+            .and_then(Value::as_mapping)
+            .into_iter()
+            .flat_map(|roles| roles.values()),
+    );
+    let needed = entries
+        .flat_map(|entry| {
+            entry
+                .get("can")
+                .and_then(Value::as_sequence)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(root) = value.as_mapping_mut() {
+        let bundles = root
+            .entry(Value::String("bundles".into()))
+            .or_insert_with(|| Value::Mapping(Mapping::new()));
+        if let Some(bundles) = bundles.as_mapping_mut() {
+            for name in needed {
+                if !bundles.contains_key(name.as_str())
+                    && let Some(default) = shipped["bundles"].get(name.as_str())
+                {
+                    bundles.insert(name.into(), default.clone());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Agents {
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let value: serde_yaml_ng::Value =
+        let mut value: serde_yaml_ng::Value =
             serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
         if let Some(found) = value
             .get("schema_version")
@@ -115,6 +176,7 @@ impl Agents {
                 current: VERSION,
             });
         }
+        inherit_capabilities(&mut value)?;
         let result: Self = serde_yaml_ng::from_value(value).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {
             return Err(invalid(

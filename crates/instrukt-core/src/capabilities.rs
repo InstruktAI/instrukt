@@ -17,7 +17,7 @@ actions! {
     TodoRead => "todo-read", TodoWrite => "todo-write",
     ArtifactRead => "artifact-read", ArtifactWrite => "artifact-write", Stamp => "stamp",
     TodoOrchestration => "todo-orchestration", AssignmentWrite => "assignment-write", Integration => "integration",
-    SessionObserve => "session-observe", HistoryRead => "history-read", SessionRecover => "session-recover", StandingBind => "standing-bind",
+    SessionObserve => "session-observe", HistoryRead => "history-read", SessionRecover => "session-recover", StandingBind => "standing-bind", ConversationLink => "conversation-link",
     AgentsRead => "agents-read", AgentsWrite => "agents-write",
     ConfigRead => "config-read", ConfigWrite => "config-write", SecretsWrite => "secrets-write",
     RepositoryRead => "repository-read", RepositoryWrite => "repository-write", CodeCommit => "code-commit",

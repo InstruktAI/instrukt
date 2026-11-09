@@ -16,8 +16,6 @@
     "default": {
       "$ref": "#/$defs/role",
       "required": [
-        "class",
-        "can",
         "order",
         "tier"
       ]
@@ -88,11 +86,7 @@
         "github_app": {
           "type": "string"
         }
-      },
-      "required": [
-        "class",
-        "can"
-      ]
+      }
     },
     "profile": {
       "oneOf": [
@@ -880,7 +874,8 @@
             "events-read",
             "installation-read",
             "installation-write",
-            "runner-execute"
+            "runner-execute",
+            "conversation-link"
           ]
         },
         "scope": {

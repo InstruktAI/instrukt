@@ -410,6 +410,11 @@ last stream/handover failure. The source observation position is distinct from
 accepted delivery progress. Link creation initializes both directions; target
 acceptance or a recorded empty disposition advances delivery. Source occurrence
 times are attribution, never cursors. Pending evidence survives runner restart.
+Pending handovers distinguish native turns, opening contributions and final
+contributions. Existing native handovers migrate to the native origin before
+consumption. A final contribution's acceptance receipt commits with whole-link
+closure; management receipts do not advance the native completed-turn position.
+
 These tables realize the runner's contract in
 `project/instrukt/spec/feature/runner/conversation-links`; work owns their file,
 migration and writer boundary, not the relay decision. Native stream and send
