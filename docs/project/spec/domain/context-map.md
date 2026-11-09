@@ -65,6 +65,7 @@ not permission for an upstream module to depend on its consumer.
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
 | configuration → publication | Customer / Supplier | Project slug, runtime choice and configuration migration operation |
 | configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
+| blueprint → runner | Customer / Supplier | Blueprint-owned release pin and tool lifecycle consumed by module installation |
 | configuration → blueprint | Customer / Supplier | Module switch and engine selection |
 | configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration and runner settings |
 | work, runner → CLI admission | Published language | Owner-supplied todo attempts and standing/scheduled assignment facts for the recognized caller; core-declared lookup wired by the CLI |
@@ -88,7 +89,7 @@ not permission for an upstream module to depend on its consumer.
 | publication → workflow | Customer / Supplier | Published flavor definitions, roles, actions and templates from the selected domain's `docs/domain/<x>/workflow/` |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
-| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads |
+| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` and `runner.dependency_failing` supply their respective failed-check evidence |
 | repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |

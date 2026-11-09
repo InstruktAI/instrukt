@@ -97,6 +97,10 @@ selection, configuration and snippets of the published revision, never proposed
 or dirty branch documentation. It does not publish, update publication records,
 write global agent files or refresh editor schemas in a linked worktree.
 Preparation reads its proposed documentation through `--target`.
+Each checkout retains its own versioned inventory of generated entrypoints in
+its Git administrative area. A render retracts its previously generated files
+that are absent from the published baseline, preserves unowned files and retains
+the inventory across interrupted writes so a subsequent render can converge.
 Checkout rendering shares a lock with publication's live output application, so
 its recorded revision and published indexes form one coherent view and its
 primary-checkout writes cannot overwrite a newer publication. It does not take
@@ -224,17 +228,21 @@ And the domain's snippets are still found by listing that domain
 ### UC-AE6: An agent in a linked worktree receives the published baseline
 
 ```gherkin
-Given a project has published its main revision and installed instrukt hooks
-When a linked worktree is checked out on a branch with different proposed documentation
+Given a developer has published their project and installed instrukt hooks
+When the developer opens a linked worktree with different proposed documentation
 Then that checkout has the project entrypoints rendered from the published revision
 And publication state, global agent files and primary checkout outputs are unchanged
+When the developer withdraws a nested instruction master on main and publishes it
+And checks out that published revision in their existing linked worktree
+Then the withdrawn generated instructions are absent there
+And instruction files the renderer never wrote are preserved
 ```
 
 ### UC-AE7: A fresh primary checkout bootstraps publication once
 
 ```gherkin
-Given a primary checkout has installed instrukt hooks but no project publication
-When checkout runs
+Given a developer has installed instrukt hooks in their primary checkout without publishing the project
+When the developer checks out a branch
 Then canonical main is published and its project entrypoints are present before git returns
 When a later checkout occurs without advancing main
 Then existing published state supplies the entrypoints and no publication runs again

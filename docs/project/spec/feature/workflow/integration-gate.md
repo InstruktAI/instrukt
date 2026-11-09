@@ -112,6 +112,16 @@ that can require notification. Ordinary approval and new-intent requests
 remain in the responsible agent's thread. The runner owns whether and how an
 anomaly is notified; the integration gate reports the unresolved failure.
 
+### Failed dependency updates
+
+`runner.dependency_failing` reaches the standing integrator through the same
+failed-check delivery path as `runner.main_failing`, with the exact dependency
+branch, head and failed check run. Observation is owned by
+`project/instrukt/spec/feature/runner/event-activation`; this context owns the
+response. The integrator reads the check evidence, judges whether it warrants
+a bug, deduplicates against existing work and files it once when warranted.
+Dependency-branch failure does not imply red main or trigger a revert of main.
+
 ### Mechanical canonical-checkout synchronization
 
 On each tick, before dispatch, the runner observes remote main with Git and
@@ -183,6 +193,17 @@ Then an occurrence event wakes the integrator to integrate it through the candid
 And its documentation is published before the implementation starts
 And the integrator removes the merged preparation worktree and its local and origin branch
 And work starts separately from freshly fetched remote main
+```
+
+### UC-IG6: A developer gets failed dependency updates assessed without watching every bot PR
+
+```gherkin
+Given a developer has enabled their project's integrator and CI observation for dependency-update branches
+When a required check fails on a current dependency-update branch head
+Then their integrator receives that exact branch, commit and failed check result
+And repeated observation of that same failure creates no duplicate response
+And their integrator assesses whether it warrants a bug and deduplicates any bug it files
+But unrelated branches and successful or unfinished checks do not trigger this failure response
 ```
 
 ## Known caveats

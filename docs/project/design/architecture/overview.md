@@ -38,7 +38,7 @@ One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
 shared by `todos` and `events`), `instrukt-todos`. Dependencies point one way:
 `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
-`instrukt-core`; `instrukt-blueprint` → `instrukt-core`; `instrukt-core` →
+`instrukt-core` and `instrukt-blueprint`; `instrukt-blueprint` → `instrukt-core`; `instrukt-core` →
 nothing of instrukt. Where core needs an answer only an optional module has
 (whether a todo slug named by a pending doc exists), core declares the
 interface and the CLI wires the module's implementation in only when that
@@ -54,6 +54,8 @@ retained records, and reading and writing per-role session bindings. It also
 declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
+Blueprint supplies its release-owned tool lifecycle to runner's module
+installation; runner consumes that API rather than defining tool policy.
 Core likewise declares the hook-generation interface; the CLI wires blueprint
 into it when enabled. Core declares the todo-existence and flavor-role lookup
 interfaces, wired by the CLI to todos only when enabled.
@@ -210,8 +212,15 @@ configuration layers, never into the skill
 
 ```mermaid
 flowchart LR
-  A[commit / merge / rebase / checkout on main] --> B[hook section]
+  A[commit / merge / rebase on main] --> B[hook section]
   B --> C[instrukt sync, detached, under lock]
+  K[checkout in any worktree] --> N{unpublished primary?}
+  N -- yes --> O[synchronous first publication from main]
+  N -- no --> L[synchronous published-entrypoint rendering]
+  L --> Q{primary on main?}
+  Q -- yes --> C
+  Q -- no --> P[return to git]
+  O --> P
   C --> M[configuration migration before refusal or skip]
   M --> D{main == published commit?}
   D -- yes --> E[done]

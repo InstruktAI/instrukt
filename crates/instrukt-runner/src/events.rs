@@ -68,6 +68,9 @@ acquisition_events! {
     CiCompleted, "runner.ci_completed", "The integrate candidate CI completed, including a no-CI observation.", State, Commit {
         project: ProjectSlug, candidate: CommitSha, result: CiResult
     };
+    DependencyFailing, "runner.dependency_failing", "A check run on a current dependency-update head failed.", Occurrence, Commit {
+        project: ProjectSlug, branch: String, head: CommitSha, check_run_id: u64, check_name: String, conclusion: Option<String>
+    };
     MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", State, InboundSource {
         project: ProjectSlug, head: CommitSha
     };
@@ -85,6 +88,7 @@ impl Event {
             Self::UpstreamChanged { project, .. }
             | Self::CiCompleted { project, .. }
             | Self::MainFailing { project, .. }
+            | Self::DependencyFailing { project, .. }
             | Self::PreparationReviewed { project, .. }
             | Self::WorkflowFinalized { project, .. } => project,
         }
@@ -105,6 +109,22 @@ impl Event {
                 candidate, result, ..
             } => key.extend([candidate.as_str(), result.as_str()]),
             Self::MainFailing { head, .. } => key.push(head.as_str()),
+            Self::DependencyFailing {
+                branch,
+                head,
+                check_run_id,
+                conclusion,
+                ..
+            } => {
+                return occurrence_id(&[
+                    self.name(),
+                    self.project().as_str(),
+                    branch,
+                    head.as_str(),
+                    &check_run_id.to_string(),
+                    conclusion.as_deref().unwrap_or(""),
+                ]);
+            }
             Self::PreparationReviewed { todo, revision, .. }
             | Self::WorkflowFinalized { todo, revision, .. } => {
                 key.extend([todo.as_str(), revision.as_str()])

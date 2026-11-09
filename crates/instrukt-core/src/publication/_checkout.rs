@@ -2,6 +2,9 @@
 //! branch proposals. Only an unpublished primary checkout may bootstrap sync.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use super::_render::Renderer;
 use super::_source::{self, Committed};
@@ -13,6 +16,8 @@ use crate::config::Configuration;
 use crate::docs::{Corpus, Position, Values};
 use crate::fsx::atomic_write;
 use crate::index::GlobalIndex;
+
+const CHECKOUT_OUTPUTS_VERSION: u32 = 1;
 
 pub(crate) enum Checkout {
     Primary,
@@ -81,12 +86,33 @@ pub(crate) fn checkout_entrypoints(
         project_index.as_ref(),
         &mut Vec::new(),
     )?;
-    let previous = Outputs::load(home, &project.slug)?;
+    let git_dir = PathBuf::from(crate::git::run(
+        &project.worktree,
+        ["rev-parse", "--absolute-git-dir"],
+    )?);
+    let inventory_file = confined(&git_dir, Path::new("instrukt-entrypoints.json"))?;
+    let previous = match CheckoutOutputs::load(&inventory_file)? {
+        Some(inventory) => inventory,
+        None => CheckoutOutputs {
+            schema_version: CHECKOUT_OUTPUTS_VERSION,
+            agents: Outputs::load(home, &project.slug)?.agents,
+        },
+    };
     // Check the entire write set before touching a checkout; links never redirect
     // generated files outside the checkout being opened.
     for rel in agents.iter().map(|(rel, _)| rel).chain(&previous.agents) {
         confined(&project.worktree, rel)?;
     }
+    // Remember every possible write before touching outputs. If a render stops
+    // midway, the next render still knows which now-withdrawn files it owns.
+    let desired: Vec<PathBuf> = agents.iter().map(|(rel, _)| rel.clone()).collect();
+    let mut retained: BTreeSet<PathBuf> = previous.agents.iter().cloned().collect();
+    retained.extend(desired.iter().cloned());
+    CheckoutOutputs {
+        schema_version: CHECKOUT_OUTPUTS_VERSION,
+        agents: retained.into_iter().collect(),
+    }
+    .save(&inventory_file)?;
     for rel in previous
         .agents
         .iter()
@@ -102,10 +128,58 @@ pub(crate) fn checkout_entrypoints(
     for (rel, text) in agents {
         atomic_write(&confined(&project.worktree, &rel)?, text.as_bytes())?;
     }
+    CheckoutOutputs {
+        schema_version: CHECKOUT_OUTPUTS_VERSION,
+        agents: desired,
+    }
+    .save(&inventory_file)?;
     tracing::debug!(event="checkout_entrypoints_rendered", project=%project.slug, checkout=%project.worktree.display(), commit=%record.commit);
     Ok(if primary {
         Checkout::Primary
     } else {
         Checkout::Linked
     })
+}
+
+#[derive(Serialize, Deserialize)]
+struct CheckoutOutputs {
+    schema_version: u32,
+    agents: Vec<PathBuf>,
+}
+
+impl CheckoutOutputs {
+    fn load(file: &Path) -> Result<Option<Self>, PublicationError> {
+        let bytes = match std::fs::read(file) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: file.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        let inventory: Self =
+            serde_json::from_slice(&bytes).map_err(|error| Self::invalid(file, error))?;
+        if inventory.schema_version != CHECKOUT_OUTPUTS_VERSION {
+            return Err(Self::invalid(
+                file,
+                "unsupported checkout output inventory version; upgrade instrukt",
+            ));
+        }
+        Ok(Some(inventory))
+    }
+
+    fn save(&self, file: &Path) -> Result<(), PublicationError> {
+        let bytes = serde_json::to_vec(self).map_err(|error| Self::invalid(file, error))?;
+        atomic_write(file, &bytes)?;
+        Ok(())
+    }
+
+    fn invalid(file: &Path, reason: impl std::fmt::Display) -> PublicationError {
+        PublicationError::Rendering {
+            file: file.display().to_string(),
+            reason: reason.to_string(),
+        }
+    }
 }

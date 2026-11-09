@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/configuration-editing.rs
 expression: "stderr(&env, &refused)"
 ---
-instrukt: [TMP]/newer/instrukt.yaml has schema_version 5, newer than this instrukt supports (4); upgrade instrukt
+instrukt: [TMP]/newer/instrukt.yaml has schema_version 6, newer than this instrukt supports (5); upgrade instrukt

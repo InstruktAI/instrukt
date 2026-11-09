@@ -55,6 +55,10 @@ dependencies, GitHub Actions SHA pins and the Graphify pin (PyPI datasource);
 dependency PRs merge automatically after required CI checks pass, without a
 human technical approval gate (C16's dependency policy).
 
+Dependency-update failure observation belongs to
+`project/instrukt/spec/feature/runner/event-activation`; integrator assessment
+belongs to `project/instrukt/spec/feature/workflow/integration-gate`.
+
 ### Engine selection
 
 `blueprint.engine` selects the engine
@@ -92,9 +96,10 @@ map; agents continue receiving answers from the previous complete map.
 ### UC-BE2: The shipped adapter uses only the release-owned installation
 
 ```gherkin
-Given a blueprint-enabled project and the release-pinned Graphify installed in its instrukt home
+Given a developer uses the shipped blueprint engine to understand their project
+And the release-pinned Graphify is installed in their instrukt home
 And another graphify executable is available on PATH
-When a revision is mapped or an engine question is asked
+When the developer asks for a structural answer after mapping a revision
 Then the adapter runs the home-owned binary and never the PATH executable
 And its code-only output satisfies the node-link contract
 But when the home-owned binary is missing

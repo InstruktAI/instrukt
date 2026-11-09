@@ -118,16 +118,16 @@ Native agent-operation prose is supplied by configuration and rendered through `
   use one todo worktree and branch, with one workspace role admitted at a time
   and atomic completion/release through the work and workflow contracts. Events include
   `runner.upstream_changed`,
-  `runner.ci_completed`, `workflow.preparation_reviewed`, `runner.main_failing` and
+  `runner.ci_completed`, `runner.dependency_failing`, `workflow.preparation_reviewed`, `runner.main_failing` and
   `workflow.finalized`.
-- **Allowed dependencies:** configuration supplies effective machine and
+- **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
   project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
   supplies records and session identity, and the state database's file,
   writer lock and migrations; workflow supplies assignments; the runtime and
   GitHub supply execution and external observations. These
   relationships are specified in the context map position below.
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
-  `todos` and `events`, and depends on `instrukt-core`. `instrukt-todos`
+  `todos` and `events`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
@@ -269,13 +269,14 @@ of event enablement and without a GitHub API call or a main-ahead event.
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
 `runner.upstream_changed`, `workflow.preparation_reviewed` → `workflow.preparation_reviewed`,
 `runner.ci_completed` → `runner.ci_completed`, `runner.main_failing` →
-`runner.main_failing`, and `workflow.finalized` → `workflow.finalized`.
-The producing contexts remain owners of these five facts; subscriptions keep
+`runner.main_failing`, `runner.dependency_failing` → `runner.dependency_failing`,
+and `workflow.finalized` → `workflow.finalized`.
+The producing contexts remain owners of these facts; subscriptions keep
 these names. Event-platform types ported from `teleclaude.*` use `instrukt.*`.
 No compatibility alias or second occurrence is emitted.
 
 The canonical received boundary is the open event envelope, not a closed enum
-of those five facts. The three runner declarations use project origin;
+of these facts. Runner declarations use project origin;
 upstream changes name the observed repository revision as a commit reference,
 main-failing names a repository-qualified commit, and CI completion names the
 candidate commit (including the `no_ci` observation). Finalize-ready and reviewed
@@ -286,7 +287,7 @@ serialization. Producer declarations expose the existing payloads as typed data.
 ### Domain events emitted
 
 The first build reads watched upstream refs with `git ls-remote` and uses
-conditional requests for an active integrate candidate's CI status per SHA.
+conditional requests for integrate candidates, canonical main and configured dependency-update branch heads.
 Polling follows the cost contract in
 `project/instrukt/spec/feature/runner/event-activation`. Missed
 ticks are caught by the next state read. Signed native and GitHub requests also enter as ordinary cluster events; polling remains source reconciliation, with its own authoritative state.
@@ -295,6 +296,7 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 | --- | --- | --- | --- | --- |
 | `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `general/procedure/upstream-watch` |
 | `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
+| `runner.dependency_failing` | A check run on a current configured dependency-update head fails | Project, branch, head SHA, check run ID/name/conclusion | Project, branch, head, run ID and conclusion | Workflow's subscribed integrator, assessing and deduplicating bug work under its procedure |
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
 
 ### Event-platform facts emitted
@@ -376,7 +378,7 @@ has no origin, as declared in Canonical fields.
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
-| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` wakes it to restore a failing canonical branch |
+| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
 The runtime adapter and event-source boundary form an **Anti-corruption layer
 (ACL)** translating session operations and external observations. These are

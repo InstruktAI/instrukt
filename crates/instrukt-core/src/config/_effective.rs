@@ -437,6 +437,28 @@ impl Configuration {
             .collect()
     }
 
+    /// Project-selected remote branch prefixes for dependency CI observation.
+    pub fn dependency_branch_prefixes(&self) -> Result<Vec<String>, ConfigError> {
+        let Some(value) = self.at(&["ci", "dependency_branch_prefixes"]) else {
+            return Ok(vec![
+                super::_schema::DEFAULT_DEPENDENCY_BRANCH_PREFIX.to_owned(),
+            ]);
+        };
+        value
+            .as_sequence()
+            .ok_or_else(|| invalid("ci.dependency_branch_prefixes", "is not a list"))?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        invalid("ci.dependency_branch_prefixes", "requires nonempty strings")
+                    })
+            })
+            .collect()
+    }
+
     /// `runner.autostart` for todos of `kind` (default off; a map omitting
     /// the kind is off).
     pub fn runner_autostart(&self, kind: &str) -> Result<bool, ConfigError> {

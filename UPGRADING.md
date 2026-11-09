@@ -2,6 +2,15 @@
 
 ## 0.1.0
 
+### Dependency-update CI observation
+
+Configuration schema 5 adds the project-only `ci.dependency_branch_prefixes`
+list. Existing configurations migrate without changing their settings; an absent
+selection follows the configuration owner's default. Run the project's existing
+runner with events enabled and publish the updated integrator subscription so
+failed dependency check runs reach its ordinary activation path. The integrator
+assesses bug evidence and deduplicates work; this installs no webhook bridge.
+
 ### Blueprint tool and checkout instructions
 
 For projects with blueprint enabled, make `uv` available on the computer, then

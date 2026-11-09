@@ -362,8 +362,8 @@ And foreign services and shared executables are unchanged
 ### UC-MI12: Converge the release-pinned blueprint engine without host dependence
 
 ```gherkin
-Given an adopted project enables only blueprint with other modules explicitly off
-When installation converges with uv available
+Given a developer enables only blueprint for their adopted project
+When the developer installs its dependencies with uv available
 Then the pinned Graphify is installed with uv's tool and binary directories inside the instrukt home
 And repeating installation reuses a matching version and repairs a missing, broken or drifted version
 And no wake-up, Redis or receiver is installed

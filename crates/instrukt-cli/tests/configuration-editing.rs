@@ -285,8 +285,10 @@ fn an_empty_project_identity_is_refused() {
 fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
     let repo = env.git_repo("demo");
-    let layer = "# my notes\nschema_version: 4\nproject: chosen\nboard: acme/7\n";
-    repo.write("instrukt.yaml", layer);
+    let layer = format!(
+        "# my notes\nschema_version: {CURRENT_SCHEMA_VERSION}\nproject: chosen\nboard: acme/7\n"
+    );
+    repo.write("instrukt.yaml", &layer);
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(repo.read("instrukt.yaml"), layer);
 }

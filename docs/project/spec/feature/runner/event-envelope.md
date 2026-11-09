@@ -103,7 +103,7 @@ revision evidence remains in data. Candidate CI state names the candidate commit
 
 The shipped `runner.upstream_changed`, `runner.ci_completed`,
 `runner.main_failing` is state. `workflow.preparation_reviewed` is an occurrence bound to the exact approved preparation head.
-`workflow.finalized` and `instrukt.system.event.dead_lettered` are occurrence.
+`runner.dependency_failing`, `workflow.finalized` and `instrukt.system.event.dead_lettered` are occurrence. Dependency failures identify the exact check run and retain its branch and commit evidence.
 External names default to occurrence. A webhook source may explicitly declare
 state names and a payload field supplying the subject under inbound-webhook-endpoint-framework.
 

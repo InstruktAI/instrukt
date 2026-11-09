@@ -444,13 +444,10 @@ fn read_sources(
         return;
     };
 
-    // CI is read for the active candidate and for remote canonical main's
-    // head, in one conditional pass.
+    // Canonical, candidate and selected dependency heads share one conditional
+    // pass and the same source deferral and credential boundary.
     let candidate = observed.candidate.clone();
     let head = observed.remote_main.clone();
-    if candidate.is_none() && head.is_none() {
-        return;
-    }
     let api_url = match github::api_url(cx.home) {
         Ok(url) => url,
         Err(err) => {
@@ -476,6 +473,23 @@ fn read_sources(
             return;
         }
     }
+    let dependencies = match considered
+        .config
+        .dependency_branch_prefixes()
+        .map_err(|error| error.to_string())
+        .and_then(|prefixes| {
+            sources::dependency_heads(&project.root, &prefixes).map_err(|error| error.to_string())
+        }) {
+        Ok(heads) => heads,
+        Err(error) => {
+            tracing::warn!(event="dependency_heads_unreadable", project=%project.slug, error=%error);
+            // Canonical/candidate CI still progresses when dependency discovery fails.
+            Vec::new()
+        }
+    };
+    if candidate.is_none() && head.is_none() && dependencies.is_empty() {
+        return;
+    }
     let Some(credentials) = &cx.wiring.github_credentials else {
         tracing::warn!(event="ci_app_unavailable",project=%project.slug,cause="work credential capability unavailable");
         return;
@@ -497,12 +511,22 @@ fn read_sources(
         state,
         &project.slug,
     );
-    let commits: Vec<&CommitSha> = candidate.iter().chain(head.iter()).collect();
+    let commits: Vec<&CommitSha> = candidate
+        .iter()
+        .chain(head.iter())
+        .chain(dependencies.iter().map(|(_, sha)| sha))
+        .collect();
     match client.read(&commits, now) {
         Ok(CiRead::States(states)) => {
             let mut states = states.into_iter();
-            let candidate_state = candidate.as_ref().and_then(|_| states.next());
-            let head_state = head.as_ref().and_then(|_| states.next());
+            let candidate_state = candidate
+                .as_ref()
+                .and_then(|_| states.next())
+                .map(|read| read.state);
+            let head_state = head
+                .as_ref()
+                .and_then(|_| states.next())
+                .map(|read| read.state);
             for event in ci::events(
                 &project.slug,
                 candidate.as_ref(),
@@ -511,6 +535,18 @@ fn read_sources(
                 head_state,
             ) {
                 append(&event);
+            }
+            for ((branch, head), observed) in dependencies.into_iter().zip(states) {
+                for check in observed.failed_checks {
+                    append(&Event::DependencyFailing {
+                        project: project.slug.clone(),
+                        branch: branch.clone(),
+                        head: head.clone(),
+                        check_run_id: check.id,
+                        check_name: check.name,
+                        conclusion: check.conclusion,
+                    });
+                }
             }
         }
         Ok(CiRead::Deferred(until)) => {

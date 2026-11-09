@@ -1,5 +1,5 @@
 ---
-description: 'Integrate exact verified candidates, publish reviewed preparation and one-off worktree heads through the same gate, and restore a red main before repair.'
+description: 'Integrate exact verified candidates, publish reviewed preparation and one-off worktree heads through the same gate, restore a red main before repair, and assess failed dependency updates.'
 visibility: 'public'
 role: integrator
 parameters:
@@ -9,6 +9,7 @@ subscriptions:
   - workflow.preparation_reviewed
   - runner.ci_completed
   - runner.main_failing
+  - runner.dependency_failing
 subscription_home: project
 interruptible: false
 ---
@@ -24,7 +25,8 @@ interruptible: false
 
 Merge finalized work and reviewed preparation and one-off worktree heads into a verified candidate,
 advance canonical main to exactly that commit, and recover a red baseline
-before repairing its cause. The standing integrator owns composition,
+before repairing its cause, and assess failed dependency updates for bug work.
+The standing integrator owns composition,
 failure interpretation, promotion and recovery.
 
 ## Preconditions
@@ -65,6 +67,13 @@ Apply these configured action values to the identified assignment and session.
 - **`runner.ci_completed`:** reconcile the result with the exact submitted
   candidate and current GitHub check state. Proceed under Step 3 only when
   the required result is complete for that commit.
+- **`runner.dependency_failing`:** inspect the exact dependency branch, commit and
+  failed check run. Apply `sdlc/policy/todo-creation-discipline` to judge whether
+  the evidence warrants a bug; check existing work and file kind `bug` once when
+  warranted, or add the evidence to its existing owner. Preserve the failed
+  dependency PR for remediation. This event is not evidence of red main and
+  invokes no main revert. The project supplies its dependency-update branch
+  selection to the runner's CI observation; this procedure owns the assessment.
 - **`runner.main_failing`:** take the recovery path under Step 5: revert the
   offending delivery first, then repair it in its own todo.
 
@@ -199,7 +208,7 @@ owed until the corresponding head is absent. Preserve the runtime thread record 
 todo cleanup is separate from the persistent integration workspace.
 
 When all current work is settled, park as the standing integrator. The next
-`workflow.finalized`, `workflow.preparation_reviewed`, `runner.ci_completed` or `runner.main_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
+`workflow.finalized`, `workflow.preparation_reviewed`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
 binding.
 
 ## Outputs

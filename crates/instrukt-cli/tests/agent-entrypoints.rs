@@ -528,7 +528,7 @@ fn checkout_project(env: &TestEnv) -> Repo {
     let repo = env.git_repo("checkout");
     repo.write(
         "instrukt.yaml",
-        "schema_version: 4\nproject: checkout\nmodules: {history: false}\n",
+        "schema_version: 5\nproject: checkout\nmodules: {history: false}\n",
     )
     .write("AGENTS.master.md", "## Purpose\n\nPublished purpose.\n")
     .write(
@@ -617,7 +617,7 @@ fn primary_checkout_bootstraps_once_and_later_renders_published_state() {
     let repo = checkout_project(&env);
     let own = repo.path().join(".git/hooks/post-checkout");
     let mut hook = std::fs::read_to_string(&own).unwrap();
-    hook.push_str("echo ran > own-checkout-ran\n");
+    hook.push_str("if [ -f AGENTS.md ]; then echo ran > own-checkout-ran; fi\n");
     std::fs::write(&own, hook).unwrap();
     repo.git(["checkout", "-b", "feature"]);
     assert!(repo.path().join("AGENTS.md").is_file());
@@ -671,4 +671,39 @@ fn unpublished_linked_checkout_reports_prerequisite_without_publishing_or_failin
     ));
     let status = env.run(&linked, ["hooks", "status"]).success();
     insta::assert_snapshot!(stdout(&env, &status));
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE6
+#[test]
+fn a_linked_checkout_retracts_its_own_withdrawn_generated_instructions() {
+    let env = checkout_machine();
+    let repo = checkout_project(&env);
+    repo.write(
+        "nested/AGENTS.master.md",
+        "## Nested\n\nPublished nested instructions.\n",
+    );
+    repo.commit("docs: add nested instructions");
+    env.run(repo.path(), ["sync"]).success();
+    let linked = env.path("withdrawal-linked");
+    env.git(
+        repo.path(),
+        ["worktree", "add", linked.to_str().unwrap(), "-b", "linked"],
+    );
+    assert!(linked.join("nested/AGENTS.md").is_file());
+    // A user-owned AGENTS.md never written by publication is not a withdrawal target.
+    std::fs::create_dir_all(linked.join("manual")).unwrap();
+    std::fs::write(
+        linked.join("manual/AGENTS.md"),
+        "developer owned instructions\n",
+    )
+    .unwrap();
+    std::fs::remove_file(repo.path().join("nested/AGENTS.master.md")).unwrap();
+    repo.commit("docs: withdraw nested instructions");
+    env.run(repo.path(), ["sync"]).success();
+    assert!(!repo.path().join("nested/AGENTS.md").exists());
+    let published = publication_bytes(&env);
+    env.git(&linked, ["checkout", "--detach", &repo.head()]);
+    assert!(!linked.join("nested/AGENTS.md").exists());
+    assert!(linked.join("manual/AGENTS.md").is_file());
+    assert_eq!(publication_bytes(&env), published);
 }

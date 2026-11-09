@@ -1106,7 +1106,10 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
     let canned = guard
         .canned
         .iter()
-        .position(|c| (c.method.is_empty() || c.method == method) && path.ends_with(&c.path_suffix))
+        .position(|c| {
+            (c.method.is_empty() || c.method == method)
+                && (path.ends_with(&c.path_suffix) || url.ends_with(&c.path_suffix))
+        })
         .and_then(|at| guard.canned.remove(at));
     let authorization = headers
         .get("authorization")

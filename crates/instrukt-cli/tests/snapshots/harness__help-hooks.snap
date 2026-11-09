@@ -13,8 +13,8 @@ Commands:
            remain
   status   Per hook: the hooks directory, whether the section is current, outdated or absent (with
            the line to give a hook manager), and the last run's outcome
-  run      What a section calls: start what acts on the hook point and return without waiting. Never
-           fails the git operation
+  run      What a section calls: checkout waits for entrypoint rendering and first publication if
+           needed; other publication triggers run detached. Never fails the git operation
   help     Print this message or the help of the given subcommand(s)
 
 Options:

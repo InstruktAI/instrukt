@@ -187,8 +187,9 @@ enum HooksCommand {
     /// outdated or absent (with the line to give a hook manager), and the
     /// last run's outcome.
     Status,
-    /// What a section calls: start what acts on the hook point and return
-    /// without waiting. Never fails the git operation.
+    /// What a section calls: checkout waits for entrypoint rendering and first
+    /// publication if needed; other publication triggers run detached.
+    /// Never fails the git operation.
     Run(RunArgs),
     /// The detached process a hook run starts.
     #[command(hide = true)]

@@ -639,3 +639,148 @@ fn app_issuance_retry_deadlines_defer_credentials_and_ci_requests_across_ticks()
     assert_eq!(project.github.requests_to("GET", "/status").len(), 1);
     assert_eq!(project.github.requests_to("GET", "/check-runs").len(), 1);
 }
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG6
+#[test]
+fn failed_dependency_checks_reach_the_integrator_once_with_their_exact_evidence() {
+    let project = Tracked::integrating();
+    let branch = "renovate/graphifyy-0.x";
+    let updater = project
+        .env
+        .clone_repo(&project.env.path("demo-origin.git"), "updater");
+    updater.git(["checkout", "-b", branch]);
+    updater.write("dependency.txt", "updated dependency\n");
+    let head = updater.commit("build: update a pinned dependency");
+    updater.git(["push", "--quiet", "origin", branch]);
+    project.github.set_check_run(
+        REPOSITORY,
+        &head,
+        "pinned Graphify contract",
+        CheckRun::InProgress,
+    );
+    project.tick();
+    assert_eq!(project.rt.started_count(), 0);
+    project.github.set_check_run(
+        REPOSITORY,
+        &head,
+        "pinned Graphify contract",
+        CheckRun::Completed(Conclusion::Success),
+    );
+    project.tick();
+    assert_eq!(project.rt.started_count(), 0);
+    project.github.set_check_run(
+        REPOSITORY,
+        &head,
+        "pinned Graphify contract",
+        CheckRun::Completed(Conclusion::Failure),
+    );
+    project.tick();
+    assert_eq!(project.rt.started_count(), 1);
+    log_snapshot!(
+        "dependency-failure",
+        project.rt.opening("s1").replace(&head, "<dependency head>")
+    );
+    project.rt.set_status("s1", "ended ok");
+    project.tick();
+    assert_eq!(project.rt.sent_count("s1"), 0);
+    // A failed rerun is new evidence even at the same commit. Bug deduplication
+    // belongs to the integrator, not a delivery gate that would hide that run.
+    project.github.set_check_run(
+        REPOSITORY,
+        &head,
+        "pinned Graphify contract",
+        CheckRun::Completed(Conclusion::Failure),
+    );
+    project.tick();
+    assert_eq!(project.rt.sent_count("s1"), 1);
+}
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG6
+#[test]
+fn dependency_observation_uses_project_prefixes_and_ignores_other_or_disabled_branches() {
+    let project = Tracked::integrating();
+    let updater = project
+        .env
+        .clone_repo(&project.env.path("demo-origin.git"), "custom-updater");
+    updater.write("dependency.txt", "updated dependency\n");
+    let head = updater.commit("build: update dependency");
+    for branch in ["feature/unrelated", "deps/libraries"] {
+        updater.git([
+            "push",
+            "--quiet",
+            "origin",
+            &format!("HEAD:refs/heads/{branch}"),
+        ]);
+    }
+    project.github.set_check_run(
+        REPOSITORY,
+        &head,
+        "required test",
+        CheckRun::Completed(Conclusion::Failure),
+    );
+    project.tick();
+    assert_eq!(project.rt.started_count(), 0);
+    let config = project.repo.read("instrukt.yaml");
+    project.repo.write(
+        "instrukt.yaml",
+        &format!("{config}\nci: {{dependency_branch_prefixes: ['deps/']}}\n"),
+    );
+    project.tick();
+    assert_eq!(project.rt.started_count(), 1);
+    project.rt.set_status("s1", "ended ok");
+    project.repo.write(
+        "instrukt.yaml",
+        &format!("{config}\nci: {{dependency_branch_prefixes: []}}\n"),
+    );
+    project.github.set_check_run(
+        REPOSITORY,
+        &head,
+        "another required test",
+        CheckRun::Completed(Conclusion::Failure),
+    );
+    project.tick();
+    assert_eq!(project.rt.sent_count("s1"), 0);
+}
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG6
+#[test]
+fn a_required_dependency_check_on_a_later_github_page_reaches_the_integrator() {
+    let project = Tracked::integrating();
+    let updater = project
+        .env
+        .clone_repo(&project.env.path("demo-origin.git"), "paged-updater");
+    updater.write("dependency.txt", "updated dependency\n");
+    let head = updater.commit("build: update dependency");
+    updater.git([
+        "push",
+        "--quiet",
+        "origin",
+        "HEAD:refs/heads/renovate/paged",
+    ]);
+    let successful: Vec<_> = (1..=30).map(|id| serde_json::json!({"id": id, "name": format!("successful-{id}"), "status": "completed", "conclusion": "success"})).collect();
+    for (suffix, checks) in [
+        (format!("/commits/{head}/check-runs"), successful),
+        (
+            format!("/commits/{head}/check-runs?page=2"),
+            vec![
+                serde_json::json!({"id": 901, "name": "required contract", "status": "completed", "conclusion": "failure"}),
+            ],
+        ),
+    ] {
+        project.github.respond_once(
+            "GET",
+            &suffix,
+            common::github::CannedResponse {
+                status: 200,
+                body: serde_json::json!({"total_count": 31, "check_runs": checks}),
+                headers: Vec::new(),
+            },
+        );
+    }
+    project.tick();
+    assert_eq!(project.rt.started_count(), 1);
+    log_snapshot!(
+        "paged-dependency-failure",
+        project.rt.opening("s1").replace(&head, "<dependency head>")
+    );
+}

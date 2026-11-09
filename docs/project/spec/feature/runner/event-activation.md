@@ -42,8 +42,8 @@ Path-based post-commit follow-ups use git hooks, including sync hooks.
 
 ### Sources and reactions
 
-The five source names remain unchanged as the runner domain's explicit naming
-map records. Their canonical envelopes carry a stable occurrence ID, project
+The source names and canonical envelopes follow the runner domain's explicit naming
+map. Their canonical envelopes carry a stable occurrence ID, project
 origin and typed subject; external source payloads remain open domain facts.
 
 | Origin | Source | Runner-facing meaning |
@@ -53,6 +53,7 @@ origin and typed subject; external source payloads remain open domain facts.
 | Workflow | `workflow.finalized` | Finalize-ready work wakes the subscribed standing integrator. |
 | Repositories | `git ls-remote` for configured watched upstream refs on each tick | A changed upstream produces `runner.upstream_changed`. |
 | Candidate CI | Conditional requests for the active integrate candidate's CI status per SHA, respecting the source poll interval | A completed result produces `runner.ci_completed` and wakes the integrator. When nothing has reported for the candidate and the canonical head carries no status and no check run, the result is `no_ci`. |
+| Dependency-update CI | Remote branch heads whose names start with a configured project dependency-update prefix, using the same conditional CI requests | Each failed check run produces `runner.dependency_failing` with its exact branch, head, run identity, name and conclusion. It reaches the subscribed integrator through the same event log, transport and activation path as red-main checks. |
 | Canonical CI | Conditional requests for the CI status of remote canonical main's head commit, respecting the source poll interval | When that commit's CI completes red, produce `runner.main_failing` once for that commit and wake the integrator. |
 
 The active candidate SHA is the fetched `origin/integrate` head not yet
@@ -60,9 +61,18 @@ contained in remote canonical main, under the integration-gate contract.
 An absent ref or an already promoted head means no candidate is pending.
 
 The project layer selects watched refs with `events.watch: [{remote, ref}]`.
+`ci.dependency_branch_prefixes` selects dependency-update branches. Only their
+current remote heads are observed; an empty list disables this source. The
+runner reports failed runs, including required runs, without deciding whether
+their evidence warrants a bug. Integration owns that judgment under
+`project/instrukt/spec/feature/workflow/integration-gate`. Repeated observation
+of the same branch/head/run/conclusion is idempotent; a new head or failed rerun
+is fresh evidence. The source needs the existing Git remote and GitHub observation
+credentials, not a webhook or separate failure delivery service.
+
 State watching needs no public address; signed webhook sources additionally use the opt-in ingress receiver. Each tick considers watched upstream refs, CI
 status per active candidate SHA and the CI status of remote canonical main's
-head commit, subject to the source poll interval. It does not depend on delivery guarantees: a missed
+head commit, plus dependency-update branch check runs, subject to the source poll interval. It does not depend on delivery guarantees: a missed
 tick is caught by the next tick reading current state.
 
 A project's declared native or GitHub endpoint verifies and relays a signed
@@ -72,8 +82,10 @@ External events carry the ingress computer as source. Only that computer
 activates matching procedures, and a missing local home is a visible failure.
 
 Polling checks only active subjects: a waiting integrate candidate, remote
-canonical main's head commit, local items on this computer and configured
-watched upstreams. API requests reuse
+canonical main's head commit, dependency-update heads, local items on this computer and configured
+watched upstreams. All check-run pages are read before classification and failure delivery. Each
+page participates in the existing conditional-request cache and source deferral.
+API requests reuse
 the previous ETag; an unchanged `304` does not consume GitHub rate quota.
 Upstream refs use `git ls-remote`, consuming no API quota. Where GitHub sends
 `X-Poll-Interval`, the runner never polls that source faster.

@@ -200,7 +200,7 @@ impl Tracked {
                     "procedure",
                     "Integrate",
                     "Integrate exact verified candidates.",
-                    "role: integrator\nparameters:\n  - name: slug\nsubscription_home: project\ninterruptible: false\nsubscriptions:\n  - workflow.preparation_reviewed\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_failing\n",
+                    "role: integrator\nparameters:\n  - name: slug\nsubscription_home: project\ninterruptible: false\nsubscriptions:\n  - workflow.preparation_reviewed\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_failing\n  - runner.dependency_failing\n",
                     &[],
                     "Integrate.\n",
                 ),

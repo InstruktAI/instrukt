@@ -127,7 +127,9 @@ commands.
     ends the hook early, so every section after it runs; a redirection-only
     `exec` is allowed, and the pre-push section uses one to give the sections
     after it the full ref list on stdin.
-  - A section in a post-hook never fails or delays the git operation.
+  - A section in a post-hook never fails the git operation. Checkout waits for
+    entrypoint rendering and any first-publication bootstrap; other publication
+    triggers remain detached.
 - **Identifier:** the hook name within the repository's hooks directory.
 - **Lifecycle:** written by `instrukt hooks install` or `instrukt init`;
   removed by `instrukt hooks remove`; lost when a hook manager regenerates the

@@ -140,7 +140,7 @@ fn real_pinned_graphify_contract() {
     let repo = project(&env, None);
     repo.write(
         "instrukt.yaml",
-        "schema_version: 4\nproject: demo\nmodules: {blueprint: true, history: false}\n",
+        "schema_version: 5\nproject: demo\nmodules: {blueprint: true, history: false}\n",
     );
     repo.write(
         "sample.py",

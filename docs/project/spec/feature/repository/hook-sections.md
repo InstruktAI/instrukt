@@ -38,8 +38,8 @@ projects keep their own tooling.
 - A started sync runs under the publication lock and does nothing when main
   equals the published commit
   (`project/instrukt/spec/feature/publication/project-publication`), so
-  hooks firing on a branch, in a linked worktree or several times in a row
-  cost nothing.
+  repeated publication triggers do not republish an unchanged revision.
+  Checkout rendering follows its separate synchronous contract above.
 - Publication and graph generation started by other hooks stay detached.
   Checkout rendering completes before return; no hook ever fails the
   git operation: a missing `instrukt` binary, a refused sync or a failed start
@@ -131,12 +131,12 @@ Then instrukt's sections are absent
 And the developer's own hook content and hook files remain unchanged
 ```
 
-### UC-HK5: Checkout gives each worktree its project instructions
+### UC-HK5: A developer keeps their checkout hooks working through the rendering handoff
 
 ```gherkin
-Given a repository has instrukt post-checkout installed beside its own hook content
-When git checks out a branch or adds a linked worktree
-Then the checkout receives the entrypoints specified by the agent-entrypoints contract before git returns
+Given a developer has installed instrukt post-checkout beside their own hook content
+When the developer checks out a branch or adds a linked worktree
+Then the hook waits for the rendering handoff to finish before returning to git
 And the developer's own hook still runs
 And a rendering failure leaves git's result unchanged and is reported
 ```

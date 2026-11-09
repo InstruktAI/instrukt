@@ -211,6 +211,45 @@ pub fn observe_main(root: &Path) -> Result<MainObservation, SourceError> {
     })
 }
 
+/// Current dependency-update heads, selected by literal project prefixes.
+/// Branch discovery uses Git just like canonical-head observation, without API quota.
+pub(crate) fn dependency_heads(
+    root: &Path,
+    prefixes: &[String],
+) -> Result<Vec<(String, CommitSha)>, SourceError> {
+    if prefixes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let done = Invocation::program("git", &["ls-remote", "--heads", "--", CANONICAL_REMOTE])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .cwd(root)
+        .run(LS_REMOTE_TIMEOUT)?;
+    if !done.success {
+        return Err(SourceError::LsRemote {
+            dir: root.display().to_string(),
+            remote: CANONICAL_REMOTE.to_owned(),
+            git_ref: "refs/heads/*".to_owned(),
+            detail: done.stderr,
+        });
+    }
+    let mut heads = Vec::new();
+    for (sha, branch) in done.stdout.lines().filter_map(|line| line.split_once('\t')) {
+        let Some(branch) = branch.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        if prefixes.iter().any(|prefix| branch.starts_with(prefix)) {
+            let sha = CommitSha::parse(sha).map_err(|error| SourceError::LsRemote {
+                dir: root.display().to_string(),
+                remote: CANONICAL_REMOTE.to_owned(),
+                git_ref: branch.to_owned(),
+                detail: error.to_string(),
+            })?;
+            heads.push((branch.to_owned(), sha));
+        }
+    }
+    Ok(heads)
+}
+
 /// Advance the canonical checkout mechanically; Git's post-merge hook publishes
 /// the new docs and hands its revision to blueprint. Never switch or force a checkout.
 pub fn synchronize_main(root: &Path, observed: &MainObservation) -> Result<(), SourceError> {

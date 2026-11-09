@@ -1,12 +1,13 @@
 ---
 source: crates/instrukt-cli/tests/event-discovery.rs
-assertion_line: 11
 expression: "String::from_utf8_lossy(&run.get_output().stdout)"
 ---
 instrukt.system.event.dead_lettered v1 — A persistently failing stream entry was parked in a dead letter destination. (subject: stream_entry, delivery: Occurrence)
   instrukt events schema instrukt.system.event.dead_lettered
 runner.ci_completed v1 — The integrate candidate CI completed, including a no-CI observation. (subject: commit, delivery: State)
   instrukt events schema runner.ci_completed
+runner.dependency_failing v1 — A check run on a current dependency-update head failed. (subject: commit, delivery: Occurrence)
+  instrukt events schema runner.dependency_failing
 runner.main_failing v1 — Remote canonical main head completed CI red. (subject: inbound_source, delivery: State)
   instrukt events schema runner.main_failing
 runner.upstream_changed v1 — A watched upstream ref changed. (subject: inbound_source, delivery: State)

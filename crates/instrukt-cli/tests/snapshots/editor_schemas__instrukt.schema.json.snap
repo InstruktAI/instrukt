@@ -255,6 +255,20 @@ expression: "String::from_utf8(bytes).unwrap()"
         ]
       }
     },
+    "ci": {
+      "type": "object",
+      "properties": {
+        "dependency_branch_prefixes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "blueprint": {
       "type": "object",
       "properties": {

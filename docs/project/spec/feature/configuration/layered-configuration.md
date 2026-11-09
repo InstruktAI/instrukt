@@ -13,7 +13,9 @@ like git's user and repository configuration. The global layer
 machine may decide; the project layer (`instrukt.yaml` at the repository root)
 holds what the project declares, and overrides the global layer where a key
 may live in both. Validation knows, per key, which layer it may live in. Both
-layers carry `schema_version`, and older documents are migrated.
+layers carry `schema_version`, and older documents are migrated. Schema 5
+adds dependency-update branch selection; conversion retains existing settings
+and leaves an omitted selection to the configuration default.
 
 ## Canonical fields
 
@@ -46,6 +48,7 @@ enable events. Installation and withdrawal are owned by
 | `schema_version` | each document | configuration |
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `ci.dependency_branch_prefixes` (list of nonempty strings; default `[renovate/]`; `[]` disables dependency-branch observation) | project only | runner CI observation |
 | `events.watch: [{remote, ref}]` | project only | runner |
 | `webhooks.<domain>` | project only; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |

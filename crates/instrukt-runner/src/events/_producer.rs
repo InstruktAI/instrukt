@@ -86,6 +86,9 @@ impl Event {
             Self::CiCompleted {
                 project, candidate, ..
             } => EventRef::new(ReferenceKind::Commit, &format!("{project}/{candidate}"))?,
+            Self::DependencyFailing { project, head, .. } => {
+                EventRef::new(ReferenceKind::Commit, &format!("{project}/{head}"))?
+            }
             Self::MainFailing { project, .. } => {
                 EventRef::new(ReferenceKind::InboundSource, &format!("{project}/main"))?
             }

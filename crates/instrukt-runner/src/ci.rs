@@ -1,4 +1,4 @@
-//! Candidate CI results from GitHub (`integration-gate`, "Candidate and
+//! CI observations and failed-check evidence from GitHub (`integration-gate`, "Candidate and
 //! verification"; `event-activation`, "Sources and reactions").
 //!
 //! A commit's result is read from its combined status and its check runs:
@@ -107,12 +107,15 @@ pub struct StatusEntry {
 /// GitHub's check runs of a commit.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct CheckRuns {
+    pub total_count: usize,
     #[serde(default)]
     pub check_runs: Vec<CheckRun>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct CheckRun {
+    pub id: u64,
+    pub name: String,
     pub status: String,
     #[serde(default)]
     pub conclusion: Option<String>,
@@ -125,13 +128,7 @@ pub fn classify(status: &CombinedStatus, checks: &CheckRuns) -> CiState {
         .iter()
         .any(|s| matches!(s.state.as_str(), "failure" | "error"))
         || (!status.statuses.is_empty() && matches!(status.state.as_str(), "failure" | "error"));
-    let check_failed = checks.check_runs.iter().any(|run| {
-        run.status == "completed"
-            && !matches!(
-                run.conclusion.as_deref(),
-                Some("success" | "neutral" | "skipped")
-            )
-    });
+    let check_failed = checks.check_runs.iter().any(CheckRun::failed);
     if status_failed || check_failed {
         return CiState::Red;
     }
@@ -169,7 +166,24 @@ pub enum CiRead {
     /// The source asked not to be polled before this time.
     Deferred(Timestamp),
     /// The state of each commit asked for, in order.
-    States(Vec<CiState>),
+    States(Vec<CommitChecks>),
+}
+
+/// One observed commit with the original failed check identities for delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitChecks {
+    pub state: CiState,
+    pub failed_checks: Vec<CheckRun>,
+}
+
+impl CheckRun {
+    fn failed(&self) -> bool {
+        self.status == "completed"
+            && !matches!(
+                self.conclusion.as_deref(),
+                Some("success" | "neutral" | "skipped")
+            )
+    }
 }
 
 /// `project`'s conditional-request validators and poll deferral.
@@ -308,7 +322,7 @@ impl<'a> CiClient<'a> {
             let read = self
                 .get(&format!("{base}/status"), &mut validators, &mut interval)
                 .and_then(|status| {
-                    self.get(
+                    self.check_runs(
                         &format!("{base}/check-runs"),
                         &mut validators,
                         &mut interval,
@@ -335,10 +349,41 @@ impl<'a> CiClient<'a> {
         let mut states = Vec::with_capacity(bodies.len());
         for (base, status_body, checks_body) in bodies {
             let status: CombinedStatus = parse(&format!("{base}/status"), &status_body)?;
-            let checks: CheckRuns = parse(&format!("{base}/check-runs"), &checks_body)?;
-            states.push(classify(&status, &checks));
+            let checks = checks_body;
+            states.push(CommitChecks {
+                state: classify(&status, &checks),
+                failed_checks: checks
+                    .check_runs
+                    .into_iter()
+                    .filter(CheckRun::failed)
+                    .collect(),
+            });
         }
         Ok(CiRead::States(states))
+    }
+
+    fn check_runs(
+        &self,
+        url: &str,
+        validators: &mut Validators,
+        interval: &mut Option<i64>,
+    ) -> Result<CheckRuns, CiError> {
+        let mut checks: CheckRuns = parse(url, &self.get(url, validators, interval)?)?;
+        let mut page = 2;
+        while checks.check_runs.len() < checks.total_count {
+            let next_url = format!("{url}?page={page}");
+            let next: CheckRuns = parse(&next_url, &self.get(&next_url, validators, interval)?)?;
+            if next.check_runs.is_empty() {
+                return Err(CiError::Body {
+                    url: next_url,
+                    message: "check-run pagination ended before its reported total".to_owned(),
+                });
+            }
+            checks.total_count = checks.total_count.max(next.total_count);
+            checks.check_runs.extend(next.check_runs);
+            page += 1;
+        }
+        Ok(checks)
     }
 
     fn get(
@@ -464,9 +509,12 @@ mod tests {
 
     fn checks(runs: &[(&str, Option<&str>)]) -> CheckRuns {
         CheckRuns {
+            total_count: runs.len(),
             check_runs: runs
                 .iter()
                 .map(|(status, conclusion)| CheckRun {
+                    id: 1,
+                    name: "test".into(),
                     status: (*status).into(),
                     conclusion: conclusion.map(str::to_owned),
                 })

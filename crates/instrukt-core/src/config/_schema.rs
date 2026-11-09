@@ -10,7 +10,9 @@ use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 4;
+pub const CURRENT_SCHEMA_VERSION: u64 = 5;
+
+pub(super) const DEFAULT_DEPENDENCY_BRANCH_PREFIX: &str = "renovate/";
 
 /// The `blueprint.engine` values that name a shipped adapter: the only
 /// values a project layer may give it. Any other value is a command, which
@@ -88,6 +90,7 @@ enum Shape {
     Autostart,
     WatchList,
     StrList,
+    BranchPrefixes,
     ModuleList,
     Identity,
 }
@@ -163,6 +166,13 @@ fn schema() -> Node {
                 ("computer", Leaf(GlobalOnly, Shape::MachineId)),
                 ("port", Leaf(GlobalOnly, Shape::Port)),
             ]),
+        ),
+        (
+            "ci",
+            map(vec![(
+                "dependency_branch_prefixes",
+                Leaf(ProjectOnly, Shape::BranchPrefixes),
+            )]),
         ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
         (
@@ -472,6 +482,14 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                 "expected true, false or a mapping of kind to true or false",
             )),
         },
+        Shape::BranchPrefixes => {
+            if !value.as_sequence().is_some_and(|seq| {
+                seq.iter()
+                    .all(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
+            }) {
+                out.push(invalid("expected a list of nonempty branch prefixes"));
+            }
+        }
         Shape::StrList => {
             if !value
                 .as_sequence()
@@ -725,6 +743,9 @@ fn json_shape(shape: Shape) -> serde_json::Value {
                 { "type": "object", "additionalProperties": { "type": "boolean" } },
             ],
         }),
+        Shape::BranchPrefixes => {
+            json!({ "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" } })
+        }
         Shape::StrList => json!({ "type": "array", "items": { "type": "string" } }),
         Shape::ModuleList => {
             let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
@@ -761,6 +782,11 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
             insert_at(&mut root, &["approvals", "prd"], text("human"));
             insert_at(&mut root, &["approvals", "task"], text("human"));
             insert_at(&mut root, &["workflow", "domain"], text("sdlc"));
+            insert_at(
+                &mut root,
+                &["ci", "dependency_branch_prefixes"],
+                Value::Sequence(vec![text(DEFAULT_DEPENDENCY_BRANCH_PREFIX)]),
+            );
         }
     }
     Value::Mapping(root)

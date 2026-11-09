@@ -80,7 +80,8 @@ independent cluster Redis demand for merged search. A core-only setup explicitly
 disables history. Local history search needs no Redis.
 
 Only enabled modules authorize their infrastructure. After recording
-desired settings, the local agent uses `instrukt install [--module todos|events|history]`
+desired settings, the local agent uses `instrukt install` with the module scope supported by
+`project/instrukt/spec/feature/runner/module-installation`, including blueprint
 to converge demanded infrastructure, then `instrukt install --check` with the
 same scope and relevant `instrukt ticks status` / `instrukt events status`.
 Disabled-module withdrawal uses the installation contract's full demand read.
