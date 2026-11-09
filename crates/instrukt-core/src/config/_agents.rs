@@ -338,7 +338,31 @@ impl Agents {
         }
     }
 
-    /// Explain a supported pending shape conversion without deploying defaults.
+    /// Persist mandatory shape conversion independently of default selection.
+    pub fn migrate_shape(home: &Home) -> Result<(), ConfigError> {
+        let path = home.agents_file();
+        let before = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => return Err(ConfigError::Read { path, source }),
+        };
+        if super::_agents_migrate::current(&before)?.is_none() {
+            return Ok(());
+        }
+        let _lock = LockGuard::acquire(
+            &home.locks_dir().join("agents.lock"),
+            Duration::from_secs(10),
+        )?;
+        let current = std::fs::read(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        if let Some(converted) = super::_agents_migrate::current(&current)? {
+            atomic_write(&path, &converted)?;
+        }
+        Ok(())
+    }
+
     pub fn inspection_notice(home: &Home) -> Result<Option<String>, ConfigError> {
         let path = home.agents_file();
         let bytes = match std::fs::read(&path) {

@@ -1,5 +1,5 @@
 //! Provision an executable without starting a distribution-owned Redis service.
-use super::*;
+use super::Request;
 use crate::process::Invocation;
 use std::{path::PathBuf, time::Duration};
 fn on_path(name: &str, path_env: &str) -> Option<PathBuf> {

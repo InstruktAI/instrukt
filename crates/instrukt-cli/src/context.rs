@@ -17,6 +17,7 @@ pub struct Ctx {
     pub out: Output,
     /// The clock every command takes its time from.
     pub clock: Clock,
+    pub receiver: Option<instrukt_runner::webhooks::PreparedReceiver>,
 }
 
 impl Ctx {
@@ -42,6 +43,7 @@ impl Ctx {
         // Every command enters with current owned configuration, before its
         // module's refusal or unchanged-work decision.
         if !inspection {
+            instrukt_core::config::Agents::migrate_shape(&home)?;
             instrukt_core::config::Configuration::load_at(&home, &cwd)?;
         }
         let clock = Clock::from_process()?;
@@ -50,6 +52,7 @@ impl Ctx {
             cwd,
             out: Output::stdout(),
             clock,
+            receiver: None,
         })
     }
 }

@@ -62,6 +62,33 @@ pub fn serve_with_socket(
     clock: std::sync::Arc<dyn Fn() -> Timestamp + Send + Sync>,
     socket_activation: bool,
 ) -> Result<(), WebhookError> {
+    serve_prepared(ServeRequest {
+        home,
+        env,
+        clock,
+        socket_activation,
+        prepared: None,
+    })
+}
+pub struct PreparedReceiver {
+    listener: TcpListener,
+    installed_port: Option<u16>,
+}
+pub struct ServeRequest<'a> {
+    pub home: &'a Home,
+    pub env: &'a Env,
+    pub clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
+    pub socket_activation: bool,
+    pub prepared: Option<PreparedReceiver>,
+}
+pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
+    let ServeRequest {
+        home,
+        env,
+        clock,
+        socket_activation,
+        prepared,
+    } = request;
     let inspection = home.for_inspection();
     let computer = machine_id(home)?;
     let ingress = Configuration::load_global(&inspection)?.ingress()?;
@@ -100,44 +127,24 @@ pub fn serve_with_socket(
     if !demand {
         return Err(invalid.unwrap_or(WebhookError::NoSources));
     }
-    let listener = if socket_activation {
-        let socket_name = if std::env::var_os("LISTEN_FDS").is_some() {
-            if std::env::var("LISTEN_PID").ok().as_deref() != Some(&std::process::id().to_string())
-                || std::env::var("LISTEN_FDS").ok().as_deref() != Some("1")
-                || std::env::var("LISTEN_FDNAMES").ok().as_deref() != Some("instrukt")
-            {
-                return Err(WebhookError::Listen(std::io::Error::other(
-                    "invalid service-manager socket handoff",
-                )));
-            }
-            "fd://"
-        } else {
-            "fd://instrukt"
-        };
-        let binding: service_binding::Binding = socket_name
-            .parse()
-            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
-        match service_binding::Listener::try_from(binding).map_err(WebhookError::Listen)? {
-            service_binding::Listener::Tcp(listener) => listener,
-            // service-binding wraps inherited descriptors as UnixListener even
-            // for TCP. Transfer ownership without touching the socket, then
-            // validate its actual address below.
-            service_binding::Listener::Unix(listener) => {
-                let descriptor: std::os::fd::OwnedFd = listener.into();
-                TcpListener::from(descriptor)
-            }
-            _ => {
-                return Err(WebhookError::Listen(std::io::Error::other(
-                    "service manager did not pass a TCP listener",
-                )));
-            }
-        }
+    let prepared = if socket_activation {
+        Some(match prepared {
+            Some(prepared) => prepared,
+            None => prepare_activation(home)?,
+        })
     } else {
-        TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ingress.port))
-            .map_err(WebhookError::Listen)?
+        None
+    };
+    let installed_port = prepared.as_ref().and_then(|p| p.installed_port);
+    let listener = match prepared {
+        Some(prepared) => prepared.listener,
+        None => TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ingress.port))
+            .map_err(WebhookError::Listen)?,
     };
     let address = listener.local_addr().map_err(WebhookError::Listen)?;
-    if address.ip() != std::net::Ipv4Addr::LOCALHOST || address.port() != ingress.port {
+    if address.ip() != std::net::Ipv4Addr::LOCALHOST
+        || address.port() != installed_port.unwrap_or(ingress.port)
+    {
         return Err(WebhookError::Listen(std::io::Error::other(
             "service-manager socket does not match configured loopback ingress port",
         )));
@@ -171,6 +178,73 @@ pub fn serve_with_socket(
         {
             tracing::warn!(event = "webhook_response_failed", error = %error);
         }
+    }
+}
+
+/// Apply a proven effective invocation before logging or receiver configuration reads.
+/// Exec retains the listening descriptor and leaves the manager's socket intact.
+pub fn prepare_activation(home: &Home) -> Result<PreparedReceiver, WebhookError> {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+    let listener = managed_listener()?;
+    let address = listener.local_addr().map_err(WebhookError::Listen)?;
+    if !address.ip().is_loopback() {
+        return Err(WebhookError::Listen(std::io::Error::other(
+            "activation socket must be loopback",
+        )));
+    }
+    let effective = crate::installation::_launch::owned(home, address.port())
+        .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
+    let installed_port = effective.as_ref().map(|_| address.port());
+    if let Some((effective, digest)) = effective
+        && !effective.applied(&digest)
+    {
+        rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
+            .map_err(|e| WebhookError::Listen(e.into()))?;
+        let error = std::process::Command::new(&effective.executable)
+            .args(["webhooks", "serve", "--socket-activation"])
+            .envs(&effective.environment)
+            .env("INSTRUKT_RECEIVER_FD", listener.as_raw_fd().to_string())
+            .env("INSTRUKT_RECEIVER_APPLIED", digest)
+            .exec();
+        return Err(WebhookError::Listen(error));
+    }
+    Ok(PreparedReceiver {
+        listener,
+        installed_port,
+    })
+}
+fn managed_listener() -> Result<TcpListener, WebhookError> {
+    let binding = if let Ok(fd) = std::env::var("INSTRUKT_RECEIVER_FD") {
+        let fd = fd
+            .parse::<i32>()
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
+        service_binding::Binding::FileDescriptor(fd)
+    } else {
+        let name = if std::env::var_os("LISTEN_FDS").is_some() {
+            if std::env::var("LISTEN_PID").ok().as_deref() != Some(&std::process::id().to_string())
+                || std::env::var("LISTEN_FDS").ok().as_deref() != Some("1")
+                || std::env::var("LISTEN_FDNAMES").ok().as_deref() != Some("instrukt")
+            {
+                return Err(WebhookError::Listen(std::io::Error::other(
+                    "invalid service-manager socket handoff",
+                )));
+            }
+            "fd://"
+        } else {
+            "fd://instrukt"
+        };
+        name.parse::<service_binding::Binding>()
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?
+    };
+    match service_binding::Listener::try_from(binding).map_err(WebhookError::Listen)? {
+        service_binding::Listener::Tcp(listener) => Ok(listener),
+        service_binding::Listener::Unix(listener) => {
+            let descriptor: std::os::fd::OwnedFd = listener.into();
+            Ok(TcpListener::from(descriptor))
+        }
+        _ => Err(WebhookError::Listen(std::io::Error::other(
+            "service manager did not pass a TCP listener",
+        ))),
     }
 }
 

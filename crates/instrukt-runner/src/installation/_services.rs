@@ -1,16 +1,19 @@
-use super::*;
+use super::{Disposition, Report, Request, ResourceKind};
+use crate::install::Scheduler;
 use crate::process::Invocation;
 use instrukt_core::fsx::atomic_write_with_permissions;
+use instrukt_core::home::Home;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Definition {
-    pub name: String,
+    pub name: ResourceKind,
     pub unit: String,
-    pub scheduler: String,
+    pub scheduler: Scheduler,
     pub files: BTreeMap<PathBuf, String>,
     #[serde(default)]
     pub registered: bool,
@@ -19,7 +22,7 @@ pub(super) struct Definition {
 }
 impl Definition {
     fn stem(&self) -> String {
-        if self.scheduler == "launchd" {
+        if self.scheduler == Scheduler::Launchd {
             self.unit.trim_start_matches("ai.instrukt.").into()
         } else {
             self.unit
@@ -40,22 +43,29 @@ impl Definition {
         None
     }
     fn label(&self) -> String {
-        let unit = if self.scheduler == "cron" {
+        let unit = if self.scheduler == Scheduler::Crontab {
             "# instrukt-tick"
         } else {
             &self.unit
         };
-        format!("{} ({})", unit, self.scheduler)
+        format!("{} ({})", unit, self.scheduler.name())
     }
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct Transition {
+    before: Vec<Definition>,
+    after: Definition,
 }
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct Owned {
     schema_version: u32,
-    resources: BTreeMap<String, Definition>,
+    resources: BTreeMap<ResourceKind, Definition>,
     #[serde(default)]
     assets: BTreeMap<PathBuf, String>,
     #[serde(default)]
     pending_receiver: Option<Definition>,
+    #[serde(default)]
+    updates: BTreeMap<ResourceKind, Transition>,
 }
 impl Owned {
     pub fn load(home: &Home) -> anyhow::Result<Self> {
@@ -63,14 +73,14 @@ impl Owned {
             Ok(bytes) => {
                 let mut owned: Self = serde_json::from_slice(&bytes)?;
                 anyhow::ensure!(
-                    matches!(owned.schema_version, 1 | 2),
+                    matches!(owned.schema_version, 1..=3),
                     "unsupported installation ownership version; upgrade instrukt"
                 );
-                owned.schema_version = 2;
+                owned.schema_version = 3;
                 Ok(owned)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self {
-                schema_version: 2,
+                schema_version: 3,
                 ..Self::default()
             }),
             Err(e) => Err(e.into()),
@@ -82,6 +92,55 @@ impl Owned {
             &serde_json::to_vec_pretty(self)?,
             std::fs::Permissions::from_mode(0o600),
         )?;
+        Ok(())
+    }
+    fn proofs(&self, kind: ResourceKind) -> Vec<&Definition> {
+        let mut definitions = self.resources.get(&kind).into_iter().collect::<Vec<_>>();
+        if let Some(update) = self.updates.get(&kind) {
+            definitions.extend(update.before.iter());
+            definitions.push(&update.after);
+        }
+        if kind == ResourceKind::Receiver
+            && let Some(pending) = &self.pending_receiver
+        {
+            definitions.push(pending);
+        }
+        definitions
+    }
+    fn proven(&self, kind: ResourceKind, file: &Path, actual: &str) -> bool {
+        self.proofs(kind).into_iter().any(|definition| {
+            definition
+                .files
+                .get(file)
+                .is_some_and(|value| value == actual)
+        })
+    }
+    fn begin(&mut self, home: &Home, desired: &Definition) -> anyhow::Result<()> {
+        let before = self.proofs(desired.name).into_iter().cloned().collect();
+        self.updates.insert(
+            desired.name,
+            Transition {
+                before,
+                after: desired.clone(),
+            },
+        );
+        self.save(home)
+    }
+    fn write_files(&self, desired: &Definition) -> anyhow::Result<()> {
+        for (file, content) in &desired.files {
+            if let Some(actual) = read(file)? {
+                anyhow::ensure!(
+                    self.proven(desired.name, file, &actual),
+                    "ownership conflict at {}; restore a recorded definition",
+                    file.display()
+                );
+            }
+            atomic_write_with_permissions(
+                file,
+                content.as_bytes(),
+                std::fs::Permissions::from_mode(0o600),
+            )?;
+        }
         Ok(())
     }
     pub fn retained_file(
@@ -134,9 +193,9 @@ impl Owned {
         report: &mut Report,
     ) -> anyhow::Result<()> {
         if !required {
-            return self.withdraw_named(request, &desired.name, complete, report);
+            return self.withdraw_named(request, desired.name, complete, report);
         }
-        if desired.name == "receiver" {
+        if desired.name == ResourceKind::Receiver {
             return self.receiver_resource(request, desired, complete, projects, report);
         }
         let previous = self.resources.get(&desired.name);
@@ -152,9 +211,9 @@ impl Owned {
             match read(file)? {
                 None => changed = true,
                 Some(current) => {
-                    let recorded = previous.and_then(|p| p.files.get(file));
+                    let recorded = self.proven(desired.name, file, &current);
                     anyhow::ensure!(
-                        recorded == Some(&current),
+                        recorded,
                         "ownership conflict at {}; restore the recorded owned definition or move the foreign file, then rerun instrukt install",
                         file.display()
                     );
@@ -162,7 +221,7 @@ impl Owned {
                 }
             }
         }
-        if desired.scheduler == "cron" {
+        if desired.scheduler == Scheduler::Crontab {
             let table = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
             anyhow::ensure!(
                 table.success || table.stderr.to_ascii_lowercase().contains("no crontab for"),
@@ -175,14 +234,16 @@ impl Owned {
                 .collect::<Vec<_>>();
             anyhow::ensure!(
                 marked.len() <= 1
-                    && marked
-                        .first()
-                        .is_none_or(|line| previous.is_some_and(|old| old.unit == *line)),
+                    && marked.first().is_none_or(|line| self
+                        .proofs(desired.name)
+                        .iter()
+                        .any(|old| old.unit == *line)),
                 "ownership conflict in crontab; restore the recorded instrukt line or move the foreign marker before install"
             );
             changed |= marked.first().copied() != Some(desired.unit.as_str());
         }
-        let registered = previous.is_some_and(|p| p.registered);
+        let registered =
+            previous.is_some_and(|p| p.registered) && !self.updates.contains_key(&desired.name);
         let active = previous.is_some() && running(desired)?;
         if previous.is_none() {
             anyhow::ensure!(
@@ -193,14 +254,14 @@ impl Owned {
         }
         if request.check {
             if changed || !active || !registered {
-                report.finding(&desired.name,"missing/broken registration; run instrukt install after resolving prerequisites");
+                report.finding(desired.name,"missing/broken registration; run instrukt install after resolving prerequisites");
             }
             report.resource(
-                &desired.name,
+                desired.name,
                 if changed || !active || !registered {
-                    "unmet"
+                    Disposition::Unmet
                 } else {
-                    "reused"
+                    Disposition::Reused
                 },
                 desired.files.keys().cloned().collect(),
                 projects,
@@ -211,7 +272,7 @@ impl Owned {
             );
             return Ok(());
         }
-        if !changed && active {
+        if !changed && active && !self.updates.contains_key(&desired.name) {
             if !registered {
                 if let Some(record) = self.resources.get_mut(&desired.name) {
                     record.registered = true;
@@ -219,8 +280,8 @@ impl Owned {
                 self.save(request.home)?;
             }
             report.resource(
-                &desired.name,
-                "reused",
+                desired.name,
+                Disposition::Reused,
                 desired.files.keys().cloned().collect(),
                 projects,
                 format!("{}: working registration unchanged", desired.label()),
@@ -228,27 +289,25 @@ impl Owned {
             return Ok(());
         }
         let repaired = previous.is_some();
-        self.resources.insert(desired.name.clone(), desired.clone());
-        self.save(request.home)?;
-        if desired.name == "wake-up" {
-            crate::install::install(request.scheduler, &request.wake)?;
+        self.begin(request.home, desired)?;
+        self.write_files(desired)?;
+        if desired.name == ResourceKind::WakeUp {
+            crate::install::register(request.scheduler, &request.wake)?;
         } else {
-            for (file, content) in &desired.files {
-                atomic_write_with_permissions(
-                    file,
-                    content.as_bytes(),
-                    std::fs::Permissions::from_mode(0o600),
-                )?;
-            }
             start(desired)?;
         }
-        if let Some(record) = self.resources.get_mut(&desired.name) {
-            record.registered = true;
-        }
+        let mut recorded = desired.clone();
+        recorded.registered = true;
+        self.resources.insert(desired.name, recorded);
+        self.updates.remove(&desired.name);
         self.save(request.home)?;
         report.resource(
-            &desired.name,
-            if repaired { "repaired" } else { "installed" },
+            desired.name,
+            if repaired {
+                Disposition::Repaired
+            } else {
+                Disposition::Installed
+            },
             desired.files.keys().cloned().collect(),
             projects,
             format!("{}: registered with the service manager", desired.label()),
@@ -260,11 +319,11 @@ impl Owned {
         request: &Request<'_>,
         port: u16,
         route: String,
-    ) -> Definition {
+    ) -> anyhow::Result<Definition> {
         // Keep an existing listener identity when its address is unchanged.
         let stem = self
             .resources
-            .get("receiver")
+            .get(&ResourceKind::Receiver)
             .filter(|d| d.port() == Some(port))
             .map(|d| d.stem())
             .unwrap_or_else(|| format!("webhooks-{port}"));
@@ -279,8 +338,27 @@ impl Owned {
             ],
             Some(port),
         );
+        if request.scheduler == Scheduler::Launchd
+            && let Some(previous) = self
+                .resources
+                .get(&ResourceKind::Receiver)
+                .filter(|d| d.port() == Some(port))
+        {
+            // launchd retains this registered envelope; mutable execution settings
+            // are read by the activation entry, not falsely reloaded by kickstart.
+            for (file, contents) in &previous.files {
+                if file.extension().is_some_and(|ext| ext == "plist") {
+                    definition.files.insert(file.clone(), contents.clone());
+                }
+            }
+        }
+        let launch = super::_launch::ReceiverLaunch::desired(request, port);
+        definition.files.insert(
+            super::_launch::ReceiverLaunch::file(request.home, port),
+            launch.encode()?,
+        );
         definition.probe = Some((port, route));
-        definition
+        Ok(definition)
     }
     fn receiver_resource(
         &mut self,
@@ -290,7 +368,7 @@ impl Owned {
         projects: &[String],
         report: &mut Report,
     ) -> anyhow::Result<()> {
-        let previous = self.resources.get("receiver").cloned();
+        let previous = self.resources.get(&ResourceKind::Receiver).cloned();
         if let Some(old) = &previous {
             anyhow::ensure!(
                 old.scheduler == desired.scheduler,
@@ -314,9 +392,9 @@ impl Owned {
                 .pending_receiver
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("missing pending receiver identity"))?;
-            validate_files(pending)?;
+            self.validate_proofs(ResourceKind::Receiver)?;
             stop(pending)?;
-            remove_files(pending)?;
+            self.remove_proven(pending)?;
             self.pending_receiver = None;
             self.save(request.home)?;
         }
@@ -331,7 +409,7 @@ impl Owned {
                 None => changed = true,
                 Some(actual) => {
                     anyhow::ensure!(
-                        proof.and_then(|d| d.files.get(file)) == Some(&actual),
+                        self.proven(ResourceKind::Receiver, file, &actual),
                         "receiver ownership conflict at {}; restore the recorded definition before installation",
                         file.display()
                     );
@@ -346,7 +424,8 @@ impl Owned {
             "receiver {} is already registered without matching ownership",
             desired.unit
         );
-        let incomplete = self.pending_receiver.is_some();
+        let incomplete =
+            self.pending_receiver.is_some() || self.updates.contains_key(&ResourceKind::Receiver);
         if request.check {
             if changed || !active || !same_unit || incomplete {
                 report.finding(
@@ -355,11 +434,11 @@ impl Owned {
                 );
             }
             report.resource(
-                "receiver",
+                ResourceKind::Receiver,
                 if changed || !active || !same_unit || incomplete {
-                    "unmet"
+                    Disposition::Unmet
                 } else {
-                    "reused"
+                    Disposition::Reused
                 },
                 desired.files.keys().cloned().collect(),
                 projects,
@@ -369,8 +448,8 @@ impl Owned {
         }
         if !changed && active && same_unit && !incomplete {
             report.resource(
-                "receiver",
-                "reused",
+                ResourceKind::Receiver,
+                Disposition::Reused,
                 desired.files.keys().cloned().collect(),
                 projects,
                 format!("{}: listener retained", desired.label()),
@@ -383,20 +462,13 @@ impl Owned {
                 "complete project demand is required before changing receiver placement"
             );
         }
-        if let Some(old) = &previous
-            && !same_unit
-        {
-            validate_files(old)?;
+        if previous.is_some() && !same_unit {
+            self.validate_proofs(ResourceKind::Receiver)?;
         }
+        self.begin(request.home, desired)?;
         self.pending_receiver = Some(desired.clone());
         self.save(request.home)?;
-        for (file, content) in &desired.files {
-            atomic_write_with_permissions(
-                file,
-                content.as_bytes(),
-                std::fs::Permissions::from_mode(0o600),
-            )?;
-        }
+        self.write_files(desired)?;
         if active {
             restart_receiver(desired)?;
         } else {
@@ -408,22 +480,23 @@ impl Owned {
         if let Some(old) = &previous
             && !same_unit
         {
-            validate_files(old)?;
+            self.validate_proofs(ResourceKind::Receiver)?;
             stop(old)?;
-            remove_files(old)?;
+            self.remove_proven(old)?;
             report.notices.push(format!("receiver edge route changed from port {} to {}; align the operator's external route",old.port().map(|p|p.to_string()).unwrap_or_else(||"unknown".into()),desired.port().map(|p|p.to_string()).unwrap_or_else(||"unknown".into())));
         }
         let mut recorded = desired.clone();
         recorded.registered = true;
-        self.resources.insert("receiver".into(), recorded);
+        self.resources.insert(ResourceKind::Receiver, recorded);
         self.pending_receiver = None;
+        self.updates.remove(&ResourceKind::Receiver);
         self.save(request.home)?;
         report.resource(
-            "receiver",
+            ResourceKind::Receiver,
             if previous.is_some() {
-                "repaired"
+                Disposition::Repaired
             } else {
-                "installed"
+                Disposition::Installed
             },
             desired.files.keys().cloned().collect(),
             projects,
@@ -431,69 +504,63 @@ impl Owned {
         );
         Ok(())
     }
+    fn validate_proofs(&self, kind: ResourceKind) -> anyhow::Result<()> {
+        for definition in self.proofs(kind) {
+            for file in definition.files.keys() {
+                if let Some(actual) = read(file)? {
+                    anyhow::ensure!(
+                        self.proven(kind, file, &actual),
+                        "ownership conflict at {}; restore a recorded definition before withdrawal",
+                        file.display()
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+    fn remove_proven(&self, definition: &Definition) -> anyhow::Result<()> {
+        for file in definition.files.keys() {
+            if let Some(actual) = read(file)? {
+                anyhow::ensure!(
+                    self.proven(definition.name, file, &actual),
+                    "ownership conflict at {}; restore a recorded definition",
+                    file.display()
+                );
+                std::fs::remove_file(file)?;
+            }
+        }
+        Ok(())
+    }
     pub fn withdraw_named(
         &mut self,
         request: &Request<'_>,
-        name: &str,
+        name: ResourceKind,
         complete: bool,
         report: &mut Report,
     ) -> anyhow::Result<()> {
-        if name == "receiver"
-            && let Some(pending) = self.pending_receiver.clone()
+        let definitions = self
+            .proofs(name)
+            .into_iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
+        if definitions.is_empty()
+            || (!self.updates.contains_key(&name)
+                && (name != ResourceKind::Receiver || self.pending_receiver.is_none())
+                && !definitions.iter().any(|d| d.registered))
         {
-            anyhow::ensure!(
-                complete,
-                "incomplete project demand; restore unreadable projects before receiver withdrawal"
-            );
-            validate_files(&pending)?;
-            if request.check {
-                report.finding(
-                    name,
-                    "obsolete pending receiver; run instrukt install to withdraw it",
-                );
-                return Ok(());
-            }
-            stop(&pending)?;
-            remove_files(&pending)?;
-            if pending.scheduler == "systemd" {
-                required(&["systemctl", "--user", "daemon-reload"])?;
-            }
-            if let Some(current) = self.resources.get_mut(name)
-                && current.unit == pending.unit
-            {
-                current.registered = false;
-            }
-            self.pending_receiver = None;
-            self.save(request.home)?;
-            report.resource(
-                name,
-                "withdrawn",
-                pending.files.keys().cloned().collect(),
-                &[],
-                format!(
-                    "{}: pending receiver withdrawn; retained data unchanged",
-                    pending.label()
-                ),
-            );
-        }
-        let Some(record) = self.resources.get(name) else {
-            return Ok(());
-        };
-        if !record.registered {
             return Ok(());
         }
         anyhow::ensure!(
             complete,
             "incomplete project demand; restore unreadable projects before withdrawing {name}"
         );
-        for (file, expected) in &record.files {
-            if let Some(actual) = read(file)? {
-                anyhow::ensure!(
-                    actual == *expected,
-                    "ownership conflict at {}; restore the recorded definition before withdrawal",
-                    file.display()
-                );
-            }
+        self.validate_proofs(name)?;
+        if definitions
+            .iter()
+            .any(|d| d.scheduler == Scheduler::Crontab)
+        {
+            verify_cron(&definitions)?;
         }
         if request.check {
             report.finding(
@@ -502,54 +569,32 @@ impl Owned {
             );
             return Ok(());
         }
-        stop(record)?;
-        for file in record.files.keys() {
-            if file.is_file() {
-                std::fs::remove_file(file)?;
+        let mut stopped = std::collections::BTreeSet::new();
+        for definition in &definitions {
+            if stopped.insert(&definition.unit) {
+                stop(definition)?;
+            }
+            self.remove_proven(definition)?;
+            if definition.scheduler == Scheduler::SystemdUser {
+                required(&["systemctl", "--user", "daemon-reload"])?;
             }
         }
-        report.resource(
-            name,
-            "withdrawn",
-            record.files.keys().cloned().collect(),
-            &[],
-            format!(
-                "{}: retained data, credentials and shared executables unchanged",
-                record.label()
-            ),
-        );
-        if record.scheduler == "systemd" {
-            required(&["systemctl", "--user", "daemon-reload"])?;
-        }
-        if let Some(record) = self.resources.get_mut(name) {
+        report.resource(name, Disposition::Withdrawn,
+            definitions.iter().flat_map(|d| d.files.keys().cloned()).collect(), &[],
+            "owned registrations withdrawn; retained data, credentials and shared executables unchanged");
+        if let Some(record) = self.resources.get_mut(&name) {
             record.registered = false;
         }
+        if name == ResourceKind::Receiver {
+            self.pending_receiver = None;
+        }
+        self.updates.remove(&name);
         self.save(request.home)?;
         Ok(())
     }
 }
-fn validate_files(definition: &Definition) -> anyhow::Result<()> {
-    for (file, expected) in &definition.files {
-        if let Some(actual) = read(file)? {
-            anyhow::ensure!(
-                actual == *expected,
-                "ownership conflict at {}; restore the recorded definition",
-                file.display()
-            );
-        }
-    }
-    Ok(())
-}
-fn remove_files(definition: &Definition) -> anyhow::Result<()> {
-    for file in definition.files.keys() {
-        if read(file)?.is_some() {
-            std::fs::remove_file(file)?;
-        }
-    }
-    Ok(())
-}
 fn restart_receiver(definition: &Definition) -> anyhow::Result<()> {
-    if definition.scheduler == "launchd" {
+    if definition.scheduler == Scheduler::Launchd {
         let uid = Invocation::program("id", &["-u"]).run(Duration::from_secs(10))?;
         anyhow::ensure!(uid.success, "cannot identify the launchd user domain");
         let uid = uid.stdout.trim().parse::<u32>()?;
@@ -598,25 +643,26 @@ fn required(argv: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 fn running(d: &Definition) -> anyhow::Result<bool> {
-    match d.scheduler.as_str() {
-        "launchd" => command(&["launchctl", "list", &d.unit]),
-        "systemd" => Ok(
-            command(&["systemctl", "--user", "is-active", "--quiet", &d.unit])?
-                && command(&["systemctl", "--user", "is-enabled", "--quiet", &d.unit])?,
-        ),
-        "cron" => {
+    match d.scheduler {
+        Scheduler::Launchd => command(&["launchctl", "list", &d.unit]),
+        Scheduler::SystemdUser => {
+            Ok(
+                command(&["systemctl", "--user", "is-active", "--quiet", &d.unit])?
+                    && command(&["systemctl", "--user", "is-enabled", "--quiet", &d.unit])?,
+            )
+        }
+        Scheduler::Crontab => {
             let result = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
             Ok(result.success && result.stdout.lines().any(|line| line == d.unit))
         }
-        _ => anyhow::bail!("unknown recorded service manager; restore its configuration"),
     }
 }
 fn start(d: &Definition) -> anyhow::Result<()> {
-    if d.scheduler == "launchd" {
+    if d.scheduler == Scheduler::Launchd {
         let file = d
             .files
             .keys()
-            .next()
+            .find(|file| file.extension().is_some_and(|ext| ext == "plist"))
             .ok_or_else(|| anyhow::anyhow!("missing plist"))?;
         required(&["launchctl", "load", "-w", &file.display().to_string()])
     } else {
@@ -642,23 +688,43 @@ fn systemd_loaded(unit: &str) -> anyhow::Result<bool> {
         ),
     }
 }
+fn verify_cron(definitions: &[Definition]) -> anyhow::Result<()> {
+    let table = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
+    anyhow::ensure!(
+        table.success,
+        "cannot inspect crontab; restore access before withdrawal"
+    );
+    let marked = table
+        .stdout
+        .lines()
+        .filter(|line| line.trim_end().ends_with("# instrukt-tick"))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        marked
+            .iter()
+            .all(|line| definitions.iter().any(|d| *line == d.unit))
+            && marked.len() <= 1,
+        "crontab ownership conflict; restore the recorded instrukt line before withdrawal"
+    );
+    Ok(())
+}
 fn stop(d: &Definition) -> anyhow::Result<()> {
-    match d.scheduler.as_str() {
-        "launchd" => {
+    match d.scheduler {
+        Scheduler::Launchd => {
             let file = d
                 .files
                 .keys()
-                .next()
+                .find(|file| file.extension().is_some_and(|ext| ext == "plist"))
                 .ok_or_else(|| anyhow::anyhow!("missing plist"))?;
             if running(d)? {
                 required(&["launchctl", "unload", &file.display().to_string()])?;
             }
         }
-        "systemd" => {
+        Scheduler::SystemdUser => {
             if systemd_loaded(&d.unit)? {
                 required(&["systemctl", "--user", "disable", "--now", &d.unit])?;
             }
-            if d.name == "receiver"
+            if d.name == ResourceKind::Receiver
                 && systemd_loaded(&format!("{}.service", d.unit.trim_end_matches(".socket")))?
             {
                 required(&[
@@ -669,7 +735,7 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
                 ])?;
             }
         }
-        "cron" => {
+        Scheduler::Crontab => {
             let result = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
             anyhow::ensure!(
                 result.success,
@@ -678,7 +744,7 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
             let text = result
                 .stdout
                 .lines()
-                .filter(|line| !line.trim_end().ends_with("# instrukt-tick"))
+                .filter(|line| *line != d.unit)
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n";
@@ -687,7 +753,6 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
                 .run(Duration::from_secs(30))?;
             anyhow::ensure!(written.success, "cannot withdraw owned crontab line");
         }
-        _ => anyhow::bail!("unsupported recorded scheduler"),
     }
     Ok(())
 }
@@ -697,7 +762,7 @@ pub(super) fn tick(request: &Request<'_>) -> Definition {
         .map(|f| (f.path, f.contents))
         .collect();
     Definition {
-        name: "wake-up".into(),
+        name: ResourceKind::WakeUp,
         unit: match request.scheduler {
             Scheduler::Launchd => crate::install::LABEL.into(),
             Scheduler::SystemdUser => "instrukt-tick.timer".into(),
@@ -705,7 +770,7 @@ pub(super) fn tick(request: &Request<'_>) -> Definition {
                 .trim_end()
                 .into(),
         },
-        scheduler: request.scheduler.name().into(),
+        scheduler: request.scheduler,
         files,
         registered: false,
         probe: None,
@@ -760,13 +825,12 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
     }
     Definition {
         name: if name.starts_with("webhooks") {
-            "receiver"
+            ResourceKind::Receiver
         } else {
-            name
-        }
-        .into(),
+            ResourceKind::Redis
+        },
         unit,
-        scheduler: request.scheduler.name().into(),
+        scheduler: request.scheduler,
         files,
         registered: false,
         probe: None,
@@ -782,4 +846,20 @@ pub(super) fn redis(request: &Request<'_>, executable: &Path, config: &Path) -> 
         ],
         None,
     )
+}
+
+pub(super) fn owned_receiver_file(home: &Home, file: &Path) -> anyhow::Result<Option<String>> {
+    let Some(contents) = read(file)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        std::fs::metadata(file)?.permissions().mode() & 0o077 == 0,
+        "receiver invocation must be owner-only"
+    );
+    let owned = Owned::load(home)?;
+    anyhow::ensure!(
+        owned.proven(ResourceKind::Receiver, file, &contents),
+        "receiver invocation has no matching ownership proof; restore its recorded definition"
+    );
+    Ok(Some(contents))
 }

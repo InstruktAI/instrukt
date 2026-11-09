@@ -1,6 +1,7 @@
 //! Converge only machine infrastructure demanded by adopted projects. Inspection
 //! shares the demand and ownership model and executes no infrastructure mutation steps.
 mod _demand;
+pub(crate) mod _launch;
 mod _package;
 mod _redis;
 mod _services;
@@ -39,10 +40,82 @@ fn inspection_error(resource: &'static str, error: impl std::fmt::Display) -> In
     }
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub enum ResourceKind {
+    #[serde(rename = "wake-up")]
+    WakeUp,
+    #[serde(rename = "redis")]
+    Redis,
+    #[serde(rename = "receiver")]
+    Receiver,
+    #[serde(rename = "local Redis")]
+    LocalRedis,
+}
+impl ResourceKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::WakeUp => "wake-up",
+            Self::Redis => "redis",
+            Self::Receiver => "receiver",
+            Self::LocalRedis => "local Redis",
+        }
+    }
+}
+impl std::fmt::Display for ResourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Disposition {
+    Installed,
+    Reused,
+    Repaired,
+    Withdrawn,
+    ExternallySupplied,
+    Unmet,
+}
+impl std::fmt::Display for Disposition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Installed => "installed",
+            Self::Reused => "reused",
+            Self::Repaired => "repaired",
+            Self::Withdrawn => "withdrawn",
+            Self::ExternallySupplied => "externally_supplied",
+            Self::Unmet => "unmet",
+        })
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TickMode {
+    NoDemand,
+    Operator,
+    Launchd,
+    Systemd,
+    Cron,
+    MissingOrBroken,
+}
+impl std::fmt::Display for TickMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NoDemand => "no_demand",
+            Self::Operator => "operator",
+            Self::Launchd => "launchd",
+            Self::Systemd => "systemd",
+            Self::Cron => "cron",
+            Self::MissingOrBroken => "missing_or_broken",
+        })
+    }
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct Resource {
-    pub name: String,
-    pub disposition: String,
+    pub name: ResourceKind,
+    pub disposition: Disposition,
     pub paths: Vec<PathBuf>,
     pub projects: Vec<String>,
     pub detail: String,
@@ -57,26 +130,26 @@ impl Report {
     pub fn healthy(&self) -> bool {
         self.findings.is_empty()
     }
-    fn finding(&mut self, name: &str, error: impl std::fmt::Display) {
-        tracing::warn!(event="installation_unmet",resource=name,error=%error);
+    fn finding(&mut self, name: impl std::fmt::Display, error: impl std::fmt::Display) {
+        tracing::warn!(event="installation_unmet",resource=%name,error=%error);
         self.findings.push(format!("{name}: {error}"));
     }
     fn resource(
         &mut self,
-        name: &str,
-        disposition: &str,
+        name: ResourceKind,
+        disposition: Disposition,
         paths: Vec<PathBuf>,
         projects: &[String],
         detail: impl Into<String>,
     ) {
         tracing::info!(
             event = "installation_resource",
-            resource = name,
-            disposition
+            resource = %name,
+            disposition = %disposition
         );
         self.resources.push(Resource {
-            name: name.into(),
-            disposition: disposition.into(),
+            name,
+            disposition,
             paths,
             projects: projects.to_vec(),
             detail: detail.into(),
@@ -86,6 +159,7 @@ impl Report {
 #[derive(Clone)]
 pub struct Request<'a> {
     pub home: &'a Home,
+    pub cwd: &'a std::path::Path,
     pub env: &'a Env,
     pub scheduler: Scheduler,
     pub wake: WakeUp<'a>,
@@ -104,7 +178,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         )?)
     };
     let mut report = Report::default();
-    let demand = _demand::read(request.home, &mut report)
+    let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let mut owned = _services::Owned::load(request.home)
         .map_err(|e| InstallationError::Ownership(e.to_string()))?;
@@ -131,8 +205,8 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         }
         if !projects.is_empty() && !global.ticks_enabled()? {
             report.resource(
-                "wake-up",
-                "externally_supplied",
+                ResourceKind::WakeUp,
+                Disposition::ExternallySupplied,
                 vec![],
                 &projects,
                 "ticks off: operator supplies scheduling",
@@ -145,7 +219,8 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
                 report.finding("Redis", error);
             }
         } else if demand.redis_references.is_empty()
-            && let Err(error) = owned.withdraw_named(request, "redis", demand.complete, &mut report)
+            && let Err(error) =
+                owned.withdraw_named(request, ResourceKind::Redis, demand.complete, &mut report)
         {
             report.finding("Redis", error);
         }
@@ -166,7 +241,7 @@ fn receiver(
     let mut ingress_port = None;
     let mut health_route = None;
     for record in &demand.sources {
-        let config = Configuration::load(request.home, Some(&record.checkout))?;
+        let config = &record.config;
         let ingress = config.ingress()?;
         // Check placement without minting an identity on a read-only path.
         let machine=std::fs::read_to_string(request.home.machine_id_file()).map_err(|_|anyhow::anyhow!("machine identity missing/unreadable; restore the recorded machine-id before receiver placement or withdrawal"))?;
@@ -207,19 +282,21 @@ fn receiver(
         let route = health_route
             .clone()
             .ok_or_else(|| anyhow::anyhow!("receiver has no valid health route"))?;
-        let receiver = owned.receiver_definition(request, port, route);
+        let receiver = owned.receiver_definition(request, port, route)?;
         owned.reconcile(request, &receiver, true, demand.complete, &projects, report)?;
-        if let Some(route) = health_route {
+        if !request.check
+            && let Some(route) = health_route
+        {
             receiver_health(port, &route)?;
         }
     } else {
-        owned.withdraw_named(request, "receiver", demand.complete, report)?;
+        owned.withdraw_named(request, ResourceKind::Receiver, demand.complete, report)?;
     }
     Ok(())
 }
 #[derive(Serialize)]
 pub struct TickStatus {
-    pub mode: String,
+    pub mode: TickMode,
     pub registration: Report,
     pub last_wakeup: Option<jiff::Timestamp>,
     pub stale: bool,
@@ -229,7 +306,7 @@ pub fn ticks_status(
     now: jiff::Timestamp,
 ) -> Result<TickStatus, InstallationError> {
     let mut registration = Report::default();
-    let demand = _demand::read(request.home, &mut registration)
+    let demand = _demand::read(request.home, request.cwd, &mut registration)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let enabled = !demand.projects().is_empty();
     let policy = Configuration::load_global(request.home)?.ticks_enabled()?;
@@ -257,15 +334,18 @@ pub fn ticks_status(
     let stale = enabled && crate::ticks::status(last, now).stale;
     Ok(TickStatus {
         mode: if !enabled {
-            "no_demand"
+            TickMode::NoDemand
         } else if !policy {
-            "operator"
+            TickMode::Operator
         } else if registration.healthy() {
-            request.scheduler.name()
+            match request.scheduler {
+                Scheduler::Launchd => TickMode::Launchd,
+                Scheduler::SystemdUser => TickMode::Systemd,
+                Scheduler::Crontab => TickMode::Cron,
+            }
         } else {
-            "missing_or_broken"
-        }
-        .into(),
+            TickMode::MissingOrBroken
+        },
         registration,
         last_wakeup: last,
         stale,
@@ -274,7 +354,7 @@ pub fn ticks_status(
 /// Read retained transport/activation facts without enabling events or creating groups.
 pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
     let mut report = Report::default();
-    let demand = _demand::read(request.home, &mut report)
+    let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let infrastructure = converge(&Request {
         check: true,

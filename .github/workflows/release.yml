@@ -56,11 +56,4 @@ jobs:
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          scripts/check-release-version.sh "$GITHUB_REF_NAME"
-          for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            test -f "instrukt-$GITHUB_REF_NAME-$target.tar.gz"
-          done
-          sha256sum instrukt-*.tar.gz > SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" instrukt-*.tar.gz SHA256SUMS scripts/install.sh --repo "$GITHUB_REPOSITORY" --generate-notes --draft --verify-tag
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+        run: scripts/publish-release.sh

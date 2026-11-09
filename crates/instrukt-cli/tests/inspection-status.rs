@@ -16,7 +16,9 @@ fn fresh_status_is_complete_and_writes_nothing() {
     let report = status(&env, repo.path());
     assert_eq!(report["machine"]["configured"], false);
     assert_eq!(report["runtime"]["selected"], serde_json::Value::Null);
-    assert_eq!(report["repository"]["adoption"], "not_adopted");
+    insta::assert_json_snapshot!(report["repository"]["adoption"], @r#"
+"not_adopted"
+"#);
     for module in ["todos", "events", "blueprint"] {
         assert_eq!(report["modules"][module]["enabled"], false);
     }
@@ -69,8 +71,12 @@ fn status_uses_compiled_capabilities_and_recognizes_native_caller_without_runtim
     .unwrap();
     env.set_env("T3CODE_THREAD_ID", "caller");
     let report = status(&env, env.home());
-    assert_eq!(report["runtime"]["selected"], "t3");
-    assert_eq!(report["runtime"]["caller"], "t3:caller");
+    insta::assert_json_snapshot!(report["runtime"]["selected"], @r#"
+"t3"
+"#);
+    insta::assert_json_snapshot!(report["runtime"]["caller"], @r#"
+"t3:caller"
+"#);
     assert_eq!(
         report["modules"]["features"]["standing_agents"]["available"],
         true
@@ -79,10 +85,11 @@ fn status_uses_compiled_capabilities_and_recognizes_native_caller_without_runtim
         report["modules"]["features"]["anomaly_notification"]["available"],
         false
     );
-    assert_eq!(
-        report["modules"]["features"]["anomaly_notification"]["missing"],
-        serde_json::json!(["notification"])
-    );
+    insta::assert_json_snapshot!(report["modules"]["features"]["anomaly_notification"]["missing"], @r#"
+[
+  "notification"
+]
+"#);
     assert!(!env.instrukt_home().join("agents.yaml").exists());
 }
 // spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS4
@@ -107,14 +114,18 @@ fn status_reports_claim_owner_and_keeps_sections_when_configuration_is_broken() 
         )],
     );
     let report = status(&env, contender.path());
-    assert_eq!(report["repository"]["positions"][0]["owner"], "owner");
+    insta::assert_json_snapshot!(report["repository"]["positions"][0]["owner"], @r#"
+"owner"
+"#);
     assert_eq!(report["repository"]["positions"][0]["conflict"], true);
     std::fs::write(env.instrukt_home().join("instrukt.yaml"), "broken: [").unwrap();
     let result = env.run(contender.path(), ["status", "--json"]).failure();
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
     assert!(!report["machine"]["errors"].as_array().unwrap().is_empty());
     assert_eq!(report["instrukt"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(report["published"][0]["owner"], "owner");
+    insta::assert_json_snapshot!(report["published"][0]["owner"], @r#"
+"owner"
+"#);
     assert!(report["modules"]["events"]["enabled"].is_null());
 }
 // spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS1
@@ -147,12 +158,18 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
     )
     .unwrap();
     let report = status(&env, first.path());
-    assert_eq!(report["repository"]["adoption"], "adopted");
+    insta::assert_json_snapshot!(report["repository"]["adoption"], @r#"
+"adopted"
+"#);
     assert_eq!(report["repository"]["published_commit"], first.head());
     assert_eq!(report["repository"]["main_ahead"], false);
     assert_eq!(report["modules"]["todos"]["enabled"], true);
-    assert_eq!(report["modules"]["todos"]["layer"], "project");
-    assert_eq!(report["projects"][0]["project"], "second");
+    insta::assert_json_snapshot!(report["modules"]["todos"]["layer"], @r#"
+"project"
+"#);
+    insta::assert_json_snapshot!(report["projects"][0]["project"], @r#"
+"second"
+"#);
     assert_eq!(report["published"].as_array().unwrap().len(), 2);
     first.write("new", "new");
     first.commit("feat: another change");
@@ -194,5 +211,103 @@ fn revision_from_old_inspection_is_accepted_by_the_next_atomic_writing_command()
         value["schema_version"].as_u64(),
         Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
     );
-    assert_eq!(value["ticks"].as_str(), Some("on"));
+    insta::assert_json_snapshot!(value["ticks"].as_str(), @r#"
+"on"
+"#);
+}
+
+fn filesystem(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, (u32, Option<std::time::SystemTime>, Vec<u8>)> {
+    use std::os::unix::fs::PermissionsExt;
+    if !root.exists() {
+        return Default::default();
+    }
+    walkdir::WalkDir::new(root)
+        .into_iter()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            let metadata = std::fs::symlink_metadata(entry.path()).unwrap();
+            let bytes = if metadata.is_file() {
+                std::fs::read(entry.path()).unwrap()
+            } else if metadata.file_type().is_symlink() {
+                std::fs::read_link(entry.path())
+                    .unwrap()
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .to_vec()
+            } else {
+                vec![]
+            };
+            (
+                entry.path().strip_prefix(root).unwrap().to_path_buf(),
+                (
+                    metadata.permissions().mode(),
+                    metadata.modified().ok(),
+                    bytes,
+                ),
+            )
+        })
+        .collect()
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI1
+#[test]
+fn strict_inspection_creates_no_files_in_home_or_log_destinations() {
+    let mut env = TestEnv::new();
+    env.set_env("XDG_STATE_HOME", env.path("xdg-state").to_str().unwrap());
+    let before = filesystem(&env.path(""));
+    env.run(env.home(), ["install", "--check", "--json"])
+        .success();
+    assert_eq!(before, filesystem(&env.path("")));
+    status(&env, env.home());
+    assert_eq!(before, filesystem(&env.path("")));
+}
+// spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS1
+#[test]
+fn admission_reads_existing_database_and_live_wal_without_creating_or_changing_files() {
+    use instrukt_core::{
+        home::Home,
+        state_db::{StateDb, rusqlite::Connection},
+    };
+    let mut env = TestEnv::new();
+    let home = Home::at_user_home(env.home().into());
+    drop(StateDb::open(&home).unwrap());
+    std::fs::write(
+        home.global_config(),
+        "schema_version: 3\nrunner: {runtime: t3}\n",
+    )
+    .unwrap();
+    env.set_env("T3CODE_THREAD_ID", "caller");
+    let before = filesystem(env.home());
+    status(&env, env.home());
+    assert_eq!(before, filesystem(env.home()));
+    let writer = Connection::open(home.state_db_file()).unwrap();
+    writer
+        .execute_batch("PRAGMA journal_mode=WAL;PRAGMA wal_autocheckpoint=0;")
+        .unwrap();
+    writer.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted) VALUES('t3','inspection-live-key','standing','subject','caller',?1,1)",[env.home().to_str().unwrap()]).unwrap();
+    let before = filesystem(env.home());
+    let result = env.run(env.home(), ["status", "--json"]).failure();
+    let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    let errors = serde_json::to_string_pretty(&report["runtime"]["errors"])
+        .unwrap()
+        .replace(env.path("").to_str().unwrap(), "[TMP]");
+    insta::assert_snapshot!("live_wal_admission_errors", errors);
+    assert_eq!(before, filesystem(env.home()));
+}
+// spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS1
+#[test]
+fn foreign_checkout_edits_cannot_change_machine_status_or_its_exit_status() {
+    let env = TestEnv::new();
+    let foreign = documented::project(&env, "foreign", &[]);
+    documented::sync(&env, &foreign);
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 3\nmodules: {todos: true}\nrunner: {runtime: t3}\n",
+    )
+    .unwrap();
+    let first = status(&env, env.home());
+    foreign.write("instrukt.yaml", "broken: [");
+    let second = status(&env, env.home());
+    assert_eq!(first["machine"], second["machine"]);
 }

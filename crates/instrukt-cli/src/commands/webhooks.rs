@@ -20,15 +20,26 @@ enum WebhooksCommand {
     },
 }
 
+impl WebhooksArgs {
+    pub fn managed(&self) -> bool {
+        matches!(
+            &self.command,
+            WebhooksCommand::Serve {
+                socket_activation: true
+            }
+        )
+    }
+}
 pub fn run(args: WebhooksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         WebhooksCommand::Serve { socket_activation } => {
-            instrukt_runner::webhooks::serve_with_socket(
-                &ctx.home,
-                &Env::from_process(),
-                ctx.clock.shared(),
+            instrukt_runner::webhooks::serve_prepared(instrukt_runner::webhooks::ServeRequest {
+                home: &ctx.home,
+                env: &Env::from_process(),
+                clock: ctx.clock.shared(),
                 socket_activation,
-            )?
+                prepared: ctx.receiver.take(),
+            })?
         }
     }
     Ok(ExitCode::SUCCESS)

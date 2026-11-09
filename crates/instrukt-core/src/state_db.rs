@@ -15,6 +15,7 @@
 //! module, which sits in core because both depend on core.
 
 mod _schema;
+mod _snapshot;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -206,15 +207,15 @@ impl StateRead {
         if !path.exists() {
             return Ok(None);
         }
-        let conn = Connection::open_with_flags(
-            &path,
-            (if home.is_state_read_only() {
-                OpenFlags::SQLITE_OPEN_READ_ONLY
-            } else {
-                OpenFlags::SQLITE_OPEN_READ_WRITE
-            }) | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(StateDbError::sqlite(&path))?;
+        let conn = if home.is_state_read_only() {
+            _snapshot::read(home, &path)?
+        } else {
+            Connection::open_with_flags(
+                &path,
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(StateDbError::sqlite(&path))?
+        };
         configure(&conn, &path)?;
         let found = user_version(&conn, &path)?;
         let known = schema_version();

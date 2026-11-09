@@ -58,7 +58,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
     let mut machine_errors = Vec::new();
     let global = layer(&home, &Layer::Global, &mut machine_errors);
     let findings = if global.as_ref().is_some_and(|v| v.present) {
-        match config::validate(&home,&Layer::Global) {Ok(findings)=>json!(findings.into_iter().map(|f|json!({"document":f.document,"key":f.key,"kind":format!("{:?}",f.kind),"message":f.message})).collect::<Vec<_>>()),Err(reason)=>{machine_errors.push(error(&home.global_config(),reason));json!([])}}
+        match config::validate_local(&home,&Layer::Global) {Ok(findings)=>json!(findings.into_iter().map(|f|json!({"document":f.document,"key":f.key,"kind":format!("{:?}",f.kind),"message":f.message})).collect::<Vec<_>>()),Err(reason)=>{machine_errors.push(error(&home.global_config(),reason));json!([])}}
     } else {
         json!([])
     };

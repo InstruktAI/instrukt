@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+rustix.workspace = true
 anyhow.workspace = true
 service-binding = "=3.0.0"
 notify.workspace = true

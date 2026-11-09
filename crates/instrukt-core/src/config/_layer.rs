@@ -233,6 +233,19 @@ impl LayerInspection {
             })
     }
 }
+pub(super) fn current_view(
+    home: &Home,
+    layer: &Layer,
+    path: &Path,
+    mut value: Value,
+) -> Result<Value, ConfigError> {
+    if let Version::Older(from) = version(&value) {
+        super::_migrate::selection(home, layer, &mut value, false)?;
+        value = migrate_value(value, from, layer.kind());
+    }
+    require_usable(layer, path, &value)?;
+    Ok(value)
+}
 /// A current in-memory view, retaining the on-disk version and migration notice.
 pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, ConfigError> {
     let path = layer.path(home);

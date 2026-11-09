@@ -24,10 +24,13 @@ const CRON_MARKER: &str = "# instrukt-tick";
 const REGISTRAR_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The scheduler a wake-up is registered with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Scheduler {
+    #[serde(rename = "launchd")]
     Launchd,
+    #[serde(rename = "systemd")]
     SystemdUser,
+    #[serde(rename = "cron")]
     Crontab,
 }
 
@@ -42,9 +45,9 @@ impl Scheduler {
 
     /// The machine's native scheduler, or its fallback.
     pub fn detect(path_env: Option<&str>) -> Self {
-        if cfg!(target_os = "macos") {
+        if cfg!(target_os = "macos") && on_path("launchctl", path_env) {
             Scheduler::Launchd
-        } else if on_path("systemctl", path_env) {
+        } else if cfg!(target_os = "linux") && on_path("systemctl", path_env) {
             Scheduler::SystemdUser
         } else {
             Scheduler::Crontab
@@ -146,6 +149,12 @@ pub fn install(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Installed, Ins
     for file in &files {
         state::write_bytes(&file.path, file.contents.as_bytes())?;
     }
+    register(scheduler, wake)
+}
+
+/// Register definitions already written and ownership-checked by installation.
+pub(crate) fn register(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Installed, InstallError> {
+    let files = registration_files(scheduler, wake);
     match scheduler {
         Scheduler::Launchd => {
             let plist = launch_agent(wake.home.user_home()).display().to_string();

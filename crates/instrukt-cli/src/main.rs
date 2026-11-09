@@ -119,13 +119,33 @@ fn main() -> ExitCode {
             Err(error) => report(&error),
         };
     }
-    if let Err(err) = init_tracing(&cli.command) {
+    let mut activated = if matches!(&cli.command,Command::Webhooks(args) if args.managed()) {
+        let mut ctx = match Ctx::inspection() {
+            Ok(ctx) => ctx,
+            Err(error) => return report(&error),
+        };
+        if let Err(error) = authorization::check(&ctx, &matches) {
+            return report(&error);
+        }
+        ctx.receiver = match instrukt_runner::webhooks::prepare_activation(&ctx.home) {
+            Ok(receiver) => Some(receiver),
+            Err(error) => return report(&error.into()),
+        };
+        Some(ctx)
+    } else {
+        None
+    };
+    if !authorization::strict_inspection(&matches)
+        && let Err(err) = init_tracing(&cli.command)
+    {
         return report(&err);
     }
     let deferred_patch = matches
         .subcommand()
         .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
-    let mut ctx = match if deferred_patch || authorization::strict_inspection(&matches) {
+    let mut ctx = match if let Some(ctx) = activated.take() {
+        Ok(ctx)
+    } else if deferred_patch || authorization::strict_inspection(&matches) {
         Ctx::inspection()
     } else if authorization::read_only(&matches) {
         Ctx::configuration_read()
@@ -165,6 +185,9 @@ fn main() -> ExitCode {
     }
     if deferred_patch {
         ctx.home = ctx.home.for_writing();
+        if let Err(error) = instrukt_core::config::Agents::migrate_shape(&ctx.home) {
+            return report(&error.into());
+        }
     }
     let outcome = match cli.command {
         Command::Bugs(args) => bugs::run(args, &mut ctx),

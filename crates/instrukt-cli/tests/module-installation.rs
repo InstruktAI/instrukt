@@ -65,10 +65,9 @@ fn core_has_no_infrastructure_demand_even_with_global_defaults() {
     .unwrap();
     env.run(env.home(), ["install"]).success();
     assert!(!env.path("runtime-bin/calls").exists());
-    assert_eq!(
-        json(&env, &["ticks", "status", "--json"])["mode"],
-        "no_demand"
-    );
+    insta::assert_json_snapshot!(json(&env, &["ticks", "status", "--json"])["mode"], @r#"
+"no_demand"
+"#);
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
@@ -124,10 +123,9 @@ fn shared_demand_and_unreadable_projects_prevent_withdrawal_and_last_disable_pre
     std::fs::write(env.instrukt_home().join("state/retained"), "pending work").unwrap();
     env.run(env.home(), ["install"]).success();
     assert!(!env.path("runtime-bin/active").exists());
-    assert_eq!(
-        std::fs::read_to_string(env.instrukt_home().join("state/retained")).unwrap(),
-        "pending work"
-    );
+    insta::assert_json_snapshot!(std::fs::read_to_string(env.instrukt_home().join("state/retained")).unwrap(), @r#"
+"pending work"
+"#);
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI10
 #[test]
@@ -142,10 +140,9 @@ fn ticks_off_withdraws_owned_wakeup_and_reports_operator_scheduling() {
     )
     .unwrap();
     env.run(env.home(), ["install"]).success();
-    assert_eq!(
-        json(&env, &["ticks", "status", "--json"])["mode"],
-        "operator"
-    );
+    insta::assert_json_snapshot!(json(&env, &["ticks", "status", "--json"])["mode"], @r#"
+"operator"
+"#);
     assert!(!env.path("runtime-bin/active").exists());
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
@@ -163,10 +160,9 @@ fn foreign_definition_is_never_overwritten() {
     };
     std::fs::write(&file, "operator's changed definition").unwrap();
     env.run(env.home(), ["install"]).failure();
-    assert_eq!(
-        std::fs::read_to_string(file).unwrap(),
-        "operator's changed definition"
-    );
+    insta::assert_json_snapshot!(std::fs::read_to_string(file).unwrap(), @r#"
+"operator's changed definition"
+"#);
 }
 
 fn event_config(env: &TestEnv, local: Option<&str>, cluster: &str, ingress: Option<&str>) {
@@ -198,7 +194,11 @@ fn events_reuse_operator_local_redis_prepare_readers_and_check_without_writes() 
         .unwrap();
     assert_eq!(before, after);
     let status = json(&env, &["events", "status", "--json"]);
-    assert_eq!(status["enabled_projects"], serde_json::json!(["events"]));
+    insta::assert_json_snapshot!(status["enabled_projects"], @r#"
+[
+  "events"
+]
+"#);
     assert_eq!(status["transport"][0]["reachable"], true);
     assert!(!env.instrukt_home().join("state/redis").exists());
 }
@@ -456,14 +456,30 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
         "instrukt.yaml",
         "schema_version: 3\nproject: events\nmodules: {events: false}\n",
     );
+    let owned_path = env.instrukt_home().join("state/installation/owned.json");
+    let owned: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&owned_path).unwrap()).unwrap();
+    for suffix in ["", "?db=0", "?db=3"] {
+        repo.write("instrukt.yaml", &format!("schema_version: 3\nproject: events\nmodules: {{events: false}}\nredis: {{local: {{url: '{}{suffix}'}}}}\n", url));
+        env.run(env.home(), ["install"]).success();
+        for (file, contents) in owned["resources"]["redis"]["files"].as_object().unwrap() {
+            assert_eq!(
+                contents.as_str().unwrap().as_bytes(),
+                std::fs::read(file).unwrap()
+            );
+        }
+    }
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 3\nproject: events\nmodules: {events: false}\n",
+    );
     env.run(env.home(), ["install"]).success();
-    assert_eq!(
-        redis::cmd("GET")
+    insta::assert_json_snapshot!(redis::cmd("GET")
             .arg("instrukt:retained:test")
             .query::<String>(&mut connection)
-            .unwrap(),
-        "pending"
-    );
+            .unwrap(), @r#"
+"pending"
+"#);
     assert!(dir.join("users.acl").is_file());
     assert!(env.instrukt_home().join("secrets.env").is_file());
 }
@@ -633,6 +649,35 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
         .query::<()>(&mut redis.connection())
         .unwrap();
     env.run(env.home(), ["install", "--check"]).success();
+    for denied in ["-EVALSHA", "-SCRIPT|LOAD"] {
+        redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg("probe-user")
+            .arg("+@all")
+            .arg(denied)
+            .query::<()>(&mut redis.connection())
+            .unwrap();
+        env.run(env.home(), ["install", "--check"]).failure();
+    }
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("probe-user")
+        .arg("-@all")
+        .arg("+@all")
+        .arg("-XADD")
+        .arg("clearselectors")
+        .arg("(+XADD ~instrukt:diagnostic:*)")
+        .query::<()>(&mut redis.connection())
+        .unwrap();
+    env.run(env.home(), ["install", "--check"]).failure();
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("probe-user")
+        .arg("+@all")
+        .arg("clearselectors")
+        .query::<()>(&mut redis.connection())
+        .unwrap();
+    env.run(env.home(), ["install", "--check"]).success();
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI8
@@ -756,4 +801,342 @@ fi
     env.run(env.home(), ["install"]).success();
     assert!(!pending.exists());
     assert!(!current.exists());
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
+#[test]
+fn cron_withdrawal_preserves_the_entire_table_when_the_marked_line_has_drifted() {
+    let mut env = TestEnv::new();
+    let repo = project(&env, "cron-work", "{todos: true}");
+    let git = env
+        .command(std::path::Path::new("/usr/bin/which"), env.home())
+        .arg("git")
+        .output()
+        .unwrap();
+    std::os::unix::fs::symlink(
+        String::from_utf8(git.stdout).unwrap().trim(),
+        env.path("runtime-bin/git"),
+    )
+    .unwrap();
+    let crontab = env.path("runtime-bin/crontab");
+    let table = env.path("crontab");
+    std::fs::write(&crontab, format!("#!/bin/sh\ncase $1 in -l) if [ -f '{0}' ]; then /bin/cat '{0}'; else echo 'no crontab for fixture' >&2; exit 1; fi;; -) /bin/cat > '{0}';; esac\n", table.display())).unwrap();
+    std::fs::set_permissions(crontab, std::fs::Permissions::from_mode(0o755)).unwrap();
+    env.set_env("PATH", "");
+    env.run(env.home(), ["install"]).success();
+    let installed = std::fs::read_to_string(&table).unwrap();
+    let foreign =
+        installed.replace(" tick ", " tick --operator-changed ") + "17 * * * * /operator/job\n";
+    assert_ne!(installed, foreign);
+    std::fs::write(&table, foreign.as_bytes()).unwrap();
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 3\nproject: cron-work\nmodules: {todos: false}\n",
+    );
+    env.run(env.home(), ["install"]).failure();
+    assert_eq!(foreign.as_bytes(), std::fs::read(&table).unwrap());
+    std::fs::write(&table, &installed).unwrap();
+    env.run(env.home(), ["install"]).success();
+    assert!(
+        !std::fs::read_to_string(table)
+            .unwrap()
+            .contains(installed.trim())
+    );
+}
+
+fn write_owned(env: &TestEnv, journal: &serde_json::Value) {
+    std::fs::write(
+        env.instrukt_home().join("state/installation/owned.json"),
+        serde_json::to_vec_pretty(journal).unwrap(),
+    )
+    .unwrap();
+}
+fn replay_prefixes(env: &TestEnv, kind: &str, desired: serde_json::Value) {
+    let path = env.instrukt_home().join("state/installation/owned.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let old = &original["resources"][kind];
+    let files = desired["files"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .collect::<Vec<_>>();
+    for prefix in 0..=files.len() {
+        let mut journal = original.clone();
+        journal["updates"][kind] = serde_json::json!({"before": [old], "after": desired});
+        if kind == "receiver" {
+            journal["pending_receiver"] = desired.clone();
+        }
+        write_owned(env, &journal);
+        for resource in original["resources"].as_object().unwrap().values() {
+            for (file, contents) in resource["files"].as_object().unwrap() {
+                std::fs::write(file, contents.as_str().unwrap()).unwrap();
+            }
+        }
+        for (file, contents) in files.iter().take(prefix) {
+            std::fs::write(file, contents.as_str().unwrap()).unwrap();
+        }
+        env.run(env.home(), ["install"]).success();
+        let completed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(completed["updates"].as_object().unwrap().is_empty());
+        for (file, contents) in &files {
+            assert_eq!(
+                contents.as_str().unwrap().as_bytes(),
+                std::fs::read(file).unwrap()
+            );
+        }
+    }
+    let mut journal = original;
+    journal["updates"][kind] =
+        serde_json::json!({"before": [journal["resources"][kind]], "after": desired});
+    write_owned(env, &journal);
+    let foreign = b"foreign definition after interruption";
+    std::fs::write(files[0].0, foreign).unwrap();
+    env.run(env.home(), ["install"]).failure();
+    assert_eq!(foreign.as_slice(), std::fs::read(files[0].0).unwrap());
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn every_wakeup_write_prefix_retains_the_old_and_new_ownership_proofs() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let _repo = project(&env, "interrupted", "{todos: true}");
+    env.run(env.home(), ["install"]).success();
+    let old_path = env.injected("PATH").unwrap().to_owned();
+    env.set_env("PATH", &format!("{old_path}:/changed-tools"));
+    let desired_path = env.injected("PATH").unwrap();
+    let journal: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(env.instrukt_home().join("state/installation/owned.json")).unwrap(),
+    )
+    .unwrap();
+    let mut desired = journal["resources"]["wake-up"].clone();
+    for text in desired["files"].as_object_mut().unwrap().values_mut() {
+        *text = serde_json::Value::String(text.as_str().unwrap().replace(&old_path, desired_path));
+    }
+    replay_prefixes(&env, "wake-up", desired);
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI8
+#[test]
+fn every_receiver_write_prefix_retains_the_old_and_new_ownership_proofs() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let repo = project(&env, "events", "{events: true}");
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, Some(&redis.url), &redis.url, None);
+    env.run(env.home(), ["install"]).success();
+    let machine = std::fs::read_to_string(env.instrukt_home().join("state/machine-id")).unwrap();
+    env.instrukt(env.home())
+        .args(["secrets", "set", "SIGNING_KEY"])
+        .write_stdin("test signing material")
+        .assert()
+        .success();
+    repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    let health = ReceiverHealth::new();
+    event_config(
+        &env,
+        Some(&redis.url),
+        &redis.url,
+        Some(&format!(
+            "ingress: {{computer: '{}', port: {}}}\n",
+            machine.trim(),
+            health.port
+        )),
+    );
+    env.run(env.home(), ["install"]).success();
+    let old_path = env.injected("PATH").unwrap().to_owned();
+    env.set_env("PATH", &format!("{old_path}:/changed-tools"));
+    let desired_path = env.injected("PATH").unwrap();
+    let journal: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(env.instrukt_home().join("state/installation/owned.json")).unwrap(),
+    )
+    .unwrap();
+    let mut desired = journal["resources"]["receiver"].clone();
+    for (file, text) in desired["files"].as_object_mut().unwrap() {
+        if !cfg!(target_os = "macos") || !file.ends_with(".plist") {
+            *text =
+                serde_json::Value::String(text.as_str().unwrap().replace(&old_path, desired_path));
+        }
+    }
+    replay_prefixes(&env, "receiver", desired);
+}
+
+#[cfg(target_os = "macos")]
+struct CachedLaunchd {
+    child: std::process::Child,
+    socket: std::path::PathBuf,
+    _dir: tempfile::TempDir,
+}
+#[cfg(target_os = "macos")]
+impl CachedLaunchd {
+    fn new(env: &mut TestEnv) -> Self {
+        let python = env
+            .command(std::path::Path::new("/usr/bin/which"), env.home())
+            .arg("python3")
+            .output()
+            .unwrap();
+        let python = String::from_utf8(python.stdout).unwrap().trim().to_owned();
+        let script =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/launchd.py");
+        let dir = tempfile::Builder::new()
+            .prefix("instrukt-launchd-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = dir.path().join("control");
+        let child = env
+            .command(std::path::Path::new(&python), env.home())
+            .arg(&script)
+            .arg("serve")
+            .arg(&socket)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let fixture = Self {
+            child,
+            socket,
+            _dir: dir,
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !fixture.socket.exists() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let launchctl = env.path("runtime-bin/launchctl");
+        std::fs::write(
+            &launchctl,
+            format!(
+                "#!/bin/sh\nexec '{}' '{}' call '{}' \"$@\"\n",
+                python,
+                script.display(),
+                fixture.socket.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(launchctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        fixture
+    }
+    fn request(&self, args: &[&str]) -> serde_json::Value {
+        use std::io::{BufRead, Write};
+        let mut socket = std::os::unix::net::UnixStream::connect(&self.socket).unwrap();
+        serde_json::to_writer(&mut socket, args).unwrap();
+        socket.write_all(b"\n").unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(socket)
+            .read_line(&mut line)
+            .unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+}
+#[cfg(target_os = "macos")]
+impl Drop for CachedLaunchd {
+    fn drop(&mut self) {
+        use std::io::Write;
+        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&self.socket) {
+            let _ = stream.write_all(b"[\"shutdown\"]\n");
+        } else {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI8
+#[cfg(target_os = "macos")]
+#[test]
+fn launchd_cached_job_applies_the_desired_executable_and_environment_with_socket_custody() {
+    let mut env = TestEnv::new();
+    let fixture = CachedLaunchd::new(&mut env);
+    let repo = project(&env, "events", "{events: true}");
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, Some(&redis.url), &redis.url, None);
+    env.run(env.home(), ["install"]).success();
+    let machine = std::fs::read_to_string(env.instrukt_home().join("state/machine-id")).unwrap();
+    env.instrukt(env.home())
+        .args(["secrets", "set", "SIGNING_KEY"])
+        .write_stdin("test signing material")
+        .assert()
+        .success();
+    repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = reservation.local_addr().unwrap().port();
+    drop(reservation);
+    event_config(
+        &env,
+        Some(&redis.url),
+        &redis.url,
+        Some(&format!(
+            "ingress: {{computer: '{}', port: {port}}}\n",
+            machine.trim()
+        )),
+    );
+    env.run(env.home(), ["install"]).success();
+    let unit = format!("ai.instrukt.webhooks-{port}");
+    let before = fixture.request(&["inspect", &unit]);
+    let copied = env.path("replacement-instrukt");
+    std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &copied).unwrap();
+    env.set_env("PATH", "/usr/bin:/bin:/effective-runtime");
+    let output = env
+        .command(&copied, env.home())
+        .arg("install")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let after = fixture.request(&["inspect", &unit]);
+    assert_eq!(before["definition"], after["definition"]);
+    assert_ne!(before["pid"], after["pid"]);
+    let process = env
+        .command(std::path::Path::new("/bin/ps"), env.home())
+        .args(["eww", "-p", &after["pid"].to_string(), "-o", "command="])
+        .output()
+        .unwrap();
+    assert!(process.status.success());
+    let process = String::from_utf8(process.stdout).unwrap();
+    assert!(process.contains(copied.to_str().unwrap()), "{process}");
+    for (key, expected) in [
+        ("PATH", env.injected("PATH").unwrap().to_owned()),
+        ("HOME", env.home().display().to_string()),
+        ("INSTRUKT_HOME", env.instrukt_home().display().to_string()),
+    ] {
+        assert!(process.contains(&format!("{key}={expected}")), "{process}");
+    }
+    assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_err());
+    // The retained listener also accepts a real request from the replacement.
+    use std::io::{Read, Write};
+    let mut request = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    request
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .unwrap();
+    request.write_all(b"POST /hooks/inbound/project/events/service HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+    let mut response = String::new();
+    request.read_to_string(&mut response).unwrap();
+    insta::assert_snapshot!(response.lines().next().unwrap(), @"HTTP/1.1 401 Unauthorized");
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn installation_inspection_reads_retained_foreign_project_facts_without_entering_its_checkout() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let repo = project(&env, "retained", "{todos: true}");
+    env.run(env.home(), ["install"]).success();
+    let before = env
+        .run(env.home(), ["install", "--check", "--json"])
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    std::fs::rename(repo.path(), env.path("moved-foreign-checkout")).unwrap();
+    let after = env
+        .run(env.home(), ["install", "--check", "--json"])
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(before, after);
 }

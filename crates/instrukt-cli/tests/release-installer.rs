@@ -95,13 +95,25 @@ fn installs_verified_latest_binary_and_reports_version_path_and_skill() {
 #[test]
 fn upgrades_pins_and_leaves_matching_binary_untouched() {
     let release = Release::new();
+    release.asset("0.0.9", "0.0.9");
+    assert!(release.install(&["--version", "0.0.9"]).status.success());
+    let version = || {
+        release
+            .env
+            .command(&release.installed(), release.env.home())
+            .arg("--version")
+            .output()
+            .unwrap()
+    };
+    insta::assert_snapshot!(String::from_utf8_lossy(&version().stdout), @"instrukt 0.0.9");
     release.asset("0.1.0", "0.1.0");
-    assert!(release.install(&["--version", "0.1.0"]).status.success());
+    assert!(release.install(&[]).status.success());
+    insta::assert_snapshot!(String::from_utf8_lossy(&version().stdout), @"instrukt 0.1.0");
     let before = std::fs::metadata(release.installed())
         .unwrap()
         .modified()
         .unwrap();
-    assert!(release.install(&["--version", "v0.1.0"]).status.success());
+    assert!(release.install(&[]).status.success());
     assert_eq!(
         before,
         std::fs::metadata(release.installed())
@@ -111,10 +123,7 @@ fn upgrades_pins_and_leaves_matching_binary_untouched() {
     );
     release.asset("0.0.9", "0.0.9");
     assert!(release.install(&["--version", "0.0.9"]).status.success());
-    assert_eq!(
-        std::fs::read_to_string(release.installed()).unwrap(),
-        "#!/bin/sh\necho 'instrukt 0.0.9'\n"
-    );
+    insta::assert_snapshot!(String::from_utf8_lossy(&version().stdout), @"instrukt 0.0.9");
 }
 // spec: project/instrukt/spec/feature/distribution/release-installer UC-RI3
 #[test]
@@ -140,11 +149,97 @@ fn checksum_and_binary_version_failures_preserve_old_install() {
 fn unsupported_platform_refuses_before_download_or_write() {
     let release = Release::new();
     script(&release.bin.join("uname"), "#!/bin/sh\necho unsupported\n");
-    script(&release.bin.join("curl"), "#!/bin/sh\nexit 77\n");
-    assert!(!release.install(&[]).status.success());
+    script(
+        &release.bin.join("curl"),
+        &format!(
+            "#!/bin/sh\ntouch '{}'\nexit 77\n",
+            release.env.path("download-attempted").display()
+        ),
+    );
+    let untouched = common::LiveGuard::over(
+        vec![],
+        vec![release.env.home().into(), release.env.path("tmp")],
+    );
+    let output = release.install(&[]);
+    assert!(!output.status.success());
+    assert!(!release.env.path("download-attempted").exists());
+    assert!(untouched.changed().is_empty());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr));
     assert!(!release.installed().exists());
     assert_eq!(
         std::fs::read_dir(release.env.path("tmp")).unwrap().count(),
         0
     );
+}
+
+// spec: project/instrukt/spec/feature/distribution/release-installer UC-RI3
+#[test]
+fn standalone_publication_checks_the_tagged_asset_set_before_gh_and_publishes_a_draft_first() {
+    let release = Release::new();
+    let version = env!("CARGO_PKG_VERSION");
+    let tag = format!("v{version}");
+    std::fs::write(
+        release.env.home().join("Cargo.toml"),
+        format!("[workspace.package]\nversion = \"{version}\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(release.env.home().join("skills/instrukt")).unwrap();
+    std::fs::write(
+        release.env.home().join("skills/instrukt/SKILL.md"),
+        format!("metadata:\n  version: {version}\n"),
+    )
+    .unwrap();
+    let calls = release.env.path("gh-calls");
+    script(
+        &release.bin.join("gh"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$GH_CALLS\"\n",
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/publish-release.sh");
+    let publish = |tag: &str| {
+        release
+            .env
+            .command(Path::new("/bin/sh"), release.env.home())
+            .arg(&script)
+            .env("GITHUB_REF_NAME", tag)
+            .env("GITHUB_REPOSITORY", "fixture/project")
+            .env("GH_CALLS", &calls)
+            .output()
+            .unwrap()
+    };
+    assert!(!publish(&tag).status.success());
+    assert!(!calls.exists());
+    for target in [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+    ] {
+        std::fs::write(
+            release
+                .env
+                .home()
+                .join(format!("instrukt-{tag}-{target}.tar.gz")),
+            target,
+        )
+        .unwrap();
+    }
+    assert!(!publish("v99.0.0").status.success());
+    assert!(!calls.exists());
+    let output = publish(&tag);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(release.env.home().join("SHA256SUMS").is_file());
+    let calls = std::fs::read_to_string(calls).unwrap().replace(
+        script
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "[SCRIPTS]",
+    );
+    insta::assert_snapshot!(calls);
 }

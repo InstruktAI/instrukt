@@ -1,6 +1,9 @@
-use super::*;
+use super::_demand::Demand;
+use super::{_services, Disposition, Report, Request, ResourceKind};
+use crate::install::Scheduler;
 use crate::process::Invocation;
 use crate::transport::{EVENT_STREAM, Endpoint};
+use instrukt_core::config::Configuration;
 use instrukt_core::config::{self, Layer};
 use serde_json::{Value, json};
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -126,8 +129,8 @@ pub(super) fn ensure(
                 );
             }
             report.resource(
-                "local Redis",
-                "externally_supplied",
+                ResourceKind::LocalRedis,
+                Disposition::ExternallySupplied,
                 vec![],
                 &demand.events,
                 format!("verified cluster fallback; local Redis remains unconfigured: {error}"),
@@ -135,8 +138,8 @@ pub(super) fn ensure(
         }
     } else {
         report.resource(
-            "local Redis",
-            "externally_supplied",
+            ResourceKind::LocalRedis,
+            Disposition::ExternallySupplied,
             vec![],
             &demand.events,
             "operator-owned local Redis: configuration and service unchanged",
@@ -242,6 +245,8 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
         "XACK",
         "XAUTOCLAIM",
         "EVAL",
+        "EVALSHA",
+        "SCRIPT",
         "ACL",
     ];
     let info: Vec<redis::Value> = redis::cmd("COMMAND")
@@ -294,6 +299,22 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
             "0-0",
         ],
         vec!["EVAL", "return 1", "0"],
+        vec![
+            "EVALSHA",
+            "0000000000000000000000000000000000000000",
+            "2",
+            EVENT_STREAM,
+            &claim_key,
+        ],
+        vec!["SCRIPT", "LOAD", "return 1"],
+        vec!["XADD", EVENT_STREAM, "*", "event", "diagnostic"],
+        vec![
+            "XADD",
+            crate::transport::DEAD_LETTER_STREAM,
+            "*",
+            "record",
+            "diagnostic",
+        ],
         vec!["DEL", "instrukt:diagnostic:check"],
         vec!["GET", &claim_key],
         vec!["SET", &claim_key, "diagnostic", "EX", "1"],
@@ -442,7 +463,7 @@ pub(super) fn inspect(request: &Request<'_>, report: &mut Report) -> anyhow::Res
                 result.push(value);
             }
             Err(error) => {
-                report.finding(&format!("Redis {scope}"), error);
+                report.finding(format!("Redis {scope}"), error);
                 result.push(json!({"scope":scope,"reachable":false}));
             }
         }

@@ -338,6 +338,7 @@ where
     let env = crate::wiring::environment(ctx)?;
     action(&instrukt_runner::installation::Request {
         home: &ctx.home,
+        cwd: &ctx.cwd,
         env: &env,
         scheduler: Scheduler::detect(Some(&path_env)),
         wake: WakeUp {
