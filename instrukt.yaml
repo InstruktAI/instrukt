@@ -1,3 +1,6 @@
 # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
 schema_version: 3
 project: instrukt
+events:
+  watch:
+    - {remote: https://github.com/pingdotgg/t3code.git, ref: refs/heads/main}

@@ -116,8 +116,8 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     `expanded`, including policies and contracts mandatory routines always
     apply; put what only a specific procedure needs when it runs in `listed`.
     Everything else in the project index remains the publisher's choice.
-    Rendering semantics belong to the position-index spec
-    (`project/instrukt/spec/feature/docs/position-index`).
+    Project baseline rendering is owned by
+    `general/policy/agent-artifact-governance`.
 
 12. **Give a procedure an `activation_trigger` only when a user will ask for it
     by name.** Every trigger is a line in every agent's context on every
