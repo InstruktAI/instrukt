@@ -264,7 +264,7 @@ impl Drop for ConsumerWorkers {
 
 /// Prepare the runner's retained readers before installation admits producers.
 /// Uses the same registrations and source handover as ordinary runner startup.
-pub fn prepare_installation(
+pub(crate) fn prepare_installation(
     home: &instrukt_core::home::Home,
     env: &instrukt_core::config::Env,
 ) -> anyhow::Result<()> {

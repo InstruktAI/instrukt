@@ -170,7 +170,7 @@ pub(super) fn ensure(
     if !request.check {
         crate::consumers::prepare_installation(request.home, request.env)?;
     }
-    let _ = inspect(request, report)?;
+    inspect(request, report)?;
     Ok(())
 }
 fn connect(settings: &config::RedisEndpoint) -> anyhow::Result<redis::Connection> {

@@ -14,6 +14,31 @@ use instrukt_core::{
 use serde::Serialize;
 use std::path::PathBuf;
 
+#[derive(Debug, thiserror::Error)]
+pub enum InstallationError {
+    #[error("cannot read adopted-project demand: {0}")]
+    Demand(String),
+    #[error("cannot read infrastructure ownership: {0}")]
+    Ownership(String),
+    #[error("{resource} inspection failed: {detail}")]
+    Inspection {
+        resource: &'static str,
+        detail: String,
+    },
+    #[error(transparent)]
+    Configuration(#[from] instrukt_core::config::ConfigError),
+    #[error(transparent)]
+    Filesystem(#[from] instrukt_core::fsx::FsError),
+    #[error(transparent)]
+    State(#[from] crate::state::StateError),
+}
+fn inspection_error(resource: &'static str, error: impl std::fmt::Display) -> InstallationError {
+    InstallationError::Inspection {
+        resource,
+        detail: error.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Resource {
     pub name: String,
@@ -68,7 +93,7 @@ pub struct Request<'a> {
 }
 /// A failed resource leaves completed resources recorded, so a rerun repairs
 /// observed drift rather than trusting the previous overall outcome.
-pub fn converge(request: &Request<'_>) -> anyhow::Result<Report> {
+pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     let _lock = if request.check {
         None
     } else {
@@ -78,8 +103,10 @@ pub fn converge(request: &Request<'_>) -> anyhow::Result<Report> {
         )?)
     };
     let mut report = Report::default();
-    let demand = _demand::read(request.home, &mut report)?;
-    let mut owned = _services::Owned::load(request.home)?;
+    let demand = _demand::read(request.home, &mut report)
+        .map_err(|e| InstallationError::Demand(e.to_string()))?;
+    let mut owned = _services::Owned::load(request.home)
+        .map_err(|e| InstallationError::Ownership(e.to_string()))?;
     let global = Configuration::load_global(request.home)?;
     if request.module != Some(Module::Events) || !demand.events.is_empty() {
         let required = !demand.projects().is_empty() && global.ticks_enabled()?;
@@ -187,12 +214,17 @@ pub struct TickStatus {
     pub last_wakeup: Option<jiff::Timestamp>,
     pub stale: bool,
 }
-pub fn ticks_status(request: &Request<'_>, now: jiff::Timestamp) -> anyhow::Result<TickStatus> {
+pub fn ticks_status(
+    request: &Request<'_>,
+    now: jiff::Timestamp,
+) -> Result<TickStatus, InstallationError> {
     let mut registration = Report::default();
-    let demand = _demand::read(request.home, &mut registration)?;
+    let demand = _demand::read(request.home, &mut registration)
+        .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let enabled = !demand.projects().is_empty();
     let policy = Configuration::load_global(request.home)?.ticks_enabled()?;
-    let mut owned = _services::Owned::load(request.home)?;
+    let mut owned = _services::Owned::load(request.home)
+        .map_err(|e| InstallationError::Ownership(e.to_string()))?;
     let tick = _services::tick(request);
     let mut inspection = Request {
         check: true,
@@ -200,14 +232,16 @@ pub fn ticks_status(request: &Request<'_>, now: jiff::Timestamp) -> anyhow::Resu
     };
     inspection.module = None;
     if enabled && policy {
-        owned.reconcile(
-            &inspection,
-            &tick,
-            true,
-            demand.complete,
-            &demand.projects(),
-            &mut registration,
-        )?;
+        owned
+            .reconcile(
+                &inspection,
+                &tick,
+                true,
+                demand.complete,
+                &demand.projects(),
+                &mut registration,
+            )
+            .map_err(|e| inspection_error("wake-up", e))?;
     }
     let last = crate::ticks::last_wakeup(&crate::state::RunnerState::new(request.home))?;
     let stale = enabled && crate::ticks::status(last, now).stale;
@@ -228,9 +262,10 @@ pub fn ticks_status(request: &Request<'_>, now: jiff::Timestamp) -> anyhow::Resu
     })
 }
 /// Read retained transport/activation facts without enabling events or creating groups.
-pub fn events_status(request: &Request<'_>) -> anyhow::Result<serde_json::Value> {
+pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
     let mut report = Report::default();
-    let demand = _demand::read(request.home, &mut report)?;
+    let demand = _demand::read(request.home, &mut report)
+        .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let infrastructure = converge(&Request {
         check: true,
         module: Some(Module::Events),
@@ -243,7 +278,7 @@ pub fn events_status(request: &Request<'_>) -> anyhow::Result<serde_json::Value>
     let redis = if demand.events.is_empty() && !configured {
         vec![]
     } else {
-        _redis::inspect(request, &mut report)?
+        _redis::inspect(request, &mut report).map_err(|e| inspection_error("Redis", e))?
     };
     let state = crate::state::RunnerState::new(request.home);
     let failures=state.read(|conn,path| {
@@ -252,13 +287,13 @@ pub fn events_status(request: &Request<'_>) -> anyhow::Result<serde_json::Value>
         rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
     Ok(
-        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home)?}),
+        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?}),
     )
 }
 
 /// Inspect retained failure identities and coordinates without exposing payloads.
-pub fn dead_letters(request: &Request<'_>) -> anyhow::Result<Vec<serde_json::Value>> {
-    _redis::dead_letters(request)
+pub fn dead_letters(request: &Request<'_>) -> Result<Vec<serde_json::Value>, InstallationError> {
+    _redis::dead_letters(request).map_err(|e| inspection_error("dead letters", e))
 }
 
 fn receiver_health(port: u16, route: &str) -> anyhow::Result<()> {

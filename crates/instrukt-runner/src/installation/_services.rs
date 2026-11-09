@@ -15,6 +15,16 @@ pub(super) struct Definition {
     #[serde(default)]
     pub registered: bool,
 }
+impl Definition {
+    fn label(&self) -> String {
+        let unit = if self.scheduler == "cron" {
+            "# instrukt-tick"
+        } else {
+            &self.unit
+        };
+        format!("{} ({})", unit, self.scheduler)
+    }
+}
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct Owned {
     schema_version: u32,
@@ -165,7 +175,10 @@ impl Owned {
                 },
                 desired.files.keys().cloned().collect(),
                 projects,
-                "checked definitions, recorded ownership and service-manager state",
+                format!(
+                    "{}: checked definitions, recorded ownership and service-manager state",
+                    desired.label()
+                ),
             );
             return Ok(());
         }
@@ -181,7 +194,7 @@ impl Owned {
                 "reused",
                 desired.files.keys().cloned().collect(),
                 projects,
-                "working registration unchanged",
+                format!("{}: working registration unchanged", desired.label()),
             );
             return Ok(());
         }
@@ -216,7 +229,7 @@ impl Owned {
             if repaired { "repaired" } else { "installed" },
             desired.files.keys().cloned().collect(),
             projects,
-            "registered with the service manager",
+            format!("{}: registered with the service manager", desired.label()),
         );
         Ok(())
     }
@@ -264,7 +277,10 @@ impl Owned {
             "withdrawn",
             record.files.keys().cloned().collect(),
             &[],
-            "retained data, credentials and shared executables unchanged",
+            format!(
+                "{}: retained data, credentials and shared executables unchanged",
+                record.label()
+            ),
         );
         if record.scheduler == "systemd" {
             required(&["systemctl", "--user", "daemon-reload"])?;

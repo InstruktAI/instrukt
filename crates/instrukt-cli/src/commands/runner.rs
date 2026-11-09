@@ -318,12 +318,15 @@ pub fn run_install(args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode>
     })
 }
 
-pub fn with_installation<T>(
+pub fn with_installation<T, E>(
     ctx: &Ctx,
     check: bool,
     module: Option<Module>,
-    action: impl FnOnce(&instrukt_runner::installation::Request<'_>) -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
+    action: impl FnOnce(&instrukt_runner::installation::Request<'_>) -> Result<T, E>,
+) -> anyhow::Result<T>
+where
+    E: Into<anyhow::Error>,
+{
     let path_env = std::env::var("PATH").unwrap_or_default();
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
@@ -343,6 +346,7 @@ pub fn with_installation<T>(
         check,
         module,
     })
+    .map_err(Into::into)
 }
 
 /// `sessions`, `run` and `tick` refuse only when both `modules.todos` and
