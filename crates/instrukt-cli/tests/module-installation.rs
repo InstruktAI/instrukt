@@ -332,7 +332,7 @@ try:
     queued.sendall(b'POST /hooks/inbound/project/events/service HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Hook-Signature: '+signature.encode()+b'\r\nContent-Length: '+str(len(body)).encode()+b'\r\nConnection: close\r\n\r\n'+body)
     child = start()
     response = queued.recv(4096); queued.close()
-    assert response.split(b' ')[1] == b'202', response
+    assert int(response.split(b' ')[1]) == http.HTTPStatus.ACCEPTED, response
 finally:
     if child is not None: stop(child)
     held.close()
@@ -1139,4 +1139,26 @@ fn installation_inspection_reads_retained_foreign_project_facts_without_entering
         .stdout
         .clone();
     assert_eq!(before, after);
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn an_initial_registration_interrupted_before_completion_is_still_proven_ours() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let _repo = project(&env, "registered", "{todos: true}");
+    env.run(env.home(), ["install"]).success();
+    let path = env.instrukt_home().join("state/installation/owned.json");
+    let mut interrupted: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut staged = interrupted["resources"]
+        .as_object_mut()
+        .unwrap()
+        .remove("wake-up")
+        .unwrap();
+    staged["registered"] = serde_json::Value::Bool(false);
+    interrupted["updates"]["wake-up"] = serde_json::json!({"before": [], "after": staged});
+    write_owned(&env, &interrupted);
+    env.run(env.home(), ["install"]).success();
+    env.run(env.home(), ["install", "--check"]).success();
 }

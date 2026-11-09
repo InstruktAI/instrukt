@@ -244,8 +244,12 @@ impl Owned {
         }
         let registered =
             previous.is_some_and(|p| p.registered) && !self.updates.contains_key(&desired.name);
-        let active = previous.is_some() && running(desired)?;
-        if previous.is_none() {
+        let identified = self
+            .proofs(desired.name)
+            .into_iter()
+            .any(|record| record.scheduler == desired.scheduler && record.unit == desired.unit);
+        let active = identified && running(desired)?;
+        if !identified {
             anyhow::ensure!(
                 !running(desired)?,
                 "ownership conflict: {} is already loaded without an installation record; move the foreign unit before running instrukt install",
