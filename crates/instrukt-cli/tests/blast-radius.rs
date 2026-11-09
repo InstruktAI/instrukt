@@ -54,7 +54,7 @@ fn project(env: &TestEnv, blueprint: bool) -> Repo {
     let repo = env.git_repo("demo");
     repo.write(
         "instrukt.yaml",
-        &format!("schema_version: 3\nproject: demo\nmodules:\n  blueprint: {blueprint}\n"),
+        &format!("schema_version: 4\nproject: demo\nmodules:\n  blueprint: {blueprint}\n"),
     );
     repo.write("src/a.rs", "");
     repo.commit("feat: start");

@@ -14,6 +14,7 @@ fn manager(env: &mut TestEnv) {
 printf '%s\n' '{name}' "$@" >> '{dir}/calls'
 if [ "$1" = --user ]; then shift; fi
 operation=$1
+case $operation in load|unload|start|stop|enable|disable|restart|daemon-reload|debug) printf '%s\n' "$operation" >> '{dir}/mutations';; esac
 if [ "$operation" = list ] && [ "$#" -eq 1 ]; then
     printf 'PID\tStatus\tLabel\n'
     for path in '{dir}'/unit-*; do
@@ -43,6 +44,11 @@ esac
     }
 }
 fn project(env: &TestEnv, slug: &str, modules: &str) -> Repo {
+    let modules = if modules.contains("history:") {
+        modules.to_owned()
+    } else {
+        modules.replacen("{", "{history: false, ", 1)
+    };
     let repo = documented::project(env, slug, &[]);
     documented::sync(env, &repo);
     std::fs::write(
@@ -123,7 +129,7 @@ fn shared_demand_and_unreadable_projects_prevent_withdrawal_and_last_disable_pre
     env.run(env.home(), ["install"]).success();
     first.write(
         "instrukt.yaml",
-        "schema_version: 1\nproject: first\nmodules: {todos: false}\n",
+        "schema_version: 1\nproject: first\nmodules: {history: false, todos: false}\n",
     );
     env.run(env.home(), ["install"]).success();
     second.write("instrukt.yaml", "invalid: [");
@@ -131,7 +137,7 @@ fn shared_demand_and_unreadable_projects_prevent_withdrawal_and_last_disable_pre
     assert!(env.path("runtime-bin/active").exists());
     second.write(
         "instrukt.yaml",
-        "schema_version: 1\nproject: second\nmodules: {todos: false}\n",
+        "schema_version: 1\nproject: second\nmodules: {history: false, todos: false}\n",
     );
     std::fs::write(env.instrukt_home().join("state/retained"), "pending work").unwrap();
     env.run(env.home(), ["install"]).success();
@@ -182,7 +188,7 @@ fn event_config(env: &TestEnv, local: Option<&str>, cluster: &str, ingress: Opti
     let local = local
         .map(|url| format!("  local: {{url: '{url}'}}\n"))
         .unwrap_or_default();
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 3\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 4\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
@@ -244,7 +250,7 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     let mut env = TestEnv::new();
     manager(&mut env);
     let repo = project(&env, "events", "{events: true}");
-    repo.write("instrukt.yaml","schema_version: 1\nproject: events\nmodules: {events: true}\nwebhooks:\n  service: {secret: '${SIGNING_KEY}'}\n");
+    repo.write("instrukt.yaml","schema_version: 1\nproject: events\nmodules: {history: false, events: true}\nwebhooks:\n  service: {secret: '${SIGNING_KEY}'}\n");
     let health = ReceiverHealth::new(&env);
     let redis = common::redis::RedisServer::new(&env);
     event_config(
@@ -304,7 +310,7 @@ fn held_socket_keeps_a_signed_request_across_receiver_restart_without_runner() {
     event_config(&env, Some(&redis.url), &redis.url, None);
     env.run(env.home(), ["install"]).success();
     let machine = std::fs::read_to_string(env.instrukt_home().join("state/machine-id")).unwrap();
-    repo.write("instrukt.yaml","schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks:\n  service: {secret: '${SIGNING_KEY}'}\n");
+    repo.write("instrukt.yaml","schema_version: 4\nproject: events\nmodules: {history: false, events: true}\nwebhooks:\n  service: {secret: '${SIGNING_KEY}'}\n");
     env.instrukt(env.home())
         .args(["secrets", "set", "SIGNING_KEY"])
         .write_stdin("diagnostic-test-key")
@@ -397,10 +403,18 @@ impl Drop for PrivateRedis {
         let _ = self.0.wait();
     }
 }
-// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
-// spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
-#[test]
-fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() {
+struct OwnedRedisFixture {
+    _server: PrivateRedis,
+    _cluster: common::redis::RedisServer,
+    env: TestEnv,
+    repo: Repo,
+    _short: tempfile::TempDir,
+    alias: std::path::PathBuf,
+    dir: std::path::PathBuf,
+    url: String,
+    connection: redis::Connection,
+}
+fn owned_redis_fixture() -> OwnedRedisFixture {
     let mut env = TestEnv::new();
     manager(&mut env);
     let short = tempfile::Builder::new()
@@ -441,7 +455,7 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
     info = info.set_redis_settings(auth);
     let client = redis::Client::open(info).unwrap();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let mut connection = loop {
+    let connection = loop {
         if let Ok(mut c) = client.get_connection()
             && redis::cmd("PING").query::<String>(&mut c).is_ok()
         {
@@ -453,6 +467,66 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
     };
     env.run(env.home(), ["install"]).success();
     env.run(env.home(), ["install", "--check"]).success();
+    OwnedRedisFixture {
+        _server: server,
+        _cluster: cluster,
+        env,
+        repo,
+        _short: short,
+        alias,
+        dir,
+        url,
+        connection,
+    }
+}
+impl OwnedRedisFixture {
+    fn history_cluster(&self, url: &str) {
+        let file = self.env.instrukt_home().join("instrukt.yaml");
+        let mut settings: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        settings["redis"]["cluster"] = settings["redis"]["local"].clone();
+        settings["redis"]["cluster"]["url"] = url.into();
+        std::fs::write(file, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+        self.repo.write(
+            "instrukt.yaml",
+            "schema_version: 4\nproject: events\nmodules: {events: false, history: true}\n",
+        );
+    }
+    fn legacy_acl(&self) -> (std::path::PathBuf, String, String) {
+        let file = self.alias.join(".instrukt/state/redis/users.acl");
+        let current = std::fs::read_to_string(&file).unwrap();
+        let old = current
+            .replace(" +rpush +blpop +multi +exec", "")
+            .replace(" +select", "");
+        let mut record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                self.env
+                    .instrukt_home()
+                    .join("state/installation/owned.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        record["resources"]["redis"]["files"]
+            .as_object_mut()
+            .unwrap()
+            .remove(file.to_str().unwrap());
+        record["assets"][file.to_str().unwrap()] = old.clone().into();
+        std::fs::write(&file, &old).unwrap();
+        write_owned(&self.env, &record);
+        (file, current, old)
+    }
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
+#[test]
+fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() {
+    let mut fixture = owned_redis_fixture();
+    let env = &fixture.env;
+    let repo = &fixture.repo;
+    let dir = &fixture.dir;
+    let url = &fixture.url;
+    let mut connection = &mut fixture.connection;
     let mut anonymous = redis::Client::open(url.as_str())
         .unwrap()
         .get_connection()
@@ -467,13 +541,13 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
         .unwrap();
     repo.write(
         "instrukt.yaml",
-        "schema_version: 3\nproject: events\nmodules: {events: false}\n",
+        "schema_version: 4\nproject: events\nmodules: {history: false, events: false}\n",
     );
     let owned_path = env.instrukt_home().join("state/installation/owned.json");
     let owned: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&owned_path).unwrap()).unwrap();
     for suffix in ["", "?db=0", "?db=3"] {
-        repo.write("instrukt.yaml", &format!("schema_version: 3\nproject: events\nmodules: {{events: false}}\nredis: {{local: {{url: '{}{suffix}'}}}}\n", url));
+        repo.write("instrukt.yaml", &format!("schema_version: 4\nproject: events\nmodules: {{history: false, events: false}}\nredis: {{local: {{url: '{}{suffix}'}}}}\n", url));
         env.run(env.home(), ["install"]).success();
         for (file, contents) in owned["resources"]["redis"]["files"].as_object().unwrap() {
             assert_eq!(
@@ -484,7 +558,7 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
     }
     repo.write(
         "instrukt.yaml",
-        "schema_version: 3\nproject: events\nmodules: {events: false}\n",
+        "schema_version: 4\nproject: events\nmodules: {history: false, events: false}\n",
     );
     env.run(env.home(), ["install"]).success();
     insta::assert_json_snapshot!(redis::cmd("GET")
@@ -684,7 +758,7 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
             .assert()
             .success();
     }
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 3\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 4\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
     env.run(env.home(), ["install", "--check"]).failure();
     redis::cmd("ACL")
         .arg("SETUSER")
@@ -739,7 +813,7 @@ fn receiver_restart_preserves_registration_and_port_change_starts_replacement_fi
         .write_stdin("test signing material")
         .assert()
         .success();
-    repo.write("instrukt.yaml","schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    repo.write("instrukt.yaml","schema_version: 4\nproject: events\nmodules: {history: false, events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
     let first = ReceiverHealth::new(&env);
     event_config(
         &env,
@@ -840,7 +914,7 @@ fi
     assert!(current.is_file());
     repo.write(
         "instrukt.yaml",
-        "schema_version: 3\nproject: events\nmodules: {events: false}\n",
+        "schema_version: 4\nproject: events\nmodules: {history: false, events: false}\n",
     );
     env.run(env.home(), ["install"]).success();
     assert!(!pending.exists());
@@ -875,7 +949,7 @@ fn cron_withdrawal_preserves_the_entire_table_when_the_marked_line_has_drifted()
     std::fs::write(&table, foreign.as_bytes()).unwrap();
     repo.write(
         "instrukt.yaml",
-        "schema_version: 3\nproject: cron-work\nmodules: {todos: false}\n",
+        "schema_version: 4\nproject: cron-work\nmodules: {history: false, todos: false}\n",
     );
     env.run(env.home(), ["install"]).failure();
     assert_eq!(foreign.as_bytes(), std::fs::read(&table).unwrap());
@@ -977,7 +1051,7 @@ fn every_receiver_write_prefix_retains_the_old_and_new_ownership_proofs() {
         .write_stdin("test signing material")
         .assert()
         .success();
-    repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    repo.write("instrukt.yaml", "schema_version: 4\nproject: events\nmodules: {history: false, events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
     let health = ReceiverHealth::new(&env);
     event_config(
         &env,
@@ -1101,7 +1175,7 @@ fn launchd_cached_job_applies_the_desired_executable_and_environment_with_socket
         .write_stdin("test signing material")
         .assert()
         .success();
-    repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    repo.write("instrukt.yaml", "schema_version: 4\nproject: events\nmodules: {history: false, events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
     let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = reservation.local_addr().unwrap().port();
     drop(reservation);
@@ -1225,7 +1299,7 @@ fn schema_two_ownership_golden_is_read_without_writes_and_persisted_on_unchanged
     env.set_env("PATH", "");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 3\nrunner: {runtime: t3}\n",
+        "schema_version: 4\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let github = env.with_fake_github();
@@ -1333,7 +1407,7 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
         .write_stdin("test signing material")
         .assert()
         .success();
-    repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    repo.write("instrukt.yaml", "schema_version: 4\nproject: events\nmodules: {history: false, events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port();
     drop(socket);
@@ -1485,7 +1559,7 @@ fn github_readiness_checks_existing_reflection_surfaces_without_mutating_them_or
             ..Default::default()
         },
     );
-    repo.write("instrukt.yaml", "schema_version: 3\nproject: github-ready\nmodules: {todos: true}\nrunner: {runtime: t3}\ngithub: {repository: fixture/project}\nboard: fixture/1\n");
+    repo.write("instrukt.yaml", "schema_version: 4\nproject: github-ready\nmodules: {history: false, todos: true}\nrunner: {runtime: t3}\ngithub: {repository: fixture/project}\nboard: fixture/1\n");
     let issues = github.issues("fixture/project");
     let artifacts = github.artifacts("fixture/project", issue);
     let fields = github.project_fields("fixture", 1);
@@ -1613,7 +1687,7 @@ fn github_readiness_refuses_disabled_repository_issues() {
 #[test]
 fn github_readiness_reports_an_unavailable_configured_board_without_replacing_it() {
     let (env, repo, github) = github_installation();
-    repo.write("instrukt.yaml", "schema_version: 3\nproject: github-ready\nmodules: {todos: true}\nrunner: {runtime: t3}\ngithub: {repository: fixture/project}\nboard: fixture/99\n");
+    repo.write("instrukt.yaml", "schema_version: 4\nproject: github-ready\nmodules: {history: false, todos: true}\nrunner: {runtime: t3}\ngithub: {repository: fixture/project}\nboard: fixture/99\n");
     insta::assert_json_snapshot!(
         "github-readiness-missing-board",
         github_check(&env, &repo, false)
@@ -1676,4 +1750,222 @@ fn github_readiness_checks_older_issue_artifacts_after_a_full_page_of_pull_reque
     );
     assert_eq!(github.issues("fixture/project"), issues);
     assert_eq!(github.artifacts("fixture/project", issue), artifacts);
+}
+
+fn history_cluster_fixture() -> (TestEnv, Repo, common::redis::RedisServer) {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let repo = project(
+        &env,
+        "history",
+        "{history: true, events: false, todos: false}",
+    );
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 4\nproject: history\nmodules: {events: false, todos: false}\n",
+    );
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, None, &redis.url, None);
+    let file = env.instrukt_home().join("instrukt.yaml");
+    let original = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        format!("{original}  local: {{url: 'unix:///missing/socket', password: '${{MISSING}}'}}\n"),
+    )
+    .unwrap();
+    (env, repo, redis)
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn history_converges_cluster_without_event_resources_or_local_credentials() {
+    let (env, _repo, redis) = history_cluster_fixture();
+    let report = json(&env, &["install", "--json"]);
+    assert!(report["findings"].as_array().unwrap().is_empty());
+    assert_eq!(report["resources"].as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!(report["resources"][0]["projects"], @r#"
+    [
+      "history"
+    ]
+    "#);
+    assert!(!env.path("runtime-bin/calls").exists());
+    assert!(!env.instrukt_home().join("state/redis").exists());
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg("instrukt:*")
+        .query(&mut redis.connection())
+        .unwrap();
+    assert!(keys.is_empty());
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn history_inspection_checks_only_cluster_without_changing_files() {
+    let (env, repo, redis) = history_cluster_fixture();
+    let guard = common::LiveGuard::over(vec![], vec![env.home().into(), repo.path().into()]);
+    let result = env
+        .run(
+            repo.path(),
+            ["install", "--module", "history", "--check", "--json"],
+        )
+        .success();
+    let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert!(report["findings"].as_array().unwrap().is_empty());
+    assert_eq!(report["resources"].as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!(report["resources"][0]["projects"], @r#"
+    [
+      "history"
+    ]
+    "#);
+    assert!(guard.changed().is_empty());
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg("instrukt:*")
+        .query(&mut redis.connection())
+        .unwrap();
+    assert!(keys.is_empty());
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn todos_filter_keeps_history_prerequisites_out_of_its_scope() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let repo = project(&env, "work", "{todos: true}");
+    repo.write("instrukt.yaml", "schema_version: 4\nproject: work\nmodules: {todos: true}\ngithub: {repository: fixture/project}\n");
+    let github = env.with_fake_github();
+    github.add_repo("fixture/project");
+    env.run(env.home(), ["install", "--module", "todos"])
+        .success();
+    env.run(env.home(), ["install", "--module", "todos", "--check"])
+        .success();
+    let full = env
+        .run(env.home(), ["install", "--check", "--json"])
+        .failure();
+    let result: serde_json::Value = serde_json::from_slice(&full.get_output().stdout).unwrap();
+    assert_eq!(result["findings"].as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!(result["findings"], @r#"
+    [
+      "history Redis: `redis.cluster.url` required for enabled Redis transport"
+    ]
+    "#);
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn history_upgrades_legacy_owned_acl_through_a_qualified_socket_and_keeps_query_database() {
+    let mut f = owned_redis_fixture();
+    let url = format!("{}?db=3", f.url);
+    f.history_cluster(&url);
+    let (file, current, _) = f.legacy_acl();
+    f.env
+        .run(f.env.home(), ["install", "--module", "history"])
+        .success();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), current);
+    f.env
+        .run(
+            f.env.home(),
+            [
+                "history",
+                "search",
+                "test",
+                "--computer",
+                "bbbbbbbbbbbbbbbb",
+                "--timeout",
+                "1",
+                "--json",
+            ],
+        )
+        .failure();
+    let mut info = redis::IntoConnectionInfo::into_connection_info(url.as_str()).unwrap();
+    let password = instrukt_core::config::resolve_secret(
+        &instrukt_core::home::Home::at_user_home(f.env.home().into()),
+        "${INSTRUKT_REDIS_PASSWORD}",
+    )
+    .unwrap();
+    let auth = info
+        .redis_settings()
+        .clone()
+        .set_username("instrukt")
+        .set_password(&password);
+    info = info.set_redis_settings(auth);
+    let mut selected = redis::Client::open(info).unwrap().get_connection().unwrap();
+    assert!(
+        redis::cmd("EXISTS")
+            .arg("instrukt:history:requests:bbbbbbbbbbbbbbbb")
+            .query::<bool>(&mut selected)
+            .unwrap()
+    );
+    assert!(
+        !redis::cmd("EXISTS")
+            .arg("instrukt:history:requests:bbbbbbbbbbbbbbbb")
+            .query::<bool>(&mut f.connection)
+            .unwrap()
+    );
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn history_repairs_owned_acl_through_a_canonical_parent_alias() {
+    let f = owned_redis_fixture();
+    let alias = f._short.path().join("other");
+    std::os::unix::fs::symlink(f.env.home(), &alias).unwrap();
+    let url = format!(
+        "unix://{}",
+        alias.join(".instrukt/state/redis/redis.sock").display()
+    );
+    f.history_cluster(&url);
+    let (file, current, _) = f.legacy_acl();
+    f.env
+        .run(f.env.home(), ["install", "--module", "history"])
+        .success();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), current);
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI7
+#[test]
+fn history_only_demand_keeps_a_shared_owned_redis_registered() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    f.env.run(f.env.home(), ["install"]).success();
+    f.env.run(f.repo.path(), ["install", "--check"]).success();
+    assert!(f.dir.join("redis.sock").exists());
+    assert!(f.dir.join("users.acl").exists());
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn history_acl_upgrade_inspection_leaves_legacy_files_and_services_unchanged() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    let (file, _, old) = f.legacy_acl();
+    let calls = std::fs::read(f.env.path("runtime-bin/mutations")).unwrap();
+    f.env
+        .run(f.repo.path(), ["install", "--module", "history", "--check"])
+        .failure();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), old);
+    assert_eq!(
+        std::fs::read(f.env.path("runtime-bin/mutations")).unwrap(),
+        calls
+    );
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn events_filtered_install_does_not_repair_history_only_redis() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    let (file, _, old) = f.legacy_acl();
+    let calls = std::fs::read(f.env.path("runtime-bin/mutations")).unwrap();
+    f.env
+        .run(f.env.home(), ["install", "--module", "events"])
+        .success();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), old);
+    assert_eq!(
+        std::fs::read(f.env.path("runtime-bin/mutations")).unwrap(),
+        calls
+    );
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn events_filtered_inspection_does_not_check_history_only_redis() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    f.legacy_acl();
+    f.env
+        .run(f.repo.path(), ["install", "--module", "events", "--check"])
+        .success();
 }

@@ -20,7 +20,8 @@ expression: "String::from_utf8(bytes).unwrap()"
         "enum": [
           "blueprint",
           "todos",
-          "events"
+          "events",
+          "history"
         ]
       }
     },
@@ -88,6 +89,10 @@ expression: "String::from_utf8(bytes).unwrap()"
         },
         "events": {
           "type": "boolean"
+        },
+        "history": {
+          "type": "boolean",
+          "default": true
         }
       },
       "additionalProperties": false

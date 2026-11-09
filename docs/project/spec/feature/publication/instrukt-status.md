@@ -35,7 +35,7 @@ lock, reaches no network and starts no session.
 | `instrukt` | the running binary's version and the path it runs from |
 | `machine` | whether the global layer `~/.instrukt/instrukt.yaml` exists, its `schema_version`, and its validation findings (`project/instrukt/spec/feature/configuration/layered-configuration`) |
 | `runtime` | the explicit `runner.runtime` choice, or none; the compiled adapter's capabilities and recognised caller identity when available; no verb templates or entry list |
-| `modules` | each module (`blueprint`, `todos`, `events`) on or off in the effective configuration and in which layer that was decided; per runtime-dependent feature, whether the selected adapter supports its required capabilities, naming each missing one or that no runtime is chosen |
+| `modules` | each module (`blueprint`, `todos`, `events`, `history`; history defaults on) on or off in the effective configuration and in which layer that was decided; per runtime-dependent feature, whether the selected adapter supports its required capabilities, naming each missing one or that no runtime is chosen |
 | `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
 | `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
 | `projects` | every other project publication state records: its slug, checkout path and published commit |
@@ -85,7 +85,7 @@ And nothing on the computer has changed
 Given a developer has just installed instrukt on a computer with no instrukt configuration
 And they stand in a git repository instrukt has never seen
 When they read instrukt's status
-Then it reports that the machine is not configured, that no runtime is chosen, that every module is off and that nothing is published
+Then it reports that the machine is not configured, that no runtime is chosen, that history defaults on, the other modules are off and that nothing is published
 And that this repository is not adopted
 And the command succeeds
 ```

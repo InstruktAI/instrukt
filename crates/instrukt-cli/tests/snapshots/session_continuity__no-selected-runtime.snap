@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/session-continuity.rs
 expression: "shown(&p, &out.get_output().stderr)"
 ---
-instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 3; file migrates on the next writing command
+instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 4; file migrates on the next writing command
 instrukt: no runtime is chosen; set global `runner.runtime: t3`

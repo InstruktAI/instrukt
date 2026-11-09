@@ -208,6 +208,7 @@ pub(crate) fn start(
     if let Some(retained) = &recorded.request {
         // The retained model choice stays authoritative through ambiguous or
         // accepted starts, including a caller holding an earlier request copy.
+        resolved.title = retained.title.clone();
         resolved.selection = retained.selection.clone();
         resolved.selection_evidence = retained.selection_evidence.clone();
         if &resolved != retained {
@@ -512,7 +513,11 @@ pub fn followup(
     {
         return Err(SessionsError::KeyConflict(input.key.clone()));
     }
-    adapter.verify_start(input, &thread)?;
+    let mut verification = input.clone();
+    if let Some(original) = &recorded.request {
+        verification.title = original.title.clone();
+    }
+    adapter.verify_start(&verification, &thread)?;
     if recorded.bound.is_none() {
         remember(
             &guard.state,

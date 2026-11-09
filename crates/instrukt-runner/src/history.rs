@@ -15,6 +15,10 @@ pub(crate) use _fleet::SearchWorker;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
+    #[error(
+        "the history module is off; switch it on with `modules.history: true` in instrukt.yaml"
+    )]
+    Disabled,
     #[error(transparent)]
     Db(#[from] instrukt_core::state_db::StateDbError),
     #[error("history SQLite operation failed: {0}")]
@@ -45,6 +49,9 @@ pub enum HistoryError {
 impl HistoryError {
     pub fn public_message(&self) -> &'static str {
         match self {
+            Self::Disabled => {
+                "the history module is off; switch it on with `modules.history: true` in instrukt.yaml"
+            }
             Self::Db(_) | Self::Sql(_) => {
                 "history storage or source schema is unavailable; inspect this computer's history logs"
             }
@@ -242,6 +249,61 @@ pub(super) fn source(
         .ok_or(crate::sessions::SessionsError::NoActiveRuntime)?;
     Ok(crate::runtime::adapter(runtime).conversation_source(home, env)?)
 }
-pub(crate) fn start(home: &Home, env: &Env) -> Result<_watch::Worker, HistoryError> {
-    _watch::Worker::start(home, env)
+
+/// Machine reader demand includes each adopted project's effective override.
+pub fn enabled(home: &Home) -> Result<bool, HistoryError> {
+    let global = instrukt_core::config::Configuration::load_global(home)?;
+    let records = instrukt_core::publication::PublishedRecord::load_all(home)
+        .map_err(|error| HistoryError::Source(error.to_string()))?;
+    if records.is_empty() {
+        return Ok(global.module_enabled(instrukt_core::config::Module::History)?);
+    }
+    for record in records {
+        if instrukt_core::config::Configuration::load(home, Some(&record.checkout))?
+            .module_enabled(instrukt_core::config::Module::History)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Owns independent source and query readers for the long-lived runner.
+#[derive(Default)]
+pub(crate) struct Readers {
+    extraction: Option<_watch::Worker>,
+    search: Option<SearchWorker>,
+}
+impl Readers {
+    pub(crate) fn refresh(&mut self, home: &Home, env: &Env) -> Result<(), HistoryError> {
+        if !enabled(home)? {
+            self.search = None;
+            self.extraction = None;
+            return Ok(());
+        }
+        let config = instrukt_core::config::Configuration::load_global(home)?;
+        if self.extraction.is_none()
+            && let Some(runtime) = config.runner_runtime()?
+            && crate::runtime::adapter(runtime)
+                .supports(crate::runtime::Capability::ConversationSource)
+        {
+            self.extraction = Some(_watch::Worker::start(home, env)?);
+        }
+        if self.search.is_none() {
+            match crate::transport::ScopedTransport::cluster_only(
+                &config,
+                &crate::state::RunnerState::new(home),
+            ) {
+                Ok(transport) => self.search = Some(SearchWorker::start(home, env, &transport)?),
+                Err(error) => tracing::warn!(event="history_merged_search_unavailable", %error),
+            }
+        }
+        if let Some(extraction) = &self.extraction {
+            extraction.check()?;
+        }
+        if let Some(search) = &self.search {
+            search.check()?;
+        }
+        Ok(())
+    }
 }

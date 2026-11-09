@@ -37,8 +37,26 @@ pub struct RuntimeStart {
     pub selection_evidence: Option<String>,
     pub checkout: PathBuf,
     pub key: String,
+    pub title: String,
     pub brief: String,
     pub worktree: Option<WorktreeRequest>,
+}
+
+/// Keep labels opaque and place semantic identity last for narrow sidebars.
+pub fn thread_title(label: &str, key: &str) -> String {
+    format!("{label} · {key}")
+}
+
+/// Reconstruct the preceding driver's label from its retained role and phase placement.
+/// This historical format uses the original phase branch, never a current todo slug.
+pub fn legacy_driver_title(role: &str, branch: &str, key: &str) -> Option<String> {
+    let slug = branch
+        .strip_suffix("/prepare")
+        .or_else(|| branch.strip_suffix("/work"))?;
+    if role.is_empty() || slug.is_empty() || key.is_empty() {
+        return None;
+    }
+    Some(format!("{role} · {slug} · {key}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

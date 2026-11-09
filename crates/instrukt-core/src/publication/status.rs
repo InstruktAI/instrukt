@@ -114,7 +114,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
         || (root.is_none() && !repository_errors.is_empty());
     let mut modules_errors = Vec::new();
     let mut modules = serde_json::Map::new();
-    for module in [Module::Blueprint, Module::Todos, Module::Events] {
+    for module in Module::ALL {
         let setting = |view: Option<&LayerInspection>| {
             view.map(|v| v.module_setting(module))
                 .transpose()
@@ -130,15 +130,18 @@ pub fn inspect(request: &Request<'_>) -> Report {
             ));
             json!({"enabled":null,"layer":null})
         } else {
-            match setting(project_layer.as_ref()).and_then(|project| {
-                Ok(match project {
-                    Some(value) => (value, "project"),
-                    None => match setting(global.as_ref())? {
-                        Some(value) => (value, "global"),
-                        None => (false, "default"),
-                    },
-                })
-            }) {
+            match Configuration::load(&home, root.as_deref())
+                .and_then(|config| config.module_enabled(module))
+                .and_then(|enabled| {
+                    let source = if setting(project_layer.as_ref())?.is_some() {
+                        "project"
+                    } else if setting(global.as_ref())?.is_some() {
+                        "global"
+                    } else {
+                        "default"
+                    };
+                    Ok((enabled, source))
+                }) {
                 Ok((enabled, layer)) => json!({"enabled":enabled,"layer":layer}),
                 Err(reason) => {
                     modules_errors.push(error(request.cwd, reason));
@@ -256,6 +259,7 @@ fn features(runtime: Option<Runtime>, unreadable: bool) -> Value {
     let mut result = serde_json::Map::new();
     for (key, feature) in [
         ("standing_agents", Feature::StandingAgents),
+        ("history_extraction", Feature::HistoryExtraction),
         ("todo_dispatch", Feature::TodoDispatch),
         ("recurring_tasks", Feature::RecurringTasks),
         ("anomaly_notification", Feature::AnomalyNotification),

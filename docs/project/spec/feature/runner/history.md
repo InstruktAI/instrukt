@@ -6,6 +6,11 @@ delivered_by: [instrukt-first-build]
 
 ## What it is
 
+History is a monorepo module controlled by `modules.history`, on by default.
+When off, every history command reports the module is off before accessing its
+data or source; `instrukt run` starts neither history extraction nor the history
+query responder. Existing stored history and source positions survive disable.
+
 instrukt makes past conversations searchable through a store on each computer.
 An extract-and-load step reads T3's local state into instrukt's own history;
 TeleClaude's existing mirrors are imported once. A search across computers
@@ -67,9 +72,14 @@ search also catch up before reading the local index. Each remote participant
 performs its own catch-up before answering. There is no tick-driven extraction,
 periodic polling loop or scheduled reconciliation fallback.
 
+Local extraction, import, lookup and search require no Redis. Installation
+counts enabled history independently as demand for cluster Redis for merged
+search, without local event consumers, minute wake-up or receiver demand.
+History never requires `modules.events`.
+
 Merged search reuses the existing configured cluster transport and explicitly
 named instrukt computer identities. A remote answer requires a running,
-event-enabled participant. The computer hosting a history store remains distinct
+history-enabled participant. The computer hosting a history store remains distinct
 from original source-computer provenance. Redis transports bounded queries and
 answers and holds no central durable archive.
 
@@ -88,7 +98,10 @@ count, committed position and duration, without conversation content.
 Given a developer has conversations in T3's local state on a computer
 When instrukt extracts and loads that state
 Then the conversations are searchable in that computer's instrukt history
-And no central service is required
+And no central service or Redis is required
+But when the developer disables history
+Then every history data operation reports the module is off without touching its data or source
+And stored history survives disabling and can be searched after re-enabling
 ```
 
 ### UC-HI2: Keep the TeleClaude mirrors through one import
@@ -105,6 +118,7 @@ And rerunning the completed import does not duplicate those conversations
 
 ```gherkin
 Given a developer's participating computers each hold local instrukt history
+And history is enabled independently of events
 When they search across those computers
 Then the results merge matches from those stores with their source computer identified
 And no central database is introduced

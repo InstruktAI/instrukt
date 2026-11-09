@@ -32,11 +32,11 @@ struct Query {
 
 pub(super) fn merge(
     home: &Home,
-    env: &Env,
+    _env: &Env,
     search: &super::Search<'_>,
 ) -> Result<SearchResult, HistoryError> {
     let config = Configuration::load_global(home)?;
-    let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(home))?;
+    let transport = ScopedTransport::cluster_only(&config, &RunnerState::new(home))?;
     let endpoint = transport.endpoint(EventScope::Cluster);
     let own = machine::machine_id(home)?.to_string();
     let targets: BTreeSet<_> = search.computers.iter().filter(|id| **id != own).collect();
@@ -167,6 +167,9 @@ impl SearchWorker {
                 let queue = format!("{PREFIX}:requests:{computer}");
                 while !stopping.load(Ordering::Relaxed) {
                     let outcome = (|| -> Result<(), HistoryError> {
+                        if !super::enabled(&home)? {
+                            return Err(HistoryError::Disabled);
+                        }
                         endpoint.command::<()>(
                             redis::cmd("SET")
                                 .arg(format!("{PREFIX}:ready:{computer}"))
@@ -195,6 +198,7 @@ impl SearchWorker {
                                 "invalid remote history request".into(),
                             ));
                         }
+                        if !super::enabled(&home)? { return Err(HistoryError::Disabled); }
                         let answer = match local_search(&home, &env, &request.query, request.limit)
                         {
                             Ok(answer) => answer,
@@ -225,6 +229,7 @@ impl SearchWorker {
                     })();
                     if let Err(error) = outcome {
                         tracing::error!(event="history_query_failed",error=%error);
+                        if matches!(error, HistoryError::Disabled | HistoryError::Config(_)) { break; }
                         if matches!(error, HistoryError::Transport(_))
                             && !stopping.load(Ordering::Relaxed)
                         {

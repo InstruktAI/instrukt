@@ -25,7 +25,7 @@ impl Default for T3 {
 impl T3 {
     pub(crate) fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
         let checkout = request.checkout.to_string_lossy();
-        let mut args = vec!["thread", "start", "--title", request.key.as_str()];
+        let mut args = vec!["thread", "start", "--title", request.title.as_str()];
         if let Some(worktree) = &request.worktree {
             args.extend([
                 "--worktree",
@@ -385,7 +385,11 @@ impl RuntimeAdapter for T3 {
 }
 
 pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
-    if thread.semantic_key.as_deref() != Some(request.key.as_str()) {
+    if thread.semantic_key.as_deref() != Some(request.key.as_str())
+        || ![request.title.as_str(), request.key.as_str()]
+            .into_iter()
+            .any(|title| thread.title.as_deref() == Some(title))
+    {
         return Err(failure(
             "start recovery",
             "thread title differs from the recorded key",
@@ -497,10 +501,7 @@ impl NativeThread {
             session: SessionRef::parse(&format!("t3:{}", self.thread_id))
                 .map_err(|e| failure("decode", e.to_string()))?,
             project_id: self.project_id,
-            semantic_key: self
-                .title
-                .starts_with("instrukt:")
-                .then(|| self.title.clone()),
+            semantic_key: semantic_key(&self.title).map(str::to_owned),
             title: Some(self.title),
             state,
             branch: self.branch,
@@ -535,4 +536,22 @@ fn failure(operation: &str, detail: impl Into<String>) -> SessionsError {
         operation: operation.into(),
         detail: detail.into(),
     }
+}
+
+// The label is opaque. Legacy whole-key titles and labelled suffixes share identity.
+fn semantic_key(title: &str) -> Option<&str> {
+    let key = title.rsplit(" · ").next()?;
+    [
+        "instrukt:todo:",
+        "instrukt:standing:",
+        "instrukt:task:",
+        "instrukt:run:",
+    ]
+    .iter()
+    .any(|prefix| {
+        key.strip_prefix(prefix)
+            .is_some_and(|rest| !rest.is_empty())
+    })
+    .then_some(key)
+    .filter(|key| !key.chars().any(char::is_whitespace))
 }

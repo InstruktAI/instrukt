@@ -500,8 +500,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         request["key"].as_str().unwrap(),
         request["brief"].as_str().unwrap(),
     );
-    let evidence =
-        serde_json::json!({"session":"t3:s1","title":request["key"],"assignment":request["brief"]});
+    let evidence = serde_json::json!({"session":"t3:s1","title":request["title"],"assignment":request["brief"]});
     let bind = || {
         r.computer
             .env
@@ -567,6 +566,18 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     // Schema 9's producer persisted this same semantic effort plus native options.
     // The caller is interrupted before it can start or bind a native thread.
     let db = r.computer.db();
+    let original_fields: serde_json::Value =
+        serde_json::from_slice(&first.get_output().stdout).unwrap();
+    let mut old: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/manual-reservation-v14.json")).unwrap();
+    for (field, value) in old.as_object_mut().unwrap() {
+        *value = original_fields[field].clone();
+    }
+    db.execute(
+        "UPDATE manual_standing_reservations SET request=?1",
+        [old.to_string()],
+    )
+    .unwrap();
     db.execute_batch("DROP TABLE conversation_relay_positions; DROP TABLE conversation_links;")
         .unwrap();
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
@@ -579,6 +590,19 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     let replay: instrukt_runner::standing::ManualReservation =
         serde_json::from_slice(&replay.get_output().stdout).unwrap();
     assert!(!replay.start_allowed);
+    assert_eq!(replay.title, original.key);
+    let normalized: String = r
+        .computer
+        .db()
+        .query_row(
+            "SELECT request FROM manual_standing_reservations",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let normalized: serde_json::Value = serde_json::from_str(&normalized).unwrap();
+    assert_eq!(normalized["title"], original.key);
+
     assert_eq!(
         r.computer
             .db()
@@ -624,7 +648,7 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
 
     r.runtime.seed("s1", root, &retried.key, &retried.brief);
     let evidence =
-        serde_json::json!({"session":"t3:s1","title":retried.key,"assignment":retried.brief});
+        serde_json::json!({"session":"t3:s1","title":retried.title,"assignment":retried.brief});
     r.computer
         .env
         .instrukt(root)
@@ -878,4 +902,24 @@ fn a_standing_agent_starts_with_its_procedures_resolved_model_instead_of_project
         "standing-model-selection",
         work::redact(&String::from_utf8_lossy(&result.get_output().stdout))
     );
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS10
+#[test]
+fn bound_standing_delivery_keeps_a_relabelled_threads_event_pending() {
+    let r = Responsibility::new("");
+    r.append("initial");
+    r.tick();
+    r.runtime.consume("s1");
+    let title = r.runtime.title("s1");
+    let key = title.rsplit(" · ").next().unwrap();
+    r.runtime
+        .change("s1", "title", format!("Changed label · {key}").into());
+    r.append("after-relabel");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 1);
+    assert_eq!(r.runtime.threads().len(), 1);
+    r.runtime.change("s1", "title", title.into());
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
 }

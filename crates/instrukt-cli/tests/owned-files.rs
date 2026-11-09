@@ -338,3 +338,59 @@ fn retired_project_actions_convert_for_inspection_and_persist_before_an_unchange
         .success();
     insta::assert_snapshot!(String::from_utf8_lossy(&after_sync.get_output().stdout), @"peer");
 }
+
+fn history_migration_setup(global: &str, project: &str) -> (TestEnv, common::Repo) {
+    let env = TestEnv::new();
+    let repo = env.git_repo("history-migration");
+    std::fs::create_dir_all(env.instrukt_home()).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"), global).unwrap();
+    repo.write("instrukt.yaml", project);
+    (env, repo)
+}
+fn effective_history(env: &TestEnv, repo: &common::Repo) -> serde_json::Value {
+    let result = env
+        .run(repo.path(), ["config", "get", "modules.history", "--json"])
+        .success();
+    serde_json::from_slice(&result.get_output().stdout).unwrap()
+}
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn history_migration_preserves_inherited_global_false_without_a_project_override() {
+    let (env, repo) = history_migration_setup(
+        "schema_version: 3\nmodules: {history: false}\n",
+        "schema_version: 3\nproject: history-migration\n",
+    );
+    assert_eq!(effective_history(&env, &repo), false);
+    env.run(repo.path(), ["config", "init"]).success();
+    assert_eq!(effective_history(&env, &repo), false);
+    let migrated: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
+    assert_eq!(
+        migrated["schema_version"].as_u64(),
+        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+    );
+    assert!(migrated.get("modules").is_none());
+}
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn history_migration_preserves_an_explicit_project_override() {
+    let (env, repo) = history_migration_setup(
+        "schema_version: 3\nmodules: {history: false}\n",
+        "schema_version: 3\nproject: history-migration\nmodules: {history: true}\n",
+    );
+    env.run(repo.path(), ["config", "init"]).success();
+    assert_eq!(effective_history(&env, &repo), true);
+}
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn history_migration_keeps_the_default_when_neither_layer_sets_a_value() {
+    let (env, repo) = history_migration_setup(
+        "schema_version: 3\n",
+        "schema_version: 3\nproject: history-migration\n",
+    );
+    env.run(repo.path(), ["config", "init"]).success();
+    assert_eq!(effective_history(&env, &repo), true);
+}

@@ -225,7 +225,7 @@ INSERT INTO mirror_sources VALUES(1,1,'source-alias','native-session','claude','
     file
 }
 pub fn configure_cluster(env: &TestEnv, url: &str) {
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 1\nmodules: {{events: true, todos: false}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: {url}\n")).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 1\nmodules: {{events: false, todos: false}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: {url}\n")).unwrap();
 }
 pub struct Runner(Child);
 impl Drop for Runner {

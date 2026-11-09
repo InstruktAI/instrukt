@@ -28,6 +28,7 @@ The modules:
 blueprint: false
 todos: false
 events: false
+history: true
 ```
 
 Then report.

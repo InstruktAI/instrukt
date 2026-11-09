@@ -256,7 +256,7 @@ fn standing_bind_own_never_reserves_another_project_home() {
         "other",
         &[(
             "instrukt.yaml",
-            "schema_version: 3
+            "schema_version: 4
 project: other
 modules: {events: true}
 "
@@ -304,7 +304,7 @@ fn foreign_reservation(h: &handler::Handler) -> (common::Repo, serde_json::Value
         "other",
         &[(
             "instrukt.yaml",
-            "schema_version: 3\nproject: other\nmodules: {events: true}\n".into(),
+            "schema_version: 4\nproject: other\nmodules: {events: true}\n".into(),
         )],
     );
     documented::sync(env, &other);

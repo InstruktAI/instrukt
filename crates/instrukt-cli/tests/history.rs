@@ -633,3 +633,38 @@ fn a_baseline_v2_position_preserves_loaded_observations_when_adding_the_current_
         3
     );
 }
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn disabled_history_search_preserves_retained_conversations() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    assert_eq!(
+        search(&env, "jewels")["matches"].as_array().unwrap().len(),
+        2
+    );
+    let config = env.instrukt_home().join("instrukt.yaml");
+    let original = std::fs::read_to_string(&config).unwrap().replacen(
+        "schema_version: 1",
+        &format!(
+            "schema_version: {}",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+        1,
+    );
+    std::fs::write(
+        &config,
+        format!("{original}\nmodules: {{history: false}}\n"),
+    )
+    .unwrap();
+    let result = env
+        .run(env.home(), ["history", "search", "jewels"])
+        .failure();
+    insta::assert_snapshot!(String::from_utf8_lossy(&result.get_output().stderr), @"instrukt: the history module is off; switch it on with `modules.history: true` in instrukt.yaml");
+    source.remove_threads();
+    std::fs::write(&config, original).unwrap();
+    assert_eq!(
+        search(&env, "jewels")["matches"].as_array().unwrap().len(),
+        2
+    );
+}

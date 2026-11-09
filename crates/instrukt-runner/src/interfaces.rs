@@ -237,6 +237,8 @@ pub trait Claims: Send + Sync {
 /// `session-continuity`, "Runtime worktree binding").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionBinding {
+    /// Work-owned native placement title; automatic starts retain theirs with the runner request.
+    pub title: Option<String>,
     pub key: String,
     pub session: SessionRef,
     pub worktree: Option<PathBuf>,

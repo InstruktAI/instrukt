@@ -173,6 +173,11 @@ fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
         &["--catch-up", "once"],
     );
 
+    let config_file = project.env.instrukt_home().join("instrukt.yaml");
+    let config = std::fs::read_to_string(&config_file).unwrap();
+    let mut settings: serde_yaml_ng::Value = serde_yaml_ng::from_str(&config).unwrap();
+    settings["modules"]["history"] = false.into();
+    std::fs::write(&config_file, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
     project.env.run(project.env.home(), ["install"]).success();
     let calls = std::fs::read_to_string(stubs.join("calls")).unwrap();
     let registered = registered(&project.env, &calls);

@@ -10,7 +10,7 @@ use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 3;
+pub const CURRENT_SCHEMA_VERSION: u64 = 4;
 
 /// The `blueprint.engine` values that name a shipped adapter: the only
 /// values a project layer may give it. Any other value is a command, which
@@ -645,6 +645,7 @@ pub fn editor_schema() -> serde_json::Value {
         head.extend(std::mem::take(object));
         *object = head;
     }
+    schema["properties"]["modules"]["properties"]["history"]["default"] = json!(true);
     schema
 }
 
@@ -741,7 +742,11 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
     match layer {
         LayerKind::Global => {
             for module in Module::ALL {
-                insert_at(&mut root, &["modules", module.key()], Value::Bool(false));
+                insert_at(
+                    &mut root,
+                    &["modules", module.key()],
+                    Value::Bool(module == Module::History),
+                );
             }
             insert_at(&mut root, &["ticks"], text("on"));
             insert_at(

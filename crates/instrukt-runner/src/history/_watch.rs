@@ -30,6 +30,14 @@ impl Worker {
             .name("history-extraction".into())
             .spawn(move || {
                 loop {
+                    match super::enabled(&home) {
+                        Ok(true) => {}
+                        Ok(false) => return,
+                        Err(error) => {
+                            tracing::error!(event="history_enablement_failed", %error);
+                            return;
+                        }
+                    }
                     if let Err(error) = extract(&home, &env) {
                         tracing::error!(event="history_extract_failed",error=%error);
                     }

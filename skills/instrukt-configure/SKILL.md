@@ -34,10 +34,15 @@ infrastructure readiness.
 
 Keep the developer's existing choices unless their requested outcome changes
 them. Ask only for unresolved facts or intent instrukt cannot supply. Settle
-participating computers, each project's placement, intended module enablement,
+participating computers, each project's placement, intended module enablement (blueprint, todos, events and history),
 the one ingress computer and operator-supplied cluster endpoint. Preserve an
 existing runtime choice; an unset `runner.runtime` stays unset until the
 developer chooses one for runtime-dependent work.
+
+Offer history with its default-on setting like the other modules. Explain that
+local history needs no Redis and merged search independently demands cluster
+Redis, even when events are off. For an explicitly core-only setup, record
+`modules.history: false`; existing history remains stored when disabled.
 
 Prepare one brief for the participating agents containing the agreed facts and
 each computer's intended result. Read existing identities and project paths
@@ -47,7 +52,7 @@ identity discovery surface as a prerequisite instead of inventing an ID.
 - `ingress.computer` is the same existing stable instrukt machine ID everywhere.
   Runtime environment identity and hostname are separate facts.
 - `redis.cluster.url` reaches the same logical database and stream namespace on
-  every event participant. Equivalent URLs and machine-local credential
+  every events or merged-history participant. Equivalent URLs and machine-local credential
   references may differ; verify their common destination and required access.
 - Record project identities and computer-local checkouts as placement facts.
   Ensure ingress holds each source-declaring adopted project, since external
@@ -125,7 +130,7 @@ in the report.
    `instrukt config validate`; read back effective values. Keep already matching
    documents as they are.
 3. For developer-enabled modules, use `instrukt install` to converge demand
-   across adopted projects. `--module todos` or `--module events` can narrow
+   across adopted projects. `--module todos` or `--module events` or `--module history` can narrow
    the requested installation/check scope. Use full convergence for withdrawal
    after disable so remaining projects' demand is counted. An events-disable
    patch removes conflicting source declarations in the same valid patch.

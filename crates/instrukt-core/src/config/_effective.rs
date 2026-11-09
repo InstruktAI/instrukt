@@ -159,8 +159,23 @@ impl Configuration {
     }
 
     /// Read machine-owned Redis settings, resolving credential references for I/O.
-    pub fn redis(&self, env: &Env) -> Result<super::RedisSettings, ConfigError> {
-        super::_redis::settings(self, env)
+    pub fn redis(&self, _env: &Env) -> Result<super::RedisSettings, ConfigError> {
+        super::_redis::settings(self, true)
+    }
+
+    /// Read only the cluster endpoint for modules with no local Redis demand.
+    pub fn cluster_redis(&self) -> Result<super::RedisEndpoint, ConfigError> {
+        Ok(super::_redis::settings(self, false)?.cluster)
+    }
+
+    /// The configured cluster address without resolving unrelated authentication references.
+    pub fn cluster_redis_url(&self) -> Result<Option<String>, ConfigError> {
+        self.redis_raw()
+            .and_then(|r| r.get("cluster"))
+            .and_then(|r| r.get("url"))
+            .and_then(Value::as_str)
+            .map(|url| self.secret_template(url))
+            .transpose()
     }
 
     /// Whether this project explicitly refers to a local Redis endpoint, independently
@@ -304,9 +319,11 @@ impl Configuration {
         Ok(_features::availability(self.runner_runtime()?, features))
     }
 
-    /// Whether `module` is switched on (off by default).
+    /// Whether `module` is switched on (history defaults on; other modules default off).
     pub fn module_enabled(&self, module: Module) -> Result<bool, ConfigError> {
-        Ok(self.bool_at(&["modules", module.key()])?.unwrap_or(false))
+        Ok(self
+            .bool_at(&["modules", module.key()])?
+            .unwrap_or(module == Module::History))
     }
 
     /// The project slug of the project layer, if one takes part.

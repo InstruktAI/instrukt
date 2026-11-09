@@ -22,7 +22,7 @@ expression: "support::redact(&String::from_utf8_lossy(&retry.get_output().stdout
   "role": "planner",
   "attempt": 1,
   "semantic_key": "instrukt:todo:demo/<id 1>:planner:1",
-  "title": "instrukt:todo:demo/<id 1>:planner:1",
+  "title": "planner · native-fallback · instrukt:todo:demo/<id 1>:planner:1",
   "worktree": "[TMP]/team-native-fallback-prepare",
   "branch": "native-fallback/prepare",
   "base": "<commit 1>",

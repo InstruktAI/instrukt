@@ -182,7 +182,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     let mut report = Report::default();
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
-    if request.check && request.module != Some(Module::Events) {
+    if request.check && (request.module.is_none() || request.module == Some(Module::Todos)) {
         for work in &demand.work {
             if let Err(error) =
                 request
@@ -216,7 +216,9 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     {
         report.notices.push(notice);
     }
-    if request.module != Some(Module::Events) || !demand.events.is_empty() {
+    if request.module != Some(Module::History)
+        && (request.module != Some(Module::Events) || !demand.events.is_empty())
+    {
         let required = !demand.projects().is_empty() && global.ticks_enabled()?;
         let projects = demand.projects();
         let tick = _services::tick(request);
@@ -241,17 +243,28 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         }
     }
     if request.module != Some(Module::Todos) {
-        if !demand.events.is_empty() {
+        if (request.module != Some(Module::History) && !demand.events.is_empty())
+            || (request.module != Some(Module::Events) && !demand.history_owned_redis.is_empty())
+        {
             if let Err(error) = _redis::ensure(request, &mut owned, &demand, &mut report) {
                 report.finding("Redis", error);
             }
         } else if demand.redis_references.is_empty()
+            && demand.events.is_empty()
             && let Err(error) =
                 owned.withdraw_named(request, ResourceKind::Redis, demand.complete, &mut report)
         {
             report.finding("Redis", error);
         }
-        if let Err(error) = receiver(request, &mut owned, &demand, &mut report) {
+        if request.module != Some(Module::Events)
+            && !demand.history.is_empty()
+            && let Err(error) = _redis::history(request, &demand.history, &mut report)
+        {
+            report.finding("history Redis", error);
+        }
+        if request.module != Some(Module::History)
+            && let Err(error) = receiver(request, &mut owned, &demand, &mut report)
+        {
             report.finding("receiver", error);
         }
     }

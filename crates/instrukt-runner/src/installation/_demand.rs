@@ -17,6 +17,8 @@ pub(super) struct Demand {
     pub work: Vec<WorkDemand>,
     pub todos: Vec<String>,
     pub events: Vec<String>,
+    pub history: Vec<String>,
+    pub history_owned_redis: Vec<String>,
     pub sources: Vec<SourceDemand>,
     pub complete: bool,
     pub redis_references: Vec<String>,
@@ -39,6 +41,8 @@ pub(super) fn read(
         work: vec![],
         todos: vec![],
         events: vec![],
+        history: vec![],
+        history_owned_redis: vec![],
         sources: vec![],
         complete: true,
         redis_references: Vec::new(),
@@ -81,6 +85,19 @@ pub(super) fn read(
             }
             let todos = config.module_enabled(Module::Todos)?;
             let events = config.module_enabled(Module::Events)?;
+            if config.module_enabled(Module::History)? {
+                demand.history.push(record.project.to_string());
+                if config
+                    .cluster_redis_url()?
+                    .as_deref()
+                    .map(|url| owned_server(url, &home.state_dir().join("redis/redis.sock")))
+                    .transpose()?
+                    .unwrap_or(false)
+                {
+                    demand.history_owned_redis.push(record.project.to_string());
+                    demand.redis_references.push(record.project.to_string());
+                }
+            }
             let repository = if todos {
                 demand.todos.push(record.project.to_string());
                 if home.is_inspection() && current_project.as_ref() != Some(&record.project) {
@@ -142,7 +159,7 @@ pub(super) fn read(
     Ok(demand)
 }
 
-fn owned_server(url: &str, owned: &std::path::Path) -> anyhow::Result<bool> {
+pub(super) fn owned_server(url: &str, owned: &std::path::Path) -> anyhow::Result<bool> {
     use redis::IntoConnectionInfo;
     let info = url.into_connection_info().map_err(|_| {
         anyhow::anyhow!("invalid local Redis reference; repair it before withdrawal")

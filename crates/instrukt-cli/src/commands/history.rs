@@ -42,6 +42,11 @@ enum Command {
     },
 }
 pub fn run(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let config = instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
+    anyhow::ensure!(
+        config.module_enabled(instrukt_core::config::Module::History)?,
+        "the history module is off; switch it on with `modules.history: true` in instrukt.yaml"
+    );
     execute(args, ctx).map_err(|error| {
         tracing::error!(event="history_command_failed",error=%format!("{error:#}"));
         let detail = error

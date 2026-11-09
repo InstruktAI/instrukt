@@ -18,12 +18,32 @@ pub(super) fn ensure(
 ) -> anyhow::Result<()> {
     let config = Configuration::load_global(request.home)?;
     // A missing cluster prerequisite is independent of a local setup. Never pick a cluster host.
-    let settings = config.redis(request.env)?;
+    let events_required =
+        !demand.events.is_empty() && request.module != Some(instrukt_core::config::Module::History);
+    let settings = if events_required {
+        config.redis(request.env)?
+    } else {
+        let cluster = config.cluster_redis()?;
+        config::RedisSettings {
+            local: Some(cluster.clone()),
+            cluster,
+        }
+    };
+    let mut projects = if events_required {
+        demand.events.clone()
+    } else {
+        Vec::new()
+    };
+    projects.extend(demand.history_owned_redis.clone());
+    projects.sort();
+    projects.dedup();
     let redis_dir = request.home.state_dir().join("redis");
     let local_owned = settings
         .local
         .as_ref()
-        .is_none_or(|e| e.url == format!("unix://{}", redis_dir.join("redis.sock").display()));
+        .map(|endpoint| super::_demand::owned_server(&endpoint.url, &redis_dir.join("redis.sock")))
+        .transpose()?
+        .unwrap_or(true);
     if local_owned {
         let local = (|| -> anyhow::Result<()> {
             anyhow::ensure!(
@@ -53,7 +73,7 @@ pub(super) fn ensure(
             let conf = redis_dir.join("redis.conf");
             let acl = redis_dir.join("users.acl");
             let expected_acl = format!(
-                "user default off\nuser instrukt on #{hash} ~instrukt:* +@stream +@scripting +ping +info +command +acl|whoami +acl|dryrun +get +set +del +exists +expire +ttl +type\n"
+                "user default off\nuser instrukt on #{hash} ~instrukt:* +@stream +@scripting +ping +info +command +acl|whoami +acl|dryrun +get +set +del +exists +expire +ttl +type +rpush +blpop +multi +exec +select\n"
             );
             let quote = |p: &Path| {
                 format!(
@@ -74,16 +94,15 @@ pub(super) fn ensure(
                 std::fs::create_dir_all(&redis_dir)?;
                 std::fs::set_permissions(&redis_dir, std::fs::Permissions::from_mode(0o700))?;
             }
-            for (file, expected) in [(&conf, &expected_conf), (&acl, &expected_acl)] {
-                owned.retained_file(request, file, expected)?;
-            }
-            let definition = _services::redis(request, &server, &conf);
+            owned.retained_file(request, &conf, &expected_conf)?;
+            let mut definition = _services::redis(request, &server, &conf);
+            owned.redis_acl(request, &mut definition, &acl, expected_acl)?;
             owned.reconcile(
                 request,
                 &definition,
                 true,
                 demand.complete,
-                &demand.events,
+                &projects,
                 report,
             )?;
             // Authenticate and check the private socket before recording its endpoint.
@@ -132,7 +151,7 @@ pub(super) fn ensure(
                 ResourceKind::LocalRedis,
                 Disposition::ExternallySupplied,
                 vec![],
-                &demand.events,
+                &projects,
                 format!("verified cluster fallback; local Redis remains unconfigured: {error}"),
             );
         }
@@ -141,9 +160,12 @@ pub(super) fn ensure(
             ResourceKind::LocalRedis,
             Disposition::ExternallySupplied,
             vec![],
-            &demand.events,
+            &projects,
             "operator-owned local Redis: configuration and service unchanged",
         );
+    }
+    if !events_required {
+        return Ok(());
     }
     let config = Configuration::load_global(request.home)?;
     let settings = config.redis(request.env)?;
@@ -213,7 +235,7 @@ fn private_socket(endpoint: &config::RedisEndpoint) -> anyhow::Result<()> {
     );
     Ok(())
 }
-fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
+fn server_version(connection: &mut redis::Connection) -> anyhow::Result<()> {
     let server: redis::InfoDict =
         redis::cmd("INFO")
             .arg("server")
@@ -238,6 +260,10 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
         major >= 7,
         "Redis 7.0 or later is required (server reports {version}); upgrade Redis before installation"
     );
+    Ok(())
+}
+fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
+    server_version(connection)?;
     let commands = [
         "XADD",
         "XGROUP",
@@ -527,4 +553,45 @@ pub(super) fn dead_letters(request: &Request<'_>) -> anyhow::Result<Vec<Value>> 
         }
     }
     Ok(result)
+}
+
+/// History requires cluster request/reply only; event groups and local services are separate demand.
+pub(super) fn history(
+    request: &Request<'_>,
+    projects: &[String],
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let endpoint = Configuration::load_global(request.home)?.cluster_redis()?;
+    let mut connection = connect(&endpoint)?;
+    server_version(&mut connection)?;
+    let user: String = redis::cmd("ACL").arg("WHOAMI").query(&mut connection)?;
+    for args in [
+        vec!["RPUSH", "instrukt:history:requests:check", "check"],
+        vec!["BLPOP", "instrukt:history:requests:check", "1"],
+        vec!["RPUSH", "instrukt:history:reply:check", "check"],
+        vec!["BLPOP", "instrukt:history:reply:check", "1"],
+        vec!["EXPIRE", "instrukt:history:reply:check", "120"],
+        vec!["EXPIRE", "instrukt:history:requests:check", "120"],
+        vec!["SET", "instrukt:history:ready:check", "1", "EX", "5"],
+        vec!["MULTI"],
+        vec!["EXEC"],
+    ] {
+        let answer: String = redis::cmd("ACL")
+            .arg("DRYRUN")
+            .arg(&user)
+            .arg(args)
+            .query(&mut connection)?;
+        anyhow::ensure!(
+            answer == "OK",
+            "Redis ACL denies history request/reply; grant history transport permissions"
+        );
+    }
+    report.resource(
+        ResourceKind::Redis,
+        Disposition::ExternallySupplied,
+        vec![],
+        projects,
+        "cluster Redis verified for history merged search; events not required",
+    );
+    Ok(())
 }

@@ -41,6 +41,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | core | docs, configuration, publication, repository, specs | Always on; independent of optional modules |
 | blueprint | blueprint | Switchable; uses core repository information and a graph engine |
 | todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
+| history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
 
 Distribution is in no module: it is release tooling and the skill beside
@@ -135,7 +136,7 @@ This map records the relationships across all bounded contexts.
 
 ## Known caveats
 
-- One build run covers every module in order — core, blueprint, todos, events — each with its own acceptance.
+- One build run covers every module in order — core, blueprint, todos, events, history — each with its own acceptance.
 - Enabled events use tick-read sources and opt-in signed webhook ingress
   under the runner event contracts. Reactions activate agents, never script-run
   event actions or event-bound maintenance.

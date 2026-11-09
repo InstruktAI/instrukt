@@ -56,7 +56,7 @@ coordination carries references and verification findings.
 
 The skill reads configuration before asking questions and asks the developer
 only for unresolved intent or facts instrukt cannot answer: participating
-computers, desired module enablement, ingress choice, operator-supplied cluster
+computers, desired module enablement (blueprint, todos, events and default-on history), ingress choice, operator-supplied cluster
 endpoint, project placement and an unset runtime choice. Existing choices are
 kept unless the requested outcome changes them. An unset runtime means no
 runtime; the agent's host does not select one.
@@ -75,8 +75,12 @@ and `instrukt config validate [--global]` to record and check only the intended
 differences. Missing layers use `instrukt config init [--global]`. A stale
 revision requires a fresh read and recomputed difference.
 
-Only developer-enabled modules authorize their infrastructure. After recording
-desired settings, the local agent uses `instrukt install [--module todos|events]`
+Offer history like the other modules, explaining its default-on setting and
+independent cluster Redis demand for merged search. A core-only setup explicitly
+disables history. Local history search needs no Redis.
+
+Only enabled modules authorize their infrastructure. After recording
+desired settings, the local agent uses `instrukt install [--module todos|events|history]`
 to converge demanded infrastructure, then `instrukt install --check` with the
 same scope and relevant `instrukt ticks status` / `instrukt events status`.
 Disabled-module withdrawal uses the installation contract's full demand read.

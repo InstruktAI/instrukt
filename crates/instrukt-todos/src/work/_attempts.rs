@@ -260,6 +260,7 @@ pub struct AttemptResolution<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriverPlacement {
+    pub title: String,
     pub session: SessionRef,
     pub key: String,
     pub worktree: PathBuf,
@@ -423,7 +424,10 @@ impl Work {
             role: role.clone(),
             attempt: number,
             semantic_key: key.clone(),
-            title: key.clone(),
+            title: instrukt_runner::runtime::thread_title(
+                &format!("{role} · {}", record.slug),
+                &key,
+            ),
             worktree: canonical(&path)?,
             branch: branch.clone(),
             base: head(&path, "HEAD")?,
@@ -815,6 +819,7 @@ pub(super) fn readiness(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
+    pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection: Option<instrukt_core::config::AgentSelection>,
     pub key: String,
@@ -925,6 +930,12 @@ impl Work {
                     number,
                 )
             });
+        let title = existing
+            .and_then(|b| b.attempt.native_placement.as_ref())
+            .map(|p| p.title.clone())
+            .unwrap_or_else(|| {
+                instrukt_runner::runtime::thread_title(&format!("{role} · {todo}"), &key)
+            });
         let already_bound = in_workspace
             && existing.is_some_and(|b| {
                 b.session.is_some()
@@ -940,6 +951,7 @@ impl Work {
             })?;
             if !in_workspace
                 || &proof.session != caller
+                || (proof.title != title && proof.title != key)
                 || proof.key != key
                 || proof.branch != branch
                 || proof.source.trim().is_empty()
@@ -963,7 +975,7 @@ impl Work {
             true
         } else if in_workspace {
             return Err(WorkError::refused(
-                "Git cwd alone does not bind an orchestrator; supply --placement-evidence with native session, key, recorded worktree, branch, head and source",
+                "Git cwd alone does not bind an orchestrator; supply --placement-evidence with native session, key, title, recorded worktree, branch, head and source",
             ));
         } else {
             false
@@ -1048,6 +1060,7 @@ impl Work {
             native_selection(&s, &s.items[index].record, procedure.as_deref())?
         };
         Ok(Some(WorkspaceEntry {
+            title,
             selection,
             key,
             from,

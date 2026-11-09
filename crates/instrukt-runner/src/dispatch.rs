@@ -286,7 +286,13 @@ fn dispatch_one(
             worktree,
         } => (key, creation, None, worktree),
     };
+    let label = if occurrence.is_some() {
+        format!("task · {todo}")
+    } else {
+        format!("{bind_role} · {todo}")
+    };
     let request = StartRequest {
+        label: &label,
         now: cx.now,
         invocation: cx.invocation,
         creation,
@@ -298,7 +304,12 @@ fn dispatch_one(
         from: placement.as_ref().map(|p| p.from.as_str()),
     };
     let started = match existing {
-        Some(binding) => sessions.followup(&binding.session, binding.worktree.as_deref(), &request),
+        Some(binding) => sessions.followup(
+            &binding.session,
+            binding.worktree.as_deref(),
+            binding.title.as_deref(),
+            &request,
+        ),
         None => sessions.start(&order, &request),
     };
     let started = match started {
@@ -336,6 +347,7 @@ fn dispatch_one(
         }
     };
     let binding = SessionBinding {
+        title: None,
         key: started.key.clone(),
         session: started.session.clone(),
         worktree: started.worktree,

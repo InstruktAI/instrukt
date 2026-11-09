@@ -1532,7 +1532,7 @@ fn older_remote_schema_converts_without_losing_retained_evidence() {
         "log",
         "continued after conversion",
     ]);
-    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 2);
+    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 3);
     insta::assert_snapshot!(
         "converted-schema-evidence",
         project.ok(["artifacts", "read", "schema-change", "input"])
@@ -2001,4 +2001,45 @@ fn an_empty_projects_cockpit_failure_is_a_project_reflection_failure() {
     );
     assert_eq!(project.github.project_workflows("acme", 1), workflows);
     insta::assert_json_snapshot!("empty-project-cockpit-recovered", cockpit());
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR10
+#[test]
+fn old_remote_native_placement_is_converted_before_record_mutation() {
+    let project = Project::new();
+    project.create("legacy-driver", "change", INTENT);
+    let mut key = String::new();
+    seed_revision(&project.github, |record| {
+        record["schema"] = 2.into();
+        let mut placement: Value = serde_json::from_str(
+            &include_str!("fixtures/native-placement-v14.json")
+                .replace("__WORKTREE__", project.repo.path().to_str().unwrap())
+                .replace("__HEAD__", &project.repo.head()),
+        )
+        .unwrap();
+        key = instrukt_runner::keyed::todo_key(
+            "demo",
+            record["id"].as_str().unwrap(),
+            "prepare-orchestrator",
+            1,
+        );
+        placement["key"] = key.clone().into();
+        record["bindings"] = serde_json::json!([{"role":"prepare-orchestrator","session":placement["session"],"worktree":placement["worktree"],"runtime":"t3","native_placement":placement,"assignment":"driver","attempt":1,"semantic_key":key}]);
+    });
+    project.ok([
+        "artifacts",
+        "write",
+        "legacy-driver",
+        "log",
+        "Continue after upgrade.",
+    ]);
+    let current = latest_envelope(&project.github);
+    insta::assert_snapshot!(
+        "converted-old-native-placement-title",
+        redact(
+            current["record"]["bindings"][0]["native_placement"]["title"]
+                .as_str()
+                .unwrap()
+        )
+    );
 }
