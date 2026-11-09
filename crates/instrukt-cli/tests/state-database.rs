@@ -174,7 +174,7 @@ fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_intr
 fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
     let file = env.instrukt_home().join("state/instrukt.db");
     let db = Connection::open(&file).unwrap();
-    db.execute_batch("DROP TABLE history_projection_records; DROP TABLE history_source_positions; DROP TABLE history_sources; DROP TABLE history_conversations; DROP TABLE history_fts; DROP TABLE agent_quota; PRAGMA user_version=4;")
+    db.execute_batch("DROP TABLE history_projection_records; DROP TABLE history_source_positions; DROP TABLE history_sources; DROP TABLE history_conversations; DROP TABLE history_fts; DROP TABLE agent_quota; DROP TABLE conversation_relay_positions; DROP TABLE conversation_links; PRAGMA user_version=4;")
         .unwrap();
     let checkout = env.git_repo("retained");
     let old = serde_json::json!({"key":"retained-key","brief":"retained-input","checkout":checkout.path(),"worktree":null,"selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});

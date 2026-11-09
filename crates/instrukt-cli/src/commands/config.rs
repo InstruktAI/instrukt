@@ -85,7 +85,14 @@ pub fn run(args: ConfigArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 entry.order = entry.order.take().or_else(|| agents.default.order.clone());
                 entry.tier = entry.tier.or(agents.default.tier);
             }
-            ctx.out.json(&agents)?;
+            let mut inspected = serde_json::to_value(&agents)?;
+            for role in agents.roles.keys() {
+                inspected["roles"][role]["effective_grants"] =
+                    serde_json::to_value(agents.capabilities(role)?.grants)?;
+            }
+            inspected["default"]["effective_grants"] =
+                serde_json::to_value(agents.capabilities("default")?.grants)?;
+            ctx.out.json(&inspected)?;
             Ok(ExitCode::SUCCESS)
         }
         ConfigCommand::Patch(args) => patch(args, ctx),

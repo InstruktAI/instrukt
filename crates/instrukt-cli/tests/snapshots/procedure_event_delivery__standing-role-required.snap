@@ -3,4 +3,4 @@ source: crates/instrukt-cli/tests/procedure-event-delivery.rs
 assertion_line: 725
 expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
 ---
-instrukt: standing assignment needs a declared role
+instrukt: standing assignment needs a resolved published role; recover its initialization evidence or publication

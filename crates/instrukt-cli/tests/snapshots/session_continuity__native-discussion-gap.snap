@@ -3,4 +3,4 @@ source: crates/instrukt-cli/tests/session-continuity.rs
 assertion_line: 116
 expression: "String::from_utf8_lossy(&out.get_output().stdout)"
 ---
-Use a supported native discussion capability for the requested collaboration, preserving each participant's attribution. Report an unavailable capability; the linked-conversation mechanism remains unsettled and no instrukt forwarding route is supplied.
+A discussion uses two runner-owned linked conversations. The long-lived instrukt runner relays finished human and agent contributions with original attribution and supports closure for both members. Link opening and closure currently have no specified user/runtime entrypoint: report that gap to the dispatcher. Focused roles report in their own output/artifacts; workers report upward through native child-result delivery.

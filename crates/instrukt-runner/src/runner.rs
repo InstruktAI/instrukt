@@ -39,6 +39,8 @@ const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error(transparent)]
+    Links(#[from] crate::links::LinkError),
+    #[error(transparent)]
     History(#[from] crate::history::HistoryError),
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
@@ -174,9 +176,24 @@ pub fn run(
         }
         None => None,
     };
+    let relay = match Configuration::load_global(cx.home)?.runner_runtime()? {
+        Some(_) => match crate::links::Worker::start(cx.home, cx.env) {
+            Ok(worker) => Some(worker),
+            Err(error) => {
+                crate::links::record_failure(cx.home, &error);
+                None
+            }
+        },
+        None => None,
+    };
     let mut history_search = None;
     tracing::info!(event = "runner_started");
     loop {
+        if let Some(relay) = &relay
+            && let Err(error) = relay.check()
+        {
+            crate::links::record_failure(cx.home, &error);
+        }
         let considered = considered_projects(cx.home)?;
         if platform.is_none()
             && let Some(prepared) = event_platform(cx, &state, &considered)?

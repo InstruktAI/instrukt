@@ -1258,6 +1258,8 @@ struct ProcedureState {
     repo_path: Option<PathBuf>,
     root: bool,
     role: Option<String>,
+    subscribed: bool,
+    explicit_role: bool,
     required: Vec<SnippetId>,
 }
 
@@ -1268,6 +1270,8 @@ fn state(id: &SnippetId, version: &Version, repo_path: Option<PathBuf>) -> Proce
         repo_path,
         root: entry.is_root(),
         role: entry.role.clone(),
+        subscribed: !entry.subscriptions.is_empty(),
+        explicit_role: version.frontmatter().raw.contains_key("role"),
         required: snippet_targets(version),
     }
 }
@@ -1393,7 +1397,9 @@ fn check_procedures(
 ) -> Result<(), DocsError> {
     let mut by_role: BTreeMap<&str, BTreeSet<&SnippetId>> = BTreeMap::new();
     for s in states {
-        if let Some(role) = &s.role {
+        if let Some(role) = &s.role
+            && s.explicit_role
+        {
             by_role.entry(role.as_str()).or_default().insert(&s.id);
         }
     }
@@ -1463,7 +1469,7 @@ fn check_procedures(
             .into_iter()
             .map(|r| r.as_str().to_owned())
             .collect();
-        for s in states {
+        for s in states.iter().filter(|s| !s.subscribed) {
             let (Some(role), Some(path)) = (&s.role, &s.repo_path) else {
                 continue;
             };
@@ -1612,7 +1618,7 @@ fn check_workflows(
         }
         let roles: BTreeSet<&str> = declarations.roles.iter().map(|r| r.as_str()).collect();
         let prefix = format!("{domain}/");
-        for s in states {
+        for s in states.iter().filter(|s| !s.subscribed) {
             let (Some(role), Some(path)) = (&s.role, &s.repo_path) else {
                 continue;
             };

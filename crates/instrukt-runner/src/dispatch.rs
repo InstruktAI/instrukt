@@ -232,7 +232,8 @@ fn dispatch_one(
     // A task's session learns which scheduled occurrence it executes, so
     // its start and outcome stamps can carry that occurrence.
     let brief = occurrence.map(|occurrence| format!("occurrence: {occurrence}"));
-    let prepared = match launch::prepare(procedure, Some(todo.as_str()), brief.as_deref()) {
+    let prepared = match launch::prepare(cx.home, procedure, Some(todo.as_str()), brief.as_deref())
+    {
         Ok(prepared) => prepared,
         Err(err) => {
             tracing::warn!(event = "launch_refused", project = %project.slug, todo = %todo, error = %err);

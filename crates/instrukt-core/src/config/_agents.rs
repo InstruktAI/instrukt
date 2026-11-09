@@ -50,13 +50,14 @@ pub enum HarnessKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoleSelection {
     pub order: Option<Vec<ProfileName>>,
     pub tier: Option<Tier>,
-    // These values belong to the roles/App slice; selection neither parses
-    // nor interprets their contents, and retains the single shared role map.
-    #[serde(flatten)]
-    pub other: BTreeMap<String, serde_yaml_ng::Value>,
+    pub class: crate::capabilities::RoleClass,
+    pub can: Vec<crate::capabilities::Allowance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_app: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,8 +89,8 @@ pub struct Agents {
     #[serde(default)]
     pub roles: BTreeMap<String, RoleSelection>,
     pub profiles: BTreeMap<ProfileName, Profile>,
-    #[serde(default, skip_serializing_if = "serde_yaml_ng::Value::is_null")]
-    pub bundles: serde_yaml_ng::Value,
+    #[serde(default)]
+    pub bundles: BTreeMap<String, Vec<crate::capabilities::Grant>>,
 }
 
 fn invalid(message: impl Into<String>) -> ConfigError {
@@ -124,13 +125,6 @@ impl Agents {
             return Err(invalid("default requires order and tier"));
         }
         for entry in std::iter::once(&result.default).chain(result.roles.values()) {
-            if entry
-                .other
-                .keys()
-                .any(|key| !matches!(key.as_str(), "class" | "can" | "github_app"))
-            {
-                return Err(invalid("unknown role selection field"));
-            }
             if let Some(order) = &entry.order
                 && (order.is_empty() || order.iter().any(|p| !result.profiles.contains_key(p)))
             {
@@ -138,6 +132,10 @@ impl Agents {
                     "orders must be nonempty and reference declared profiles",
                 ));
             }
+        }
+        result.capabilities("default")?;
+        for role in result.roles.keys() {
+            result.capabilities(role)?;
         }
         for (name, profile) in &result.profiles {
             for tier in [Tier::Light, Tier::Standard, Tier::Strong, Tier::Premium] {
@@ -150,6 +148,34 @@ impl Agents {
             }
         }
         Ok(result)
+    }
+
+    pub fn capabilities(
+        &self,
+        role: &str,
+    ) -> Result<crate::capabilities::Capabilities, ConfigError> {
+        use crate::capabilities::{Allowance, Capabilities};
+        let entry = self.roles.get(role).unwrap_or(&self.default);
+        let mut grants = std::collections::BTreeSet::new();
+        for allowance in &entry.can {
+            match allowance {
+                Allowance::Grant(grant) => {
+                    grants.insert(*grant);
+                }
+                Allowance::Bundle(name) => {
+                    let bundle = self
+                        .bundles
+                        .get(name)
+                        .ok_or_else(|| invalid(format!("unknown capability bundle `{name}`")))?;
+                    grants.extend(bundle);
+                }
+            }
+        }
+        Ok(Capabilities {
+            role: role.into(),
+            class: entry.class,
+            grants,
+        })
     }
 
     /// Deploy or upgrade defaults, retaining edits against the last deployed

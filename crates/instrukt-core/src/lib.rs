@@ -24,3 +24,5 @@ pub mod state_db;
 pub mod subscription;
 
 pub mod process;
+
+pub mod capabilities;

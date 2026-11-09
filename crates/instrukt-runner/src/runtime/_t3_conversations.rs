@@ -301,6 +301,8 @@ struct Row {
 struct Position {
     version: u8,
     loaded: BTreeMap<String, Fingerprint>,
+    #[serde(default)]
+    observed: std::collections::BTreeSet<String>,
     after: Option<String>,
 }
 impl Default for Position {
@@ -308,6 +310,7 @@ impl Default for Position {
         Self {
             version: 2,
             loaded: BTreeMap::new(),
+            observed: Default::default(),
             after: None,
         }
     }
@@ -470,6 +473,7 @@ impl ConversationSource for T3Conversations {
     ) -> Result<ConversationChanges, SourceError> {
         validate(&self.path, &self.location)?;
         let mut state = migrate_position(position)?;
+        state.observed.extend(state.loaded.keys().cloned());
         let mut cache = self.pass.borrow_mut();
         if cache
             .as_ref()
@@ -493,9 +497,11 @@ impl ConversationSource for T3Conversations {
             })
             .map(|(id, fp)| (id.clone(), fp.clone()));
         if let Some((thread, expected)) = next {
+            state.observed.insert(thread.clone());
             let mut fingerprint = Fingerprint::default();
             let mut records = Vec::new();
             let mut streaming = false;
+            let mut incomplete_runs = std::collections::BTreeSet::new();
             for projection in PROJECTIONS {
                 let mut after = String::new();
                 loop {
@@ -508,6 +514,8 @@ impl ConversationSource for T3Conversations {
                         fingerprint.add(&row.fingerprint);
                         if row.streaming {
                             streaming = true;
+                            incomplete_runs
+                                .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
                         } else {
                             records.push(normalized(projection, row)?);
                         }
@@ -530,14 +538,24 @@ impl ConversationSource for T3Conversations {
                 records,
                 position,
                 has_more: true,
+                incomplete_runs: incomplete_runs.into_iter().collect(),
+                missing: Vec::new(),
             });
         }
+        let missing = state
+            .observed
+            .iter()
+            .filter(|thread| !pass.fingerprints.contains_key(*thread))
+            .cloned()
+            .collect();
         state.after = None;
         *cache = None;
         Ok(ConversationChanges {
             records: Vec::new(),
             position: SourcePosition(serde_json::to_value(state)?),
             has_more: false,
+            incomplete_runs: Vec::new(),
+            missing,
         })
     }
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError> {

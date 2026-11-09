@@ -98,9 +98,11 @@ header-looking text they quote. Reading discipline is
 ### Stream reader and durable progress
 
 The relay is one more independent reader hosted by the existing long-lived
-`instrukt run`. Its T3 adapter follows each linked thread through
-`orchestration.subscribeThread` (`subscribeThread`), using orchestration read
-scope. Native target delivery uses the adapter's supported input operation;
+`instrukt run`. Its T3 adapter reads the runtime's durable conversation source: the same
+read-only T3 projection-database reader, per-conversation fingerprints and
+native database change notifications used by history. Each link is an
+independent consumer with its own opaque source position; it never borrows
+history's extraction position. This reader needs no T3 session token. Native target delivery uses the adapter's supported input operation;
 read scope alone grants no send authority. Redis is transport only and owns
 neither turns, link membership nor relay decisions. There is no separate relay
 process, agent relay tool, scheduled tick relay or periodic fallback.
@@ -115,8 +117,8 @@ rendered timestamps. A pending range and its source identities survive restart;
 a directional delivery position advances only after native acceptance, or a
 recorded empty-content disposition.
 
-Ordinary runner startup reopens active subscriptions from retained positions
-and resumes unfinished ranges. T3 replay or snapshots are interpreted through
+Ordinary runner startup catches up active links from retained positions
+and resumes unfinished ranges. Native projection changes and completed-run/message evidence are interpreted through
 the adapter without treating an observed high-water position as proof of
 completed delivery. Missing source content, an unsupported stream shape or an
 unresolved handover is a visible failure; no fabricated transcript or successful
@@ -127,7 +129,7 @@ checks remain at the runtime boundary.
 pending/failed handovers and stream failures. Logs carry the link, source,
 target and native turn/position references with the failure cause, without
 conversation bodies or credentials. A blocked relay does not block unrelated
-runner readers. Stream reconnection and runner restart continue the same
+runner readers. Native change notifications and runner restart continue the same
 recorded work; no second timer-driven delivery path is introduced.
 
 ## Use cases
@@ -160,6 +162,7 @@ And the developer can continue separately in either conversation
 - Target acceptance is not target consumption. An interrupted handover with no
   native acceptance evidence remains visibly uncertain; this contract does not
   claim exactly-once delivery across an ambiguous external send.
+- Link opening and closure are defined at the runner API; the user/runtime entrypoint for invoking them is not specified. `runtime.discuss` must report that entrypoint gap rather than invent a native T3 linking operation.
 - Continuous relay requires `instrukt run`. A scheduled-only computer's ticks
   do not substitute for the stream reader.
 
@@ -171,4 +174,4 @@ And the developer can continue separately in either conversation
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [general/policy/message-identity-headers](../../../../general/policy/message-identity-headers.md)
 - [general/policy/no-output-turn](../../../../general/policy/no-output-turn.md)
-- T3 source: `packages/contracts/src/orchestrationV2.ts`, `apps/server/src/ws.ts`, `apps/server/src/auth/RpcAuthorization.ts` and `packages/client-runtime/src/state/threads.ts` in https://github.com/pingdotgg/t3code — stream schema, replay/snapshot behavior, authorization and native resumed-reader usage.
+- T3 source: the projection-database reader and source-shape checks in the runtime adapter; native sends use the existing T3 host CLI adapter.

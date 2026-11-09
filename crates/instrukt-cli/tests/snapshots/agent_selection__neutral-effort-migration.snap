@@ -9,7 +9,10 @@ expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().st
       "personal",
       "work"
     ],
-    "tier": "standard"
+    "tier": "standard",
+    "class": "agent",
+    "can": [],
+    "effective_grants": []
   },
   "roles": {
     "builder": {
@@ -18,11 +21,17 @@ expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().st
         "personal"
       ],
       "tier": "strong",
+      "class": "focused",
       "can": [
         "read"
       ],
-      "class": "focused",
-      "github_app": "author"
+      "github_app": "author",
+      "effective_grants": [
+        {
+          "action": "docs-read",
+          "scope": "any"
+        }
+      ]
     }
   },
   "profiles": {
@@ -90,5 +99,13 @@ expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().st
         }
       ]
     }
+  },
+  "bundles": {
+    "read": [
+      {
+        "action": "docs-read",
+        "scope": "any"
+      }
+    ]
   }
 }

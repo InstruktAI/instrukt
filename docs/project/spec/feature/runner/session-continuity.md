@@ -36,16 +36,15 @@ creates no replacement session identity.
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
-| `conversation_source` | Optional durable changes since an opaque source position: normalized conversations/messages and native records, native ids and parent links, roles, available timestamps, completed-turn evidence and the next position; also supplies a native change-notification subscription. | History extraction and other conversation consumers, without owning their storage, indexing or relay behavior. |
+| `conversation_source` | Optional durable changes since an opaque source position: normalized conversations/messages and native records, native ids and parent links, roles, available timestamps, completed-turn evidence and the next position; also supplies a native change-notification subscription. | History extraction and the independent conversation-link relay, without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
-| `subscribe_thread` | Native thread reference and retained source position; yields recorded thread updates with native completion and replay/snapshot evidence, or reports unsupported. | Long-lived runner conversation-link reader; link membership and relay decisions remain runner-owned. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended CLI adapter lacks attachment and effort/options flags. Agent workflow requirements use typed native capability metadata;
 unattended consumers use adapter capabilities. Conversation links use the
 runner-owned contract in `project/instrukt/spec/feature/runner/conversation-links`
-and require supported thread streams and native input delivery. Notification and
+and require the durable conversation source with native change notifications and native input delivery. Notification and
 agent/model selection retain their optional capability contracts.
 Availability information, when the runtime supplies it, is adapter metadata;
 there are no configurable `available` or `model` commands. A
@@ -58,6 +57,8 @@ effective role (declared or `event-handler`), attendance and interruptibility
 facts beside its system-origin loader. Role-aware help and briefing use
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`; the binding's
 recorded role/home/placement, not native provider identity, resolves its scope.
+Native child reservations also retain their dispatcher reference; later claim
+changes do not rewrite that relationship.
 After loss of local binding caches, semantic-key discovery recovers those fixed
 facts through the selected adapter's supported assignment-evidence capability
 with native provenance before reuse. Missing or
@@ -152,7 +153,7 @@ adapter verb templates.
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
-| Conversation links | `subscribe_thread` and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
+| Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Enabling a module without a selected runtime, or with its native/adapter path
@@ -163,7 +164,7 @@ never a reason to select another adapter or create a replacement session.
 Enablement reads the selected workflow's typed `requires` declaration under
 `project/instrukt/spec/feature/workflow/workflow-definition`; it does not infer
 requirements from action prose. Missing steering is a supported degradation,
-not an enablement failure. Conversation links rely on T3's thread stream and
+not an enablement failure. Conversation links read T3's durable projection database without a session token and use
 native input delivery, not on a CLI link command. Notification remains
 unavailable on T3's published CLI; instrukt does not rebuild it.
 
@@ -368,7 +369,7 @@ instruction prose is a separate configuration surface.
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search. |
 | Recover keyed identity | `t3 thread list --project <checkout> --json`; top-level array entries carry `threadId`, `projectId`, `title`, `status`, `link`, `providerInstanceId`, `model`, `settled`, `snoozed`, and timestamps. `settled` alone does not make a thread gone. |
-| Linked-thread stream | The adapter uses T3's `orchestration.subscribeThread` under orchestration read scope for runner-owned relay, as specified in `project/instrukt/spec/feature/runner/conversation-links`; native CLI linking is not required. |
+| Linked-thread source | The adapter reads the T3 projection database read-only, with per-conversation fingerprints and native database change notifications, as history does. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 
 T3 project listing includes settled threads and supplies no server-side time

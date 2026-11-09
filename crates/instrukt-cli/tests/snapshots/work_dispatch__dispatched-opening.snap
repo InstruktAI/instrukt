@@ -2,7 +2,13 @@
 source: crates/instrukt-cli/tests/work-dispatch.rs
 expression: "project.rt.opening(\"s1\")"
 ---
+[Instrukt Assignment]
 Run `instrukt docs get acme/procedure/prepare-overview --closure` and execute that procedure.
 
 slug: tidy-imports
 $ARGUMENTS: tidy-imports
+[/Instrukt Assignment]
+[Instrukt Assignment]
+Resolved role capabilities: role: prepare-orchestrator; class: agent; grants: docs-read:any, docs-write:own, todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, todo-orchestration:own, assignment-write:own, session-observe:own, session-recover:own, standing-bind:own, agents-read:any, config-read:any, repository-read:any, code-commit:own, code-check:any, eval-read:any, events-read:any, installation-read:any
+Assignment scope: the fixed todo, home and workspace evidence supplied with this assignment. Object claims, phase and writer constraints apply.
+[/Instrukt Assignment]

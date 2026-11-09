@@ -305,7 +305,7 @@ impl<'c> Sessions<'c> {
             selection_evidence: None,
             checkout,
             key,
-            brief: request.message.into(),
+            brief: if crate::envelopes::segment(request.message).iter().all(|span| matches!(span, crate::envelopes::Span::Control) || matches!(span, crate::envelopes::Span::Ordinary(text) if text.trim().is_empty())) { request.message.into() } else { crate::envelopes::Control::Assignment.frame(request.message) },
             worktree,
         };
         Ok((input, project))

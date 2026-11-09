@@ -3,6 +3,7 @@ source: crates/instrukt-cli/tests/session-continuity.rs
 expression: "support::redact(&String::from_utf8_lossy(&retry.get_output().stdout).replace(crew.project.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
 ---
 {
+  "dispatcher": "t3:lead-1",
   "selection": {
     "profile": "codex",
     "kind": "codex",
@@ -15,7 +16,7 @@ expression: "support::redact(&String::from_utf8_lossy(&retry.get_output().stdout
   },
   "runtime": "t3",
   "dispatch_allowed": true,
-  "brief": "Run `instrukt docs get crew/procedure/plan --closure` and execute that procedure.\n\nslug: native-fallback\n$ARGUMENTS: native-fallback\n\nRetain this original brief.\n",
+  "brief": "[Instrukt Assignment]\nRun `instrukt docs get crew/procedure/plan --closure` and execute that procedure.\n\nslug: native-fallback\n$ARGUMENTS: native-fallback\n\nRetain this original brief.\n[/Instrukt Assignment]\n[Instrukt Assignment]\nResolved role capabilities: role: planner; class: agent; grants: docs-read:any, docs-write:any, todo-read:any, todo-write:any, artifact-read:any, artifact-write:any, stamp:any, todo-orchestration:any, assignment-write:any, integration:any, session-observe:any, history-read:any, session-recover:any, standing-bind:any, agents-read:any, agents-write:any, config-read:any, config-write:any, secrets-write:any, repository-read:any, repository-write:any, code-commit:any, publication:any, code-check:any, eval-read:any, events-read:any, installation-read:any, installation-write:any, runner-execute:any\nAssignment scope: the fixed todo, home and workspace evidence supplied with this assignment. Object claims, phase and writer constraints apply.\n[/Instrukt Assignment]",
   "procedure": "crew/procedure/plan",
   "args": "native-fallback",
   "role": "planner",

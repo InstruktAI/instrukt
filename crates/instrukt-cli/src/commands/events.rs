@@ -14,6 +14,11 @@ pub struct EventsArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum EventsCommand {
+    /// Inspect conversation links, progress and failed handovers.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
     /// Reserve or bind a deliberate native standing assignment without runtime I/O.
     Bind(BindArgs),
     /// List declared event types and how to inspect their schema. No event
@@ -66,6 +71,16 @@ fn input(source: &str) -> anyhow::Result<String> {
 pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let catalog = EventCatalog::builtin()?;
     match args.command {
+        EventsCommand::Status { json } => {
+            let links = instrukt_runner::links::status(&ctx.home)?;
+            if json {
+                ctx.out.json(&links)?;
+            } else {
+                for link in links {
+                    ctx.out.line(&serde_json::to_string_pretty(&link)?)?;
+                }
+            }
+        }
         EventsCommand::Bind(args) => {
             let config = instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
             let env = crate::wiring::environment(ctx)?;

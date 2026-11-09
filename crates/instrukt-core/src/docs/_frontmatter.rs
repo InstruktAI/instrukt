@@ -153,6 +153,7 @@ fn read_entry(raw: &Mapping) -> ProcedureEntry {
         }
         _ => Vec::new(),
     };
+    let role = role.or_else(|| (!subscriptions.is_empty()).then(|| "event-handler".into()));
     let parameters = get(raw, "parameters")
         .filter(|_| role.is_some())
         .and_then(|v| parse_parameters(v).ok())
@@ -355,9 +356,6 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
     {
         issues.push((FindingCode::RoleInvalid, Some(yaml_text(value))));
     }
-    if subscriptions.is_some() && role.is_none() {
-        issues.push((FindingCode::SubscriptionsWithoutRole, None));
-    }
     if subscriptions.is_some() && !raw.contains_key("subscription_home") {
         issues.push((
             FindingCode::SubscriptionHomeMissing,
@@ -397,7 +395,7 @@ fn check_procedure(raw: &Mapping, issues: &mut Vec<Issue>) {
         }
     }
     if let Some(value) = get(raw, "parameters") {
-        if role.is_none() {
+        if read_entry(raw).role.is_none() {
             issues.push((FindingCode::ParametersWithoutRole, None));
         } else if let Err(why) = parse_parameters(value) {
             issues.push((FindingCode::ParametersInvalid, Some(why)));
@@ -519,7 +517,6 @@ mod tests {
             [
                 FindingCode::SubscriptionsInvalid,
                 FindingCode::ActivationConflict,
-                FindingCode::SubscriptionsWithoutRole,
                 FindingCode::SubscriptionHomeMissing,
                 FindingCode::DeliverySettingInvalid,
                 FindingCode::ParametersWithoutRole,

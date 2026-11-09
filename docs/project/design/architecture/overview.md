@@ -145,7 +145,7 @@ commands. Docs name `-h`.
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
 | Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
-| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, and read-scoped `orchestration.subscribeThread`; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | OS scheduler | runner | `instrukt tick` each minute |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
@@ -308,12 +308,15 @@ on its next message.
 The runner's conversation aggregate and identity-envelope vocabulary live in
 `project/instrukt/spec/feature/runner/conversation-links`, indexed by its domain
 spec. General reading discipline is `general/policy/message-identity-headers`.
-The runtime adapter supplies source thread streams and target input; work owns
+The runtime adapter supplies read-only native conversation changes and target input; work owns
 only the existing state database's file, migrations and writer boundary. No
 additional bounded context or process is introduced.
 
 An independent reader in long-lived `instrukt run` follows each linked T3
-thread through read-scoped `subscribeThread`. Runner admission and delivery use
+thread through the adapter's read-only conversation source, with per-conversation
+fingerprints and native database change notifications. The reader uses no T3
+session token and owns per-link positions independently of history. Runner
+admission and delivery use
 recorded assignments and native identities. Native turn completion releases
 recorded conversational content to the peer in identity envelopes. Link and
 per-direction progress commit in the existing database, outside native network

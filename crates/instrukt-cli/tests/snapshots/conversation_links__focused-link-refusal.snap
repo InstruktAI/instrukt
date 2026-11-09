@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/conversation-links.rs
+assertion_line: 251
+expression: error.to_string()
+---
+conversation link: focused role `plan-reviewer` on t3:plan-reviewer-1 reports through its own output and assigned artifacts

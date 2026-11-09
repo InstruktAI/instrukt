@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
 const V7: &str = r#"
@@ -625,4 +625,20 @@ UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection
 UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.variant') WHERE json_extract(request,'$.selection.kind') IN ('opencode');
 UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.effort') WHERE json_extract(request,'$.selection.kind') IN ('claude','fx','cursor');
 UPDATE manual_standing_reservations SET request=json_remove(request,'$.selection.options.reasoning') WHERE json_extract(request,'$.selection.kind')='cursor';
+"#;
+
+/// Version 11: runner-owned discussion links and independent delivery positions.
+const V11: &str = r#"
+CREATE TABLE conversation_links (
+ id TEXT PRIMARY KEY, source_identity TEXT NOT NULL,
+ a TEXT NOT NULL, b TEXT NOT NULL, active INTEGER NOT NULL,
+ failure TEXT
+);
+CREATE UNIQUE INDEX conversation_link_pair ON conversation_links(a,b) WHERE active=1;
+CREATE TABLE conversation_relay_positions (
+ link TEXT NOT NULL REFERENCES conversation_links(id), source TEXT NOT NULL, target TEXT NOT NULL,
+ position_json TEXT NOT NULL, seen_json TEXT NOT NULL, pending_json TEXT NOT NULL,
+ delivered_turn TEXT, receipts_json TEXT NOT NULL DEFAULT '{}', failure TEXT,
+ PRIMARY KEY(link,source)
+);
 "#;

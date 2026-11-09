@@ -1,34 +1,104 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/InstruktAI/instrukt/main/schemas/agents.schema.json
 schema_version: 2
-default: {order: [claude, codex, antigravity], tier: standard}
+default: {class: agent, can: [all], order: [claude, codex, antigravity], tier: standard}
 roles:
-  builder: {order: [claude, codex, antigravity], tier: strong}
-  finalizer: {order: [claude, codex, antigravity], tier: strong}
-  drift-analyzer: {order: [claude, codex, antigravity], tier: strong}
-  deferrer: {order: [claude, codex, antigravity], tier: strong}
-  diagnoser: {order: [claude, codex, antigravity], tier: strong}
-  knowledge-author: {order: [claude, codex, antigravity], tier: strong}
-  project-analyst: {order: [claude, codex, antigravity], tier: strong}
-  third-party-researcher: {order: [claude, codex, antigravity], tier: strong}
-  config-assessor: {order: [claude, codex, antigravity], tier: strong}
-  prepare-orchestrator: {order: [claude, codex, antigravity], tier: strong}
-  work-orchestrator: {order: [claude, codex, antigravity], tier: strong}
-  intaker: {order: [claude, codex, antigravity], tier: strong}
-  architect: {order: [claude, codex, antigravity], tier: strong}
-  planner: {order: [claude, codex, antigravity], tier: strong}
-  diagnosis-driver: {order: [claude, codex, antigravity], tier: strong}
-  task-preparer: {order: [claude, codex, antigravity], tier: strong}
-  task-runner: {order: [claude, codex, antigravity], tier: strong}
-  integrator: {order: [claude, codex, antigravity], tier: strong}
-  coordinator: {order: [claude, codex, antigravity], tier: strong}
-  bug-hunter: {order: [claude, codex, antigravity], tier: strong}
-  upstream-watcher: {order: [claude, codex, antigravity], tier: strong}
-  event-handler: {order: [claude, codex, antigravity], tier: strong}
-  prd-reviewer: {order: [codex, claude, antigravity], tier: strong}
-  architecture-reviewer: {order: [codex, claude, antigravity], tier: strong}
-  plan-reviewer: {order: [codex, claude, antigravity], tier: strong}
-  build-reviewer: {order: [codex, claude, antigravity], tier: strong}
-  commit-reviewer: {order: [codex, claude, antigravity], tier: strong}
+  builder: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  finalizer: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  drift-analyzer: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  deferrer: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  diagnoser: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  knowledge-author: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  project-analyst: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  third-party-researcher: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  config-assessor: {class: focused, can: [read, configure, worker, record], order: [claude, codex, antigravity], tier: strong}
+  prepare-orchestrator: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  work-orchestrator: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  intaker: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  architect: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  planner: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  diagnosis-driver: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  task-preparer: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  task-runner: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  integrator: {class: standing, can: [read, record, orchestrate, integrate], order: [claude, codex, antigravity], tier: strong}
+  coordinator: {class: standing, can: [read, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  bug-hunter: {class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
+  upstream-watcher: {class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
+  event-handler: {class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
+  prd-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  architecture-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  plan-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  build-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  commit-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+bundles:
+  read:
+    - {action: docs-read, scope: any}
+    - {action: todo-read, scope: any}
+    - {action: artifact-read, scope: any}
+    - {action: config-read, scope: any}
+    - {action: agents-read, scope: any}
+    - {action: events-read, scope: any}
+    - {action: code-check, scope: any}
+    - {action: eval-read, scope: any}
+    - {action: repository-read, scope: any}
+    - {action: installation-read, scope: any}
+  worker:
+    - {action: artifact-write, scope: own}
+    - {action: stamp, scope: own}
+    - {action: code-commit, scope: own}
+    - {action: docs-write, scope: own}
+  review:
+    - {action: artifact-write, scope: own}
+    - {action: stamp, scope: own}
+  record:
+    - {action: todo-write, scope: own}
+    - {action: artifact-write, scope: own}
+    - {action: stamp, scope: own}
+  orchestrate:
+    - {action: todo-orchestration, scope: own}
+    - {action: assignment-write, scope: own}
+    - {action: session-observe, scope: own}
+    - {action: session-recover, scope: own}
+    - {action: standing-bind, scope: own}
+  integrate:
+    - {action: integration, scope: own}
+    - {action: publication, scope: own}
+    - {action: repository-write, scope: own}
+    - {action: todo-write, scope: own}
+  configure:
+    - {action: config-write, scope: any}
+    - {action: secrets-write, scope: any}
+    - {action: installation-write, scope: any}
+    - {action: agents-write, scope: any}
+  all:
+    - {action: docs-read, scope: any}
+    - {action: docs-write, scope: any}
+    - {action: todo-read, scope: any}
+    - {action: todo-write, scope: any}
+    - {action: artifact-read, scope: any}
+    - {action: artifact-write, scope: any}
+    - {action: stamp, scope: any}
+    - {action: todo-orchestration, scope: any}
+    - {action: assignment-write, scope: any}
+    - {action: integration, scope: any}
+    - {action: session-observe, scope: any}
+    - {action: history-read, scope: any}
+    - {action: session-recover, scope: any}
+    - {action: standing-bind, scope: any}
+    - {action: agents-read, scope: any}
+    - {action: agents-write, scope: any}
+    - {action: config-read, scope: any}
+    - {action: config-write, scope: any}
+    - {action: secrets-write, scope: any}
+    - {action: repository-read, scope: any}
+    - {action: repository-write, scope: any}
+    - {action: code-commit, scope: any}
+    - {action: publication, scope: any}
+    - {action: code-check, scope: any}
+    - {action: eval-read, scope: any}
+    - {action: events-read, scope: any}
+    - {action: installation-read, scope: any}
+    - {action: installation-write, scope: any}
+    - {action: runner-execute, scope: any}
 profiles:
   codex:
     instance: codex

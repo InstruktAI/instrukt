@@ -567,6 +567,8 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     // Schema 9's producer persisted this same semantic effort plus native options.
     // The caller is interrupted before it can start or bind a native thread.
     let db = r.computer.db();
+    db.execute_batch("DROP TABLE conversation_relay_positions; DROP TABLE conversation_links;")
+        .unwrap();
     db.pragma_update(None, "user_version", 9).unwrap();
     drop(db);
 

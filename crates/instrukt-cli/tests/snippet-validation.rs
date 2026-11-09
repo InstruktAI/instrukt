@@ -914,3 +914,41 @@ fn linked_required_reads_take_part_in_redundancy_checks_by_id() {
     assert!(!run.success);
     insta::assert_snapshot!("linked_required_read_implied", run.out);
 }
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV6
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP2
+#[test]
+fn independent_subscriptions_use_their_own_roles_and_publish_the_implicit_handler() {
+    let env = TestEnv::new();
+    publish_crew_flavor(&env);
+    let repo = env.git_repo("demo");
+    repo.write("instrukt.yaml","schema_version: 1\nproject: demo\nmodules: {todos: true, events: true}\nworkflow: {domain: crew}\n");
+    for (name, role) in [
+        ("explicit", "role: custom-handler\n"),
+        ("implicit", ""),
+        ("second-default", ""),
+    ] {
+        repo.write(
+            &format!("docs/project/procedure/{name}.md"),
+            &snippet(
+                "procedure",
+                &format!("{role}subscriptions: ['runner.*']\nsubscription_home: project\n"),
+                "",
+            ),
+        );
+    }
+    let run = validate(&env, &repo, &[]);
+    assert!(run.success, "{}{}", run.out, run.err);
+    repo.commit("publish independent handlers");
+    env.run(repo.path(), ["sync"]).success();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let index = instrukt_core::index::GlobalIndex::load(&home)
+        .unwrap()
+        .unwrap();
+    let implicit = index
+        .snippets
+        .iter()
+        .find(|entry| entry.id.as_str() == "project/demo/procedure/implicit")
+        .unwrap();
+    assert_eq!(implicit.role.as_deref(), Some("event-handler"));
+}

@@ -577,6 +577,7 @@ impl Session<'_> {
                                 bail!("procedure role differs from --role");
                             }
                             instrukt_runner::launch::prepare(
+                                &ctx.home,
                                 &entry,
                                 args.args.as_deref(),
                                 Some(&brief),

@@ -45,6 +45,9 @@ pub struct ConversationChanges {
     pub records: Vec<ConversationRecord>,
     pub position: SourcePosition,
     pub has_more: bool,
+    pub incomplete_runs: Vec<String>,
+    /// Previously observed native conversations absent from this source pass.
+    pub missing: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]

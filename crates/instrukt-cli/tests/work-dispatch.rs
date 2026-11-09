@@ -343,7 +343,7 @@ fn the_procedure_role_selects_its_configured_profile_order_and_tier() {
     let p = Tracked::new(true);
     selection_config(
         &p,
-        "default: {order: [claude], tier: light}\nroles: {prepare-orchestrator: {order: [antigravity], tier: strong}}\n",
+        "default: {order: [claude], tier: light}\nroles: {prepare-orchestrator: {class: agent, can: [read, worker, record, orchestrate], order: [antigravity], tier: strong}}\n",
     );
     create_change(&p);
     p.tick();

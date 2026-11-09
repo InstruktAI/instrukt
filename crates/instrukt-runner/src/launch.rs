@@ -10,6 +10,8 @@ use instrukt_core::index::{GlobalIndex, IndexEntry, IndexError, IndexParameter};
 /// A launch was refused before any session existed.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    #[error(transparent)]
+    Config(#[from] instrukt_core::config::ConfigError),
     #[error("no procedure `{0}` is published; check `instrukt docs index`")]
     UnknownProcedure(SnippetId),
     #[error("`{0}` is not a procedure")]
@@ -53,19 +55,28 @@ pub fn procedure(home: &Home, id: &SnippetId) -> Result<IndexEntry, LaunchError>
 /// Prepares the launch of `entry` with the raw argument text `args` and
 /// the additional briefing `brief`.
 pub fn prepare(
+    home: &Home,
     entry: &IndexEntry,
     args: Option<&str>,
     brief: Option<&str>,
 ) -> Result<Launch, LaunchError> {
     let raw = args.unwrap_or("");
     let bound = bind_arguments(&entry.id, &entry.parameters, raw)?;
+    let mut message = compose(&entry.id, &bound, raw, brief);
+    if let Some(role) = entry.role.as_deref()
+        && entry.subscriptions.is_empty()
+    {
+        let capabilities = instrukt_core::config::Agents::load(home)?.capabilities(role)?;
+        let resolved = capabilities.describe();
+        message.push_str(&format!("\n{}", crate::envelopes::Control::Assignment.frame(&format!("Resolved role capabilities: {resolved}\nAssignment scope: the fixed todo, home and workspace evidence supplied with this assignment. Object claims, phase and writer constraints apply."))));
+    }
     Ok(Launch {
         procedure: entry.id.clone(),
         role: entry
             .role
             .as_deref()
             .and_then(|role| RoleName::parse(role).ok()),
-        message: compose(&entry.id, &bound, raw, brief),
+        message,
     })
 }
 
@@ -139,7 +150,7 @@ pub fn compose(
         text.push_str(brief.trim_end());
         text.push('\n');
     }
-    text
+    crate::envelopes::Control::Assignment.frame(&text)
 }
 
 #[cfg(test)]

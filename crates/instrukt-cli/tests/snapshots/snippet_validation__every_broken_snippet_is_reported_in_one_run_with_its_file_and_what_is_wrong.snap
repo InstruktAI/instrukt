@@ -24,8 +24,6 @@ docs/domain/acme/principle/shape.md: structure-section-missing: Tensions, requir
 docs/domain/acme/principle/shape.md: structure-section-unknown: Extra, outside the schema of docs/domain/acme/principle; see `instrukt docs schema docs/domain/acme/principle`
 docs/domain/acme/principle/shape.md: structure-see-also-not-last
 docs/domain/acme/procedure/both.md: frontmatter-activation-conflict
-docs/domain/acme/procedure/both.md: frontmatter-subscriptions-without-role
-docs/domain/acme/procedure/both.md: frontmatter-parameters-without-role
 docs/domain/acme/procedure/ghostly.md: frontmatter-dispatch-invalid: obsolete dispatch; use agents.yaml role selection
 docs/domain/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
 docs/domain/loose.md: identity-missing-domain: loose

@@ -195,7 +195,15 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
             } else {
                 Some(args.since.unwrap_or(Duration::from_secs(3 * 86400)))
             };
-            let threads = sessions.list(&ctx.cwd, since, ctx.clock.now())?;
+            let mut threads = sessions.list(&ctx.cwd, since, ctx.clock.now())?;
+            if let Some((_, capabilities)) = crate::authorization::caller(ctx)?
+                && capabilities.class == instrukt_core::capabilities::RoleClass::Focused
+                && capabilities.scope(instrukt_core::capabilities::Action::SessionObserve)
+                    == Some(instrukt_core::capabilities::Scope::Own)
+            {
+                let caller = config.caller(&env)?;
+                threads.retain(|thread| Some(&thread.session) == caller.as_ref());
+            }
             if args.json {
                 ctx.out.json(&threads)?;
             } else {
@@ -296,6 +304,12 @@ pub fn run_install(_args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode
 /// `modules.events` are off: in the caller's effective configuration and
 /// in every published project's.
 fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
+    if instrukt_runner::links::status(&ctx.home)?
+        .iter()
+        .any(|link| link.active)
+    {
+        return Ok(());
+    }
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
     if config.module_enabled(Module::Todos)? || config.module_enabled(Module::Events)? {
         return Ok(());

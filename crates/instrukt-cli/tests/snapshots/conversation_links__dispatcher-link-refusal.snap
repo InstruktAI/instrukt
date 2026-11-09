@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/conversation-links.rs
+assertion_line: 279
+expression: error.to_string()
+---
+conversation link: a worker reports to its dispatcher through native child-result delivery

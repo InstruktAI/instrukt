@@ -16,6 +16,7 @@
 //! ([`crate::evidence::WorkEvidence`]) and core ([`WorkExistence`] for
 //! `TodoExistence`).
 
+mod _assignment;
 mod _attempts;
 mod _board;
 mod _diff;
@@ -39,6 +40,7 @@ use instrukt_core::home::Home;
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::Timestamp;
 
+pub use _assignment::{recorded_assignment, target_identity};
 pub use _attempts::{
     AttemptRequest, AttemptResolution, DriverPlacement, NativeAssignment, NativeBinding,
     StoppedChild, WorkspaceEntry, WorkspaceRequest,

@@ -4,6 +4,7 @@
 //! the invocation context and hands each command to its context's command
 //! module under `commands/`.
 
+mod authorization;
 mod clock;
 mod commands;
 mod context;
@@ -12,7 +13,7 @@ mod wiring;
 
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     agents, blueprint, config, docs, eval, events, history, repository, runner, secrets, specs,
@@ -75,7 +76,30 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = match Cli::command().try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
+            let result = (|| -> anyhow::Result<Option<clap::Error>> {
+                let ctx = Ctx::from_process()?;
+                let Some((assignment, caps)) = authorization::caller(&ctx)? else {
+                    return Ok(None);
+                };
+                let command = authorization::help(Cli::command(), &mut Vec::new(), &caps)
+                    .after_help(format!("Role: {} · class: {}. Scope comes from assignment {}. Object claims, phase and writer constraints apply.\nUsual capabilities: {}",assignment.role,caps.class.name(),assignment.key,caps.describe()));
+                Ok(command.try_get_matches().err())
+            })();
+            return match result {
+                Ok(Some(role_help)) => role_help.exit(),
+                Ok(None) => error.exit(),
+                Err(error) => report(&error),
+            };
+        }
+        Err(error) => error.exit(),
+    };
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
     if let Err(err) = init_tracing(&cli.command) {
         return report(&err);
     }
@@ -83,6 +107,9 @@ fn main() -> ExitCode {
         Ok(ctx) => ctx,
         Err(err) => return report(&err),
     };
+    if let Err(error) = authorization::check(&ctx, &matches) {
+        return report(&error);
+    }
     let outcome = match cli.command {
         Command::DevSeed => seed_development(&mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),

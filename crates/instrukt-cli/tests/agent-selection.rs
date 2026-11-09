@@ -6,9 +6,10 @@ use instrukt_core::config::{Agents, Tier};
 
 const CONFIG: &str = r#"
 schema_version: 2
-default: {order: [personal, work], tier: standard}
+default: {class: agent, can: [], order: [personal, work], tier: standard}
 roles:
   builder: {class: focused, can: [read], github_app: author, order: [work, personal], tier: strong}
+bundles: {read: [{action: docs-read, scope: any}]}
 profiles:
   personal:
     instance: codex-personal

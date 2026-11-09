@@ -16,6 +16,8 @@
     "default": {
       "$ref": "#/$defs/role",
       "required": [
+        "class",
+        "can",
         "order",
         "tier"
       ]
@@ -27,7 +29,13 @@
       }
     },
     "bundles": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/grant"
+        }
+      }
     },
     "profiles": {
       "type": "object",
@@ -64,12 +72,27 @@
           ]
         },
         "can": {
-          "type": "array"
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "$ref": "#/$defs/grant"
+              }
+            ]
+          }
         },
         "github_app": {
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "class",
+        "can"
+      ]
     },
     "profile": {
       "oneOf": [
@@ -816,6 +839,55 @@
               "auto"
             ]
           }
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "scope"
+      ],
+      "properties": {
+        "action": {
+          "enum": [
+            "docs-read",
+            "docs-write",
+            "todo-read",
+            "todo-write",
+            "artifact-read",
+            "artifact-write",
+            "stamp",
+            "todo-orchestration",
+            "assignment-write",
+            "integration",
+            "session-observe",
+            "history-read",
+            "session-recover",
+            "standing-bind",
+            "agents-read",
+            "agents-write",
+            "config-read",
+            "config-write",
+            "secrets-write",
+            "repository-read",
+            "repository-write",
+            "code-commit",
+            "publication",
+            "code-check",
+            "eval-read",
+            "events-read",
+            "installation-read",
+            "installation-write",
+            "runner-execute"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "own",
+            "any"
+          ]
         }
       }
     }

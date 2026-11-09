@@ -404,7 +404,8 @@ it preserves delivery evidence rather than deleting progress.
 
 **`conversation_relay_positions`** — one record per link and source direction,
 retaining the source stream position, completed-turn delivery position, fixed
-native target, pending range/content identity, native acceptance evidence and
+native target, pending range/content identity, native acceptance receipts (or
+explicit empty-content dispositions) and
 last stream/handover failure. The source observation position is distinct from
 accepted delivery progress. Link creation initializes both directions; target
 acceptance or a recorded empty disposition advances delivery. Source occurrence
