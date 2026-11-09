@@ -160,14 +160,12 @@ The socket and receiver agree on loopback and configured port. A receiver exits
 before serving after loss of ingress designation; a later convergence removes
 only its obsolete owned units. Valid source edits are read per request without
 restart. Invalid changes do not replace a working validated listener config.
-Owned configuration changes that require receiver restart keep socket custody;
-same-port process restarts retain the registered listening socket. launchd keeps
-its loaded socket envelope; an owner-only effective invocation, covered by the
-same transition journal, supplies the installed executable and configuration
-environment at activation. The receiver applies it by exec while retaining the
-inherited descriptor before serving, so kickstart applies current execution
-settings even though launchd retains its loaded definition. The invocation
-is recorded by explicit installation and always names an installed executable. A port change
+Owned execution changes take effect for existing and new installations while
+receiver ownership remains proven. Same-port restarts retain the registered
+listening socket; health and inspection establish that the desired installed
+executable and configuration are running. See the
+[receiver activation implementation](../../../../../crates/instrukt-runner/src/installation/_launch.rs)
+for the concrete mechanism. A port change
 registers and checks the replacement listener before withdrawing the prior owned
 units, and reports the edge-route change for operator alignment without waiting
 for the operator. Interrupted replacement retains its recorded ownership for

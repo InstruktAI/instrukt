@@ -172,7 +172,19 @@ pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
         else {
             continue;
         };
-        let response = receive(home, env, computer.as_str(), &mut request, clock());
+        let response = if request.method() == &Method::Get
+            && request.url() == crate::installation::_launch::PROBE_PATH
+        {
+            match crate::installation::_launch::running(address.port()) {
+                Ok(proof) => (200, proof),
+                Err(error) => {
+                    tracing::warn!(event = "receiver_execution_unproven", error = %error);
+                    (503, "receiver execution unproven\n".into())
+                }
+            }
+        } else {
+            receive(home, env, computer.as_str(), &mut request, clock())
+        };
         if let Err(error) =
             request.respond(Response::from_string(response.1).with_status_code(response.0))
         {
@@ -207,6 +219,10 @@ pub fn prepare_activation(home: &Home) -> Result<PreparedReceiver, WebhookError>
             .env("INSTRUKT_RECEIVER_APPLIED", digest)
             .exec();
         return Err(WebhookError::Listen(error));
+    }
+    if installed_port.is_some() {
+        crate::installation::_launch::arm(home, address.port())
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
     }
     Ok(PreparedReceiver {
         listener,

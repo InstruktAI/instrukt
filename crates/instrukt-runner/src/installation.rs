@@ -182,6 +182,11 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let mut owned = _services::Owned::load(request.home)
         .map_err(|e| InstallationError::Ownership(e.to_string()))?;
+    if !request.check {
+        owned
+            .persist_migration(request.home)
+            .map_err(|e| InstallationError::Ownership(e.to_string()))?;
+    }
     let global = Configuration::load_global(request.home)?;
     if let Some(notice) =
         instrukt_core::config::inspect_layer(request.home, &instrukt_core::config::Layer::Global)?

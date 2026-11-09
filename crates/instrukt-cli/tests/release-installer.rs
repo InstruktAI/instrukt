@@ -172,7 +172,7 @@ fn unsupported_platform_refuses_before_download_or_write() {
     );
 }
 
-// spec: project/instrukt/spec/feature/distribution/release-installer UC-RI3
+// Smoke/wiring: validated release assets reach gh in draft-then-publish order.
 #[test]
 fn standalone_publication_checks_the_tagged_asset_set_before_gh_and_publishes_a_draft_first() {
     let release = Release::new();

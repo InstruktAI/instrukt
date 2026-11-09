@@ -66,6 +66,8 @@ pub(super) struct Owned {
     pending_receiver: Option<Definition>,
     #[serde(default)]
     updates: BTreeMap<ResourceKind, Transition>,
+    #[serde(skip)]
+    migrated_from: Option<u32>,
 }
 impl Owned {
     pub fn load(home: &Home) -> anyhow::Result<Self> {
@@ -76,6 +78,7 @@ impl Owned {
                     matches!(owned.schema_version, 1..=3),
                     "unsupported installation ownership version; upgrade instrukt"
                 );
+                owned.migrated_from = (owned.schema_version < 3).then_some(owned.schema_version);
                 owned.schema_version = 3;
                 Ok(owned)
             }
@@ -85,6 +88,13 @@ impl Owned {
             }),
             Err(e) => Err(e.into()),
         }
+    }
+    pub fn persist_migration(&mut self, home: &Home) -> anyhow::Result<()> {
+        if self.migrated_from.is_some() {
+            self.save(home)?;
+            self.migrated_from = None;
+        }
+        Ok(())
     }
     fn save(&self, home: &Home) -> anyhow::Result<()> {
         atomic_write_with_permissions(
@@ -342,20 +352,6 @@ impl Owned {
             ],
             Some(port),
         );
-        if request.scheduler == Scheduler::Launchd
-            && let Some(previous) = self
-                .resources
-                .get(&ResourceKind::Receiver)
-                .filter(|d| d.port() == Some(port))
-        {
-            // launchd retains this registered envelope; mutable execution settings
-            // are read by the activation entry, not falsely reloaded by kickstart.
-            for (file, contents) in &previous.files {
-                if file.extension().is_some_and(|ext| ext == "plist") {
-                    definition.files.insert(file.clone(), contents.clone());
-                }
-            }
-        }
         let launch = super::_launch::ReceiverLaunch::desired(request, port);
         definition.files.insert(
             super::_launch::ReceiverLaunch::file(request.home, port),
@@ -430,16 +426,27 @@ impl Owned {
         );
         let incomplete =
             self.pending_receiver.is_some() || self.updates.contains_key(&ResourceKind::Receiver);
+        let port = desired
+            .port()
+            .ok_or_else(|| anyhow::anyhow!("receiver listener has no port"))?;
+        let execution = super::_launch::verify(request.home, port);
+        let effective = execution.is_ok();
         if request.check {
-            if changed || !active || !same_unit || incomplete {
+            if changed || !active || !same_unit || incomplete || !effective {
                 report.finding(
                     "receiver",
-                    "missing, stale or incomplete owned receiver; run instrukt install",
+                    format!(
+                        "missing, stale or incomplete owned receiver; run instrukt install{}",
+                        execution
+                            .err()
+                            .map(|e| format!(": {e}"))
+                            .unwrap_or_default()
+                    ),
                 );
             }
             report.resource(
                 ResourceKind::Receiver,
-                if changed || !active || !same_unit || incomplete {
+                if changed || !active || !same_unit || incomplete || !effective {
                     Disposition::Unmet
                 } else {
                     Disposition::Reused
@@ -450,7 +457,7 @@ impl Owned {
             );
             return Ok(());
         }
-        if !changed && active && same_unit && !incomplete {
+        if !changed && active && same_unit && !incomplete && effective {
             report.resource(
                 ResourceKind::Receiver,
                 Disposition::Reused,
@@ -474,10 +481,11 @@ impl Owned {
         self.save(request.home)?;
         self.write_files(desired)?;
         if active {
-            restart_receiver(desired)?;
+            restart_receiver(request.home, desired)?;
         } else {
             start(desired)?;
         }
+        super::_launch::verify(request.home, port)?;
         if let Some((port, route)) = &desired.probe {
             super::receiver_health(*port, route)?;
         }
@@ -597,8 +605,14 @@ impl Owned {
         Ok(())
     }
 }
-fn restart_receiver(definition: &Definition) -> anyhow::Result<()> {
+fn restart_receiver(home: &Home, definition: &Definition) -> anyhow::Result<()> {
     if definition.scheduler == Scheduler::Launchd {
+        super::_launch::arm(
+            home,
+            definition
+                .port()
+                .ok_or_else(|| anyhow::anyhow!("missing receiver port"))?,
+        )?;
         let uid = Invocation::program("id", &["-u"]).run(Duration::from_secs(10))?;
         anyhow::ensure!(uid.success, "cannot identify the launchd user domain");
         let uid = uid.stdout.trim().parse::<u32>()?;
@@ -866,4 +880,13 @@ pub(super) fn owned_receiver_file(home: &Home, file: &Path) -> anyhow::Result<Op
         "receiver invocation has no matching ownership proof; restore its recorded definition"
     );
     Ok(Some(contents))
+}
+
+pub(super) fn receiver_job(home: &Home, port: u16) -> anyhow::Result<Option<(Scheduler, String)>> {
+    let owned = Owned::load(home)?;
+    Ok(owned
+        .proofs(ResourceKind::Receiver)
+        .into_iter()
+        .find(|d| d.port() == Some(port))
+        .map(|d| (d.scheduler, d.unit.clone())))
 }

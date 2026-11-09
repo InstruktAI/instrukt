@@ -6,6 +6,7 @@ use common::{Repo, TestEnv};
 use std::os::unix::fs::PermissionsExt;
 
 fn manager(env: &mut TestEnv) {
+    env.set_env("SERVICE_PID", &std::process::id().to_string());
     let dir = env.path("runtime-bin");
     for name in ["launchctl", "systemctl", "crontab"] {
         let text = format!(
@@ -13,8 +14,18 @@ fn manager(env: &mut TestEnv) {
 printf '%s\n' '{name}' "$@" >> '{dir}/calls'
 if [ "$1" = --user ]; then shift; fi
 operation=$1
+if [ "$operation" = list ] && [ "$#" -eq 1 ]; then
+    printf 'PID\tStatus\tLabel\n'
+    for path in '{dir}'/unit-*; do
+        [ -f "$path" ] || continue
+        unit=${{path##*/unit-}}
+        printf '%s\t0\t%s\n' "$SERVICE_PID" "$unit"
+    done
+    exit 0
+fi
+if [ "$operation" = show ] && [ "$3" = --property=MainPID ]; then echo "$SERVICE_PID"; exit 0; fi
 if [ "$operation" = show ]; then unit=$2; if [ -f '{dir}/unit-'"$unit" ]; then echo loaded; else echo not-found; fi; exit 0; fi
-case $operation in daemon-reload) exit 0;; esac
+case $operation in daemon-reload|debug) exit 0;; esac
 for argument in "$@"; do unit=$argument; done
 unit=${{unit##*/}}; unit=${{unit%.plist}}
 state='{dir}/unit-'$unit
@@ -232,7 +243,7 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     manager(&mut env);
     let repo = project(&env, "events", "{events: true}");
     repo.write("instrukt.yaml","schema_version: 1\nproject: events\nmodules: {events: true}\nwebhooks:\n  service: {secret: '${SIGNING_KEY}'}\n");
-    let health = ReceiverHealth::new();
+    let health = ReceiverHealth::new(&env);
     let redis = common::redis::RedisServer::new(&env);
     event_config(
         &env,
@@ -529,20 +540,31 @@ struct ReceiverHealth {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl ReceiverHealth {
-    fn new() -> Self {
-        Self::with_response(401)
+    fn new(env: &TestEnv) -> Self {
+        Self::with_response(env, 401)
     }
-    fn with_response(code: u16) -> Self {
+    fn with_response(env: &TestEnv, code: u16) -> Self {
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let port = server.server_addr().to_ip().unwrap().port();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reader = std::sync::Arc::clone(&server);
         let stopping = std::sync::Arc::clone(&stop);
+        let home = env.instrukt_home();
         let thread = std::thread::spawn(move || {
             while !stopping.load(std::sync::atomic::Ordering::Acquire) {
                 match reader.recv() {
                     Ok(request) => {
-                        request.respond(tiny_http::Response::empty(code)).unwrap();
+                        if request.url() == "/_instrukt/receiver" && code == 401 {
+                            use sha2::{Digest, Sha256};
+                            let bytes =
+                                std::fs::read(home.join(format!("state/receiver/{port}.json")))
+                                    .unwrap();
+                            request
+                                .respond(tiny_http::Response::from_string(serde_json::json!({"pid": std::process::id(), "invocation": hex::encode(Sha256::digest(bytes))}).to_string()))
+                                .unwrap();
+                        } else {
+                            request.respond(tiny_http::Response::empty(code)).unwrap();
+                        }
                     }
                     Err(_) => break,
                 }
@@ -696,7 +718,7 @@ fn receiver_restart_preserves_registration_and_port_change_starts_replacement_fi
         .assert()
         .success();
     repo.write("instrukt.yaml","schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
-    let first = ReceiverHealth::new();
+    let first = ReceiverHealth::new(&env);
     event_config(
         &env,
         Some(&redis.url),
@@ -736,7 +758,7 @@ fi
     env.run(env.home(), ["install"]).success();
     env.run(env.home(), ["install", "--check"]).success();
     env.remove_env("FORBID_SOCKET_STOP");
-    let next = ReceiverHealth::new();
+    let next = ReceiverHealth::new(&env);
     let next_unit = if cfg!(target_os = "macos") {
         format!("ai.instrukt.webhooks-{}", next.port)
     } else {
@@ -773,7 +795,7 @@ fi
             .query::<redis::Value>(&mut redis.connection())
             .unwrap()
     );
-    let broken = ReceiverHealth::with_response(503);
+    let broken = ReceiverHealth::with_response(&env, 503);
     event_config(
         &env,
         Some(&redis.url),
@@ -934,7 +956,7 @@ fn every_receiver_write_prefix_retains_the_old_and_new_ownership_proofs() {
         .assert()
         .success();
     repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
-    let health = ReceiverHealth::new();
+    let health = ReceiverHealth::new(&env);
     event_config(
         &env,
         Some(&redis.url),
@@ -954,11 +976,8 @@ fn every_receiver_write_prefix_retains_the_old_and_new_ownership_proofs() {
     )
     .unwrap();
     let mut desired = journal["resources"]["receiver"].clone();
-    for (file, text) in desired["files"].as_object_mut().unwrap() {
-        if !cfg!(target_os = "macos") || !file.ends_with(".plist") {
-            *text =
-                serde_json::Value::String(text.as_str().unwrap().replace(&old_path, desired_path));
-        }
+    for text in desired["files"].as_object_mut().unwrap().values_mut() {
+        *text = serde_json::Value::String(text.as_str().unwrap().replace(&old_path, desired_path));
     }
     replay_prefixes(&env, "receiver", desired);
 }
@@ -968,6 +987,7 @@ struct CachedLaunchd {
     child: std::process::Child,
     socket: std::path::PathBuf,
     _dir: tempfile::TempDir,
+    python: String,
 }
 #[cfg(target_os = "macos")]
 impl CachedLaunchd {
@@ -997,6 +1017,7 @@ impl CachedLaunchd {
             child,
             socket,
             _dir: dir,
+            python: python.clone(),
         };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !fixture.socket.exists() {
@@ -1090,21 +1111,7 @@ fn launchd_cached_job_applies_the_desired_executable_and_environment_with_socket
     let after = fixture.request(&["inspect", &unit]);
     assert_eq!(before["definition"], after["definition"]);
     assert_ne!(before["pid"], after["pid"]);
-    let process = env
-        .command(std::path::Path::new("/bin/ps"), env.home())
-        .args(["eww", "-p", &after["pid"].to_string(), "-o", "command="])
-        .output()
-        .unwrap();
-    assert!(process.status.success());
-    let process = String::from_utf8(process.stdout).unwrap();
-    assert!(process.contains(copied.to_str().unwrap()), "{process}");
-    for (key, expected) in [
-        ("PATH", env.injected("PATH").unwrap().to_owned()),
-        ("HOME", env.home().display().to_string()),
-        ("INSTRUKT_HOME", env.instrukt_home().display().to_string()),
-    ] {
-        assert!(process.contains(&format!("{key}={expected}")), "{process}");
-    }
+    assert_receiver_execution(&env, &after, &copied, port);
     assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_err());
     // The retained listener also accepts a real request from the replacement.
     use std::io::{Read, Write};
@@ -1161,4 +1168,248 @@ fn an_initial_registration_interrupted_before_completion_is_still_proven_ours() 
     write_owned(&env, &interrupted);
     env.run(env.home(), ["install"]).success();
     env.run(env.home(), ["install", "--check"]).success();
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn schema_two_ownership_golden_is_read_without_writes_and_persisted_on_unchanged_convergence() {
+    let mut env = TestEnv::new();
+    let repo = project(&env, "migrating", "{todos: true}");
+    let git = env
+        .command(std::path::Path::new("/usr/bin/which"), env.home())
+        .arg("git")
+        .output()
+        .unwrap();
+    std::os::unix::fs::symlink(
+        String::from_utf8(git.stdout).unwrap().trim(),
+        env.path("runtime-bin/git"),
+    )
+    .unwrap();
+    let crontab = env.path("runtime-bin/crontab");
+    let table = env.path("crontab");
+    std::fs::write(
+        &crontab,
+        format!(
+            "#!/bin/sh\ncase $1 in -l) /bin/cat '{}';; *) exit 99;; esac\n",
+            table.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(crontab, std::fs::Permissions::from_mode(0o755)).unwrap();
+    env.set_env("PATH", "");
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 3\nrunner: {runtime: t3}\n",
+    )
+    .unwrap();
+    // Exact pre-change field set; only installation-specific addresses are substituted.
+    let original = include_str!("fixtures/installation-owned-v2-676e017-cron.json")
+        .replace("__HOME__", env.home().to_str().unwrap())
+        .replace("__PATH__", env.injected("PATH").unwrap())
+        .replace("__EXE__", env!("CARGO_BIN_EXE_instrukt"));
+    let golden: serde_json::Value = serde_json::from_str(&original).unwrap();
+    std::fs::write(
+        &table,
+        format!(
+            "{}\n",
+            golden["resources"]["wake-up"]["unit"].as_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let path = env.instrukt_home().join("state/installation/owned.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, original.as_bytes()).unwrap();
+    let inspection_only =
+        common::LiveGuard::over(vec![], vec![env.home().into(), repo.path().into()]);
+    env.run(repo.path(), ["install", "--check"]).success();
+    assert_eq!(original.as_bytes(), std::fs::read(&path).unwrap());
+    assert!(inspection_only.changed().is_empty());
+    let table_before = std::fs::read(&table).unwrap();
+    env.run(repo.path(), ["install"]).success();
+    let current: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(golden["resources"], current["resources"]);
+    assert_eq!(golden["assets"], current["assets"]);
+    assert_eq!(golden["pending_receiver"], current["pending_receiver"]);
+    assert_eq!(table_before, std::fs::read(table).unwrap());
+    insta::assert_json_snapshot!(serde_json::json!({"schema_version": current["schema_version"], "updates": current["updates"]}), @r#"
+    {
+      "schema_version": 3,
+      "updates": {}
+    }
+    "#);
+}
+
+#[cfg(target_os = "macos")]
+fn assert_receiver_execution(
+    env: &TestEnv,
+    job: &serde_json::Value,
+    executable: &std::path::Path,
+    port: u16,
+) {
+    use std::os::unix::fs::MetadataExt;
+    let pid = job["pid"].to_string();
+    let kernel = env
+        .command(std::path::Path::new("/bin/ps"), env.home())
+        .args(["-p", &pid, "-o", "comm="])
+        .output()
+        .unwrap();
+    assert!(kernel.status.success());
+    let program = String::from_utf8(kernel.stdout).unwrap();
+    let observed = std::fs::metadata(program.trim_end()).unwrap();
+    let desired = std::fs::metadata(executable).unwrap();
+    assert_eq!(
+        (observed.dev(), observed.ino()),
+        (desired.dev(), desired.ino())
+    );
+    let process = env
+        .command(std::path::Path::new("/bin/ps"), env.home())
+        .args(["eww", "-p", &pid, "-o", "command="])
+        .output()
+        .unwrap();
+    assert!(process.status.success());
+    use sha2::{Digest, Sha256};
+    let invocation = std::fs::read(
+        env.instrukt_home()
+            .join(format!("state/receiver/{port}.json")),
+    )
+    .unwrap();
+    let digest = hex::encode(Sha256::digest(invocation));
+    let rendered = String::from_utf8(process.stdout)
+        .unwrap()
+        .replace(&digest, "[INVOCATION]")
+        .replace(&format!("LISTEN_PID={pid}"), "LISTEN_PID=[PID]")
+        .replace(env.path("").to_str().unwrap(), "[TMP]/");
+    let rendered = rendered
+        .split_whitespace()
+        .filter(|field| !field.starts_with("__CF_USER_TEXT_ENCODING="))
+        .collect::<Vec<_>>()
+        .join(" ");
+    insta::assert_snapshot!("receiver_execution", rendered);
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI8
+#[cfg(target_os = "macos")]
+#[test]
+fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket() {
+    let mut env = TestEnv::new();
+    let fixture = CachedLaunchd::new(&mut env);
+    env.set_env("PATH", "/usr/bin:/bin");
+    let repo = project(&env, "events", "{events: true}");
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, Some(&redis.url), &redis.url, Some("ticks: off\n"));
+    env.run(env.home(), ["install"]).success();
+    let machine = std::fs::read_to_string(env.instrukt_home().join("state/machine-id")).unwrap();
+    env.instrukt(env.home())
+        .args(["secrets", "set", "SIGNING_KEY"])
+        .write_stdin("test signing material")
+        .assert()
+        .success();
+    repo.write("instrukt.yaml", "schema_version: 3\nproject: events\nmodules: {events: true}\nwebhooks: {service: {secret: '${SIGNING_KEY}'}}\n");
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    event_config(
+        &env,
+        Some(&redis.url),
+        &redis.url,
+        Some(&format!(
+            "ticks: off\ningress: {{computer: '{}', port: {port}}}\n",
+            machine.trim()
+        )),
+    );
+    let original = env.path("original-instrukt");
+    std::fs::write(
+        &original,
+        format!(
+            "#!{}\n{}",
+            fixture.python,
+            include_str!("support/pre-invocation-receiver.py")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let golden = include_str!("fixtures/installation-owned-v2-676e017-launchd.json")
+        .replace("__HOME__", env.home().to_str().unwrap())
+        .replace("__EXE__", original.to_str().unwrap())
+        .replace("__PATH__", env.injected("PATH").unwrap())
+        .replace("__PORT__", &port.to_string());
+    let record: serde_json::Value = serde_json::from_str(&golden).unwrap();
+    for (file, contents) in record["resources"]["receiver"]["files"]
+        .as_object()
+        .unwrap()
+    {
+        let file = std::path::Path::new(file);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, contents.as_str().unwrap()).unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        fixture.request(&["load", "-w", file.to_str().unwrap()]);
+    }
+    std::fs::create_dir_all(env.instrukt_home().join("state/installation")).unwrap();
+    std::fs::write(
+        env.instrukt_home().join("state/installation/owned.json"),
+        golden.as_bytes(),
+    )
+    .unwrap();
+    let unit = record["resources"]["receiver"]["unit"].as_str().unwrap();
+    let before = fixture.request(&["inspect", unit]);
+    let untouched = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    env.run(env.home(), ["install", "--check"]).failure();
+    assert!(untouched.changed().is_empty());
+    let copied = env.path("replacement-instrukt");
+    std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &copied).unwrap();
+    env.set_env("PATH", "/usr/bin:/bin:/effective-runtime");
+    let inspect = || {
+        env.command(&copied, env.home())
+            .args(["install", "--check"])
+            .output()
+            .unwrap()
+    };
+    let install = || {
+        env.command(&copied, env.home())
+            .arg("install")
+            .output()
+            .unwrap()
+    };
+    let output = install();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let after = fixture.request(&["inspect", unit]);
+    assert_eq!(before["custody"], after["custody"]);
+    assert_eq!(before["definition"], after["definition"]);
+    assert_receiver_execution(&env, &after, &copied, port);
+    let moved = env.path("temporarily-unavailable-checkout");
+    std::fs::rename(repo.path(), &moved).unwrap();
+    let inspection_only = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    assert!(inspect().status.success());
+    assert!(inspection_only.changed().is_empty());
+    std::fs::rename(moved, repo.path()).unwrap();
+    fixture.request(&["force-legacy", unit]);
+    let unchanged = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    assert!(!inspect().status.success());
+    assert!(unchanged.changed().is_empty());
+    // A misleading unsigned 401 is insufficient when the native override did not apply.
+    fixture.request(&["ignore-debug", "on"]);
+    assert!(!install().status.success());
+    fixture.request(&["ignore-debug", "off"]);
+    assert!(install().status.success());
+    let repaired = fixture.request(&["inspect", unit]);
+    assert_eq!(before["custody"], repaired["custody"]);
+    assert_receiver_execution(&env, &repaired, &copied, port);
+    // Native debug overrides are one-shot: the running receiver prepares the next start too.
+    fixture.request(&["kickstart", "-k", &format!("gui/1/{unit}")]);
+    assert!(inspect().status.success());
+    let restarted = fixture.request(&["inspect", unit]);
+    assert_eq!(before["custody"], restarted["custody"]);
+    assert_receiver_execution(&env, &restarted, &copied, port);
+    fixture.request(&["stop-process", unit]);
+    let cold = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    assert!(!inspect().status.success());
+    assert!(cold.changed().is_empty());
+    let stopped = fixture.request(&["inspect", unit]);
+    assert_eq!(stopped["queued"], serde_json::Value::Bool(false));
+    assert_eq!(before["custody"], stopped["custody"]);
 }

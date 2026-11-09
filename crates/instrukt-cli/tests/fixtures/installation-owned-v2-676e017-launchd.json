@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "resources": {
+    "receiver": {
+      "name": "receiver",
+      "unit": "ai.instrukt.webhooks-__PORT__",
+      "scheduler": "launchd",
+      "files": {
+        "__HOME__/Library/LaunchAgents/ai.instrukt.webhooks-__PORT__.plist": "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>ai.instrukt.webhooks-__PORT__</string><key>ProgramArguments</key><array><string>__EXE__</string><string>webhooks</string><string>serve</string><string>--socket-activation</string></array><key>EnvironmentVariables</key><dict><key>HOME</key><string>__HOME__</string><key>INSTRUKT_HOME</key><string>__HOME__/.instrukt</string><key>INSTRUKT_DEVELOPMENT</key><string>0</string><key>PATH</key><string>__PATH__</string></dict><key>Umask</key><integer>63</integer><key>Sockets</key><dict><key>instrukt</key><dict><key>SockNodeName</key><string>127.0.0.1</string><key>SockServiceName</key><string>__PORT__</string><key>SockType</key><string>stream</string></dict></dict></dict></plist>\n"
+      },
+      "registered": true
+    }
+  },
+  "assets": {},
+  "pending_receiver": null
+}
