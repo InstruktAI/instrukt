@@ -504,7 +504,26 @@ fn unconfigured_local_fallback_is_verified_and_check_never_provisions() {
     let _repo = project(&env, "events", "{events: true}");
     let cluster = common::redis::RedisServer::new(&env);
     event_config(&env, None, &cluster.url, None);
-    env.set_env("PATH", "/usr/bin:/bin");
+    let bin = env.path("fallback-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    // Only these tools and the process-line fakes are visible to the CLI.
+    for tool in ["git", "id", "rm", "touch"] {
+        let resolved = env
+            .command(std::path::Path::new("/usr/bin/which"), env.home())
+            .arg(tool)
+            .output()
+            .unwrap();
+        assert!(
+            resolved.status.success(),
+            "required fixture tool {tool} is absent"
+        );
+        std::os::unix::fs::symlink(
+            String::from_utf8(resolved.stdout).unwrap().trim(),
+            bin.join(tool),
+        )
+        .unwrap();
+    }
+    env.set_env("PATH", bin.to_str().unwrap());
     let brew = env.path("runtime-bin/brew");
     std::fs::write(
         &brew,
@@ -530,6 +549,7 @@ fn unconfigured_local_fallback_is_verified_and_check_never_provisions() {
     env.run(env.home(), ["install", "--check"]).failure();
     assert!(!env.path("package-called").exists());
     env.run(env.home(), ["install"]).success();
+    assert!(env.path("package-called").exists());
     let report = json(&env, &["install", "--check", "--json"]);
     assert!(report["findings"].as_array().unwrap().is_empty());
     assert!(!env.instrukt_home().join("state/redis").exists());

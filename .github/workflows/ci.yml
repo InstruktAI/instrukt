@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, "wave/**", "build/**"]
+    branches: [main, "wave/**", "build/**", "fix/**"]
   pull_request:
 
 permissions:
