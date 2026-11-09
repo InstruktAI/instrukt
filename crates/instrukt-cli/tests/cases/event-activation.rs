@@ -43,7 +43,6 @@ fn tick(env: &TestEnv, cwd: &std::path::Path) {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/event-activation UC-EA1
 #[test]
 fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
     let env = TestEnv::new();
@@ -114,7 +113,6 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/event-activation UC-EA1
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS11
 #[test]
 fn a_runner_killed_after_creation_recovers_the_same_standing_agent() {

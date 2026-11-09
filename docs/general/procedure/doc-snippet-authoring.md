@@ -111,6 +111,8 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     Project-specific content belongs in the project's fill; the general
     procedure carries the declaration and the instruction to read the fill
     when it runs (`general/policy/referencing-doc-snippets`).
+    A procedure declaring a project-focus extension point reports when no
+    project fill exists.
 
     For project baselines, put what every agent needs on every run in
     `expanded`, including policies and contracts mandatory routines always

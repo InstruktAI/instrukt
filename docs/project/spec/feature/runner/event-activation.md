@@ -97,6 +97,8 @@ discover whether anything changed. Time-based task due logic belongs to
 
 ### Fork-upstream response
 
+When a watched upstream ref changes, its subscribed standing agent is activated.
+
 The shipped `general/procedure/upstream-watch` subscribes a standing agent to
 `runner.upstream_changed` and owns assessment, admission, routing and reporting
 of the upstream response, including preservation of local modifications for a
@@ -145,14 +147,7 @@ Procedure-event-delivery owns selection, combining and untrusted data framing.
 
 ## Use cases
 
-### UC-EA1: Activate upstream assessment for a watched fork
-
-```gherkin
-  Given a developer has adopted instrukt for a fork with local modifications
-  And the developer has enabled event responses for its upstream
-  When the upstream changes
-  Then the subscribed upstream-watch standing agent receives the upstream-change event
-```
+### UC-EA1
 
 ### UC-EA2: A developer's integrator learns of failed dependency checks
 
