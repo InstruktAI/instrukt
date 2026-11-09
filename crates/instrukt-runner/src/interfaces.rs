@@ -670,6 +670,7 @@ impl std::fmt::Debug for WorkPorts {
 /// this build, and the runner dispatches no todos.
 #[derive(Clone, Default)]
 pub struct RunnerWiring {
+    pub github_credentials: Option<Arc<dyn GitHubCredentials>>,
     pub work: Option<WorkPorts>,
     pub workflow: Option<Arc<dyn WorkflowAssignments>>,
 }
@@ -678,9 +679,20 @@ impl std::fmt::Debug for RunnerWiring {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunnerWiring")
             .field("work", &self.work.is_some())
+            .field("github_credentials", &self.github_credentials.is_some())
             .field("workflow", &self.workflow.is_some())
             .finish()
     }
+}
+
+/// Bounded work-owned GitHub credentials, composed by CLI for observation.
+pub trait GitHubCredentials: Send + Sync {
+    fn credential(
+        &self,
+        repository: &str,
+        operation: instrukt_core::github::Operation,
+        now: Timestamp,
+    ) -> Result<Arc<instrukt_core::github::Credential>, instrukt_core::github::AppError>;
 }
 
 #[cfg(test)]

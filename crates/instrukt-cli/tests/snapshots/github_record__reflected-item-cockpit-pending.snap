@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: "redact(&project.ok([\"update\", \"reflected-cockpit\"]))"
+---
+updated reflected-cockpit
+reflection: pending: GitHub: GitHub answered POST /orgs/acme/projectsV2/1/views with 503: Service unavailable

@@ -117,28 +117,37 @@ struct Targets {
     needs: Value,
 }
 
-fn field(gh: &GitHub, project: &str, fields: &[Value], name: &str) -> Result<Value, GitHubError> {
+fn field(
+    gh: &GitHub,
+    project: &str,
+    fields: &[Value],
+    kind: OwnedField,
+) -> Result<Value, GitHubError> {
+    let name = kind.name();
     let existing = fields.iter().find(|f| f["name"] == name);
     let options = existing
         .and_then(|f| f["options"].as_array())
         .cloned()
         .unwrap_or_default();
-    let target = if name == NEEDS_FIELD {
-        let mut option = json!({"name":"Yes","color":"RED","description":NEEDS_DESCRIPTION});
-        if let Some(id) = options
-            .iter()
-            .find(|o| o["name"] == "Yes")
-            .and_then(|o| o["id"].as_str())
-        {
-            option["id"] = id.into();
+    let target = match kind {
+        OwnedField::NeedsYou => {
+            let mut option = json!({"name":"Yes","color":"RED","description":NEEDS_DESCRIPTION});
+            if let Some(id) = options
+                .iter()
+                .find(|o| o["name"] == "Yes")
+                .and_then(|o| o["id"].as_str())
+            {
+                option["id"] = id.into();
+            }
+            vec![option]
         }
-        vec![option]
-    } else {
-        let names = options
-            .iter()
-            .filter_map(|o| o["name"].as_str())
-            .collect::<Vec<_>>();
-        options_with(&options, &missing_options(&names))
+        OwnedField::RecordStatus => {
+            let names = options
+                .iter()
+                .filter_map(|o| o["name"].as_str())
+                .collect::<Vec<_>>();
+            options_with(&options, &missing_options(&names))
+        }
     };
     match existing {
         None => Ok(gh.graphql(
@@ -165,8 +174,8 @@ fn targets(gh: &GitHub, board: &BoardRef) -> Result<Targets, GitHubError> {
     let fields = project["fields"]["nodes"]
         .as_array()
         .ok_or_else(|| unreadable("missing project fields"))?;
-    let status = field(gh, id, fields, FIELD)?;
-    let needs = field(gh, id, fields, NEEDS_FIELD)?;
+    let status = field(gh, id, fields, OwnedField::RecordStatus)?;
+    let needs = field(gh, id, fields, OwnedField::NeedsYou)?;
     Ok(Targets {
         project: id.into(),
         status,
@@ -189,6 +198,77 @@ fn field_id(field: &Value) -> Result<&str, GitHubError> {
     field["id"]
         .as_str()
         .ok_or_else(|| unreadable("field has no node id"))
+}
+
+#[derive(Clone, Copy)]
+enum OwnedView {
+    Board,
+    NeedsYou,
+}
+impl OwnedView {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Board => "Board",
+            Self::NeedsYou => NEEDS_FIELD,
+        }
+    }
+    fn layout(self) -> &'static str {
+        match self {
+            Self::Board => "BOARD_LAYOUT",
+            Self::NeedsYou => "TABLE_LAYOUT",
+        }
+    }
+    fn filter(self) -> &'static str {
+        match self {
+            Self::Board => "",
+            Self::NeedsYou => "needs-you:Yes",
+        }
+    }
+    fn matches(self, view: &Value, targets: &Targets) -> bool {
+        match self {
+            Self::NeedsYou => true,
+            Self::Board => view["verticalGroupByFields"]["nodes"]
+                .as_array()
+                .is_some_and(|fields| fields.len() == 1 && fields[0]["id"] == targets.status["id"]),
+        }
+    }
+    fn create(
+        self,
+        gh: &GitHub,
+        board: &BoardRef,
+        targets: &Targets,
+    ) -> Result<String, GitHubError> {
+        match self {
+            Self::Board => {
+                let database_id=targets.status["databaseId"].as_u64().ok_or_else(||unreadable("Record status has no REST field id; update GitHub's Projects API capability"))?;
+                let created=gh.post_api(&format!("/orgs/{}/projectsV2/{}/views",board.owner,board.number),&json!({"name":self.name(),"layout":"board","filter":self.filter(),"vertical_group_by":[database_id]}))?;
+                created["value"]["node_id"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| unreadable("created Board view has no node id"))
+            }
+            Self::NeedsYou => gh.graphql(
+                CREATE_VIEW,
+                &json!({"project":targets.project,"name":self.name(),"layout":self.layout()}),
+            )?["createProjectV2View"]["projectV2View"]["id"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| unreadable("created view has no node id")),
+        }
+    }
+}
+#[derive(Clone, Copy)]
+enum OwnedField {
+    RecordStatus,
+    NeedsYou,
+}
+impl OwnedField {
+    fn name(self) -> &'static str {
+        match self {
+            Self::RecordStatus => FIELD,
+            Self::NeedsYou => NEEDS_FIELD,
+        }
+    }
 }
 
 /// Reconcile the owned fields and views, including on a board with no items.
@@ -218,47 +298,24 @@ pub(crate) fn configure(gh: &GitHub, board: &BoardRef) -> Result<(), GitHubError
         }
         after = cursor;
     }
-    for (name, layout, filter) in [
-        ("Board", "BOARD_LAYOUT", ""),
-        (NEEDS_FIELD, "TABLE_LAYOUT", "needs-you:Yes"),
-    ] {
+    for kind in [OwnedView::Board, OwnedView::NeedsYou] {
         let owned = views
             .iter()
-            .filter(|v| v["name"] == name)
+            .filter(|v| v["name"] == kind.name())
             .collect::<Vec<_>>();
-        let matching = owned.iter().copied().find(|view| {
-            name != "Board"
-                || view["verticalGroupByFields"]["nodes"]
-                    .as_array()
-                    .is_some_and(|fields| {
-                        fields.len() == 1 && fields[0]["id"] == targets.status["id"]
-                    })
-        });
-        let id = if let Some(view) = matching {
-            view["id"]
+        let matching = owned
+            .iter()
+            .copied()
+            .find(|view| kind.matches(view, &targets));
+        let id = match matching {
+            Some(view) => view["id"]
                 .as_str()
                 .ok_or_else(|| unreadable("view has no node id"))?
-                .to_owned()
-        } else if name == "Board" {
-            let database_id = targets.status["databaseId"].as_u64().ok_or_else(|| {
-                unreadable(
-                    "Record status has no REST field id; update GitHub's Projects API capability",
-                )
-            })?;
-            let created=gh.post_api(&format!("/orgs/{}/projectsV2/{}/views",board.owner,board.number),&json!({"name":name,"layout":"board","filter":"","vertical_group_by":[database_id]}))?;
-            created["value"]["node_id"]
-                .as_str()
-                .ok_or_else(|| unreadable("created Board view has no node id"))?
-                .to_owned()
-        } else {
-            gh.graphql(
-                CREATE_VIEW,
-                &json!({"project":targets.project,"name":name,"layout":layout}),
-            )?["createProjectV2View"]["projectV2View"]["id"]
-                .as_str()
-                .ok_or_else(|| unreadable("created view has no node id"))?
-                .to_owned()
+                .to_owned(),
+            None => kind.create(gh, board, &targets)?,
         };
+        let layout = kind.layout();
+        let filter = kind.filter();
         if matching.is_none_or(|view| {
             view["layout"] != layout || view["filter"].as_str().unwrap_or("") != filter
         }) {

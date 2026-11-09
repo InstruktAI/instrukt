@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: "failures.join(\"\\n\")"
+---
+level=WARNING logger=instrukt_runner::dispatch msg="" error="cockpit setup pending: GitHub: GitHub answered POST /orgs/acme/projectsV2/1/views with 503: Service unavailable" event=reflection_failed project=demo

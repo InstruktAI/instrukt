@@ -187,6 +187,7 @@ pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
     running: Option<Running>,
+    auth_clock: tempfile::TempDir,
 }
 
 struct Running {
@@ -199,12 +200,16 @@ impl FakeGitHub {
     pub fn start() -> Self {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let addr = server.server_addr().to_ip().unwrap();
-        let state = Arc::new(Mutex::new(State::new(format!("http://{addr}"))));
+        let auth_clock = tempfile::tempdir().unwrap();
+        let clock_file = auth_clock.path().join("clock");
+        std::fs::write(&clock_file, "system").unwrap();
+        let state = Arc::new(Mutex::new(State::new(format!("http://{addr}"), clock_file)));
         let running = Running::spawn(server, Arc::clone(&state));
         Self {
             state,
             addr,
             running: Some(running),
+            auth_clock,
         }
     }
 
@@ -231,7 +236,7 @@ impl FakeGitHub {
             .insert("api_url".into(), self.url().into());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, serde_yaml_ng::to_string(&layer).unwrap()).unwrap();
-        configure_apps(env, &self.url());
+        configure_apps(env, &self.url(), &self.auth_clock.path().join("clock"));
     }
 
     /// Stops answering: connections to the address are refused.
@@ -575,10 +580,13 @@ struct State {
     poll_interval: Option<u64>,
     /// GitHub projects (Projects v2), served through `/graphql`.
     projects: Vec<Project>,
+    auth_clock: std::path::PathBuf,
+    tokens: BTreeMap<String, (u64, jiff::Timestamp)>,
+    active_token: Option<String>,
 }
 
 impl State {
-    fn new(base: String) -> Self {
+    fn new(base: String, auth_clock: std::path::PathBuf) -> Self {
         Self {
             base,
             login: DEFAULT_LOGIN.to_owned(),
@@ -590,6 +598,9 @@ impl State {
             pauses: VecDeque::new(),
             poll_interval: None,
             projects: Vec::new(),
+            auth_clock,
+            tokens: BTreeMap::new(),
+            active_token: None,
         }
     }
 
@@ -1087,26 +1098,42 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         .get("authorization")
         .map(String::as_str)
         .unwrap_or("");
-    let app_id = authorization
-        .strip_prefix("Bearer app-token-")
-        .and_then(|s| s.parse::<u64>().ok())
-        .or_else(|| jwt_app(authorization));
+    let now = auth_time(&guard.auth_clock);
+    let jwt = jwt_app(authorization, now);
+    let token = authorization.strip_prefix("Bearer ").and_then(|t| {
+        guard
+            .tokens
+            .get(t)
+            .filter(|(_, expiry)| *expiry > now)
+            .map(|(id, _)| (*id, t.to_owned()))
+    });
+    let app_id = jwt.or(token.as_ref().map(|(id, _)| *id));
     let previous_login = guard.login.clone();
+    let previous_token = guard.active_token.clone();
+    guard.active_token = token.as_ref().map(|(_, token)| token.clone());
     if let Some(id) = app_id {
         guard.login = app_login(id).into();
     }
-    let mut reply = if authorization == "Bearer" {
-        Reply::json(401, json!({"message":"Bad credentials"}))
-    } else {
-        match canned {
-            Some(canned) => Reply {
-                status: canned.response.status,
-                body: Some(canned.response.body),
-                headers: canned.response.headers,
-            },
-            None => route(&mut guard, &method, &path, &query, &body),
-        }
-    };
+    let jwt_endpoint = path == "/app"
+        || path.starts_with("/app/installations/")
+        || path.ends_with("/installation");
+    let public_app = path.starts_with("/apps/");
+    let mut reply =
+        if jwt_endpoint && jwt.is_none() || (!jwt_endpoint && !public_app && token.is_none()) {
+            Reply::json(401, json!({"message":"Bad credentials"}))
+        } else if public_app && jwt.is_none() {
+            Reply::not_found()
+        } else {
+            match canned {
+                Some(canned) => Reply {
+                    status: canned.response.status,
+                    body: Some(canned.response.body),
+                    headers: canned.response.headers,
+                },
+                None => route(&mut guard, &method, &path, &query, &body),
+            }
+        };
+    guard.active_token = previous_token;
     guard.login = previous_login;
     if let Some(seconds) = guard.poll_interval {
         reply
@@ -1294,20 +1321,40 @@ fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -
         return Reply::ok(json!({"id":id,"slug":slug}));
     }
     if let Some(login) = path.strip_prefix("/users/") {
-        return Reply::ok(actor(login));
+        return if method == "GET" {
+            Reply::ok(actor(login))
+        } else {
+            Reply::not_found()
+        };
     }
-    if path.starts_with("/app/installations/") && path.ends_with("/access_tokens") {
+    if method == "POST"
+        && path.starts_with("/app/installations/")
+        && path.ends_with("/access_tokens")
+    {
         let id = path
             .split('/')
             .nth(3)
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(1);
         let input: Value = serde_json::from_str(body).unwrap();
+        let expected = match state.login.as_str() {
+            "instruktai-author[bot]" => 2,
+            "instruktai-reviewer[bot]" => 3,
+            _ => 1,
+        };
+        if id != expected {
+            return Reply::not_found();
+        }
+        let expires = auth_time(&state.auth_clock)
+            .checked_add(jiff::SignedDuration::from_secs(3600))
+            .unwrap();
+        let token = format!("app-token-{id}-{}", state.tokens.len() + 1);
+        state.tokens.insert(token.clone(), (id, expires));
         return Reply::created(
-            json!({"token":format!("app-token-{id}"),"expires_at":"2099-01-01T00:00:00Z","permissions":input["permissions"]}),
+            json!({"token":token,"expires_at":expires.to_string(),"permissions":input["permissions"]}),
         );
     }
-    if path == "/installation/repositories" {
+    if method == "GET" && path == "/installation/repositories" {
         return Reply::ok(
             json!({"repositories":state.repos.values().map(Repo::json).collect::<Vec<_>>()}),
         );
@@ -2668,7 +2715,7 @@ fn test_keys() -> &'static (String, String) {
         )
     })
 }
-fn jwt_app(authorization: &str) -> Option<u64> {
+fn jwt_app(authorization: &str, now: jiff::Timestamp) -> Option<u64> {
     let jwt = authorization.strip_prefix("Bearer ")?;
     let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
     validation.validate_exp = false;
@@ -2679,10 +2726,31 @@ fn jwt_app(authorization: &str) -> Option<u64> {
     )
     .ok()?
     .claims;
-    claims["iss"].as_str()?.parse().ok()
+    let issued = claims["iat"].as_i64()?;
+    let expires = claims["exp"].as_i64()?;
+    let now = now.as_second();
+    if issued > now
+        || issued < now - 660
+        || expires <= now
+        || expires > now + 600
+        || expires <= issued
+        || expires - issued > 660
+    {
+        return None;
+    }
+    claims["iss"]
+        .as_str()?
+        .parse::<u64>()
+        .ok()
+        .filter(|id| (1..=3).contains(id))
 }
 
-pub fn configure_apps(env: &TestEnv, api: &str) {
+pub fn configure_apps(env: &TestEnv, api: &str, clock: &std::path::Path) {
+    std::fs::write(
+        env.home().join(".fake-github-clock"),
+        clock.to_str().unwrap(),
+    )
+    .unwrap();
     let file = env.instrukt_home().join("instrukt.yaml");
     let mut layer: serde_yaml_ng::Value = std::fs::read_to_string(&file)
         .ok()
@@ -2705,4 +2773,20 @@ pub fn configure_apps(env: &TestEnv, api: &str) {
 
 fn field_database_id(id: &str) -> u64 {
     id.rsplit('_').next().unwrap().parse().unwrap()
+}
+
+fn auth_time(file: &std::path::Path) -> jiff::Timestamp {
+    let value = std::fs::read_to_string(file).unwrap();
+    if value == "system" {
+        jiff::Timestamp::now()
+    } else {
+        value.parse().unwrap()
+    }
+}
+pub fn sync_auth_clock(home: &std::path::Path, now: Option<&str>) {
+    if let Ok(file) = std::fs::read_to_string(home.join(".fake-github-clock"))
+        && std::path::Path::new(&file).exists()
+    {
+        std::fs::write(file, now.unwrap_or("system")).unwrap();
+    }
 }

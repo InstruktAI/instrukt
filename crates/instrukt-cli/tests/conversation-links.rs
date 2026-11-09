@@ -210,7 +210,7 @@ fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
     // Upgrade the retained native handover from the preceding owned schema.
     let previous =
         instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
-    previous.execute_batch("UPDATE conversation_relay_positions SET pending_json=(SELECT json_group_array(json(json_remove(value,'$.origin'))) FROM json_each(conversation_relay_positions.pending_json)); PRAGMA user_version=11;").unwrap();
+    previous.execute_batch("UPDATE conversation_relay_positions SET pending_json=(SELECT json_group_array(json(json_remove(value,'$.origin'))) FROM json_each(conversation_relay_positions.pending_json)); ALTER TABLE poll_deferrals DROP COLUMN cause; PRAGMA user_version=11;").unwrap();
     drop(previous);
     let runner = run();
     wait_for(|| {
@@ -339,6 +339,8 @@ fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dis
     let mut old: serde_json::Value = serde_json::from_str(&old).unwrap();
     old["args"] = native["args"].clone();
     db.execute("UPDATE session_bindings SET evidence=json_set(evidence,'$.native_assignment',json(?1)) WHERE session=?2", instrukt_core::state_db::rusqlite::params![old.to_string(), f.b.to_string()]).unwrap();
+    db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
+        .unwrap();
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
     let env = &f.crew.project.env;

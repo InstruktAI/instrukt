@@ -589,3 +589,53 @@ fn a_tick_preserves_diverged_local_history_instead_of_forcing_main() {
         .join("\n");
     insta::assert_snapshot!("diverged-main-sync-refused", lines);
 }
+
+fn observation_only() -> Tracked {
+    let project = Tracked::integrating();
+    let mut config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&project.repo.read("instrukt.yaml")).unwrap();
+    config["modules"]["todos"] = false.into();
+    project
+        .repo
+        .write("instrukt.yaml", &serde_yaml_ng::to_string(&config).unwrap());
+    project
+        .repo
+        .commit("configure observation without work dispatch");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    documented::sync(&project.env, &project.repo);
+    let head = project.repo.git(["rev-parse", "HEAD"]);
+    project.github.set_branch(REPOSITORY, "main", &head);
+    project
+        .github
+        .set_status(REPOSITORY, &head, "ci", StatusState::Success);
+    project.github.clear_requests();
+    project
+}
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
+#[test]
+fn failed_app_issuance_never_attempts_anonymous_ci_observation() {
+    let project = observation_only();
+    std::fs::remove_file(project.env.instrukt_home().join("secrets.env")).unwrap();
+    project.tick().success();
+    assert!(project.github.requests().is_empty());
+}
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG1
+#[test]
+fn app_issuance_retry_deadlines_defer_credentials_and_ci_requests_across_ticks() {
+    let mut project = observation_only();
+    let until: jiff::Timestamp = "2030-01-01T00:05:00Z".parse().unwrap();
+    project
+        .github
+        .rate_limit_next(1, until.as_second().try_into().unwrap());
+    project.tick_at("2030-01-01T00:00:00Z").success();
+    assert_eq!(project.github.requests_to("GET", "/status").len(), 0);
+    assert_eq!(project.github.requests_to("GET", "/check-runs").len(), 0);
+    project.github.clear_requests();
+    project.tick_at("2030-01-01T00:01:00Z").success();
+    assert!(project.github.requests().is_empty());
+    project.tick_at("2030-01-01T00:05:01Z").success();
+    assert_eq!(project.github.requests_to("GET", "/status").len(), 1);
+    assert_eq!(project.github.requests_to("GET", "/check-runs").len(), 1);
+}

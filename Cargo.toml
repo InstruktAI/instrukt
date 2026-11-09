@@ -16,6 +16,7 @@ license = "MIT"
 repository = "https://github.com/InstruktAI/instrukt"
 
 [workspace.dependencies]
+jsonwebtoken = "=9.3.1"
 instrukt-core = { path = "crates/instrukt-core" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint" }
 instrukt-runner = { path = "crates/instrukt-runner" }

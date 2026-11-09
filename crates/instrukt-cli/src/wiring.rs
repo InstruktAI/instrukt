@@ -62,6 +62,7 @@ pub fn environment(ctx: &Ctx) -> anyhow::Result<instrukt_core::config::Env> {
 pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     Ok(CoreWiring {
         caller_identity: caller_lookup(ctx)?,
+        github_actors: Some(ctx.github.clone()),
         session_role: Some(Arc::new(RecordedRole(ctx.home.clone()))),
         todo_existence: _work::todo_existence(ctx)?,
         flavor_roles: _workflow::flavor_roles(ctx)?,
@@ -76,6 +77,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
 pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     Ok(CoreWiring {
         caller_identity: caller_lookup(ctx)?,
+        github_actors: Some(ctx.github.clone()),
         session_role: Some(Arc::new(RecordedRole(ctx.home.clone()))),
         todo_existence: _work::available_todo_existence(ctx)?,
         flavor_roles: Some(_workflow::available_flavor_roles(ctx)),
@@ -91,6 +93,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
 pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
     let evidence = _work::evidence(ctx)?;
     Ok(RunnerWiring {
+        github_credentials: Some(ctx.github.clone()),
         work: _work::ports(ctx)?,
         workflow: _workflow::assignments(ctx, evidence)?,
     })

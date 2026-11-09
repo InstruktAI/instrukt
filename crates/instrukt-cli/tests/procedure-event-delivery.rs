@@ -569,6 +569,8 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     let db = r.computer.db();
     db.execute_batch("DROP TABLE conversation_relay_positions; DROP TABLE conversation_links;")
         .unwrap();
+    db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
+        .unwrap();
     db.pragma_update(None, "user_version", 9).unwrap();
     drop(db);
 

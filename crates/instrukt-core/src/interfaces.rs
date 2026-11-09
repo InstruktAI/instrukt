@@ -131,6 +131,7 @@ pub trait GraphGeneration: Send + Sync {
 #[derive(Clone, Default)]
 pub struct CoreWiring {
     pub caller_identity: Option<Arc<dyn CallerIdentityLookup>>,
+    pub github_actors: Option<Arc<dyn GitHubActors>>,
     pub session_role: Option<Arc<dyn SessionRoleLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
@@ -142,10 +143,18 @@ impl std::fmt::Debug for CoreWiring {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CoreWiring")
             .field("caller_identity", &self.caller_identity.is_some())
+            .field("github_actors", &self.github_actors.is_some())
+            .field("session_role", &self.session_role.is_some())
             .field("todo_existence", &self.todo_existence.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
             .finish()
     }
+}
+
+/// Setup-verified stable actor facts for local author attribution. No repository
+/// or installation authorization is implied by this capability.
+pub trait GitHubActors: Send + Sync {
+    fn actor(&self, role: &str) -> Result<crate::github::Bot, crate::github::AppError>;
 }

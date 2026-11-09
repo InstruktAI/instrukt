@@ -429,7 +429,11 @@ operations run outside local writer transactions.
 unchanged `304` reuses).
 
 **`poll_deferrals`** — per project, the earliest time the next poll of a
-source may run, from `X-Poll-Interval`. Key: `project`.
+source may run, from `X-Poll-Interval` or an App-issuance retry boundary. Key:
+`project`. Nullable `cause` retains an issuance failure independently of cached
+CI responses; successful observation clears it. Credential failure never selects
+an anonymous observation path. Database migration 14 adds this column while
+preserving existing validator bodies and retry deadlines.
 
 **`watched_refs`** — the last observation of each watched ref. Key:
 `(project, remote, ref)`. Columns: `project`, `remote`, `ref`, `revision`,

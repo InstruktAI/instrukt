@@ -10,6 +10,7 @@ use support::{Project, REPOSITORY};
 fn records_use_the_project_app_and_never_a_process_token() {
     let project = Project::new();
     project.create("app-record", "bug", "Verify bot attribution.");
+    assert_eq!(project.github.issues(REPOSITORY).len(), 1);
     let config = project
         .env
         .instrukt(project.repo.path())
@@ -18,10 +19,10 @@ fn records_use_the_project_app_and_never_a_process_token() {
         .assert()
         .success();
     let public: serde_json::Value = serde_json::from_slice(&config.get_output().stdout).unwrap();
-    assert_eq!(public["project"]["private_key"], "${TEST_APP_KEY}");
-    assert_eq!(
-        project.github.issues(REPOSITORY)[0]["user"]["login"],
-        "instruktai[bot]"
+    insta::assert_json_snapshot!("public-app-configuration", public);
+    insta::assert_json_snapshot!(
+        "project-bot-issue-author",
+        project.github.issues(REPOSITORY)[0]["user"]
     );
 }
 
@@ -64,65 +65,155 @@ fn configured_bots_with_none_association_restore_but_similarly_named_actors_do_n
     insta::assert_snapshot!("bot-recovered", support::redact(&shown));
 }
 
+fn rejected_credential(method: &str, endpoint: &str, body: serde_json::Value) -> String {
+    let project = Project::new();
+    project.create(
+        "pending-app",
+        "bug",
+        "Keep accepted work through credential failure.",
+    );
+    let comments = project.github.comments(REPOSITORY, 1);
+    let artifacts = project.github.artifacts(REPOSITORY, 1);
+    project.github.respond_once(
+        method,
+        endpoint,
+        common::github::CannedResponse {
+            status: 200,
+            headers: Vec::new(),
+            body,
+        },
+    );
+    let written = project.ok([
+        "artifacts",
+        "write",
+        "pending-app",
+        "log",
+        "accepted locally",
+    ]);
+    assert_eq!(project.github.comments(REPOSITORY, 1), comments);
+    assert_eq!(project.github.artifacts(REPOSITORY, 1), artifacts);
+    support::redact(&written)
+}
 // spec: project/instrukt/spec/feature/work/github-apps UC-GA1
 #[test]
-fn failed_app_identity_scope_or_expiry_keeps_accepted_work_pending() {
-    use common::github::CannedResponse;
-    use serde_json::json;
-    let mut reports = Vec::new();
-    for (name, method, endpoint, body) in [
-        (
-            "identity",
+fn an_app_identity_mismatch_keeps_accepted_work_pending() {
+    insta::assert_snapshot!(
+        "rejected-app-identity",
+        rejected_credential(
             "GET",
             "/app",
-            json!({"id":99,"slug":"wrong-app"}),
-        ),
-        (
-            "actor",
+            serde_json::json!({"id":99,"slug":"wrong-app"})
+        )
+    );
+}
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA1
+#[test]
+fn an_installation_actor_mismatch_keeps_accepted_work_pending() {
+    insta::assert_snapshot!(
+        "rejected-installation-actor",
+        rejected_credential(
             "POST",
             "/graphql",
-            json!({"data":{"viewer":{"id":"wrong","databaseId":99,"login":"wrong[bot]"}}}),
-        ),
-        (
-            "permissions",
+            serde_json::json!({"data":{"viewer":{"id":"wrong","databaseId":99,"login":"wrong[bot]"}}})
+        )
+    );
+}
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA1
+#[test]
+fn missing_permissions_keep_accepted_work_pending() {
+    insta::assert_snapshot!(
+        "rejected-missing-permissions",
+        rejected_credential(
             "POST",
             "/app/installations/1/access_tokens",
-            json!({"token":"must-not-leak","expires_at":"2099-01-01T00:00:00Z","permissions":{}}),
-        ),
-        (
-            "expiry",
+            serde_json::json!({"token":"must-not-leak","expires_at":"2099-01-01T00:00:00Z","permissions":{}})
+        )
+    );
+}
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA1
+#[test]
+fn an_expired_credential_keeps_accepted_work_pending() {
+    insta::assert_snapshot!(
+        "rejected-expired-credential",
+        rejected_credential(
             "POST",
             "/app/installations/1/access_tokens",
-            json!({"token":"must-not-leak","expires_at":"2000-01-01T00:00:00Z","permissions":{"issues":"write","contents":"read","pull_requests":"read"}}),
-        ),
-    ] {
-        let project = Project::new();
-        project.create(
-            "pending-app",
-            "bug",
-            "Keep accepted work through credential failure.",
-        );
-        let comments = project.github.comments(REPOSITORY, 1);
-        let artifacts = project.github.artifacts(REPOSITORY, 1);
-        project.github.respond_once(
-            method,
-            endpoint,
-            CannedResponse {
-                status: 200,
-                headers: Vec::new(),
-                body,
-            },
-        );
-        let written = project.ok([
-            "artifacts",
-            "write",
-            "pending-app",
-            "log",
-            "accepted locally",
-        ]);
-        assert_eq!(project.github.comments(REPOSITORY, 1), comments);
-        assert_eq!(project.github.artifacts(REPOSITORY, 1), artifacts);
-        reports.push(format!("{name}: {}", support::redact(&written)));
+            serde_json::json!({"token":"must-not-leak","expires_at":"2000-01-01T00:00:00Z","permissions":{"issues":"write","contents":"read","pull_requests":"read"}})
+        )
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA1
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC1
+#[test]
+fn a_configured_bot_role_commits_in_a_local_repository_without_installation_access() {
+    let env = common::TestEnv::new();
+    let github = common::github::FakeGitHub::start();
+    github.configure(&env);
+    let config = env.instrukt_home().join("instrukt.yaml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(config, format!("{text}runner: {{runtime: t3}}\n")).unwrap();
+    common::agent_profiles(
+        &env,
+        "roles: {local-author: {class: agent, can: [all], github_app: author}}",
+    );
+    let repo = env.git_repo("local-only");
+    repo.write("README.md", "Local repository.\n");
+    repo.commit("initial local state");
+    repo.git(["switch", "-c", "local-work"]);
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let mut db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+    db.write::<_,instrukt_core::state_db::StateDbError>(|tx|{
+        tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES ('local','sdlc/procedure/local','platform',1,'local',?1,?2,'{}','t3:local-author')",instrukt_core::state_db::rusqlite::params![repo.path().to_string_lossy(),r#"{"role":"local-author"}"#]).unwrap(); Ok(())
+    }).unwrap();
+    drop(db);
+    // Local attribution has no repository-installation credential dependency.
+    std::fs::remove_file(env.instrukt_home().join("secrets.env")).unwrap();
+    repo.write("change.md", "Local work.\n");
+    env.instrukt(repo.path())
+        .env("T3CODE_THREAD_ID", "local-author")
+        .args([
+            "repo",
+            "commit",
+            "--message",
+            "record local work",
+            "--only",
+            "change.md",
+        ])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "local-bot-commit",
+        repo.git(["log", "-1", "--format=%an <%ae>"])
+    );
+    assert!(github.requests().is_empty());
+}
+
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA1
+#[test]
+fn one_multi_item_reflection_reuses_authenticated_actor_facts_and_operation_credentials() {
+    let project = Project::new();
+    // Several items are ordinary work, not seven independent authentications.
+    for item in 0..8 {
+        project.create(&format!("record-{item}"), "bug", "Reflect shared work.");
     }
-    insta::assert_snapshot!("credential-failures", reports.join("\n"));
+    project.github.clear_requests();
+    project.ok(["update", "record-0"]);
+    assert_eq!(
+        project
+            .github
+            .requests_to("POST", "/app/installations/1/access_tokens")
+            .len(),
+        2
+    );
+    assert_eq!(project.github.requests_to("GET", "/app").len(), 1);
+    assert_eq!(
+        project
+            .github
+            .requests()
+            .iter()
+            .filter(|r| r.path.starts_with("/apps/"))
+            .count(),
+        0
+    );
 }

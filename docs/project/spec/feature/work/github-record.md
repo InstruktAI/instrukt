@@ -94,15 +94,19 @@ withdrawn). Its owned cockpit views are:
 The owned single-select `Needs you` field has exactly one option: `Yes`, red,
 with description `Waiting on a person; instrukt will not move it.` An item has
 this option when its record status is held, or a current approval gate waits
-for a human under `approvals.prd` or `approvals.task`. Peer-only approval gates
+for a human under `approvals.prd` or `approvals.task`. A PRD reaches that
+moment only after its current independent review approves its current target
+and report; drafting, revision and review work remain unmarked. Evidence or
+review invalidation returns the work to agents and clears the marker unless
+another person wait remains. Peer-only approval gates
 do not set it. Satisfying the gate, releasing the hold, or changing the gate to
 peer approval clears the marker when no other human wait remains. The marker
 is output, never an inbound command or a workflow fact.
 
 Setup creates missing fields and views and repairs owned layout, filter,
 column-field and option drift. Repeated setup reuses matching resources.
-GitHub exposes board-column configuration on view creation; repairing a wrong
-column field can replace the owned `Board` view and change its address.
+Repairing a wrong column field can replace the owned `Board` view and change
+its address.
 Unrelated user fields, views and GitHub's built-in project workflows remain
 untouched. Moving a card establishes no workflow fact. Setup, view repair and
 board reflection failures remain visible and retryable independently of issue and
@@ -347,7 +351,9 @@ the remote record before creating duplicate evidence.
   And the Needs you view uses table layout filtered by needs-you:Yes
   And each todo appears with its current record status
   And the Needs you field has only the red Yes option with its documented description
-  When a todo is held or has an outstanding human approval under the project's approvals configuration
+  When an unheld todo is drafting, being revised or awaiting independent review
+  Then its Needs you marker is absent
+  When a todo is held or has reached its current human approval gate under the project's approvals configuration
   Then its Needs you marker is set
   When that wait ends or only a peer approval is outstanding
   Then the marker is cleared unless another human wait remains

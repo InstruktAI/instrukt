@@ -209,11 +209,11 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         .args(["repo", "commit", "--message", "Track list depth"])
         .assert()
         .success();
-    assert_eq!(
+    insta::assert_snapshot!(
+        "bot-role-commit-author",
         project
             .env
-            .git(&workspace, ["log", "-1", "--format=%an <%ae>"]),
-        "instruktai-author[bot] <2315+instruktai-author[bot]@users.noreply.github.com>"
+            .git(&workspace, ["log", "-1", "--format=%an <%ae>"])
     );
     let built = project.env.git(&workspace, ["rev-parse", "HEAD"]);
     project
@@ -250,13 +250,6 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         .success();
 
     let remote = project.github.issues(REPOSITORY);
-    assert_eq!(
-        remote
-            .iter()
-            .find(|i| i.get("pull_request").is_some())
-            .unwrap()["user"]["login"],
-        "instruktai-author[bot]"
-    );
     let pull = remote
         .iter()
         .find(|i| i.get("pull_request").is_some())
@@ -264,11 +257,10 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         .as_u64()
         .unwrap();
     let reviews = project.github.reviews(REPOSITORY, pull);
-    assert_eq!(
-        reviews.last().unwrap()["user"]["login"],
-        "instruktai-reviewer[bot]"
+    insta::assert_json_snapshot!(
+        "native-pull-review-identities",
+        serde_json::json!({"author":remote.iter().find(|i|i.get("pull_request").is_some()).unwrap()["user"],"reviewer":reviews.last().unwrap()["user"],"state":reviews.last().unwrap()["state"]})
     );
-    assert_eq!(reviews.last().unwrap()["state"], "APPROVED");
     // Reconstruction must recognize the native verdict already on GitHub.
     let other = project.other_computer();
     other.ok(["update", "nested-lists"]);
@@ -1642,12 +1634,7 @@ fn cockpit_views_are_created_and_reconciled_without_touching_user_views_or_workf
         .find(|f| f["name"] == "Needs you")
         .unwrap();
     let options=field["options"].as_array().unwrap().iter().map(|o|serde_json::json!({"name":o["name"],"color":o["color"],"description":o["description"]})).collect::<Vec<_>>();
-    assert_eq!(
-        options,
-        vec![
-            serde_json::json!({"name":"Yes","color":"RED","description":"Waiting on a person; instrukt will not move it."})
-        ]
-    );
+    insta::assert_json_snapshot!("needs-you-option", options);
     project.ok(["update", "cockpit-views"]);
     assert_eq!(project.github.project_views("acme", 1), views);
     assert_eq!(project.github.project_views("acme", 1)[0], user_view);
@@ -1693,7 +1680,7 @@ fn cockpit_drifted_owned_views_and_options_are_repaired_and_missing_ones_recreat
         .find(|f| f["name"] == "Needs you")
         .unwrap();
     assert_eq!(field["options"].as_array().unwrap().len(), 1);
-    assert_eq!(field["options"][0]["color"], "RED");
+    insta::assert_json_snapshot!("repaired-needs-you-option",field["options"].as_array().unwrap().iter().map(|o|serde_json::json!({"name":o["name"],"color":o["color"],"description":o["description"]})).collect::<Vec<_>>());
     project.github.drift_project_option("acme", 1, "Needs you");
     project.github.edit_project_view(
         "acme",
@@ -1753,13 +1740,47 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
     assert!(!marked_needs_you(&project, 1));
     approvals_config(&project, "human", "human");
     project.ok(["update", "person-wait"]);
-    assert!(marked_needs_you(&project, 1));
+    assert!(!marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
         "write",
         "person-wait",
         "prd-review-findings",
         "Approved.",
+    ]);
+    assert!(!marked_needs_you(&project, 1));
+    project.ok([
+        "stamp",
+        "person-wait",
+        "--verdict",
+        "approve",
+        "--phase",
+        "prd_review",
+    ]);
+    assert!(marked_needs_you(&project, 1));
+    project.ok([
+        "artifacts",
+        "write",
+        "person-wait",
+        "prd-review-findings",
+        "The review must be assessed again.",
+    ]);
+    assert!(!marked_needs_you(&project, 1));
+    project.ok([
+        "stamp",
+        "person-wait",
+        "--verdict",
+        "needs_work",
+        "--phase",
+        "prd_review",
+    ]);
+    assert!(!marked_needs_you(&project, 1));
+    project.ok([
+        "artifacts",
+        "write",
+        "person-wait",
+        "prd-review-findings",
+        "Approved again.",
     ]);
     project.ok([
         "stamp",
@@ -1769,6 +1790,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "--phase",
         "prd_review",
     ]);
+    assert!(marked_needs_you(&project, 1));
     project.ok([
         "update",
         "person-wait",
@@ -1795,7 +1817,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "prd",
         "A revised outcome needs a new approval.",
     ]);
-    assert!(marked_needs_you(&project, 1));
+    assert!(!marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
         "write",
@@ -1886,4 +1908,59 @@ fn cockpit_setup_finds_owned_views_after_user_views_and_reconciles_duplicate_own
         "Retain the existing cockpit and user views.",
     );
     assert_eq!(project.github.project_views("acme", 1), expected);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn cockpit_repair_failure_stays_pending_for_an_already_reflected_item() {
+    let project = Project::new();
+    project.create("reflected-cockpit", "bug", "Keep cockpit failures visible.");
+    project.github.remove_project_view("acme", 1, "Board");
+    project.github.respond_once(
+        "POST",
+        "/orgs/acme/projectsV2/1/views",
+        CannedResponse {
+            status: 503,
+            headers: Vec::new(),
+            body: serde_json::json!({"message":"Service unavailable"}),
+        },
+    );
+    insta::assert_snapshot!(
+        "reflected-item-cockpit-pending",
+        redact(&project.ok(["update", "reflected-cockpit"]))
+    );
+    let snapshot = project.github.comments(REPOSITORY, 1);
+    project.ok(["update", "reflected-cockpit"]);
+    assert_eq!(project.github.comments(REPOSITORY, 1), snapshot);
+    assert_eq!(project.github.project_views("acme", 1).len(), 2);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn an_empty_projects_cockpit_failure_is_a_project_reflection_failure() {
+    let project = flavor::Tracked::new(false);
+    project.github.respond_once(
+        "POST",
+        "/orgs/acme/projectsV2/1/views",
+        CannedResponse {
+            status: 503,
+            headers: Vec::new(),
+            body: serde_json::json!({"message":"Service unavailable"}),
+        },
+    );
+    project.tick().success();
+    let log = std::fs::read_to_string(
+        project
+            .env
+            .home()
+            .join(".local/state/instrukt-ai/instrukt/tick.log"),
+    )
+    .unwrap();
+    let failures = log
+        .lines()
+        .filter(|line| line.contains("reflection_failed"))
+        .map(|line| line.split_once(' ').unwrap().1)
+        .collect::<Vec<_>>();
+    assert_eq!(failures.len(), 1);
+    insta::assert_snapshot!("empty-project-cockpit-pending", failures.join("\n"));
 }

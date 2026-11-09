@@ -73,7 +73,8 @@ pub(crate) fn work(ctx: &Ctx) -> anyhow::Result<Work> {
         ctx.home.clone(),
         super::environment(ctx)?,
         ctx.clock.shared(),
-    ))
+    )
+    .with_github(ctx.github.clone()))
 }
 
 /// Whether `modules.todos` is on where the caller stands.

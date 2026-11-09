@@ -16,6 +16,7 @@
 //! ([`crate::evidence::WorkEvidence`]) and core ([`WorkExistence`] for
 //! `TodoExistence`).
 
+mod _apps;
 mod _assignment;
 mod _attempts;
 mod _board;
@@ -40,6 +41,7 @@ use instrukt_core::home::Home;
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::Timestamp;
 
+pub use _apps::GitHubAccess;
 pub use _assignment::{recorded_assignment, target_identity};
 pub use _attempts::{
     AttemptRequest, AttemptResolution, DriverPlacement, NativeAssignment, NativeBinding,
@@ -65,6 +67,7 @@ pub type Clock = Arc<dyn Fn() -> Timestamp + Send + Sync>;
 
 /// The work record of this computer.
 pub struct Work {
+    github: Arc<GitHubAccess>,
     home: Home,
     env: Env,
     clock: Clock,
@@ -74,9 +77,19 @@ impl Work {
     /// Work over `home`, reading credentials and the caller's session from
     /// `env` and time from `clock`.
     pub fn new(home: Home, env: Env, clock: Clock) -> Self {
-        Self { home, env, clock }
+        let github = Arc::new(GitHubAccess::new(home.clone()));
+        Self {
+            home,
+            env,
+            clock,
+            github,
+        }
     }
 
+    pub fn with_github(mut self, github: Arc<GitHubAccess>) -> Self {
+        self.github = github;
+        self
+    }
     /// The project rooted at `root`, as its project layer names it.
     pub fn project_at(&self, root: &std::path::Path) -> Result<ProjectRef, WorkError> {
         let config = Configuration::load(&self.home, Some(root))?;

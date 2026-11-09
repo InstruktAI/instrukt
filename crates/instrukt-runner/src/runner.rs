@@ -491,18 +491,35 @@ fn read_sources(
             return;
         }
     };
+    match ci::credential_deferral(state, &project.slug, now) {
+        Ok(Some(until)) => {
+            tracing::debug!(event="ci_app_deferred",project=%project.slug,until=%until);
+            return;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(event="ci_observation_state_failed",error=%error);
+            return;
+        }
+    }
+    let Some(credentials) = &cx.wiring.github_credentials else {
+        tracing::warn!(event="ci_app_unavailable",project=%project.slug,cause="work credential capability unavailable");
+        return;
+    };
+    let credential = match credentials.credential(&repository, github::Operation::Observe, now) {
+        Ok(credential) => credential,
+        Err(error) => {
+            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, now) {
+                tracing::warn!(event="ci_observation_state_failed",error=%save);
+            }
+            tracing::warn!(event="ci_app_unavailable",project=%project.slug,error=%error);
+            return;
+        }
+    };
     let client = CiClient::new(
         &api_url,
         &repository,
-        match github::Apps::load(cx.home)
-            .and_then(|apps| apps.issue(&repository, None, github::Operation::Observe, now))
-        {
-            Ok(credential) => Some(credential.token().to_owned()),
-            Err(error) => {
-                tracing::warn!(event="ci_app_unavailable", error=%error);
-                None
-            }
-        },
+        credential.token().to_owned(),
         state,
         &project.slug,
     );

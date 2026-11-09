@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+jsonwebtoken.workspace = true
+url.workspace = true
 instrukt-core.workspace = true
 instrukt-runner.workspace = true
 hex.workspace = true

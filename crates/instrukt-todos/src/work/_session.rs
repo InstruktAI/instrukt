@@ -110,6 +110,7 @@ pub(crate) struct Session<'w> {
     /// Local items whose recovery window expired when the session opened.
     pub purged: Vec<TodoSlug>,
     /// Documentation files this command rewrote in the working tree.
+    pub board_setup_failure: Option<String>,
     pub docs_changed: Vec<std::path::PathBuf>,
     /// A group parent's pending documentation owed to its first child.
     pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
@@ -143,7 +144,10 @@ impl<'w> Session<'w> {
                 Remote::Unavailable(PendingReason::RateLimited { until: Some(until) })
             }
             _ => match GitHub::for_app(
-                work.home(),
+                {
+                    work.github.begin_pass().map_err(GitHubError::from)?;
+                    work.github.clone()
+                },
                 &api_url,
                 &repository,
                 None,
@@ -174,6 +178,7 @@ impl<'w> Session<'w> {
             base,
             purged: Vec::new(),
             docs_changed: Vec::new(),
+            board_setup_failure: None,
             pending_transfer: None,
             parent_preparation: super::_ops::ParentPreparation::NotAsked,
         };
@@ -947,6 +952,7 @@ impl<'w> Session<'w> {
                 (None, Some(error.to_string()))
             }
         };
+        self.board_setup_failure = board_error.clone();
         for index in 0..self.items.len() {
             // A known incompatible remote must stop before acknowledgements.
             if let Remote::Client { gh, down: None } = &self.remote
@@ -964,6 +970,13 @@ impl<'w> Session<'w> {
             }
             if !self.items[index].reflection.pending {
                 self.items[index].reflection.failure = None;
+            }
+            let before_setup = self.items[index].clone();
+            if let Some(error) = &board_error {
+                self.items[index].reflection.board_failure = Some(error.clone());
+            }
+            if self.items[index] != before_setup {
+                self.store.save(&self.items[index])?;
             }
             self.flush_command_replies(index)?;
             let owed = self.items[index].reflection.pending

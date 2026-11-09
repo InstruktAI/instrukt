@@ -260,6 +260,7 @@ impl TestEnv {
     /// The built `instrukt` binary, ready to run in `cwd` with this test's
     /// environment.
     pub fn instrukt(&self, cwd: &Path) -> Command {
+        github::sync_auth_clock(self.home(), self.injected("INSTRUKT_NOW"));
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_instrukt"));
         cmd.env_clear().envs(&self.vars).current_dir(cwd);
         cmd
@@ -268,6 +269,7 @@ impl TestEnv {
     /// The built `instrukt` binary as a plain process, for a test that
     /// runs it in the background and stops it part-way.
     pub fn instrukt_process(&self, cwd: &Path) -> StdCommand {
+        github::sync_auth_clock(self.home(), self.injected("INSTRUKT_NOW"));
         let mut cmd = StdCommand::new(env!("CARGO_BIN_EXE_instrukt"));
         cmd.env_clear().envs(&self.vars).current_dir(cwd);
         cmd

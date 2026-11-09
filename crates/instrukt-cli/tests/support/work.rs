@@ -37,14 +37,14 @@ impl Project {
     pub fn with_runtime(session_env: Option<&str>) -> Self {
         let github = FakeGitHub::start();
         github.add_repo(REPOSITORY).add_project("acme", 1);
-        let (env, repo) = machine(&github.url(), session_env);
+        let (env, repo) = machine(&github, session_env);
         Self { env, github, repo }
     }
 
     /// Another computer of the same developer team: its own home and
     /// checkout of the project, reflecting to the same GitHub.
     pub fn other_computer(&self) -> Computer {
-        let (env, repo) = machine(&self.github.url(), None);
+        let (env, repo) = machine(&self.github, None);
         Computer { env, repo }
     }
 
@@ -78,7 +78,7 @@ impl Project {
 /// A computer of the developer team reflecting the project to `github`:
 /// its own home and checkout.
 pub fn computer(github: &FakeGitHub) -> Computer {
-    let (env, repo) = machine(&github.url(), None);
+    let (env, repo) = machine(github, None);
     Computer { env, repo }
 }
 
@@ -117,7 +117,8 @@ where
 /// A computer: a temporary home whose global layer points at the GitHub
 /// API `api_url` (with `session_env` naming an agent runtime's session
 /// variable, if given), a token, and the project's checkout.
-fn machine(api_url: &str, session_env: Option<&str>) -> (TestEnv, Repo) {
+fn machine(github: &FakeGitHub, session_env: Option<&str>) -> (TestEnv, Repo) {
+    let api_url = github.url();
     let mut env = TestEnv::new();
     let mut global =
         format!("schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {api_url}\n");
@@ -126,7 +127,7 @@ fn machine(api_url: &str, session_env: Option<&str>) -> (TestEnv, Repo) {
     let path = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, global).unwrap();
-    crate::common::github::configure_apps(&env, api_url);
+    github.configure(&env);
     env.set_env("GITHUB_TOKEN", "test-token");
     let repo = env.git_repo("demo");
     repo.write(

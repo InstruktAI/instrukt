@@ -613,13 +613,32 @@ pub fn waiting_for_human_approval(evidence: &TodoEvidence, prd: Approver, task: 
                     != Some(digest)
             })
     };
-    needs(
-        ApprovalGate::Prd,
-        prd,
-        artifact_names::PRD,
+    let prd_review = ledger.latest_after(
         ledger.invalidations(PreparationReview::PrdReview).last(),
-    ) || (evidence.kind == instrukt_runner::interfaces::TodoKind::Task
-        && needs(ApprovalGate::Task, task, artifact_names::TASK_PLAN, None))
+        |fact| match fact {
+            StampFact::PreparationVerdict {
+                phase: PreparationReview::PrdReview,
+                verdict,
+                target,
+                report,
+            } => Some((verdict, target, report)),
+            _ => None,
+        },
+    );
+    let eligible_prd = prd_review.is_some_and(|(verdict, target, report)| {
+        *verdict == ReviewVerdict::Approve
+            && ledger.current(artifact_names::PRD) == Some(target)
+            && ledger.current(artifact_names::PRD_REVIEW_FINDINGS) == Some(report)
+    });
+    eligible_prd
+        && needs(
+            ApprovalGate::Prd,
+            prd,
+            artifact_names::PRD,
+            ledger.invalidations(PreparationReview::PrdReview).last(),
+        )
+        || (evidence.kind == instrukt_runner::interfaces::TodoKind::Task
+            && needs(ApprovalGate::Task, task, artifact_names::TASK_PLAN, None))
 }
 
 /// `prd_approval.*` and `task_approved.*`: the latest approval of each gate

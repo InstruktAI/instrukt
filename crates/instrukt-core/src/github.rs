@@ -1,7 +1,5 @@
-//! Machine-owned App authentication and repository resolution. Public profile
-//! identities are verified at GitHub; protected keys issue bounded, memory-only
-//! installation credentials. Project configuration selects the repository,
-//! while only the global layer selects the credential destination.
+//! Public GitHub configuration and repository resolution. Work supplies runtime
+//! authentication and verified actors through CLI-composed capabilities.
 
 use std::path::Path;
 
@@ -10,7 +8,7 @@ use crate::git::{self, GitError};
 use crate::home::Home;
 
 mod _apps;
-pub use _apps::{App, AppError, Apps, Bot, Credential, Operation, inventory};
+pub use _apps::{App, AppError, Bot, Credential, Operation, inventory};
 
 /// The repository could not be resolved.
 #[derive(Debug, thiserror::Error)]

@@ -74,15 +74,12 @@ pub fn commit(
             .flatten()
         {
             Some(role) => {
-                let api = crate::github::api_url(home)?;
-                let repository = crate::github::repository(&configuration, &api, &root)?;
-                let credential = crate::github::Apps::load(home)?.issue(
-                    &repository,
-                    Some(role.as_str()),
-                    crate::github::Operation::Author,
-                    jiff::Timestamp::now(),
-                )?;
-                Some(credential.bot.author())
+                let actors = wiring.github_actors.as_ref().ok_or_else(|| {
+                    crate::github::AppError::Setup(
+                        "verified actor capability unavailable; configure github.apps".into(),
+                    )
+                })?;
+                Some(actors.actor(role.as_str())?.author())
             }
             None => agent_author(&configuration, env)?,
         },

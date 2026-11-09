@@ -9,6 +9,7 @@ use crate::clock::Clock;
 use crate::output::Output;
 
 pub struct Ctx {
+    pub github: std::sync::Arc<instrukt_todos::work::GitHubAccess>,
     /// The home (`$HOME/.instrukt`) of this invocation.
     pub home: Home,
     /// The caller's working directory.
@@ -27,7 +28,9 @@ impl Ctx {
         // module's refusal or unchanged-work decision.
         instrukt_core::config::Configuration::load_at(&home, &cwd)?;
         let clock = Clock::from_process()?;
+        let github = std::sync::Arc::new(instrukt_todos::work::GitHubAccess::new(home.clone()));
         Ok(Self {
+            github,
             home,
             cwd,
             out: Output::stdout(),

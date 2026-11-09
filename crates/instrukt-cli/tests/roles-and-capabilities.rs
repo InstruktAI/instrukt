@@ -143,6 +143,8 @@ fn a_retained_baseline_worker_keeps_command_access_with_explicitly_unknown_dispa
     let home = instrukt_core::home::Home::at_user_home(crew.project.env.home().to_path_buf());
     let db = instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
     db.execute("UPDATE session_bindings SET evidence=json_set(evidence,'$.native_assignment',json(?1)) WHERE session=?2",instrukt_core::state_db::rusqlite::params![native.to_string(),worker["session"].as_str().unwrap()]).unwrap();
+    db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
+        .unwrap();
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
     let caller = worker["session"]

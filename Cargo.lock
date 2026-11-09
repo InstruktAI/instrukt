@@ -902,7 +902,6 @@ dependencies = [
  "hex",
  "indexmap",
  "jiff",
- "jsonwebtoken",
  "proptest",
  "regex",
  "rusqlite",
@@ -916,8 +915,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
- "ureq",
- "url",
  "walkdir",
 ]
 
@@ -956,6 +953,7 @@ dependencies = [
  "instrukt-core",
  "instrukt-runner",
  "jiff",
+ "jsonwebtoken",
  "proptest",
  "serde",
  "serde_json",
@@ -965,6 +963,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "ureq",
+ "url",
 ]
 
 [[package]]

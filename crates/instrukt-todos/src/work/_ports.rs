@@ -691,6 +691,9 @@ impl Reflection for Work {
         let mut s = Session::open(self, project)?;
         poll_interest(&mut s)?;
         s.flush()?;
+        if let Some(cause) = &s.board_setup_failure {
+            return Err(WorkError::refused(format!("cockpit setup pending: {cause}")).into());
+        }
         let reach = match s.github_read() {
             GitHubRead::Read => GitHubReach::Reachable,
             GitHubRead::NotRead(PendingReason::RateLimited { until }) => {

@@ -192,18 +192,19 @@ fn load_validators(state: &RunnerState, project: &ProjectSlug) -> Result<Validat
             .map_err(&sql)?
             .collect::<Result<BTreeMap<_, _>, _>>()
             .map_err(&sql)?;
-        let not_before: Option<String> = conn
+        let not_before: Option<(String, Option<String>)> = conn
             .query_row(
-                "SELECT until FROM poll_deferrals WHERE project = ?1",
+                "SELECT until, cause FROM poll_deferrals WHERE project = ?1",
                 params![project.as_str()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(&sql)?;
         Ok(Validators {
             answers,
+            cause: not_before.as_ref().and_then(|(_, cause)| cause.clone()),
             not_before: not_before
-                .map(|text| {
+                .map(|(text, _)| {
                     text.parse::<Timestamp>()
                         .map_err(|e| state::invalid(path, e))
                 })
@@ -233,9 +234,9 @@ fn save_validators(
         }
         match validators.not_before {
             Some(until) => tx.execute(
-                "INSERT INTO poll_deferrals (project, until) VALUES (?1, ?2)
-                 ON CONFLICT (project) DO UPDATE SET until = excluded.until",
-                params![project.as_str(), until.to_string()],
+                "INSERT INTO poll_deferrals (project, until, cause) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (project) DO UPDATE SET until = excluded.until, cause = excluded.cause",
+                params![project.as_str(), until.to_string(), validators.cause],
             ),
             None => tx.execute(
                 "DELETE FROM poll_deferrals WHERE project = ?1",
@@ -251,6 +252,7 @@ fn save_validators(
 struct Validators {
     answers: BTreeMap<String, Cached>,
     not_before: Option<Timestamp>,
+    cause: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -263,7 +265,7 @@ struct Cached {
 pub struct CiClient<'a> {
     api_url: String,
     repository: String,
-    token: Option<String>,
+    token: String,
     state: &'a RunnerState,
     project: &'a ProjectSlug,
 }
@@ -272,7 +274,7 @@ impl<'a> CiClient<'a> {
     pub fn new(
         api_url: &str,
         repository: &str,
-        token: Option<String>,
+        token: String,
         state: &'a RunnerState,
         project: &'a ProjectSlug,
     ) -> Self {
@@ -295,6 +297,7 @@ impl<'a> CiClient<'a> {
             return Ok(CiRead::Deferred(not_before));
         }
         let mut interval = None;
+        validators.cause = None;
         let mut bodies = Vec::with_capacity(commits.len());
         let mut failure = None;
         for commit in commits {
@@ -354,9 +357,7 @@ impl<'a> CiClient<'a> {
             .get(url)
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "instrukt");
-        if let Some(token) = &self.token {
-            request = request.header("Authorization", &format!("Bearer {token}"));
-        }
+        request = request.header("Authorization", &format!("Bearer {}", self.token));
         if let Some(cached) = validators.answers.get(url) {
             request = request.header("If-None-Match", &cached.etag);
         }
@@ -420,6 +421,31 @@ fn parse<T: serde::de::DeserializeOwned>(url: &str, body: &str) -> Result<T, CiE
         url: url.to_owned(),
         message: err.to_string(),
     })
+}
+
+/// Honor the observation source's deadline before even attempting credentials.
+pub(crate) fn credential_deferral(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    now: Timestamp,
+) -> Result<Option<Timestamp>, StateError> {
+    Ok(load_validators(state, project)?
+        .not_before
+        .filter(|until| *until > now))
+}
+pub(crate) fn record_credential_failure(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    error: &instrukt_core::github::AppError,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    let mut validators = load_validators(state, project)?;
+    validators.not_before = Some(match error {
+        instrukt_core::github::AppError::RateLimited { until: Some(until) } => *until,
+        _ => now,
+    });
+    validators.cause = Some(error.to_string());
+    save_validators(state, project, &validators)
 }
 
 #[cfg(test)]

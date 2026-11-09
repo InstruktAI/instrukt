@@ -28,7 +28,10 @@ message that writes them itself is refused.
 
 A recorded bot role uses its selected App's bot noreply author under
 `project/instrukt/spec/feature/work/github-apps`, before provider-agent lookup.
-The bot account id, not the App id, forms the noreply address. Unmapped agent
+The bot account id, not the App id, forms the noreply address. Local author
+resolution consumes the machine's complete setup-verified bot identity through
+work's actor capability. It needs no GitHub-hosted repository, App private key,
+installation token or remote write authorization for the local repository. Unmapped agent
 roles use the project App. This works with T3's recognized native session even
 when T3 reports no provider-agent identity. A known role with unavailable App
 identity refuses rather than writing under the developer's name. A roleless

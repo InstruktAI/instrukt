@@ -143,6 +143,9 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
 /// Fires the registered wake-up as the scheduler would at `at`: its
 /// program, in the environment it declares, with the clock at `at`.
 fn run_registered(registered: &Registered, cwd: &Path, at: &str) {
+    if let Some((_, home)) = registered.env.iter().find(|(key, _)| key == "HOME") {
+        common::github::sync_auth_clock(Path::new(home), Some(at));
+    }
     let (program, args) = registered.program.split_first().unwrap();
     let output = std::process::Command::new(program)
         .args(args)
@@ -300,6 +303,7 @@ fn a_task_failure_committed_before_interrupted_reflection_is_notified_on_the_nex
     // The first new revision is the automatic hold. Keep GitHub's answer
     // pending so the runner cannot proceed beyond local commit/reflection.
     let pause = project.github.pause_once("POST", "/comments");
+    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:01:20Z");
     let mut tick = project
         .env
         .instrukt_process(project.env.home())

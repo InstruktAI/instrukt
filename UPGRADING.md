@@ -2,6 +2,39 @@
 
 ## 0.1.0
 
+### GitHub App identities
+
+Existing installations using `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`
+need App setup before remote work reflection and CI observation:
+
+1. Reuse existing TeleClaude project/author/reviewer Apps when available, or
+   create three distinct Apps and install them for each intended repository.
+   Keep the observed App ids, slugs and stable bot id/node-id/login tuples.
+2. Grant the project's record App issues write and contents/pull-requests read;
+   grant the author App contents/pull-requests write, and the reviewer App
+   contents read/pull-requests write. Board maintenance also needs organization
+   Projects write on the repository's installation; CI observation needs checks,
+   statuses and contents read. Resolve missing installation/permission support
+   before treating remote setup as complete.
+3. On each computer, store keys with `instrukt secrets set NAME --from-file
+   /protected/input-file` or redirected stdin. Keys live only in owner-only
+   `~/.instrukt/secrets.env`; model-provider keys remain with T3.
+4. Configure machine-global `github.apps` public profiles with their actual
+   `app_id`, `slug`, `bot: {id, node_id, login}` and `private_key: ${NAME}`
+   references; select `github.project_app`. Set `roles.<role>.github_app` in
+   `agents.yaml`, using different author/reviewer identities. Omitted mappings
+   use the project App. Preserve existing capabilities and model choices.
+5. Validate global/project configuration and verify observed actor facts during
+   setup. Confirm an authorized remote reflection and CI observation authenticate
+   as the configured Apps with usable scoped credentials. Missing verification
+   stays incomplete; local accepted work remains pending and retryable.
+6. Retire the former token environment/gh credential integration for instrukt.
+   It supplies no fallback. Raw runtime-owned git/gh use keeps its own credential
+   integration. Local bot-attributed commits consume configured verified actor
+   facts and require no installation access to the current repository.
+
+### Protected secrets and owned files
+
 Existing development installations need machine-local secret setup before using
 webhook intake or authenticated Redis with this build:
 
