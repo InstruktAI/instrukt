@@ -127,9 +127,9 @@ mod tests {
         let mut failure = Some(LinkError::Refused(
             "native notification channel closed; restart instrukt run".into(),
         ));
-        assert_eq!(
-            observe_stopped(&mut failure).unwrap_err().to_string(),
-            "conversation link: native notification channel closed; restart instrukt run"
+        insta::assert_snapshot!(
+            "stopped-reader-failure",
+            observe_stopped(&mut failure).unwrap_err().to_string()
         );
         for _ in 0..100 {
             assert!(observe_stopped(&mut failure).is_ok());

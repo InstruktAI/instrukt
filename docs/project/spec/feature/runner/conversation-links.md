@@ -62,6 +62,10 @@ Link admission uses recorded assignments and the effective role class under
   as the reporting path.
 - A worker is not linked to the orchestrator that dispatched it. The refusal
   names native child-result delivery as its upward reporting path.
+- A worker with unavailable dispatcher evidence is not linked. The refusal
+  names the missing evidence and the way forward: a fresh assignment records
+  its dispatcher. Other scoped access follows
+  `project/instrukt/spec/feature/runner/session-continuity`.
 - A thread already linked to a peer refuses a third peer, identifies its active
   peer and preserves the existing conversation. Opening an already-linked pair
   creates neither a second link nor a duplicate opening contribution.
@@ -145,13 +149,11 @@ a directional delivery position advances only after native acceptance, or a
 recorded empty-content disposition.
 
 Ordinary runner startup catches up active links from retained positions
-and resumes unfinished ranges. The conversation-source adapter publishes typed,
-runtime-neutral completed turns with native turn references, turn/contribution
-order, author kind and available identity, text and available occurrence time.
-Native projection interpretation, completion and message relationships belong to
-the adapter. Link logic consumes only this evidence and owns envelopes, inherited
-echo exclusion, NOOP/empty handling and delivery decisions. An observed high-water
-position is never proof of completed delivery. Missing source content, an
+and resumes unfinished ranges. Link logic consumes only the adapter's typed,
+runtime-neutral completed-turn evidence under
+`project/instrukt/spec/feature/runner/session-continuity`. It owns envelopes,
+inherited echo exclusion, NOOP/empty handling and delivery decisions. An observed
+high-water position is never proof of completed delivery. Missing source content, an
 unsupported stream shape or an unresolved handover is a visible failure; no fabricated transcript or successful
 position substitutes for evidence. T3 protocol discovery and supported-version
 checks remain at the runtime boundary.

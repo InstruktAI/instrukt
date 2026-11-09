@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-runner/src/links/_watch.rs
+assertion_line: 130
+expression: observe_stopped(&mut failure).unwrap_err().to_string()
+---
+conversation link: native notification channel closed; restart instrukt run

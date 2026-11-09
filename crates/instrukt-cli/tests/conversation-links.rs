@@ -312,6 +312,83 @@ fn a_workers_recorded_dispatcher_relationship_survives_a_later_claim_change() {
 }
 
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
+#[test]
+fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dispatcher() {
+    let f = admission_fixture();
+    let mut agents: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(f.home.agents_file()).unwrap()).unwrap();
+    agents["roles"]["plan-reviewer"]["class"] = "agent".into();
+    std::fs::write(
+        f.home.agents_file(),
+        serde_yaml_ng::to_string(&agents).unwrap(),
+    )
+    .unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(f.home.state_db_file()).unwrap();
+    let native: String = db.query_row("SELECT json_extract(evidence,'$.native_assignment') FROM session_bindings WHERE session=?1", [f.b.to_string()], |row| row.get(0)).unwrap();
+    let native: serde_json::Value = serde_json::from_str(&native).unwrap();
+    let dispatcher: instrukt_core::ids::SessionRef =
+        native["dispatcher"].as_str().unwrap().parse().unwrap();
+    assert_eq!(dispatcher, f.a);
+    let workspace = std::path::Path::new(native["worktree"].as_str().unwrap());
+    let old = include_str!("fixtures/assignments/c11-native-assignment.json")
+        .replace("[KEY]", native["semantic_key"].as_str().unwrap())
+        .replace("[WORKTREE]", workspace.to_str().unwrap())
+        .replace("[BRANCH]", native["branch"].as_str().unwrap())
+        .replace("[BASE]", native["base"].as_str().unwrap());
+    let mut old: serde_json::Value = serde_json::from_str(&old).unwrap();
+    old["args"] = native["args"].clone();
+    db.execute("UPDATE session_bindings SET evidence=json_set(evidence,'$.native_assignment',json(?1)) WHERE session=?2", instrukt_core::state_db::rusqlite::params![old.to_string(), f.b.to_string()]).unwrap();
+    db.pragma_update(None, "user_version", 12).unwrap();
+    drop(db);
+    let env = &f.crew.project.env;
+    let config_path = env.instrukt_home().join("instrukt.yaml");
+    let mut config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["github"]["api_url"] = f.crew.project.github.url().into();
+    std::fs::write(config_path, serde_yaml_ng::to_string(&config).unwrap()).unwrap();
+    env.instrukt(workspace)
+        .env("T3CODE_THREAD_ID", f.b.id.as_str())
+        .args(["docs", "index"])
+        .assert()
+        .success();
+    env.instrukt(workspace)
+        .env("T3CODE_THREAD_ID", f.b.id.as_str())
+        .args([
+            "todo",
+            "artifacts",
+            "write",
+            "linked-work",
+            "plan-review-findings",
+            "The retained worker can still report.",
+        ])
+        .assert()
+        .success();
+    for (caller, target) in [(&f.b, &dispatcher), (&dispatcher, &f.b)] {
+        let denied = env
+            .instrukt(workspace)
+            .env("T3CODE_THREAD_ID", caller.id.as_str())
+            .args(["discuss", "open", target.id.as_str()])
+            .assert()
+            .failure();
+        insta::assert_snapshot!(
+            "unknown-dispatcher-link-refusal",
+            String::from_utf8_lossy(&denied.get_output().stderr)
+        );
+    }
+    assert!(links::status(&f.home).unwrap().is_empty());
+    env.instrukt(workspace)
+        .env("T3CODE_THREAD_ID", f.b.id.as_str())
+        .args(["docs", "index"])
+        .assert()
+        .success();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(f.home.state_db_file()).unwrap();
+    let current: String = db.query_row("SELECT json_extract(evidence,'$.native_assignment') FROM session_bindings WHERE session=?1", [f.b.to_string()], |row| row.get(0)).unwrap();
+    let current: serde_json::Value = serde_json::from_str(&current).unwrap();
+    assert_eq!(current.get("dispatcher"), Some(&serde_json::Value::Null));
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn a_third_peer_is_refused_without_changing_the_active_conversation() {
     let f = admission_fixture();

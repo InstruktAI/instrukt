@@ -111,6 +111,8 @@ impl Capabilities {
 /// Facts owned by work or runner; no environment variable supplies these values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Assignment {
+    /// A work-role attempt, rather than a driver or standing responsibility.
+    pub worker: bool,
     pub role: crate::ids::RoleName,
     pub project: Option<crate::ids::ProjectSlug>,
     pub procedure: Option<crate::ids::SnippetId>,
@@ -125,7 +127,7 @@ pub struct Assignment {
 mod tests {
     use super::Assignment;
     fn assignment() -> serde_json::Value {
-        serde_json::json!({"role":"builder","project":"demo","procedure":"sdlc/procedure/build","todo":null,"workspace":null,"key":"assignment","platform":false,"dispatcher":null})
+        serde_json::json!({"worker":true,"role":"builder","project":"demo","procedure":"sdlc/procedure/build","todo":null,"workspace":null,"key":"assignment","platform":false,"dispatcher":null})
     }
     #[test]
     fn assignment_deserialization_rejects_an_invalid_role() {

@@ -40,6 +40,7 @@ fn standing_assignment(
             ));
         }
         let assignment = Assignment {
+            worker: false,
             role: RoleName::parse(role)
                 .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?,
             project: project

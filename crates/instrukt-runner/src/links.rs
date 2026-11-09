@@ -164,6 +164,11 @@ fn open_plan(
                     assignment.role
                 )));
             }
+            if assignment.worker && assignment.dispatcher.is_none() {
+                return Err(LinkError::Refused(format!(
+                    "worker {member} is missing dispatcher evidence; a fresh assignment must record its dispatcher before linking"
+                )));
+            }
             if assignment
                 .dispatcher
                 .as_ref()

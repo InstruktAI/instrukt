@@ -65,6 +65,8 @@ pub fn recorded_assignment(
             .as_ref()
             .and_then(|native| native.procedure.clone());
         let assignment = Assignment {
+            worker: binding.attempt.assignment
+                != instrukt_runner::interfaces::AssignmentKind::Driver,
             role: binding.role.clone(),
             key,
             procedure: procedure
