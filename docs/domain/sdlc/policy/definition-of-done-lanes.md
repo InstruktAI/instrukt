@@ -596,14 +596,17 @@ the work record is local-leading and pull-through from GitHub, so a git-carried 
 Do not use `instrukt todo show <slug>` 404 as evidence that a pending snippet is
 undeliverable.
 
-**Project extension-point check.** Apply the authoring rule in
-`general/procedure/doc-snippet-authoring` to changed general procedures and
-project fills: a general procedure whose behavior depends on project content
-declares its extension point's name and purpose; a project's fill uses the
-declared name and is listed in `docs/project/index.yaml`. Check both ends of
-an affected declaration or fill. Explicitly report this check, including in
-clean-pass evidence: name the declarations and fills checked, or state that
-no affected extension point applies.
+**Project extension-point check.** For each changed general procedure, ask the
+authoring rule's question (`general/procedure/doc-snippet-authoring`): does
+this procedure have to behave differently per project? If it does, it declares
+a named extension point with its purpose, carries no project-specific content,
+and reports when a run finds no project fill. For each changed project fill,
+check that it uses a declared name and is listed in `docs/project/index.yaml`:
+in `listed` when only that procedure needs it, in `expanded` only when every
+agent in the project needs it on every run. Check the other end of every
+affected declaration or fill. Report this check explicitly, in clean-pass
+evidence too: name each declaration and fill checked, or state that none
+applies.
 
 **Companion re-sync check.** When a commit edits a live parent `<stem>.md` and
 a non-empty pending companion `<stem>.<slug>.md` exists, the reviewer reads
