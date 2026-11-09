@@ -189,7 +189,16 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
                     .github
                     .reflection_ready(&work.repository, work.board.as_ref(), request.now)
             {
-                report.finding(format!("project {} GitHub reflection", work.project), error);
+                let detail = match &error {
+                    instrukt_core::github::AppError::RateLimited { until: Some(until) } => {
+                        format!("{error}; retry at {until}")
+                    }
+                    _ => error.to_string(),
+                };
+                report.finding(
+                    format!("project {} GitHub reflection", work.project),
+                    detail,
+                );
             }
         }
     }

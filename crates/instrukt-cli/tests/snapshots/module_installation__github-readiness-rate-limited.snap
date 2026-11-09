@@ -3,5 +3,5 @@ source: crates/instrukt-cli/tests/module-installation.rs
 expression: "github_check(&env, &repo, false)"
 ---
 [
-  "project github-ready GitHub reflection: GitHub App API deferred requests (rate limited)"
+  "project github-ready GitHub reflection: GitHub App API deferred requests (rate limited); retry at 2099-01-01T00:00:00Z"
 ]
