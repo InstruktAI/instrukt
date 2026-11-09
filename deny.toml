@@ -2,6 +2,9 @@
 version = 2
 unmaintained = "all"
 yanked = "deny"
+# Unmaintained, not a vulnerability, and no safe upgrade is available.
+# The YAML parser migration is tracked separately.
+ignore = ["RUSTSEC-2024-0449"]
 
 [licenses]
 version = 2

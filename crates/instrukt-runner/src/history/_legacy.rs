@@ -135,11 +135,7 @@ pub(super) fn import(home: &Home, path: Option<&Path>) -> Result<Extraction, His
 
 fn rows(db: &Connection, sql: &str, id: Option<i64>) -> Result<Vec<Value>, HistoryError> {
     let mut stmt = db.prepare(sql)?;
-    let names: Vec<String> = stmt
-        .column_names()
-        .iter()
-        .map(|s| (*s).to_owned())
-        .collect();
+    let names: Vec<String> = stmt.column_names().map(str::to_owned).collect();
     let mut rows = if let Some(id) = id {
         stmt.query(params![id])?
     } else {

@@ -455,7 +455,7 @@ UPDATE runtime_starts SET request=json_remove(json_set(request,
  '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
  WHERE json_type(request,'$.selection.family') IS NOT NULL;
 UPDATE runtime_starts SET request=json_set(request,'$.preferences',
- (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ json((SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences'))))
  WHERE json_type(request,'$.preferences')='array';
 UPDATE runtime_bindings SET request=json_remove(json_set(request,
  '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
@@ -463,7 +463,7 @@ UPDATE runtime_bindings SET request=json_remove(json_set(request,
  '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
  WHERE json_type(request,'$.selection.family') IS NOT NULL;
 UPDATE runtime_bindings SET request=json_set(request,'$.preferences',
- (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ json((SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences'))))
  WHERE json_type(request,'$.preferences')='array';
 UPDATE procedure_responsibilities SET request=json_remove(json_set(request,
  '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
@@ -471,7 +471,7 @@ UPDATE procedure_responsibilities SET request=json_remove(json_set(request,
  '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
  WHERE json_type(request,'$.selection.family') IS NOT NULL;
 UPDATE procedure_responsibilities SET request=json_set(request,'$.preferences',
- (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ json((SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences'))))
  WHERE json_type(request,'$.preferences')='array';
 UPDATE procedure_generations SET request=json_remove(json_set(request,
  '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
@@ -479,7 +479,7 @@ UPDATE procedure_generations SET request=json_remove(json_set(request,
  '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
  WHERE json_type(request,'$.selection.family') IS NOT NULL;
 UPDATE procedure_generations SET request=json_set(request,'$.preferences',
- (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ json((SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences'))))
  WHERE json_type(request,'$.preferences')='array';
 UPDATE manual_standing_reservations SET request=json_remove(json_set(request,
  '$.selection.profile',CASE json_extract(request,'$.selection.family') WHEN 'gemini' THEN 'antigravity' ELSE json_extract(request,'$.selection.family') END,
@@ -487,7 +487,7 @@ UPDATE manual_standing_reservations SET request=json_remove(json_set(request,
  '$.selection.instance',json_extract(request,'$.selection.provider')),'$.selection.family','$.selection.provider')
  WHERE json_type(request,'$.selection.family') IS NOT NULL;
 UPDATE manual_standing_reservations SET request=json_set(request,'$.preferences',
- (SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences')))
+ json((SELECT json_group_array(json(CASE WHEN json_extract(value,'$.agent')='gemini' THEN json_set(value,'$.agent','antigravity') ELSE value END)) FROM json_each(request,'$.preferences'))))
  WHERE json_type(request,'$.preferences')='array';
 UPDATE procedure_responsibilities SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
 UPDATE procedure_generations SET declaration=json_remove(declaration,'$.dispatch') WHERE json_type(declaration,'$.dispatch') IS NOT NULL;
