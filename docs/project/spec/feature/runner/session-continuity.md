@@ -10,7 +10,7 @@ delivered_by: [instrukt-first-build]
 The runner defines a Rust runtime-adapter trait and ships T3 first, explicitly
 selected with global `runner.runtime`. It acts where instrukt has no agent:
 todo orchestrator pickup, event-driven standing agents, recurring tasks,
-keyed singleton discovery and event/approval delivery. Its implementation is code.
+keyed singleton discovery, event/approval delivery and conversation-link relay. Its implementation is code.
 
 An agent operating in its own conversation uses runtime-native operations via
 read-time `@config` instructions for delegation, child messages, peer messages,
@@ -38,12 +38,14 @@ creates no replacement session identity.
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
 | `conversation_source` | Optional durable changes since an opaque source position: normalized conversations/messages and native records, native ids and parent links, roles, available timestamps, completed-turn evidence and the next position; also supplies a native change-notification subscription. | History extraction and other conversation consumers, without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
-| `link` | Two session ids and add/remove; returns acknowledgement or unsupported. Optional capability. | Fallback only where native shared-input linking is absent and the adapter supports it. |
+| `subscribe_thread` | Native thread reference and retained source position; yields recorded thread updates with native completion and replay/snapshot evidence, or reports unsupported. | Long-lived runner conversation-link reader; link membership and relay decisions remain runner-owned. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended CLI adapter lacks attachment and effort/options flags. Agent workflow requirements use typed native capability metadata;
-unattended consumers use adapter capabilities. Linking, notification and
+unattended consumers use adapter capabilities. Conversation links use the
+runner-owned contract in `project/instrukt/spec/feature/runner/conversation-links`
+and require supported thread streams and native input delivery. Notification and
 agent/model selection retain their optional capability contracts.
 Availability information, when the runtime supplies it, is adapter metadata;
 there are no configurable `available` or `model` commands. A
@@ -150,7 +152,7 @@ adapter verb templates.
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
-| Linked-session input | Optional `link`. |
+| Conversation links | `subscribe_thread` and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Enabling a module without a selected runtime, or with its native/adapter path
@@ -161,9 +163,9 @@ never a reason to select another adapter or create a replacement session.
 Enablement reads the selected workflow's typed `requires` declaration under
 `project/instrukt/spec/feature/workflow/workflow-definition`; it does not infer
 requirements from action prose. Missing steering is a supported degradation,
-not an enablement failure. Linked-session input and notification remain
-unavailable on T3's published CLI;
-instrukt does not rebuild them.
+not an enablement failure. Conversation links rely on T3's thread stream and
+native input delivery, not on a CLI link command. Notification remains
+unavailable on T3's published CLI; instrukt does not rebuild it.
 
 ### Start keys and locks
 
@@ -308,9 +310,10 @@ its `providers: ServerProvider[]` snapshot. It issues a five-minute read-scoped
 session with `t3 auth session issue --scope orchestration:read --ttl 5m
 --token-only --label instrukt-readiness`, keeps its token only in memory and
 revokes that session after use. Server discovery, token framing and RPC framing
-follow T3's internal protocol. Protocol and response-shape validation admit the
-operation; CLI/server release strings are diagnostics, not exact-release gates.
-Unknown protocol/shape, failed acquisition and failed token cleanup refuse startup
+follow T3's internal protocol. Runtime-descriptor version, negotiated orchestration
+protocol and consumed response-shape validation admit the operation; CLI/server
+release strings are diagnostics, not exact-release gates. Unknown descriptor
+version or protocol/shape, failed acquisition and failed token cleanup refuse startup
 with the operation and a safe failure category, without raw outputs or credentials.
 A hard process stop before revocation leaves the session bounded by its short TTL.
 
@@ -365,7 +368,8 @@ instruction prose is a separate configuration surface.
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search. |
 | Recover keyed identity | `t3 thread list --project <checkout> --json`; top-level array entries carry `threadId`, `projectId`, `title`, `status`, `link`, `providerInstanceId`, `model`, `settled`, `snoozed`, and timestamps. `settled` alone does not make a thread gone. |
-| Link and notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+| Linked-thread stream | The adapter uses T3's `orchestration.subscribeThread` under orchestration read scope for runner-owned relay, as specified in `project/instrukt/spec/feature/runner/conversation-links`; native CLI linking is not required. |
+| Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter matches their keys exactly. Sending to a settled thread
@@ -665,6 +669,7 @@ Retired: the runtime owns session ending; its test bindings have been removed.
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/runner/conversation-links](conversation-links.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)

@@ -31,7 +31,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks and per-computer searchable history | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes and per-computer searchable history | `project/instrukt/spec/domain/runner` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
 ### Modules
@@ -104,7 +104,10 @@ External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
-session operations and external notifications. These are boundary locations, not
+session operations, native thread streams and external notifications.
+Conversation-link relay and its identity-envelope vocabulary belong to runner
+under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
+shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
 additional contexts. Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
 
