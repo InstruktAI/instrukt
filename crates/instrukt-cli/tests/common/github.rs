@@ -1323,6 +1323,40 @@ fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -
         .collect();
     let segs: Vec<&str> = segments.iter().map(String::as_str).collect();
     let input: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    if let ("POST", ["orgs", owner, "projectsV2", number, "views"]) = (method, segs.as_slice()) {
+        let id = state.next_id();
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == *owner && Some(p.number) == number.parse().ok())
+        else {
+            return Reply::not_found();
+        };
+        let Some(columns) = input
+            .get("vertical_group_by")
+            .map_or(Some(Vec::new()), |v| v.as_array().cloned())
+        else {
+            return Reply::invalid("invalid columns");
+        };
+        if columns.iter().any(|id| {
+            !project
+                .fields
+                .iter()
+                .any(|f| Some(field_database_id(&f.id)) == id.as_u64())
+        }) {
+            return Reply::invalid("unknown column field");
+        }
+        let number = project
+            .views
+            .iter()
+            .filter_map(|v| v["number"].as_u64())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let view = json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":input["name"],"layout":input["layout"],"filter":input["filter"].as_str().unwrap_or(""),"vertical_group_by":columns});
+        project.views.push(view.clone());
+        return Reply::created(json!({"value":view}));
+    }
     let ["repos", owner, name, rest @ ..] = segs.as_slice() else {
         return Reply::not_found();
     };
@@ -2031,6 +2065,8 @@ struct Project {
     title: String,
     fields: Vec<ProjectField>,
     items: Vec<ProjectItem>,
+    views: Vec<Value>,
+    workflows: Vec<Value>,
 }
 
 /// A single-select field (other field types are seeded as fields without
@@ -2066,7 +2102,7 @@ impl FieldOption {
 impl ProjectField {
     fn json(&self) -> Value {
         if self.single_select {
-            json!({"id": self.id, "name": self.name, "options": self.options.iter().map(FieldOption::json).collect::<Vec<_>>()})
+            json!({"id": self.id, "databaseId": field_database_id(&self.id), "name": self.name, "options": self.options.iter().map(FieldOption::json).collect::<Vec<_>>()})
         } else {
             // Not a single-select field: the inline fragment selects nothing.
             json!({})
@@ -2086,6 +2122,8 @@ impl FakeGitHub {
             title: String::new(),
             fields: Vec::new(),
             items: Vec::new(),
+            views: Vec::new(),
+            workflows: Vec::new(),
         });
         self
     }
@@ -2149,6 +2187,115 @@ impl FakeGitHub {
             .as_ref()
             .unwrap()
             .reviews
+            .clone()
+    }
+    pub fn seed_project_view(
+        &self,
+        owner: &str,
+        number: u64,
+        name: &str,
+        layout: &str,
+        filter: &str,
+        columns: &[&str],
+    ) {
+        let mut state = self.lock();
+        let id = state.next_id();
+        let project = state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap();
+        let fields = columns
+            .iter()
+            .map(|name| {
+                field_database_id(&project.fields.iter().find(|f| f.name == *name).unwrap().id)
+            })
+            .collect::<Vec<_>>();
+        let number = project
+            .views
+            .iter()
+            .filter_map(|v| v["number"].as_u64())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        project.views.push(json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":name,"layout":layout,"filter":filter,"vertical_group_by":fields}));
+    }
+    pub fn edit_project_view(&self, owner: &str, number: u64, name: &str, patch: &Value) {
+        let mut state = self.lock();
+        let view = state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .views
+            .iter_mut()
+            .find(|v| v["name"] == name)
+            .unwrap();
+        for (key, value) in patch.as_object().unwrap() {
+            view[key] = value.clone();
+        }
+    }
+    pub fn remove_project_view(&self, owner: &str, number: u64, name: &str) {
+        self.lock()
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .views
+            .retain(|v| v["name"] != name);
+    }
+    pub fn project_views(&self, owner: &str, number: u64) -> Vec<Value> {
+        self.lock()
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .views
+            .clone()
+    }
+    pub fn project_field_details(&self, owner: &str, number: u64) -> Vec<Value> {
+        self.lock()
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .fields
+            .iter()
+            .map(ProjectField::json)
+            .collect()
+    }
+    pub fn drift_project_option(&self, owner: &str, number: u64, name: &str) {
+        let mut state = self.lock();
+        let field = state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .fields
+            .iter_mut()
+            .find(|f| f.name == name)
+            .unwrap();
+        for option in &mut field.options {
+            option.color = "BLUE".into();
+            option.description = "drifted".into();
+        }
+    }
+    pub fn seed_project_workflow(&self, owner: &str, number: u64, workflow: Value) {
+        self.lock()
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .workflows
+            .push(workflow);
+    }
+    pub fn project_workflows(&self, owner: &str, number: u64) -> Vec<Value> {
+        self.lock()
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .workflows
             .clone()
     }
     /// A project's fields, each with its option names, in order.
@@ -2252,9 +2399,95 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
             title: vars["title"].as_str().unwrap().into(),
             fields: Vec::new(),
             items: Vec::new(),
+            views: Vec::new(),
+            workflows: Vec::new(),
         });
         return Reply::ok(
             json!({"data":{"createProjectV2":{"projectV2":{"id":id,"number":number}}}}),
+        );
+    }
+    if query.contains("views(first:") {
+        let project = state
+            .projects
+            .iter()
+            .find(|p| {
+                p.owner == vars["owner"].as_str().unwrap()
+                    && Some(p.number) == vars["number"].as_u64()
+            })
+            .unwrap();
+        let offset = vars["after"]
+            .as_str()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
+        let nodes=project.views.iter().skip(offset).take(100).map(|v| {
+            let fields=v["vertical_group_by"].as_array().unwrap().iter().filter_map(|id|project.fields.iter().find(|f|Some(field_database_id(&f.id))==id.as_u64())).map(|f|json!({"id":f.id})).collect::<Vec<_>>();
+            json!({"id":v["node_id"],"name":v["name"],"number":v["number"],"filter":v["filter"],"layout":match v["layout"].as_str().unwrap(){"board"=>"BOARD_LAYOUT","table"=>"TABLE_LAYOUT",_=>"ROADMAP_LAYOUT"},"verticalGroupByFields":{"nodes":fields}})
+        }).collect::<Vec<_>>();
+        let more = offset + 100 < project.views.len();
+        return Reply::ok(
+            json!({"data":{"repositoryOwner":{"projectV2":{"id":project.id,"views":{"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":(offset+100).to_string()}}}}}}),
+        );
+    }
+    if query.contains("createProjectV2View(") {
+        let id = state.next_id();
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| p.id == vars["project"].as_str().unwrap())
+        else {
+            return graphql_error("no such project");
+        };
+        let number = project
+            .views
+            .iter()
+            .filter_map(|v| v["number"].as_u64())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let view = json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":vars["name"],"layout":if vars["layout"]=="BOARD_LAYOUT"{"board"}else{"table"},"filter":"","vertical_group_by":[]});
+        project.views.push(view.clone());
+        return Reply::ok(
+            json!({"data":{"createProjectV2View":{"projectV2View":{"id":view["node_id"]}}}}),
+        );
+    }
+    if query.contains("updateProjectV2View(") {
+        let Some(view) = state
+            .projects
+            .iter_mut()
+            .flat_map(|p| &mut p.views)
+            .find(|v| v["node_id"] == vars["view"])
+        else {
+            return graphql_error("no such view");
+        };
+        if let Some(layout) = vars.get("layout") {
+            view["layout"] = if layout == "BOARD_LAYOUT" {
+                "board"
+            } else {
+                "table"
+            }
+            .into();
+        }
+        if let Some(filter) = vars.get("filter") {
+            view["filter"] = filter.clone();
+        }
+        return Reply::ok(
+            json!({"data":{"updateProjectV2View":{"projectV2View":{"id":view["node_id"]}}}}),
+        );
+    }
+    if query.contains("deleteProjectV2View(") {
+        for project in &mut state.projects {
+            project.views.retain(|v| v["node_id"] != vars["view"]);
+        }
+        return Reply::ok(
+            json!({"data":{"deleteProjectV2View":{"projectV2View":{"id":vars["view"]}}}}),
+        );
+    }
+    if query.contains("deleteProjectV2Workflow(") {
+        for project in &mut state.projects {
+            project.workflows.retain(|v| v["id"] != vars["workflow"]);
+        }
+        return Reply::ok(
+            json!({"data":{"deleteProjectV2Workflow":{"deletedWorkflowId":vars["workflow"]}}}),
         );
     }
     if query.contains("repositoryOwner") {
@@ -2354,6 +2587,24 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
         };
         return Reply::ok(json!({"data": {"addProjectV2ItemById": {"item": {"id": id}}}}));
     }
+    if query.contains("clearProjectV2ItemFieldValue(") {
+        let Some(item) = state
+            .projects
+            .iter_mut()
+            .find(|p| p.id == vars["project"].as_str().unwrap())
+            .and_then(|p| {
+                p.items
+                    .iter_mut()
+                    .find(|i| i.id == vars["item"].as_str().unwrap())
+            })
+        else {
+            return graphql_error("no such item");
+        };
+        item.values.remove(vars["field"].as_str().unwrap());
+        return Reply::ok(
+            json!({"data":{"clearProjectV2ItemFieldValue":{"projectV2Item":{"id":item.id}}}}),
+        );
+    }
     if query.contains("updateProjectV2ItemFieldValue") {
         let Some(project) = state
             .projects
@@ -2450,4 +2701,8 @@ pub fn configure_apps(env: &TestEnv, api: &str) {
         env.instrukt_home().parent().unwrap().to_path_buf(),
     );
     instrukt_core::config::set_secret(&home, "TEST_APP_KEY", &test_keys().0).unwrap();
+}
+
+fn field_database_id(id: &str) -> u64 {
+    id.rsplit('_').next().unwrap().parse().unwrap()
 }

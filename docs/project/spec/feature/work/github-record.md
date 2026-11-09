@@ -85,9 +85,27 @@ reconciles existing resources instead of creating duplicate boards or views.
 
 instrukt adds every reflected issue and maintains its owned single-select
 `Record status` field and required options (active, iceboxed, held, delivered,
-withdrawn), plus the cockpit views. Unrelated user fields remain untouched.
-Moving a card establishes no workflow fact. Setup, view repair and board
-reflection failures remain visible and retryable independently of issue and
+withdrawn). Its owned cockpit views are:
+
+- `Board`: board layout, no filter, columns grouped by `Record status` (one
+  column per option).
+- `Needs you`: table layout, filter `needs-you:Yes`.
+
+The owned single-select `Needs you` field has exactly one option: `Yes`, red,
+with description `Waiting on a person; instrukt will not move it.` An item has
+this option when its record status is held, or a current approval gate waits
+for a human under `approvals.prd` or `approvals.task`. Peer-only approval gates
+do not set it. Satisfying the gate, releasing the hold, or changing the gate to
+peer approval clears the marker when no other human wait remains. The marker
+is output, never an inbound command or a workflow fact.
+
+Setup creates missing fields and views and repairs owned layout, filter,
+column-field and option drift. Repeated setup reuses matching resources.
+GitHub exposes board-column configuration on view creation; repairing a wrong
+column field can replace the owned `Board` view and change its address.
+Unrelated user fields, views and GitHub's built-in project workflows remain
+untouched. Moving a card establishes no workflow fact. Setup, view repair and
+board reflection failures remain visible and retryable independently of issue and
 local-record writes; missing GitHub permissions are a reported setup failure,
 never an implicit opt-out.
 
@@ -325,10 +343,17 @@ the remote record before creating duplicate evidence.
   Given a developer's project reflects its todos to GitHub
   When their todos are reflected without a board already set up
   Then instrukt sets up the project board and its views automatically
+  And the Board view uses board layout with columns by Record status and no filter
+  And the Needs you view uses table layout filtered by needs-you:Yes
   And each todo appears with its current record status
-  And unrelated user fields are preserved
-  When an owned cockpit field or view is missing or broken
-  Then instrukt repairs it without requiring opt-in or creating duplicate resources
+  And the Needs you field has only the red Yes option with its documented description
+  When a todo is held or has an outstanding human approval under the project's approvals configuration
+  Then its Needs you marker is set
+  When that wait ends or only a peer approval is outstanding
+  Then the marker is cleared unless another human wait remains
+  When an owned cockpit field or view is missing or its options, layout, filter or column field drift
+  Then instrukt repairs it without requiring opt-in or leaving duplicate owned resources
+  And unrelated user fields, views and built-in project workflows are preserved
 ```
 
 ### UC-GR6: A developer whose code is not on GitHub is told todos need it there

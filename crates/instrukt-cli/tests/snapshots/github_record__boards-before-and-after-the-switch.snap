@@ -5,11 +5,13 @@ expression: "format!(\"{first_board}\\n===\\n{}\", board_state(&project, \"acme\
 field Status: [Todo, Done]
 field Estimate: []
 field Record status: [active, blocked, iceboxed, held, delivered, withdrawn]
+field Needs you: [Yes]
 item #1: Record status = active
 item #2: Record status = iceboxed
-item #3: Record status = held
+item #3: Record status = held, Needs you = Yes
 ===
 field Record status: [active, iceboxed, held, delivered, withdrawn]
-item #1: Record status = held
+field Needs you: [Yes]
+item #1: Record status = held, Needs you = Yes
 item #2: Record status = iceboxed
 item #3: Record status = active

@@ -4,25 +4,25 @@ expression: "project.github.issue(REPOSITORY, 1).unwrap()[\"labels\"]"
 ---
 [
   {
-    "id": 100300,
+    "id": 101300,
     "name": "instrukt",
     "color": "ededed",
     "description": null
   },
   {
-    "id": 100301,
+    "id": 101301,
     "name": "kind:feature",
     "color": "ededed",
     "description": null
   },
   {
-    "id": 100302,
+    "id": 101302,
     "name": "status:active",
     "color": "ededed",
     "description": null
   },
   {
-    "id": 101703,
+    "id": 102103,
     "name": "team-owned",
     "color": "ededed",
     "description": null

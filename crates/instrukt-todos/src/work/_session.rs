@@ -930,6 +930,7 @@ impl<'w> Session<'w> {
                 instrukt_core::config::patch(self.home(), &layer, &revision, &patch)?;
                 self.config = Configuration::load(self.home(), Some(&self.project.root))?;
             }
+            super::_board::configure(&account, &board)?;
             Ok(board)
         })();
         let (board, board_error) = match board_result {
@@ -972,12 +973,21 @@ impl<'w> Session<'w> {
                 continue;
             }
             let before = self.items[index].clone();
+            let needs_you = super::_envelope::record_status(&self.items[index].record) == "held"
+                || crate::workflow::waiting_for_human_approval(
+                    &super::_ports::to_evidence(self.items[index].record.clone(), Vec::new()),
+                    self.config
+                        .approver(instrukt_core::config::ApprovalGate::Prd)?,
+                    self.config
+                        .approver(instrukt_core::config::ApprovalGate::Task)?,
+                );
             let result = match &self.remote {
                 Remote::Client { gh, down: None } => Some(_reflect::flush(
                     gh,
                     &mut self.items[index],
                     &self.base,
                     board.as_ref(),
+                    needs_you,
                 )),
                 _ => None,
             };

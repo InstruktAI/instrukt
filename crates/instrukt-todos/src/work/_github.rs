@@ -15,7 +15,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PAGE_SIZE: usize = 100;
 /// The most pages one list read follows.
 const MAX_PAGES: usize = 50;
-const API_VERSION: &str = "2022-11-28";
+const API_VERSION: &str = "2026-03-10";
 
 /// A GitHub request did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -283,16 +283,30 @@ impl GitHub {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value, GitHubError> {
-        let url = self.url(path);
+        self.send_to(method, path, &self.url(path), body)
+    }
+
+    /// Account-scoped REST operation on the configured API origin.
+    pub fn post_api(&self, path: &str, body: &Value) -> Result<Value, GitHubError> {
+        self.send_to("POST", path, &format!("{}{path}", self.api), Some(body))
+    }
+
+    fn send_to(
+        &self,
+        method: &'static str,
+        path: &str,
+        url: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, GitHubError> {
         let text = body.map(Value::to_string).unwrap_or_default();
         let started = Instant::now();
         let result = match method {
             "POST" => self
-                .with_headers(self.agent.post(&url))?
+                .with_headers(self.agent.post(url))?
                 .header("Content-Type", "application/json")
                 .send(&text),
             _ => self
-                .with_headers(self.agent.patch(&url))?
+                .with_headers(self.agent.patch(url))?
                 .header("Content-Type", "application/json")
                 .send(&text),
         };

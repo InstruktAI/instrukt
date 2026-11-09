@@ -921,18 +921,17 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     assert_eq!(on_board(&project, "acme", 7), every_todo);
     assert_eq!(
         valued_fields(&project, "acme", 7),
-        BTreeSet::from([owned.clone()])
+        BTreeSet::from([owned.clone(), "Needs you".into()])
     );
-    // Reused, not recreated: every field keeps its place; every field but
-    // the owned one is exactly as it was; the owned one keeps its options
-    // first.
+    // Existing user fields keep their order and contents. Record status
+    // retains its options before the required additions; Needs you is appended.
     let first_after = github.project_fields("acme", 7);
-    assert_eq!(first_after.len(), first_before.len());
+    assert_eq!(first_after.len(), first_before.len() + 1);
     assert_eq!(
         first_after[..first_before.len() - 1],
         first_before[..first_before.len() - 1]
     );
-    let (name, options) = first_after.last().unwrap();
+    let (name, options) = first_after.iter().find(|(name, _)| name == &owned).unwrap();
     assert_eq!(name, &owned);
     assert_eq!(&options[..owned_before.len()], owned_before.as_slice());
     let first_shown = shown(&project, &slugs);
@@ -946,11 +945,14 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     project.ok(["refresh", slugs[1]]);
 
     assert_eq!(on_board(&project, "acme", 8), every_todo);
-    // Created there, under the same name, as the only field.
+    // Both owned fields are created on the newly selected board.
     let second_after = github.project_fields("acme", 8);
-    assert_eq!(second_after.len(), 1);
+    assert_eq!(second_after.len(), 2);
     assert_eq!(second_after[0].0, owned);
-    assert_eq!(valued_fields(&project, "acme", 8), BTreeSet::from([owned]));
+    assert_eq!(
+        valued_fields(&project, "acme", 8),
+        BTreeSet::from([owned, "Needs you".into()])
+    );
     // The first board is left as the work last put it.
     assert_eq!(github.project_fields("acme", 7), first_after);
 
@@ -1570,7 +1572,7 @@ fn missing_board_is_set_up_automatically_and_reused() {
     project.github.clear_project_items("acme", 2);
     project.ok(["update", "cockpit"]);
     assert_eq!(project.github.project_items("acme", 2).len(), 1);
-    assert_eq!(project.github.project_fields("acme", 2).len(), 2);
+    assert_eq!(project.github.project_fields("acme", 2).len(), 3);
     insta::assert_snapshot!(
         "automatic-board-state",
         board_state(
@@ -1580,4 +1582,308 @@ fn missing_board_is_set_up_automatically_and_reused() {
             &[(1, issue_node(&project, 1).as_str())]
         )
     );
+}
+
+fn cockpit_views(project: &Project) -> Vec<Value> {
+    let fields = project.github.project_field_details("acme", 1);
+    let mut views=project.github.project_views("acme",1).into_iter().map(|view| {
+        let columns=view["vertical_group_by"].as_array().unwrap().iter().map(|id|fields.iter().find(|f|f["databaseId"]==*id).unwrap()["name"].clone()).collect::<Vec<_>>();
+        serde_json::json!({"name":view["name"],"layout":view["layout"],"filter":view["filter"],"columns":columns})
+    }).collect::<Vec<_>>();
+    views.sort_by_key(|view| view["name"].as_str().unwrap().to_owned());
+    views
+}
+
+fn marked_needs_you(project: &Project, number: u64) -> bool {
+    let node = issue_node(project, number);
+    project
+        .github
+        .project_items("acme", 1)
+        .into_iter()
+        .find(|(n, _)| *n == node)
+        .unwrap()
+        .1
+        .into_iter()
+        .any(|(field, value)| field == "Needs you" && value == "Yes")
+}
+fn approvals_config(project: &Project, prd: &str, task: &str) {
+    let file = project.repo.path().join("instrukt.yaml");
+    let mut layer: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    layer["approvals"] = serde_yaml_ng::from_str(&format!("prd: {prd}\ntask: {task}")).unwrap();
+    std::fs::write(file, serde_yaml_ng::to_string(&layer).unwrap()).unwrap();
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn cockpit_views_are_created_and_reconciled_without_touching_user_views_or_workflows() {
+    let project = Project::new();
+    project
+        .github
+        .add_project_field("acme", 1, "User field", Some(&["theirs"]));
+    project
+        .github
+        .seed_project_view("acme", 1, "My view", "table", "label:mine", &[]);
+    project.github.seed_project_workflow(
+        "acme",
+        1,
+        serde_json::json!({"id":"workflow-1","enabled":true,"name":"Auto-close"}),
+    );
+    let user_view = project.github.project_views("acme", 1)[0].clone();
+    let workflows = project.github.project_workflows("acme", 1);
+    project.create("cockpit-views", "bug", "Show the cockpit views.");
+    assert_eq!(project.github.project_views("acme", 1).len(), 3);
+    let views = project.github.project_views("acme", 1);
+    insta::assert_json_snapshot!("cockpit-views-created", cockpit_views(&project));
+    let field = project
+        .github
+        .project_field_details("acme", 1)
+        .into_iter()
+        .find(|f| f["name"] == "Needs you")
+        .unwrap();
+    let options=field["options"].as_array().unwrap().iter().map(|o|serde_json::json!({"name":o["name"],"color":o["color"],"description":o["description"]})).collect::<Vec<_>>();
+    assert_eq!(
+        options,
+        vec![
+            serde_json::json!({"name":"Yes","color":"RED","description":"Waiting on a person; instrukt will not move it."})
+        ]
+    );
+    project.ok(["update", "cockpit-views"]);
+    assert_eq!(project.github.project_views("acme", 1), views);
+    assert_eq!(project.github.project_views("acme", 1)[0], user_view);
+    assert_eq!(project.github.project_workflows("acme", 1), workflows);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn cockpit_drifted_owned_views_and_options_are_repaired_and_missing_ones_recreated() {
+    let project = Project::new();
+    project
+        .github
+        .add_project_field("acme", 1, "Status", Some(&["Todo", "Done"]));
+    project
+        .github
+        .add_project_field("acme", 1, "Needs you", Some(&["Yes", "No"]));
+    project
+        .github
+        .seed_project_view("acme", 1, "Board", "table", "is:open", &["Status"]);
+    project
+        .github
+        .seed_project_view("acme", 1, "Needs you", "board", "is:closed", &[]);
+    project
+        .github
+        .seed_project_view("acme", 1, "My view", "table", "label:mine", &[]);
+    project.create("repair-cockpit", "bug", "Keep the cockpit configured.");
+    let views = project.github.project_views("acme", 1);
+    assert_eq!(views.len(), 3);
+    assert_eq!(
+        views.iter().find(|v| v["name"] == "Board").unwrap()["layout"],
+        "board"
+    );
+    assert_eq!(
+        views.iter().find(|v| v["name"] == "Needs you").unwrap()["filter"],
+        "needs-you:Yes"
+    );
+    let expected = cockpit_views(&project);
+    insta::assert_json_snapshot!("cockpit-views-repaired", expected);
+    let field = project
+        .github
+        .project_field_details("acme", 1)
+        .into_iter()
+        .find(|f| f["name"] == "Needs you")
+        .unwrap();
+    assert_eq!(field["options"].as_array().unwrap().len(), 1);
+    assert_eq!(field["options"][0]["color"], "RED");
+    project.github.drift_project_option("acme", 1, "Needs you");
+    project.github.edit_project_view(
+        "acme",
+        1,
+        "Board",
+        &serde_json::json!({"layout":"table","filter":"label:drift"}),
+    );
+    project.github.edit_project_view(
+        "acme",
+        1,
+        "Needs you",
+        &serde_json::json!({"layout":"board","filter":"is:closed"}),
+    );
+    project.ok(["update", "repair-cockpit"]);
+    assert_eq!(project.github.project_views("acme", 1), views);
+    let restored = project
+        .github
+        .project_field_details("acme", 1)
+        .into_iter()
+        .find(|f| f["name"] == "Needs you")
+        .unwrap();
+    assert_eq!(restored, field);
+    project.github.remove_project_field("acme", 1, "Needs you");
+    project.github.remove_project_view("acme", 1, "Needs you");
+    project.ok(["update", "repair-cockpit"]);
+    assert_eq!(cockpit_views(&project), expected);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_resolved_waits() {
+    let project = Project::new();
+    project.create(
+        "person-wait",
+        "feature",
+        "A person approves the intended outcome.",
+    );
+    assert!(!marked_needs_you(&project, 1));
+    project.ok([
+        "update",
+        "person-wait",
+        "--hold",
+        "--reason",
+        "Ask the owner.",
+    ]);
+    assert!(marked_needs_you(&project, 1));
+    project.ok(["update", "person-wait", "--release"]);
+    assert!(!marked_needs_you(&project, 1));
+    approvals_config(&project, "peer", "human");
+    project.ok([
+        "artifacts",
+        "write",
+        "person-wait",
+        "prd",
+        "The intended outcome.",
+    ]);
+    assert!(!marked_needs_you(&project, 1));
+    approvals_config(&project, "human", "human");
+    project.ok(["update", "person-wait"]);
+    assert!(marked_needs_you(&project, 1));
+    project.ok([
+        "artifacts",
+        "write",
+        "person-wait",
+        "prd-review-findings",
+        "Approved.",
+    ]);
+    project.ok([
+        "stamp",
+        "person-wait",
+        "--verdict",
+        "approve",
+        "--phase",
+        "prd_review",
+    ]);
+    project.ok([
+        "update",
+        "person-wait",
+        "--hold",
+        "--reason",
+        "Another person still needs to answer.",
+    ]);
+    project.ok([
+        "stamp",
+        "person-wait",
+        "--prd-approved",
+        "--by",
+        "human",
+        "--session",
+        "thread-host:person-1",
+    ]);
+    assert!(marked_needs_you(&project, 1));
+    project.ok(["update", "person-wait", "--release"]);
+    assert!(!marked_needs_you(&project, 1));
+    project.ok([
+        "artifacts",
+        "write",
+        "person-wait",
+        "prd",
+        "A revised outcome needs a new approval.",
+    ]);
+    assert!(marked_needs_you(&project, 1));
+    project.ok([
+        "artifacts",
+        "write",
+        "person-wait",
+        "prd",
+        "The intended outcome.",
+    ]);
+    assert!(marked_needs_you(&project, 1));
+    approvals_config(&project, "peer", "human");
+    project.ok(["update", "person-wait"]);
+    assert!(!marked_needs_you(&project, 1));
+    project.create(
+        "task-person-wait",
+        "task",
+        "A person approves this task plan.",
+    );
+    project.ok([
+        "artifacts",
+        "write",
+        "task-person-wait",
+        "task-plan",
+        "Run the documented task.",
+    ]);
+    assert!(marked_needs_you(&project, 2));
+    approvals_config(&project, "peer", "peer");
+    project.ok(["update", "task-person-wait"]);
+    assert!(!marked_needs_you(&project, 2));
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn cockpit_setup_failure_keeps_issue_reflection_and_retries_without_duplicate_views() {
+    let project = Project::new();
+    project.github.respond_once(
+        "POST",
+        "/orgs/acme/projectsV2/1/views",
+        CannedResponse {
+            status: 503,
+            headers: Vec::new(),
+            body: serde_json::json!({"message":"Service unavailable"}),
+        },
+    );
+    let pending = project.create("retry-views", "bug", "Keep the cockpit retryable.");
+    assert_eq!(project.github.issues(REPOSITORY).len(), 1);
+    assert_eq!(project.github.artifacts(REPOSITORY, 1).len(), 1);
+    assert!(project.github.project_views("acme", 1).is_empty());
+    insta::assert_snapshot!("cockpit-view-setup-pending", redact(&pending));
+    project.ok(["update", "retry-views"]);
+    let views = project.github.project_views("acme", 1);
+    assert_eq!(views.len(), 2);
+    project.ok(["update", "retry-views"]);
+    assert_eq!(project.github.project_views("acme", 1), views);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn cockpit_setup_finds_owned_views_after_user_views_and_reconciles_duplicate_owned_names() {
+    let project = Project::new();
+    project.github.add_project_field(
+        "acme",
+        1,
+        "Record status",
+        Some(&["active", "iceboxed", "held", "delivered", "withdrawn"]),
+    );
+    for number in 0..105 {
+        project.github.seed_project_view(
+            "acme",
+            1,
+            &format!("User view {number}"),
+            "table",
+            "label:mine",
+            &[],
+        );
+    }
+    project
+        .github
+        .seed_project_view("acme", 1, "Board", "board", "", &["Record status"]);
+    project
+        .github
+        .seed_project_view("acme", 1, "Needs you", "table", "needs-you:Yes", &[]);
+    let expected = project.github.project_views("acme", 1);
+    project
+        .github
+        .seed_project_view("acme", 1, "Board", "table", "is:closed", &[]);
+    project.create(
+        "many-views",
+        "bug",
+        "Retain the existing cockpit and user views.",
+    );
+    assert_eq!(project.github.project_views("acme", 1), expected);
 }

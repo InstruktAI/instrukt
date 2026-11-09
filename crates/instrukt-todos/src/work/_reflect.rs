@@ -278,6 +278,7 @@ pub(crate) fn flush(
     item: &mut LocalItem,
     base: &str,
     board: Option<&BoardRef>,
+    needs_you: bool,
 ) -> Result<(), GitHubError> {
     if item.reflection.conflicted {
         return Ok(());
@@ -349,7 +350,7 @@ pub(crate) fn flush(
         reflect_pull_request(gh, item, issue, base)?;
     }
     if let (Some(board), Some(issue)) = (board, item.reflection.issue) {
-        reflect_board(gh, board, item, issue)?;
+        reflect_board(gh, board, item, issue, needs_you)?;
     }
     Ok(())
 }
@@ -367,6 +368,7 @@ fn reflect_board(
     board: &BoardRef,
     item: &mut LocalItem,
     issue: IssueRef,
+    needs_you: bool,
 ) -> Result<(), GitHubError> {
     let status = _envelope::record_status(&item.record);
     let attempt = (|| {
@@ -378,7 +380,7 @@ fn reflect_board(
                 message: "an issue without a node id".to_owned(),
             })?;
         let account = gh.for_role(None, instrukt_core::github::Operation::Board)?;
-        super::_board::reflect(&account, board, &content, status)
+        super::_board::reflect(&account, board, &content, status, needs_you)
     })();
     match attempt {
         Ok(board_item) => {

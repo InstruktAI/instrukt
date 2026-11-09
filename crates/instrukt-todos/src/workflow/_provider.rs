@@ -571,6 +571,57 @@ fn eligible(approver: Approver, by: ApprovedBy) -> bool {
     }
 }
 
+fn current_approval<'e>(
+    ledger: &Ledger<'e>,
+    gate: ApprovalGate,
+    approver: Approver,
+    artifact: &str,
+    revoked: Option<usize>,
+) -> Option<(ApprovedBy, &'e ContentDigest)> {
+    let (position, (by, target)) = ledger.latest_at(|fact| match fact {
+        StampFact::Approval {
+            gate: stamped,
+            by,
+            target,
+            ..
+        } if *stamped == gate && eligible(approver, *by) => Some((*by, target)),
+        _ => None,
+    })?;
+    if revoked.is_some_and(|revoked| revoked > position) {
+        return None;
+    }
+    let approved_current = ledger
+        .history(artifact)
+        .and_then(|versions| versions.last())
+        .zip(ledger.at(position))
+        .is_some_and(|(version, at)| version.sequence < at);
+    approved_current.then_some((by, target))
+}
+
+/// Whether current evidence still needs a human's approval. This uses the same
+/// eligibility, version order and revocation rules as workflow derivation.
+pub fn waiting_for_human_approval(evidence: &TodoEvidence, prd: Approver, task: Approver) -> bool {
+    if evidence.status != crate::evidence::TodoStatus::Active {
+        return false;
+    }
+    let ledger = Ledger::new(evidence);
+    let needs = |gate, approver, artifact, revoked| {
+        approver == Approver::Human
+            && ledger.current(artifact).is_some_and(|digest| {
+                current_approval(&ledger, gate, approver, artifact, revoked)
+                    .map(|(_, target)| target)
+                    != Some(digest)
+            })
+    };
+    needs(
+        ApprovalGate::Prd,
+        prd,
+        artifact_names::PRD,
+        ledger.invalidations(PreparationReview::PrdReview).last(),
+    ) || (evidence.kind == instrukt_runner::interfaces::TodoKind::Task
+        && needs(ApprovalGate::Task, task, artifact_names::TASK_PLAN, None))
+}
+
 /// `prd_approval.*` and `task_approved.*`: the latest approval of each gate
 /// from an eligible approver, while it still binds the evidence it approved
 /// (`artifact-currency`, "Substantive settlement"; `approvals`, carry):
@@ -588,29 +639,9 @@ fn approvals(
     approvers: Approvers,
     facts: &mut Facts,
 ) -> Result<(), FactError> {
-    let current =
-        |gate: ApprovalGate, approver: Approver, artifact: &str, revoked: Option<usize>| {
-            let (position, (by, target)) = ledger.latest_at(|fact| match fact {
-                StampFact::Approval {
-                    gate: stamped,
-                    by,
-                    target,
-                    ..
-                } if *stamped == gate && eligible(approver, *by) => Some((*by, target)),
-                _ => None,
-            })?;
-            if revoked.is_some_and(|revoked| revoked > position) {
-                return None;
-            }
-            let approved_current = ledger
-                .history(artifact)
-                .and_then(|versions| versions.last())
-                .zip(ledger.at(position))
-                .is_some_and(|(version, at)| version.sequence < at);
-            approved_current.then_some((by, target))
-        };
     let prd_revoked = ledger.invalidations(PreparationReview::PrdReview).last();
-    if let Some((by, target)) = current(
+    if let Some((by, target)) = current_approval(
+        ledger,
         ApprovalGate::Prd,
         approvers.prd,
         artifact_names::PRD,
@@ -622,7 +653,8 @@ fn approvals(
             FactValue::Bool(by == ApprovedBy::Human),
         )?;
     }
-    if let Some((by, target)) = current(
+    if let Some((by, target)) = current_approval(
+        ledger,
         ApprovalGate::Task,
         approvers.task,
         artifact_names::TASK_PLAN,

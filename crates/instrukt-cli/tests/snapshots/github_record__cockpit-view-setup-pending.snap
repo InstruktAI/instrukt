@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: redact(&pending)
+---
+created retry-views (bug) with identity <id 1>
+reflection: pending: GitHub: GitHub answered POST /orgs/acme/projectsV2/1/views with 503: Service unavailable
