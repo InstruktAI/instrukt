@@ -96,6 +96,10 @@ adapter; an actor as JSON text, one of
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
+Version 13 canonicalizes retained native assignments with an omitted dispatcher
+to explicit unknown evidence. Its admission semantics are owned by
+`project/instrukt/spec/feature/runner/session-continuity`.
+
 ### Work tables
 
 Owned and written by work through its command contract. Reflection to

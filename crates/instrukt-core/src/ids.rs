@@ -167,6 +167,14 @@ identifier!(
 );
 
 identifier!(
+    /// An opaque runtime-native completed-turn reference.
+    NativeTurnRef,
+    "native turn reference",
+    is_session_id,
+    "non-empty text without whitespace or control characters"
+);
+
+identifier!(
     /// A user-owned agent profile name, distinct from a native provider instance.
     ProfileName,
     "agent profile",

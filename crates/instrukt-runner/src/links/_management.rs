@@ -175,7 +175,13 @@ fn contribution(
     text: &str,
     origin: Origin,
 ) -> Result<Pending, LinkError> {
-    let thread = request.adapter.read_state(caller)?;
+    let thread = request
+        .adapter
+        .read_state(caller)
+        .map_err(|error| LinkError::Native {
+            stage: "author observation",
+            diagnostic: Box::new(request.adapter.diagnostic("show", &error)),
+        })?;
     let author = envelopes::agent(thread.provider.as_deref(), thread.model.as_deref());
     Ok(Pending {
         turn: String::new(),
@@ -212,7 +218,7 @@ fn record_failure(
     result: &Result<String, LinkError>,
 ) -> Result<(), LinkError> {
     if let Err(error) = result {
-        tracing::error!(event="discussion_management_failed",link=id,source=%pair.a,target=%pair.b,error=%error);
+        super::_diagnostics::management_failure(home, id, pair, error)?;
         failure(home, id, Some(&pair.a.to_string()), &error.to_string())?;
     }
     Ok(())

@@ -59,23 +59,25 @@ pub fn recorded_assignment(
             .native_assignment
             .as_ref()
             .and_then(|native| native.dispatcher.clone());
-        if binding.attempt.native_assignment.is_some() && dispatcher.is_none() {
-            return Err(StateDbError::invalid(
-                db.path(),
-                format!("binding {key} lost its dispatcher; recover its initialized attempt"),
-            ));
-        }
         let procedure = binding
             .attempt
             .native_assignment
             .as_ref()
             .and_then(|native| native.procedure.clone());
         let assignment = Assignment {
-            role,
+            role: binding.role.clone(),
             key,
-            procedure,
+            procedure: procedure
+                .map(|id| {
+                    instrukt_core::ids::SnippetId::parse(&id)
+                        .map_err(|error| StateDbError::invalid(db.path(), error.to_string()))
+                })
+                .transpose()?,
             workspace: workspace.map(Into::into),
-            project: Some(project),
+            project: Some(
+                instrukt_core::ids::ProjectSlug::parse(&project)
+                    .map_err(|error| StateDbError::invalid(db.path(), error.to_string()))?,
+            ),
             todo: Some(todo),
             platform: false,
             dispatcher,

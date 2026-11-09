@@ -111,12 +111,38 @@ impl Capabilities {
 /// Facts owned by work or runner; no environment variable supplies these values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Assignment {
-    pub role: String,
-    pub project: Option<String>,
-    pub procedure: Option<String>,
+    pub role: crate::ids::RoleName,
+    pub project: Option<crate::ids::ProjectSlug>,
+    pub procedure: Option<crate::ids::SnippetId>,
     pub todo: Option<String>,
     pub workspace: Option<PathBuf>,
     pub key: String,
     pub platform: bool,
     pub dispatcher: Option<crate::ids::SessionRef>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Assignment;
+    fn assignment() -> serde_json::Value {
+        serde_json::json!({"role":"builder","project":"demo","procedure":"sdlc/procedure/build","todo":null,"workspace":null,"key":"assignment","platform":false,"dispatcher":null})
+    }
+    #[test]
+    fn assignment_deserialization_rejects_an_invalid_role() {
+        let mut value = assignment();
+        value["role"] = "two\nlines".into();
+        assert!(serde_json::from_value::<Assignment>(value).is_err());
+    }
+    #[test]
+    fn assignment_deserialization_rejects_an_invalid_project() {
+        let mut value = assignment();
+        value["project"] = "../outside".into();
+        assert!(serde_json::from_value::<Assignment>(value).is_err());
+    }
+    #[test]
+    fn assignment_deserialization_rejects_an_invalid_procedure() {
+        let mut value = assignment();
+        value["procedure"] = "not-a-snippet".into();
+        assert!(serde_json::from_value::<Assignment>(value).is_err());
+    }
 }

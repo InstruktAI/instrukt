@@ -531,30 +531,68 @@ impl ConversationSource for T3Conversations {
             if !streaming {
                 state.loaded.insert(thread.clone(), fingerprint);
             }
-            state.after = Some(thread);
+            state.after = Some(thread.clone());
             let position = SourcePosition(serde_json::to_value(state)?);
             pass.expected = Some(position.clone());
+            let (completed_turns, turn_failures) = match super::_t3_completed::completed(
+                &records,
+                &incomplete_runs.into_iter().collect::<Vec<_>>(),
+            ) {
+                Ok(turns) => (turns, Vec::new()),
+                Err(error) => (
+                    Vec::new(),
+                    vec![super::conversations::TurnEvidenceFailure {
+                        conversation: instrukt_core::ids::SessionId::parse(&thread)
+                            .map_err(|_| source_error("invalid conversation reference"))?,
+                        cause: error.to_string(),
+                    }],
+                ),
+            };
             return Ok(ConversationChanges {
-                records,
                 position,
                 has_more: true,
-                incomplete_runs: incomplete_runs.into_iter().collect(),
-                missing: Vec::new(),
+                completed_turns,
+                turn_failures,
+                conversations: records
+                    .iter()
+                    .filter(|record| matches!(record.kind, RecordKind::Conversation))
+                    .map(|record| {
+                        instrukt_core::ids::SessionId::parse(&record.conversation_id)
+                            .map_err(|_| source_error("invalid conversation reference"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                missing: if records
+                    .iter()
+                    .any(|record| matches!(record.kind, RecordKind::Conversation))
+                {
+                    Vec::new()
+                } else {
+                    vec![
+                        instrukt_core::ids::SessionId::parse(&thread)
+                            .map_err(|_| source_error("invalid conversation reference"))?,
+                    ]
+                },
+                records,
             });
         }
         let missing = state
             .observed
             .iter()
             .filter(|thread| !pass.fingerprints.contains_key(*thread))
-            .cloned()
-            .collect();
+            .map(|id| {
+                instrukt_core::ids::SessionId::parse(id)
+                    .map_err(|_| source_error("invalid missing conversation reference"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         state.after = None;
         *cache = None;
         Ok(ConversationChanges {
             records: Vec::new(),
             position: SourcePosition(serde_json::to_value(state)?),
             has_more: false,
-            incomplete_runs: Vec::new(),
+            completed_turns: Vec::new(),
+            conversations: Vec::new(),
+            turn_failures: Vec::new(),
             missing,
         })
     }

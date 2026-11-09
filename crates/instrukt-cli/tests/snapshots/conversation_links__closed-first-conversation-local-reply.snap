@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/conversation-links.rs
+assertion_line: 726
+expression: "fake.message(\"parent\", parent_before + 1)"
+---
+First local reply.

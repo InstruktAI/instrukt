@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/roles-and-capabilities.rs
+assertion_line: 492
+expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
+---
+instrukt: role `builder` (focused) cannot perform events-read on events list with its ungranted scope; return the required action to the dispatcher in your own output or assigned artifact

@@ -145,17 +145,26 @@ a directional delivery position advances only after native acceptance, or a
 recorded empty-content disposition.
 
 Ordinary runner startup catches up active links from retained positions
-and resumes unfinished ranges. Native projection changes and completed-run/message evidence are interpreted through
-the adapter without treating an observed high-water position as proof of
-completed delivery. Missing source content, an unsupported stream shape or an
-unresolved handover is a visible failure; no fabricated transcript or successful
+and resumes unfinished ranges. The conversation-source adapter publishes typed,
+runtime-neutral completed turns with native turn references, turn/contribution
+order, author kind and available identity, text and available occurrence time.
+Native projection interpretation, completion and message relationships belong to
+the adapter. Link logic consumes only this evidence and owns envelopes, inherited
+echo exclusion, NOOP/empty handling and delivery decisions. An observed high-water
+position is never proof of completed delivery. Missing source content, an
+unsupported stream shape or an unresolved handover is a visible failure; no fabricated transcript or successful
 position substitutes for evidence. T3 protocol discovery and supported-version
 checks remain at the runtime boundary.
 
 `instrukt events status` exposes active links, their directional progress,
 pending/failed handovers and stream failures. Logs carry the link, source,
 target and native turn/position references with the failure cause, without
-conversation bodies or credentials. A blocked relay does not block unrelated
+conversation bodies or credentials. Opaque positions have full stable digest
+references for correlation. Native failures retain safe typed causes and opaque
+diagnostic references; uncertain handovers remain pending. Membership transitions
+are INFO events. Successful handovers are aggregated DEBUG completion summaries
+with counts and duration. A stopped reader is reported once and its failure stays
+visible in status until recovery. A blocked relay does not block unrelated
 runner readers. Native change notifications and runner restart continue the same
 recorded work; no second timer-driven delivery path is introduced.
 

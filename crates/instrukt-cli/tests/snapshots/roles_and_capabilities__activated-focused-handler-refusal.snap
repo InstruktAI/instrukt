@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/roles-and-capabilities.rs
+assertion_line: 236
+expression: "String::from_utf8_lossy(&denied.get_output().stderr)"
+---
+instrukt: role `focused-handler` (focused) cannot perform config-write on config init with its ungranted scope; return the required action to the dispatcher in your own output or assigned artifact

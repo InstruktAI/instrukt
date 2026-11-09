@@ -1,21 +1,6 @@
 #![allow(clippy::unwrap_used, reason = "isolated feature scenarios")]
 mod common;
-use instrukt_runner::{
-    envelopes::{self, Span},
-    links,
-};
-
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
-#[test]
-fn recorded_human_spans_keep_attribution_and_never_echo_to_their_source() {
-    let text = "clarification\n[Peer (t3:scope:b · agent:codex/model · unknown)]\npeer reply\n[/Peer (t3:scope:b · agent:codex/model · unknown)]\ntrailing words";
-    let output = links::human_contributions("t3:scope:a", "t3:scope:b", text, None);
-    assert_eq!(output.len(), 2);
-    assert!(output.iter().all(
-        |s| matches!(&envelopes::segment(s)[0],Span::Identity{source,..} if *source=="t3:scope:a")
-    ));
-}
+use instrukt_runner::links;
 
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
 #[test]
@@ -153,15 +138,21 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
             .any(|d| matches!(d.receipts.get("empty-run"), Some(links::Disposition::Empty)))
     );
     drop(runner);
+    store.turn(
+        "child",
+        "fresh-after-restart",
+        4,
+        "A fresh clarification.",
+        "A fresh reply.",
+    );
     let runner = run();
-    // Observe startup catch-up through the public status rather than waiting a guessed delay.
     wait_for(|| {
         links::status(&home).unwrap()[0]
             .directions
             .iter()
-            .any(|d| d.delivered_turn.as_deref() == Some("empty-run"))
+            .any(|d| d.delivered_turn.as_deref() == Some("fresh-after-restart"))
     });
-    assert_eq!(fake.message_count("parent"), 3);
+    assert_eq!(fake.message_count("parent"), 4);
     env.instrukt(env.home())
         .env("T3CODE_THREAD_ID", a.id.as_str())
         .args(["discuss", "close"])
@@ -574,4 +565,395 @@ fn changing_the_runtime_source_does_not_reidentify_a_links_members() {
     );
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
     assert!(links::status(&home).unwrap()[0].active);
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
+#[test]
+fn native_completed_turns_suppress_inherited_echoes_but_preserve_other_human_spans() {
+    let env = common::TestEnv::new();
+    let store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "peer-a", "opening a");
+    fake.seed("child", env.home(), "peer-b", "opening b");
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let source = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
+        .conversation_source(&home, &instrukt_core::config::Env::default())
+        .unwrap();
+    let inherited = instrukt_runner::envelopes::peer(
+        &format!("{}:parent", source.identity()),
+        "agent:original",
+        "unknown",
+        "Do not echo this contribution.",
+    );
+    let old = instrukt_runner::envelopes::peer(
+        "t3:earlier:peer",
+        "human:earlier",
+        "unknown",
+        "Keep this original human attribution.",
+    );
+    let input = format!(
+        "New leading human clarification.\n{inherited}\n{old}\nNew trailing human clarification."
+    );
+    let runner = Running(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    store.turn("child", "inherited-turn", 1, &input, "A new agent reply.");
+    wait_for(|| {
+        links::status(&home).unwrap()[0]
+            .directions
+            .iter()
+            .any(|d| d.delivered_turn.as_deref() == Some("inherited-turn"))
+    });
+    assert_eq!(fake.message_count("parent"), 2);
+    assert_eq!(fake.message_count("child"), 1);
+    insta::assert_snapshot!(
+        "real-relay-no-echo",
+        fake.message("parent", 1)
+            .replace(source.identity(), "t3:[SOURCE]")
+    );
+    drop(runner);
+}
+
+fn native_input(env: &common::TestEnv, id: &str, text: &str) {
+    use std::io::Write as _;
+    let mut process = env
+        .command(&env.path("runtime-bin/t3"), env.home())
+        .args(["thread", "send", "--", id, "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    process
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
+    assert!(process.wait().unwrap().success());
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
+#[test]
+fn both_members_continue_locally_after_close_while_the_runner_processes_fresh_turns() {
+    let env = common::TestEnv::new();
+    let store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    for id in ["parent", "child", "witness-a", "witness-b"] {
+        store.thread(id, None, None, "2026-11-08T10:00:00.000Z");
+        fake.seed(id, env.home(), id, "Local opening.");
+    }
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let runner = Running(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    store.turn("child", "before-close", 1, "Shared input.", "Shared reply.");
+    wait_for(|| fake.message_count("parent") == 2);
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "close"])
+        .assert()
+        .success();
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "witness-a")
+        .args(["discuss", "open", "witness-b"])
+        .assert()
+        .success();
+    let parent_before = fake.message_count("parent");
+    let child_before = fake.message_count("child");
+    native_input(
+        &env,
+        "parent",
+        "Continue independently in the first thread.",
+    );
+    fake.finish("parent", "idle", "First local reply.");
+    native_input(
+        &env,
+        "child",
+        "Continue independently in the second thread.",
+    );
+    fake.finish("child", "idle", "Second local reply.");
+    store.turn(
+        "parent",
+        "parent-after-close",
+        2,
+        "Continue independently in the first thread.",
+        "First local reply.",
+    );
+    store.turn(
+        "child",
+        "child-after-close",
+        2,
+        "Continue independently in the second thread.",
+        "Second local reply.",
+    );
+    store.turn(
+        "witness-a",
+        "fresh-barrier",
+        1,
+        "Process the new source pass.",
+        "Fresh progress.",
+    );
+    wait_for(|| {
+        links::status(&home)
+            .unwrap()
+            .iter()
+            .flat_map(|l| &l.directions)
+            .any(|d| d.delivered_turn.as_deref() == Some("fresh-barrier"))
+    });
+    assert_eq!(fake.message_count("parent"), parent_before + 2);
+    assert_eq!(fake.message_count("child"), child_before + 2);
+    insta::assert_snapshot!(
+        "closed-first-conversation-local-reply",
+        fake.message("parent", parent_before + 1)
+    );
+    insta::assert_snapshot!(
+        "closed-second-conversation-local-reply",
+        fake.message("child", child_before + 1)
+    );
+    drop(runner);
+}
+
+fn diagnostic_reference(text: &str) -> String {
+    let mut result = text.to_owned();
+    if let Some(start) = result.find("[diagnostic:") {
+        let hash = start + "[diagnostic:".len();
+        if result
+            .get(hash..hash + 64)
+            .is_some_and(|value| value.bytes().all(|b| b.is_ascii_hexdigit()))
+            && result.as_bytes().get(hash + 64) == Some(&b']')
+        {
+            result.replace_range(hash..hash + 64, "REF");
+        }
+    }
+    result
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
+#[test]
+fn native_send_failure_keeps_a_safe_actionable_cause_and_pending_handover() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "parent", "Local opening.");
+    fake.seed("child", env.home(), "child", "Local opening.");
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    fake.flag("send-unreachable", true);
+    let failure = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "close", "--message", "CONFIDENTIAL_PEER_BODY"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(diagnostic_reference(&String::from_utf8_lossy(&failure.get_output().stderr)),@"instrukt: conversation link: native send failed: t3 send: native server unreachable (ECONNREFUSED) [diagnostic:REF]; handover remains uncertain");
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let status = links::status(&home).unwrap().remove(0);
+    assert!(status.active);
+    assert!(status.directions.iter().any(|d| d.uncertain));
+    insta::assert_snapshot!(
+        "management-failure-correlation",
+        discussion_log(&env, "discuss", &status.id)
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+#[test]
+fn native_observation_failure_keeps_its_transport_cause_without_resending() {
+    let env = common::TestEnv::new();
+    let _store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "parent", "Local opening.");
+    fake.seed("child", env.home(), "child", "Local opening.");
+    fake.flag("die-after-send", true);
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args([
+            "discuss",
+            "open",
+            "child",
+            "--message",
+            "Opening contribution.",
+        ])
+        .assert()
+        .failure();
+    fake.server_down();
+    let failure = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(diagnostic_reference(&String::from_utf8_lossy(&failure.get_output().stderr)),@"instrukt: conversation link: native acceptance observation failed: t3 show: native transport failure (ECONNREFUSED) [diagnostic:REF]; handover remains uncertain");
+    assert_eq!(fake.message_count("child"), 2);
+}
+
+fn discussion_log(env: &common::TestEnv, command: &str, link: &str) -> String {
+    let log = std::fs::read_to_string(
+        env.home()
+            .join(format!(".local/state/instrukt-ai/instrukt/{command}.log")),
+    )
+    .unwrap();
+    log.lines()
+        .filter(|line| line.contains("event=conversation_") || line.contains("event=discussion_"))
+        .map(|line| {
+            let line = line.split_once(' ').unwrap().1.replace(link, "[LINK]");
+            let mut line = diagnostic_reference(&line);
+            if let Some(start) = line.find("position=") {
+                let start = start + "position=".len();
+                let end = line[start..]
+                    .find(' ')
+                    .map_or(line.len(), |end| start + end);
+                let position = &line[start..end];
+                assert_eq!(position.len(), 64);
+                assert!(position.bytes().all(|b| b.is_ascii_hexdigit()));
+                line.replace_range(start..end, "[POSITION]");
+            }
+            if let Some(start) = line.find("duration_ms=") {
+                let start = start + "duration_ms=".len();
+                let end = line[start..]
+                    .find(' ')
+                    .map_or(line.len(), |end| start + end);
+                line.replace_range(start..end, "[MS]");
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
+#[test]
+fn membership_and_automatic_delivery_have_body_free_boundary_summaries() {
+    let env = common::TestEnv::new();
+    let store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "parent", "Local opening.");
+    fake.seed("child", env.home(), "child", "Local opening.");
+    for _ in 0..2 {
+        env.instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "parent")
+            .args(["discuss", "open", "child"])
+            .assert()
+            .success();
+    }
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let id = links::status(&home).unwrap()[0].id.clone();
+    store.turn(
+        "child",
+        "logged-turn-1",
+        1,
+        "PRIVATE HUMAN TEXT",
+        "PRIVATE ASSISTANT TEXT",
+    );
+    store.turn(
+        "child",
+        "logged-turn-2",
+        2,
+        "PRIVATE SECOND HUMAN TEXT",
+        "PRIVATE SECOND ASSISTANT TEXT",
+    );
+    let runner = Running(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .env("INSTRUKT_LOG_LEVEL", "debug")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_for(|| {
+        links::status(&home).unwrap()[0]
+            .directions
+            .iter()
+            .any(|d| d.delivered_turn.as_deref() == Some("logged-turn-2"))
+    });
+    // Close acquires the same link lock, after the successful delivery summary.
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "close"])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "membership-operation-log",
+        discussion_log(&env, "discuss", &id)
+    );
+    insta::assert_snapshot!("automatic-delivery-log", discussion_log(&env, "run", &id));
+    drop(runner);
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+#[test]
+fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_position() {
+    let env = common::TestEnv::new();
+    let store = history::T3Store::new(&env);
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "parent", "Local opening.");
+    fake.seed("child", env.home(), "child", "Local opening.");
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let id = links::status(&home).unwrap()[0].id.clone();
+    let runner = Running(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_for(|| {
+        std::fs::read_to_string(env.home().join(".local/state/instrukt-ai/instrukt/run.log"))
+            .is_ok_and(|log| log.contains("event=runner_started"))
+    });
+    instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap()
+        .execute_batch("ALTER TABLE orchestration_v2_projection_messages RENAME COLUMN role TO unsupported_role").unwrap();
+    wait_for(|| {
+        let link = links::status(&home).unwrap().remove(0);
+        link.failure.is_some() || link.directions.iter().all(|d| d.failure.is_some())
+    });
+    insta::assert_snapshot!(
+        "source-failure-correlation",
+        discussion_log(&env, "run", &id).replace(env.home().to_str().unwrap(), "[HOME]")
+    );
+    let status = env
+        .run(env.home(), ["events", "status", "--json"])
+        .success();
+    let public: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert!(
+        public[0]["failure"].is_string()
+            || public[0]["directions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|d| d["failure"].is_string())
+    );
+    drop(runner);
 }

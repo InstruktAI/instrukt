@@ -19,7 +19,7 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
     )?;
     assignment
         .map(|assignment| {
-            let grants = Agents::load(&ctx.home)?.capabilities(&assignment.role)?;
+            let grants = Agents::load(&ctx.home)?.capabilities(assignment.role.as_str())?;
             Ok((assignment, grants))
         })
         .transpose()
@@ -94,7 +94,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         return Ok(());
     }
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
-    let project = config.project()?.map(|p| p.to_string());
+    let project = config.project()?;
     let in_project = assignment.project.is_some() && assignment.project == project;
     // Clap's parsed identifiers retain their types; raw values are used only as target addresses.
     let raw = |name: &str| {
@@ -116,9 +116,9 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
             | Action::Integration
             | Action::TodoOrchestration
     );
-    let own_todo = match (target.filter(|_| todo_action), project.as_deref()) {
+    let own_todo = match (target.filter(|_| todo_action), project.as_ref()) {
         (Some(target), Some(project)) => {
-            instrukt_todos::work::target_identity(&ctx.home, project, target)?.as_ref()
+            instrukt_todos::work::target_identity(&ctx.home, project.as_str(), target)?.as_ref()
                 == assignment.todo.as_ref()
                 && assignment.todo.is_some()
         }
@@ -151,7 +151,25 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         SessionObserve | ConversationLink => true,
         SessionRecover => raw("key") == Some(assignment.key.as_str()),
         StandingBind => {
-            raw("procedure") == assignment.procedure.as_deref() && assignment.procedure.is_some()
+            if let Some(procedure) = assignment
+                .procedure
+                .as_ref()
+                .filter(|id| Some(id.as_str()) == raw("procedure"))
+            {
+                match instrukt_runner::standing::binding_home(
+                    &ctx.home,
+                    &config,
+                    procedure,
+                    raw("reservation"),
+                )? {
+                    instrukt_runner::standing::BindingHome::Project(project) => {
+                        assignment.project.as_ref() == Some(&project)
+                    }
+                    instrukt_runner::standing::BindingHome::Platform => assignment.platform,
+                }
+            } else {
+                false
+            }
         }
         _ => false,
     };
@@ -187,7 +205,9 @@ pub fn help(mut command: Command, path: &mut Vec<String>, caps: &Capabilities) -
                 || (action == Action::ConversationLink
                     && path.last().is_some_and(|name| name == "open")))
         {
-            command = command.hide(true);
+            command = command
+                .hide(true)
+                .override_help(caps.refusal(action, &path.join(" ")));
         } else {
             command = command.after_help(format!(
                 "Action: {} · scope: {}. Object claims, phase and writer constraints apply.",

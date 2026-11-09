@@ -1,4 +1,5 @@
 //! Admit two-thread conversations and relay finished turns with durable handover evidence.
+mod _diagnostics;
 mod _management;
 mod _turns;
 mod _watch;
@@ -7,7 +8,6 @@ use crate::runtime::{
     conversations::{ConversationSource, SourcePosition},
 };
 pub use _management::{Discussion, Operation, manage};
-pub use _turns::human_contributions;
 pub(crate) use _watch::{Worker, record as record_failure};
 use instrukt_core::{
     capabilities::RoleClass,
@@ -37,6 +37,13 @@ pub enum LinkError {
     Config(#[from] instrukt_core::config::ConfigError),
     #[error(transparent)]
     Runtime(#[from] crate::sessions::SessionsError),
+    #[error("conversation link: native {stage} failed: {diagnostic}; handover remains uncertain")]
+    Native {
+        stage: &'static str,
+        diagnostic: Box<crate::runtime::NativeDiagnostic>,
+    },
+    #[error("conversation notification reader stopped: {0}; restart instrukt run")]
+    Stopped(Box<LinkError>),
     #[error("conversation link: {0}")]
     Refused(String),
 }
@@ -61,6 +68,8 @@ pub struct Progress {
     pub observed: SourcePosition,
     pub delivered_turn: Option<String>,
     pub pending: usize,
+    #[serde(skip)]
+    retained_turn: Option<String>,
     pub uncertain: bool,
     pub receipts: std::collections::BTreeMap<String, Disposition>,
     pub failure: Option<String>,
@@ -149,7 +158,7 @@ fn open_plan(
         (request.b, b_assignment.as_ref()),
     ] {
         if let Some(assignment) = assignment {
-            if agents.capabilities(&assignment.role)?.class == RoleClass::Focused {
+            if agents.capabilities(assignment.role.as_str())?.class == RoleClass::Focused {
                 return Err(LinkError::Refused(format!(
                     "focused role `{}` on {member} reports through its own output and assigned artifacts",
                     assignment.role
@@ -193,20 +202,19 @@ fn open_plan(
     let mut seen = std::collections::BTreeMap::<String, std::collections::BTreeSet<String>>::new();
     loop {
         let batch = source.changed_since(position.as_ref())?;
-        for record in batch.records {
-            if matches!(
-                record.kind,
-                crate::runtime::conversations::RecordKind::Conversation
-            ) {
-                observed.insert(record.conversation_id.clone());
-            }
-            if matches!(record.kind, crate::runtime::conversations::RecordKind::Run)
-                && record.completed
-            {
-                seen.entry(record.conversation_id)
-                    .or_default()
-                    .insert(record.id);
-            }
+        if let Some(failure) = batch.turn_failures.iter().find(|failure| {
+            failure.conversation == request.a.id || failure.conversation == request.b.id
+        }) {
+            return Err(LinkError::Refused(format!(
+                "completed-turn evidence unavailable: {}",
+                failure.cause
+            )));
+        }
+        observed.extend(batch.conversations.into_iter().map(|id| id.to_string()));
+        for turn in batch.completed_turns {
+            seen.entry(turn.conversation.to_string())
+                .or_default()
+                .insert(turn.native_turn.to_string());
         }
         position = Some(batch.position);
         if !batch.has_more {
@@ -221,7 +229,7 @@ fn open_plan(
     let contribution = plan.contribution.map(|prepare| prepare()).transpose()?;
     let id = crate::keyed::request_id()?;
     let mut db = StateDb::open(home)?;
-    db.write::<_,LinkError>(|tx| {
+    let opened = db.write::<_,LinkError>(|tx| {
         let mut q=tx.prepare("SELECT id,a,b FROM conversation_links WHERE active=1 AND (a IN (?1,?2) OR b IN (?1,?2))")?;
         let rows=q.query_map(params![a.to_string(),b.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?.collect::<Result<Vec<_>,_>>()?;
         if let Some((existing,x,y)) = rows.into_iter().next() {
@@ -233,8 +241,12 @@ fn open_plan(
             let pending=if from==request.a {contribution.as_ref().map(|pending| {let mut pending=pending.clone();pending.turn=format!("opening:{id}");vec![pending]}).unwrap_or_default()}else{Vec::new()};
             tx.execute("INSERT INTO conversation_relay_positions(link,source,target,position_json,seen_json,pending_json) VALUES (?1,?2,?3,?4,?5,?6)",params![id,from.to_string(),to.to_string(),serde_json::to_string(&position)?,serde_json::to_string(&seen.get(from.id.as_str()).cloned().unwrap_or_default())?,serde_json::to_string(&pending)?])?;
         }
-        Ok(id)
-    })
+        Ok(id.clone())
+    })?;
+    if opened == id {
+        tracing::info!(event="conversation_opened",link=%id,source=%request.a,target=%request.b,position=%position.reference());
+    }
+    Ok(opened)
 }
 
 pub fn close(home: &Home, member: &SessionRef) -> Result<(), LinkError> {
@@ -255,13 +267,16 @@ fn link_lock(home: &Home, id: &str) -> Result<instrukt_core::fsx::LockGuard, Lin
 }
 fn close_link(home: &Home, id: &str, member: &SessionRef) -> Result<(), LinkError> {
     let mut db = StateDb::open(home)?;
-    db.write::<_, LinkError>(|tx| {
-        tx.execute(
+    let changed = db.write::<_, LinkError>(|tx| {
+        Ok(tx.execute(
             "UPDATE conversation_links SET active=0 WHERE id=?1 AND active=1 AND (a=?2 OR b=?2)",
             params![id, member.to_string()],
-        )?;
-        Ok(())
-    })
+        )?)
+    })?;
+    if changed > 0 {
+        _diagnostics::closed(home, id, member)?;
+    }
+    Ok(())
 }
 
 pub fn status(home: &Home) -> Result<Vec<Status>, LinkError> {
@@ -306,7 +321,11 @@ pub fn status(home: &Home) -> Result<Vec<Status>, LinkError> {
                         source,
                         target,
                         observed: serde_json::from_str(&pos)?,
-                        delivered_turn,
+                        delivered_turn: delivered_turn.clone(),
+                        retained_turn: pending
+                            .first()
+                            .map(|p| p.turn.clone())
+                            .or_else(|| delivered_turn.clone()),
                         pending: pending.len(),
                         uncertain: pending.iter().any(|item| item.sending),
                         receipts: serde_json::from_str(&receipts)?,
@@ -377,7 +396,11 @@ fn write_direction(home: &Home, d: &Direction, origin: Option<&Origin>) -> Resul
         tx.execute("UPDATE conversation_relay_positions SET position_json=?3,seen_json=?4,pending_json=?5,delivered_turn=?6,receipts_json=?7,failure=NULL WHERE link=?1 AND source=?2",params![d.link,d.source.to_string(),serde_json::to_string(&d.position)?,serde_json::to_string(&d.seen)?,serde_json::to_string(&d.pending)?,d.delivered,serde_json::to_string(&d.receipts)?])?;
         if matches!(origin,Some(Origin::Closing{..})) {tx.execute("UPDATE conversation_links SET active=0 WHERE id=?1",[&d.link])?;}
         Ok(())
-    })
+    })?;
+    if matches!(origin, Some(Origin::Closing { .. })) {
+        _diagnostics::closed(home, &d.link, &d.source)?;
+    }
+    Ok(())
 }
 
 fn active(home: &Home, id: &str) -> Result<bool, LinkError> {
@@ -424,13 +447,7 @@ pub fn relay(
             })?;
         }
         if let Err(error) = result {
-            tracing::error!(event="conversation_relay_failed",link=%d.link,source=%d.source,target=%d.target,turn=?d.pending.first().map(|p|&p.turn),error=%error);
-            failure(
-                home,
-                &d.link,
-                Some(&d.source.to_string()),
-                &error.to_string(),
-            )?;
+            _diagnostics::relay_failure(home, &d, &error)?;
         }
     }
     Ok(())
@@ -461,36 +478,28 @@ fn relay_direction(
             return Ok(());
         }
         let batch = source.changed_since(Some(&d.position))?;
-        if batch.missing.iter().any(|id| id == d.source.id.as_str()) {
+        if batch.missing.iter().any(|id| id == &d.source.id) {
             return Err(LinkError::Refused(
                 "linked source conversation is missing; restore its native source content".into(),
             ));
         }
-        let member_records = batch
-            .records
+        if let Some(failure) = batch
+            .turn_failures
             .iter()
-            .filter(|record| record.conversation_id == d.source.id.as_str())
-            .collect::<Vec<_>>();
-        if !member_records.is_empty()
-            && !member_records.iter().any(|record| {
-                matches!(
-                    record.kind,
-                    crate::runtime::conversations::RecordKind::Conversation
-                )
-            })
+            .find(|failure| failure.conversation == d.source.id)
         {
-            return Err(LinkError::Refused(
-                "linked native conversation metadata is missing; restore its native source content"
-                    .into(),
-            ));
+            return Err(LinkError::Refused(format!(
+                "completed-turn evidence unavailable: {}",
+                failure.cause
+            )));
         }
         {
             let turns = _turns::finished(
-                &batch,
+                &batch.completed_turns,
                 d.source.id.as_str(),
                 &format!("{}:{}", source.identity(), d.source.id),
                 &format!("{}:{}", source.identity(), d.target.id),
-            )?;
+            );
             for (id, content) in turns {
                 if d.seen.insert(id.clone()) {
                     d.pending.push(Pending {
@@ -517,6 +526,7 @@ fn deliver(
     d: &mut Direction,
     mode: DeliveryMode,
 ) -> Result<(), LinkError> {
+    let mut summary = _diagnostics::Deliveries::new(d);
     while let Some(p) = d.pending.first() {
         if matches!(mode, DeliveryMode::Management) && matches!(p.origin, Origin::Turn) {
             return Ok(());
@@ -536,11 +546,16 @@ fn deliver(
                 .insert(completed.turn.clone(), Disposition::Empty);
             d.delivered = Some(completed.turn);
             retain(home, d)?;
+            summary.completed(d, false);
             continue;
         }
         if p.sending {
-            let observation =
-                adapter.observe_input(&d.target, &p.content, jiff::Timestamp::now()).map_err(|_| LinkError::Refused("native input acceptance observation failed; inspect the target native thread before resolving its pending handover".into()))?;
+            let observation = adapter
+                .observe_input(&d.target, &p.content, jiff::Timestamp::now())
+                .map_err(|error| LinkError::Native {
+                    stage: "acceptance observation",
+                    diagnostic: Box::new(adapter.diagnostic("observe", &error)),
+                })?;
             if observation.state == crate::runtime::InputState::Unknown {
                 return Err(LinkError::Refused(format!(
                     "handover for turn {} remains uncertain; recover native acceptance evidence",
@@ -553,7 +568,12 @@ fn deliver(
             if !active(home, &d.link)? {
                 return Ok(());
             }
-            adapter.send(&d.target,&d.pending[0].content).map_err(|_| LinkError::Refused("native input send failed; handover remains uncertain until native acceptance is observed".into()))?;
+            adapter
+                .send(&d.target, &d.pending[0].content)
+                .map_err(|error| LinkError::Native {
+                    stage: "send",
+                    diagnostic: Box::new(adapter.diagnostic("send", &error)),
+                })?;
         }
         let completed = d.pending.remove(0);
         d.receipts.insert(
@@ -566,6 +586,7 @@ fn deliver(
             d.delivered = Some(completed.turn);
         }
         write_direction(home, d, Some(&completed.origin))?;
+        summary.completed(d, true);
     }
     Ok(())
 }

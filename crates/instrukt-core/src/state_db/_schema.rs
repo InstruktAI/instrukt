@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
 const V7: &str = r#"
@@ -650,4 +650,11 @@ SET pending_json=(SELECT json_group_array(json(
  CASE WHEN json_type(value,'$.origin') IS NULL
  THEN json_set(value,'$.origin',json_object('kind','turn')) ELSE value END
 )) FROM json_each(conversation_relay_positions.pending_json));
+"#;
+
+/// Version 13: canonical unknown dispatcher evidence for retained native assignments.
+const V13: &str = r#"
+UPDATE session_bindings SET evidence=json_insert(evidence,'$.native_assignment.dispatcher',NULL)
+WHERE json_type(evidence,'$.native_assignment')='object'
+AND json_type(evidence,'$.native_assignment.dispatcher') IS NULL;
 "#;

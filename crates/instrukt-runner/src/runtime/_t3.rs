@@ -94,7 +94,18 @@ impl T3 {
             result => result?,
         };
         let shown: Shown =
-            serde_json::from_str(&out).map_err(|e| failure("show", e.to_string()))?;
+            serde_json::from_str(&out).map_err(|e| SessionsError::InvalidResponse {
+                runtime: "t3".into(),
+                operation: "show".into(),
+                category: match e.classify() {
+                    serde_json::error::Category::Io => "io",
+                    serde_json::error::Category::Syntax => "syntax",
+                    serde_json::error::Category::Data => "data",
+                    serde_json::error::Category::Eof => "eof",
+                },
+                line: e.line(),
+                column: e.column(),
+            })?;
         if shown.thread.thread_id != session.id.as_str() {
             return Err(failure("show", "response identifies a different thread"));
         }
@@ -121,6 +132,13 @@ impl instrukt_core::interfaces::CallerIdentityLookup for T3 {
 }
 
 impl RuntimeAdapter for T3 {
+    fn diagnostic(&self, operation: &str, error: &SessionsError) -> super::NativeDiagnostic {
+        let native = match error {
+            SessionsError::Failed { detail, .. } => super::_t3_diagnostics::cause(detail),
+            _ => None,
+        };
+        super::_diagnostics::diagnose("t3", operation, error, native)
+    }
     fn conversation_source(
         &self,
         home: &instrukt_core::home::Home,

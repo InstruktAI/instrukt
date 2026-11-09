@@ -115,6 +115,41 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             self.db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,'child',?2,'completed',?3,?4)",params![id,kind,at,item.to_string()]).unwrap();
         }
     }
+    #[allow(
+        dead_code,
+        reason = "completed turns are used by the shared relay scenarios"
+    )]
+    pub fn turn(&self, thread: &str, id: &str, order: u64, human: &str, agent: &str) {
+        let at = "2026-11-08T10:00:00.000Z";
+        let tx = self.db.unchecked_transaction().unwrap();
+        let user = format!("{id}-user");
+        let reply = format!("{id}-reply");
+        for (message, role, text, ordinal) in
+            [(&user, "user", human, 0), (&reply, "assistant", agent, 1)]
+        {
+            let native = json!({"id":message,"threadId":thread,"runId":id,"role":role,"text":text,"streaming":false,"createdAt":at,"updatedAt":at,"createdBy":if role=="user"{"user"}else{"agent"},"creationSource":if role=="user"{"web"}else{"provider"},"attachments":[]});
+            tx.execute(
+                "INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,?3,0,?4,?4,?5)",
+                params![message, thread, role, at, native.to_string()],
+            )
+            .unwrap();
+            let item_id = format!("{id}-item-{ordinal}");
+            let kind = if role == "user" {
+                "user_message"
+            } else {
+                "assistant_message"
+            };
+            let item = json!({"id":item_id,"threadId":thread,"runId":id,"type":kind,"messageId":message,"ordinal":ordinal,"status":"completed","streaming":false,"text":text,"createdAt":at,"updatedAt":at,"completedAt":at});
+            tx.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,?2,?3,'completed',?4,?5)",params![item_id,thread,kind,at,item.to_string()]).unwrap();
+        }
+        let run = json!({"id":id,"threadId":thread,"ordinal":order,"providerInstanceId":"fixture","modelSelection":{"instanceId":"fixture","model":"fixture"},"userMessageId":user,"status":"completed","requestedAt":at,"completedAt":at});
+        tx.execute(
+            "INSERT INTO orchestration_v2_projection_runs VALUES(?1,?2,'completed',?3,?3,?4)",
+            params![id, thread, at, run.to_string()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
     pub fn remove_threads(&self) {
         self.db.execute_batch("DELETE FROM orchestration_v2_projection_messages;DELETE FROM orchestration_v2_projection_threads;").unwrap();
     }

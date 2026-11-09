@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/roles-and-capabilities.rs
+assertion_line: 433
+expression: "serde_json::from_slice::<serde_json::Value>(&shown.get_output().stdout).unwrap()"
+---
+[
+  {
+    "provider": "codex",
+    "model": "gpt-6-luna",
+    "session": "t3:s1",
+    "title": "instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork",
+    "state": "running",
+    "settled": false,
+    "semantic_key": "instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork",
+    "last_activity": "2026-11-06T10:00:00Z",
+    "activity_source": "t3 updatedAt/settledAt: native latest activity or settling"
+  }
+]

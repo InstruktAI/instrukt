@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/conversation-links.rs
+assertion_line: 905
+expression: "discussion_log(&env, \"run\", &id)"
+---
+level=DEBUG logger=instrukt_runner::links::_diagnostics msg="" accepted=2 duration_ms=[MS] empty=0 event=conversation_delivery_completed link=[LINK] position=[POSITION] source=t3:child target=t3:parent

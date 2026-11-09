@@ -145,6 +145,16 @@ pub fn agent(provider: Option<&str>, model: Option<&str>) -> String {
     }
 }
 
+pub fn speaker(kind: crate::runtime::conversations::AuthorKind, identity: Option<&str>) -> String {
+    let kind = match kind {
+        crate::runtime::conversations::AuthorKind::Human => "human",
+        crate::runtime::conversations::AuthorKind::Agent => "agent",
+    };
+    identity
+        .map(|identity| format!("{kind}:{}", identity.escape_debug()).replace(" · ", " "))
+        .unwrap_or_else(|| kind.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Control, Span, peer, segment};

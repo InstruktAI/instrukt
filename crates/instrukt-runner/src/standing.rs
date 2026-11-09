@@ -563,6 +563,74 @@ pub(crate) fn settle(state: &RunnerState) -> Result<(), StateError> {
     })
 }
 
+/// Exact responsibility home addressed by a manual reservation or its retained token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingHome {
+    Project(ProjectSlug),
+    Platform,
+}
+impl BindingHome {
+    fn from_key(value: &str) -> Result<Self, SessionsError> {
+        if value == "platform" {
+            return Ok(Self::Platform);
+        }
+        let project = value.strip_prefix("project:").ok_or_else(|| {
+            SessionsError::Refused("standing reservation has an unsupported home".into())
+        })?;
+        Ok(Self::Project(
+            ProjectSlug::parse(project).map_err(|e| SessionsError::Refused(e.to_string()))?,
+        ))
+    }
+    fn key(&self) -> String {
+        match self {
+            Self::Project(project) => format!("project:{project}"),
+            Self::Platform => "platform".into(),
+        }
+    }
+}
+fn manual_home(config: &Configuration, entry: &IndexEntry) -> Result<BindingHome, SessionsError> {
+    match entry.subscription_home {
+        Some(instrukt_core::subscription::SubscriptionHome::Project) => {
+            Ok(BindingHome::Project(config.project()?.ok_or_else(
+                || SessionsError::Refused("standing entry needs a project".into()),
+            )?))
+        }
+        Some(instrukt_core::subscription::SubscriptionHome::Platform) => Ok(BindingHome::Platform),
+        _ => Err(SessionsError::Refused(
+            "this standing home cannot execute here".into(),
+        )),
+    }
+}
+pub fn binding_home(
+    home: &instrukt_core::home::Home,
+    config: &Configuration,
+    procedure: &instrukt_core::ids::SnippetId,
+    reservation: Option<&str>,
+) -> Result<BindingHome, SessionsError> {
+    if let Some(token) = reservation {
+        let value = RunnerState::new(home)
+            .read(|conn, path| {
+                conn.query_row(
+                    "SELECT home FROM manual_standing_reservations WHERE token=?1",
+                    [token],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(state::sql(path))
+            })?
+            .flatten()
+            .ok_or_else(|| {
+                SessionsError::Refused(
+                    "standing reservation is unknown; recover its original reservation".into(),
+                )
+            })?;
+        return BindingHome::from_key(&value);
+    }
+    let entry = crate::launch::procedure(home, procedure)
+        .map_err(|e| SessionsError::Refused(e.to_string()))?;
+    manual_home(config, &entry)
+}
+
 /// Record-only deliberate entry, serialized with automatic responsibility delivery.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ManualReservation {
@@ -603,7 +671,6 @@ pub fn reserve_manual(
         args,
         brief,
     } = *request;
-    use instrukt_core::subscription::SubscriptionHome;
     let runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     if entry.subscriptions.is_empty()
@@ -613,20 +680,7 @@ pub fn reserve_manual(
             "manual entry requires a subscribed home-identity procedure".into(),
         ));
     }
-    let home = match entry.subscription_home {
-        Some(SubscriptionHome::Project) => format!(
-            "project:{}",
-            config
-                .project()?
-                .ok_or_else(|| SessionsError::Refused("standing entry needs a project".into()))?
-        ),
-        Some(SubscriptionHome::Platform) => "platform".into(),
-        _ => {
-            return Err(SessionsError::Refused(
-                "this standing home cannot execute here".into(),
-            ));
-        }
-    };
+    let home = manual_home(config, entry)?.key();
     if !config.module_enabled(instrukt_core::config::Module::Events)? {
         return Err(SessionsError::Refused(
             "standing entry requires modules.events".into(),

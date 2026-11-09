@@ -633,8 +633,9 @@ fn resolve_entry(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "pure configuration parser setup")]
 mod tests {
-    use super::{Agents, ConfigError};
+    use super::{Agents, ConfigError, SHIPPED_AGENTS};
     #[test]
     fn a_newer_schema_is_refused_before_interpreting_its_profile_shape() {
         let newer = "schema_version: 3\nprofiles: {future: {kind: future-harness}}\n";
@@ -646,5 +647,95 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn handler_defaults_and_unknown_roles_preserve_their_recorded_name() {
+        let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let handler = agents.capabilities("event-handler").unwrap();
+        assert_eq!(handler.class, crate::capabilities::RoleClass::Standing);
+        let unknown = agents.capabilities("custom-handler").unwrap();
+        assert_eq!(unknown.role, "custom-handler");
+        assert_eq!(unknown.class, crate::capabilities::RoleClass::Agent);
+    }
+
+    #[test]
+    fn an_unknown_role_class_is_rejected() {
+        assert!(
+            Agents::parse(&SHIPPED_AGENTS.replacen("class: agent", "class: admin", 1)).is_err()
+        );
+    }
+
+    #[test]
+    fn a_missing_capability_bundle_is_rejected() {
+        assert!(
+            Agents::parse(&SHIPPED_AGENTS.replacen("can: [all]", "can: [missing]", 1)).is_err()
+        );
+    }
+
+    #[test]
+    fn an_unknown_configured_role_inherits_the_effective_default_capabilities() {
+        use crate::capabilities::{Action, RoleClass, Scope};
+        let mut edited: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        edited["default"]["class"] = "focused".into();
+        edited["default"]["can"] =
+            serde_yaml_ng::from_str("[{action: docs-read, scope: own}]").unwrap();
+        edited["roles"]["custom"] =
+            serde_yaml_ng::from_str("{order: [codex], tier: light}").unwrap();
+        let resolved = Agents::parse(&serde_yaml_ng::to_string(&edited).unwrap()).unwrap();
+        let role = resolved.capabilities("custom").unwrap();
+        assert_eq!(role.class, RoleClass::Focused);
+        assert_eq!(role.scope(Action::DocsRead), Some(Scope::Own));
+        assert_eq!(role.scope(Action::CodeCommit), None);
+    }
+
+    #[test]
+    fn an_explicit_role_class_wins_while_its_missing_grants_use_the_shipped_role() {
+        use crate::capabilities::{Action, RoleClass, Scope};
+        let mut edited: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        edited["roles"]["builder"]["class"] = "agent".into();
+        edited["roles"]["builder"]
+            .as_mapping_mut()
+            .unwrap()
+            .remove("can");
+        let role = Agents::parse(&serde_yaml_ng::to_string(&edited).unwrap())
+            .unwrap()
+            .capabilities("builder")
+            .unwrap();
+        assert_eq!(role.class, RoleClass::Agent);
+        assert_eq!(role.scope(Action::DocsWrite), Some(Scope::Own));
+    }
+
+    #[test]
+    fn an_explicit_empty_grant_list_wins_while_the_missing_class_uses_the_shipped_role() {
+        use crate::capabilities::RoleClass;
+        let mut edited: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        edited["roles"]["builder"]
+            .as_mapping_mut()
+            .unwrap()
+            .remove("class");
+        edited["roles"]["builder"]["can"] = serde_yaml_ng::from_str("[]").unwrap();
+        let role = Agents::parse(&serde_yaml_ng::to_string(&edited).unwrap())
+            .unwrap()
+            .capabilities("builder")
+            .unwrap();
+        assert_eq!(role.class, RoleClass::Focused);
+        assert!(role.grants.is_empty());
+    }
+
+    #[test]
+    fn explicit_bundle_edits_win_when_a_role_inherits_its_grant_names() {
+        use crate::capabilities::Action;
+        let mut edited: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        edited["roles"]["builder"]
+            .as_mapping_mut()
+            .unwrap()
+            .remove("can");
+        edited["bundles"]["worker"] = serde_yaml_ng::from_str("[]").unwrap();
+        let role = Agents::parse(&serde_yaml_ng::to_string(&edited).unwrap())
+            .unwrap()
+            .capabilities("builder")
+            .unwrap();
+        assert_eq!(role.scope(Action::DocsWrite), None);
     }
 }

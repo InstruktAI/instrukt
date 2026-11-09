@@ -1,22 +1,19 @@
-//! Project completed native runs into conversational contributions only.
-use super::LinkError;
+//! Render typed completed turns; framing and delivery policy belong to links.
 use crate::{
     envelopes::{self, Span},
-    runtime::conversations::{ConversationRecord, RecordKind, Role},
+    runtime::conversations::{AuthorKind, CompletedTurn, TurnContribution},
 };
-pub fn human_contributions(
-    source: &str,
-    target: &str,
-    text: &str,
-    at: Option<jiff::Timestamp>,
-) -> Vec<String> {
-    let mut contributions = Vec::new();
-    for span in envelopes::segment(text) {
+fn human_contributions(source: &str, target: &str, contribution: &TurnContribution) -> Vec<String> {
+    let mut result = Vec::new();
+    for span in envelopes::segment(&contribution.text) {
         match span {
-            Span::Ordinary(body) if !body.trim().is_empty() => contributions.push(envelopes::peer(
+            Span::Ordinary(body) if !body.trim().is_empty() => result.push(envelopes::peer(
                 source,
-                "human",
-                &envelopes::minute(at),
+                &envelopes::speaker(
+                    contribution.author.kind,
+                    contribution.author.identity.as_deref(),
+                ),
+                &envelopes::minute(contribution.occurred_at),
                 body,
             )),
             Span::Identity {
@@ -24,156 +21,65 @@ pub fn human_contributions(
                 author,
                 at,
                 body,
-            } if source != target => contributions.push(envelopes::peer(source, author, at, body)),
+            } if source != target => result.push(envelopes::peer(source, author, at, body)),
             _ => {}
         }
     }
-    contributions
-}
-fn shape(message: &str) -> LinkError {
-    LinkError::Refused(format!(
-        "unsupported or missing native turn evidence: {message}"
-    ))
-}
-fn author(run: &ConversationRecord) -> String {
-    envelopes::agent(
-        run.native["providerInstanceId"].as_str(),
-        run.native["modelSelection"]["model"].as_str(),
-    )
+    result
 }
 pub(super) fn finished(
-    batch: &crate::runtime::conversations::ConversationChanges,
+    turns: &[CompletedTurn],
     thread: &str,
     source: &str,
     target: &str,
-) -> Result<Vec<(String, String)>, LinkError> {
-    let records = &batch.records;
-    if batch.incomplete_runs.iter().any(|id| id == "*") {
-        return Err(shape("streaming record has no native run identity"));
-    }
-    let mut runs = records
+) -> Vec<(String, String)> {
+    let mut turns = turns
         .iter()
-        .filter(|r| {
-            r.conversation_id == thread
-                && matches!(r.kind, RecordKind::Run)
-                && r.completed
-                && !batch.incomplete_runs.contains(&r.id)
-        })
+        .filter(|turn| turn.conversation.as_str() == thread)
         .collect::<Vec<_>>();
-    for run in &runs {
-        if run.native["ordinal"].as_u64().is_none() {
-            return Err(shape("run ordinal"));
-        }
-    }
-    runs.sort_by_key(|r| r.native["ordinal"].as_u64());
-    let mut result = Vec::new();
-    for run in runs {
-        let mut entries = records
-            .iter()
-            .filter(|r| {
-                r.conversation_id == thread
-                    && matches!(r.kind, RecordKind::TurnItem)
-                    && r.run_id.as_deref() == Some(run.id.as_str())
-                    && matches!(
-                        r.native["type"].as_str(),
-                        Some("user_message" | "assistant_message")
-                    )
-            })
-            .collect::<Vec<_>>();
-        for item in &entries {
-            if item.native["ordinal"].as_u64().is_none() {
-                return Err(shape("message item ordinal"));
-            }
-        }
-        entries.sort_by_key(|r| r.native["ordinal"].as_u64());
-        let mut messages = Vec::new();
-        if entries.is_empty() {
-            let user = run.native["userMessageId"]
-                .as_str()
-                .ok_or_else(|| shape("run userMessageId"))?;
-            let user = records
-                .iter()
-                .find(|r| {
-                    r.id == user
-                        && r.conversation_id == thread
-                        && matches!(r.kind, RecordKind::Message)
-                })
-                .ok_or_else(|| shape("run's recorded human input"))?;
-            messages.push(user);
-            let replies = records
-                .iter()
-                .filter(|r| {
-                    r.conversation_id == thread
-                        && matches!(r.kind, RecordKind::Message)
-                        && r.run_id.as_deref() == Some(run.id.as_str())
-                        && matches!(r.role, Some(Role::Assistant))
-                })
-                .collect::<Vec<_>>();
-            if replies.len() > 1 {
-                return Err(shape("multiple replies need native message item ordering"));
-            }
-            messages.extend(replies);
-        } else {
-            if let Some(user_id) = run.native["userMessageId"].as_str()
-                && entries
-                    .iter()
-                    .all(|item| item.native["messageId"].as_str() != Some(user_id))
-            {
-                let user = records
-                    .iter()
-                    .find(|record| {
-                        record.id == user_id
-                            && record.conversation_id == thread
-                            && matches!(record.kind, RecordKind::Message)
-                            && matches!(record.role, Some(Role::User))
-                    })
-                    .ok_or_else(|| shape("run's recorded human input"))?;
-                messages.push(user);
-            }
-            for entry in entries {
-                let id = entry.native["messageId"]
-                    .as_str()
-                    .ok_or_else(|| shape("message item identity"))?;
-                let message = records
-                    .iter()
-                    .find(|r| {
-                        r.id == id
-                            && r.conversation_id == thread
-                            && matches!(r.kind, RecordKind::Message)
-                    })
-                    .ok_or_else(|| shape("completed message content"))?;
-                if !messages
-                    .iter()
-                    .any(|m: &&ConversationRecord| m.id == message.id)
-                {
-                    messages.push(message);
+    turns.sort_by_key(|turn| turn.order);
+    turns
+        .into_iter()
+        .map(|turn| {
+            let mut rendered = Vec::new();
+            for contribution in &turn.contributions {
+                match contribution.author.kind {
+                    AuthorKind::Human => {
+                        rendered.extend(human_contributions(source, target, contribution))
+                    }
+                    AuthorKind::Agent
+                        if contribution.text.trim() != "NOOP"
+                            && !contribution.text.trim().is_empty() =>
+                    {
+                        rendered.push(envelopes::peer(
+                            source,
+                            &envelopes::speaker(
+                                contribution.author.kind,
+                                contribution.author.identity.as_deref(),
+                            ),
+                            &envelopes::minute(contribution.occurred_at),
+                            &contribution.text,
+                        ))
+                    }
+                    _ => {}
                 }
             }
-        }
-        let mut contributions = Vec::new();
-        for message in messages {
-            let text = message.native["text"]
-                .as_str()
-                .ok_or_else(|| shape("message text"))?;
-            match message.role {
-                Some(Role::User) => contributions.extend(human_contributions(
-                    source,
-                    target,
-                    text,
-                    message.created_at,
-                )),
-                Some(Role::Assistant) if text.trim() != "NOOP" && !text.trim().is_empty() => {
-                    contributions.push(envelopes::peer(
-                        source,
-                        &author(run),
-                        &envelopes::minute(message.created_at),
-                        text,
-                    ))
-                }
-                _ => {}
-            }
-        }
-        result.push((run.id.clone(), contributions.join("\n\n")));
+            (turn.native_turn.to_string(), rendered.join("\n\n"))
+        })
+        .collect()
+}
+#[cfg(test)]
+mod tests {
+    use super::human_contributions;
+    use crate::{
+        envelopes::{self, Span},
+        runtime::conversations::{AuthorEvidence, AuthorKind, TurnContribution},
+    };
+    #[test]
+    fn inherited_identity_is_not_echoed_to_its_source() {
+        let contribution=TurnContribution {order:0,author:AuthorEvidence{kind:AuthorKind::Human,identity:None},occurred_at:None,text:"clarification\n[Peer (t3:scope:b · agent:codex/model · unknown)]\npeer reply\n[/Peer (t3:scope:b · agent:codex/model · unknown)]\ntrailing words".into()};
+        let output = human_contributions("t3:scope:a", "t3:scope:b", &contribution);
+        assert_eq!(output.len(), 2);
+        assert!(output.iter().all(|text| matches!(&envelopes::segment(text)[0],Span::Identity{source,..} if *source=="t3:scope:a")));
     }
-    Ok(result)
 }

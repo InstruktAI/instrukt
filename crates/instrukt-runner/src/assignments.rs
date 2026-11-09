@@ -2,7 +2,7 @@
 use instrukt_core::{
     capabilities::Assignment,
     home::Home,
-    ids::SessionRef,
+    ids::{ProjectSlug, RoleName, SessionRef, SnippetId},
     state_db::{StateDbError, StateRead},
 };
 
@@ -40,9 +40,18 @@ fn standing_assignment(
             ));
         }
         let assignment = Assignment {
-            role: role.into(),
-            project,
-            procedure: Some(procedure),
+            role: RoleName::parse(role)
+                .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?,
+            project: project
+                .map(|slug| {
+                    ProjectSlug::parse(&slug)
+                        .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))
+                })
+                .transpose()?,
+            procedure: Some(
+                SnippetId::parse(&procedure)
+                    .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?,
+            ),
             todo: None,
             workspace: Some(checkout.into()),
             key,

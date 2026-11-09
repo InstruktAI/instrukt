@@ -582,3 +582,54 @@ fn a_delivered_timestamp_position_migrates_to_complete_conversation_detection() 
         1
     );
 }
+
+// spec: project/instrukt/spec/feature/runner/history UC-HI1
+#[test]
+fn a_baseline_v2_position_preserves_loaded_observations_when_adding_the_current_field() {
+    let env = TestEnv::new();
+    let source = fixture::T3Store::new(&env);
+    source.thread("retired", None, None, "2026-11-08T10:00:00.000Z");
+    source.message(
+        "retired",
+        "retired-message",
+        "Retained historical content.",
+        "2026-11-08T10:00:00.000Z",
+        false,
+    );
+    env.run(env.home(), ["history", "extract", "--json"])
+        .success();
+    let native = instrukt_core::state_db::rusqlite::Connection::open(&source.file).unwrap();
+    native.execute_batch("DELETE FROM orchestration_v2_projection_messages WHERE thread_id='retired';DELETE FROM orchestration_v2_projection_threads WHERE thread_id='retired';").unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let old: Value = serde_json::from_str(include_str!("fixtures/history-source-v2.json")).unwrap();
+    db.execute(
+        "UPDATE history_source_positions SET position_json=?1",
+        [old.to_string()],
+    )
+    .unwrap();
+    let result = env
+        .run(env.home(), ["history", "extract", "--json"])
+        .success();
+    let result: Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(result["loaded"], 0);
+    assert_eq!(result["position"]["loaded"], old["loaded"]);
+    let current: String = db
+        .query_row(
+            "SELECT position_json FROM history_source_positions",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&current).unwrap(),
+        result["position"]
+    );
+    insta::assert_json_snapshot!("upgraded-baseline-v2-position", result["position"]);
+    assert_eq!(
+        search(&env, "jewels")["matches"].as_array().unwrap().len(),
+        3
+    );
+}

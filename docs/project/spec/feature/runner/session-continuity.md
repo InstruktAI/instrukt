@@ -36,7 +36,7 @@ creates no replacement session identity.
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
-| `conversation_source` | Optional durable changes since an opaque source position: normalized conversations/messages and native records, native ids and parent links, roles, available timestamps, completed-turn evidence and the next position; also supplies a native change-notification subscription. | History extraction and the independent conversation-link relay, without owning their storage, indexing or relay behavior. |
+| `conversation_source` | Optional durable changes since an opaque source position: normalized conversations/messages and native records, native ids and parent links, roles, available timestamps, typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text) and the next position; also supplies a native change-notification subscription. | History extraction and the independent conversation-link relay, without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
@@ -58,7 +58,10 @@ facts beside its system-origin loader. Role-aware help and briefing use
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`; the binding's
 recorded role/home/placement, not native provider identity, resolves its scope.
 Native child reservations also retain their dispatcher reference; later claim
-changes do not rewrite that relationship.
+changes do not rewrite that relationship. Retained assignments whose producer
+recorded no dispatcher migrate to explicit unknown evidence. Unknown dispatcher
+provenance does not refuse otherwise legitimate commands or infer a parent from
+the current claim.
 After loss of local binding caches, semantic-key discovery recovers those fixed
 facts through the selected adapter's supported assignment-evidence capability
 with native provenance before reuse. Missing or

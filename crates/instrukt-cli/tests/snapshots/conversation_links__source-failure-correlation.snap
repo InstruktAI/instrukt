@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/conversation-links.rs
+assertion_line: 942
+expression: "discussion_log(&env, \"run\",\n&id).replace(env.home().to_str().unwrap(), \"[HOME]\")"
+---
+level=ERROR logger=instrukt_runner::links::_diagnostics msg="" error="conversation source incompatible: required projection column or type is incompatible" event=conversation_relay_failed link=[LINK] position=[POSITION] source=t3:child target=t3:parent turn=None
+level=ERROR logger=instrukt_runner::links::_diagnostics msg="" error="conversation source incompatible: required projection column or type is incompatible" event=conversation_relay_failed link=[LINK] position=[POSITION] source=t3:parent target=t3:child turn=None

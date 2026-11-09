@@ -86,6 +86,8 @@ elif command=='start':
 elif command=='send':
     t=find(operands[0])
     if (root/'send-failure').exists(): print('send failed',file=sys.stderr); sys.exit(1)
+    if (root/'send-unreachable').exists():
+        print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+sys.stdin.read(),file=sys.stderr); sys.exit(1)
     text=sys.stdin.read() if operands[1]=='-' else operands[1]
     t['settled']=False; t['settledAt']=None
     run=None

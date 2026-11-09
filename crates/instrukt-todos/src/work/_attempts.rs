@@ -205,7 +205,6 @@ fn native_selection(
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeAssignment {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatcher: Option<SessionRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<instrukt_core::config::AgentSelection>,

@@ -1,4 +1,5 @@
 //! Optional durable conversation changes and native source-change notifications.
+use instrukt_core::ids::{NativeTurnRef, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
@@ -7,6 +8,12 @@ use std::{path::PathBuf, time::Duration};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourcePosition(pub(super) Value);
+impl SourcePosition {
+    /// Body-free correlation for the opaque runtime-owned position.
+    pub fn reference(&self) -> String {
+        super::_diagnostics::reference(self.0.to_string().as_bytes())
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,13 +48,46 @@ pub struct ConversationRecord {
     pub completed: bool,
     pub native: Value,
 }
+/// Ordered conversational evidence translated by the selected runtime adapter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletedTurn {
+    pub conversation: SessionId,
+    pub native_turn: NativeTurnRef,
+    pub order: u64,
+    pub contributions: Vec<TurnContribution>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthorKind {
+    Human,
+    Agent,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorEvidence {
+    pub kind: AuthorKind,
+    pub identity: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnContribution {
+    pub order: u64,
+    pub author: AuthorEvidence,
+    pub text: String,
+    pub occurred_at: Option<jiff::Timestamp>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnEvidenceFailure {
+    pub conversation: SessionId,
+    pub cause: String,
+}
 pub struct ConversationChanges {
     pub records: Vec<ConversationRecord>,
     pub position: SourcePosition,
     pub has_more: bool,
-    pub incomplete_runs: Vec<String>,
+    pub completed_turns: Vec<CompletedTurn>,
+    pub conversations: Vec<SessionId>,
+    pub turn_failures: Vec<TurnEvidenceFailure>,
     /// Previously observed native conversations absent from this source pass.
-    pub missing: Vec<String>,
+    pub missing: Vec<SessionId>,
 }
 
 #[derive(Debug, thiserror::Error)]

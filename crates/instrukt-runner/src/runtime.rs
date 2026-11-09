@@ -1,6 +1,9 @@
 //! Structured runtime primitives; the selected runtime owns conversations and workspaces.
+mod _diagnostics;
 mod _t3;
+mod _t3_completed;
 mod _t3_conversations;
+mod _t3_diagnostics;
 mod _t3_fingerprint;
 pub(crate) mod _t3_home;
 mod _t3_notifications;
@@ -14,6 +17,7 @@ use instrukt_core::ids::{ProviderInstanceId, SessionRef};
 use serde::{Deserialize, Serialize};
 
 use crate::sessions::{SessionState, SessionsError};
+pub use _diagnostics::{NativeCause, NativeDiagnostic};
 pub use _t3::T3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +201,9 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
             runtime: self.runtime().name().into(),
             capability: Capability::ConversationSource,
         })
+    }
+    fn diagnostic(&self, operation: &str, error: &SessionsError) -> NativeDiagnostic {
+        _diagnostics::diagnose(self.runtime().name(), operation, error, None)
     }
     fn runtime(&self) -> Runtime;
     fn provider_snapshot(

@@ -176,7 +176,7 @@ pub fn run(
         }
         None => None,
     };
-    let relay = match Configuration::load_global(cx.home)?.runner_runtime()? {
+    let mut relay = match Configuration::load_global(cx.home)?.runner_runtime()? {
         Some(_) => match crate::links::Worker::start(cx.home, cx.env) {
             Ok(worker) => Some(worker),
             Err(error) => {
@@ -189,7 +189,7 @@ pub fn run(
     let mut history_search = None;
     tracing::info!(event = "runner_started");
     loop {
-        if let Some(relay) = &relay
+        if let Some(relay) = &mut relay
             && let Err(error) = relay.check()
         {
             crate::links::record_failure(cx.home, &error);

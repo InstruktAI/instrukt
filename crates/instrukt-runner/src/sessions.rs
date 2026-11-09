@@ -90,6 +90,16 @@ pub enum SessionsError {
         detail: String,
     },
     #[error(
+        "runtime `{runtime}` {operation} returned an invalid response ({category} at {line}:{column})"
+    )]
+    InvalidResponse {
+        runtime: String,
+        operation: String,
+        category: &'static str,
+        line: usize,
+        column: usize,
+    },
+    #[error(
         "start `{key}` remains unresolved; use `instrukt sessions resolve-start {key} --session <runtime:id> | --none`"
     )]
     Unresolved { key: String },
