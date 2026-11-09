@@ -25,7 +25,7 @@ impl Default for T3 {
 impl T3 {
     pub(crate) fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
         let checkout = request.checkout.to_string_lossy();
-        let mut args = vec!["thread", "start", "--title", request.display_title()];
+        let mut args = vec!["thread", "start", "--title", request.title.as_str()];
         if let Some(worktree) = &request.worktree {
             args.extend([
                 "--worktree",
@@ -386,7 +386,7 @@ impl RuntimeAdapter for T3 {
 
 pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
     if thread.semantic_key.as_deref() != Some(request.key.as_str())
-        || ![request.display_title(), request.key.as_str()]
+        || ![request.title.as_str(), request.key.as_str()]
             .into_iter()
             .any(|title| thread.title.as_deref() == Some(title))
     {

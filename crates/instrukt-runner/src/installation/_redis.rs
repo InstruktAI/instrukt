@@ -41,7 +41,9 @@ pub(super) fn ensure(
     let local_owned = settings
         .local
         .as_ref()
-        .is_none_or(|e| e.url == format!("unix://{}", redis_dir.join("redis.sock").display()));
+        .map(|endpoint| super::_demand::owned_server(&endpoint.url, &redis_dir.join("redis.sock")))
+        .transpose()?
+        .unwrap_or(true);
     if local_owned {
         let local = (|| -> anyhow::Result<()> {
             anyhow::ensure!(
@@ -71,7 +73,7 @@ pub(super) fn ensure(
             let conf = redis_dir.join("redis.conf");
             let acl = redis_dir.join("users.acl");
             let expected_acl = format!(
-                "user default off\nuser instrukt on #{hash} ~instrukt:* +@stream +@scripting +ping +info +command +acl|whoami +acl|dryrun +get +set +del +exists +expire +ttl +type +rpush +blpop +multi +exec\n"
+                "user default off\nuser instrukt on #{hash} ~instrukt:* +@stream +@scripting +ping +info +command +acl|whoami +acl|dryrun +get +set +del +exists +expire +ttl +type +rpush +blpop +multi +exec +select\n"
             );
             let quote = |p: &Path| {
                 format!(

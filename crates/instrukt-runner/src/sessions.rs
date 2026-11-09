@@ -315,7 +315,7 @@ impl<'c> Sessions<'c> {
             selection: None,
             selection_evidence: None,
             checkout,
-            title: Some(crate::runtime::thread_title(request.label, &key)),
+            title: crate::runtime::thread_title(request.label, &key),
             key,
             brief: if crate::envelopes::segment(request.message).iter().all(|span| matches!(span, crate::envelopes::Span::Control) || matches!(span, crate::envelopes::Span::Ordinary(text) if text.trim().is_empty())) { request.message.into() } else { crate::envelopes::Control::Assignment.frame(request.message) },
             worktree,
@@ -326,6 +326,7 @@ impl<'c> Sessions<'c> {
         &self,
         session: &SessionRef,
         path: Option<&Path>,
+        title: Option<&str>,
         request: &StartRequest<'_>,
     ) -> Result<Started, SessionsError> {
         if request.key.is_none() {
@@ -333,7 +334,10 @@ impl<'c> Sessions<'c> {
                 "a follow-up needs its recorded start key".into(),
             ));
         }
-        let (input, project) = self.input(request)?;
+        let (mut input, project) = self.input(request)?;
+        if let Some(title) = title {
+            input.title = title.to_owned();
+        }
         let thread = keyed::followup(
             self.adapter()?.as_ref(),
             &crate::runtime::FollowupAssignment {

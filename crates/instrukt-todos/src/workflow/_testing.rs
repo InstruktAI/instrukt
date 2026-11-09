@@ -216,6 +216,7 @@ impl EvidenceBuilder {
                 ..Default::default()
             },
             binding: instrukt_runner::interfaces::SessionBinding {
+                title: None,
                 key: format!("test:{role}"),
                 session: session(id),
                 worktree: worktree.map(PathBuf::from),

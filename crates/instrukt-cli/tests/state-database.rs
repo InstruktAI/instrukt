@@ -237,3 +237,93 @@ fn assert_retained_starts(env: &common::TestEnv, old: &serde_json::Value) {
         [("fastMode".into(), serde_json::json!(true))].into()
     );
 }
+
+fn title_migration_fixture() -> (support::Project, Connection, serde_json::Value) {
+    let project = support::Project::new();
+    project.ok(["list"]);
+    let db = Connection::open(project.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    db.pragma_update(None, "user_version", 14).unwrap();
+    let old: serde_json::Value = serde_json::from_str(
+        &include_str!("fixtures/runtime-start-v14.json")
+            .replace("__CHECKOUT__", project.repo.path().to_str().unwrap()),
+    )
+    .unwrap();
+    (project, db, old)
+}
+fn normalized_title(db: &Connection, table: &str) -> (serde_json::Value, serde_json::Value) {
+    let encoded: String = db
+        .query_row(&format!("SELECT request FROM {table} LIMIT 1"), [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert!(
+        value["title"].is_string(),
+        "owned title has not been normalized in {table}"
+    );
+    (value["title"].clone(), value["key"].clone())
+}
+// spec: project/instrukt/spec/feature/work/state-database UC-SD2
+#[test]
+fn old_runtime_start_and_binding_requests_normalize_to_captured_titles_before_domain_reads() {
+    let (project, db, old) = title_migration_fixture();
+    let key = old["key"].as_str().unwrap();
+    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3',?1,'demo','run','retained',?2,'Retained opening input.',?3,'2030-01-01T00:00:00Z',0,'unresolved')",instrukt_core::state_db::rusqlite::params![key, project.repo.path().to_str().unwrap(),old.to_string()]).unwrap();
+    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,checkout,accepted,request) VALUES('t3',?1,'run','demo','retained','t3:retained',?2,1,?3)",instrukt_core::state_db::rusqlite::params![key,project.repo.path().to_str().unwrap(),old.to_string()]).unwrap();
+    db.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request) VALUES('retained','reactions/procedure/respond','project:demo',1,?1,?2,'{}',?3)",instrukt_core::state_db::rusqlite::params![key,project.repo.path().to_str().unwrap(),old.to_string()]).unwrap();
+    db.execute("INSERT INTO procedure_generations VALUES('retained',1,?1,'t3:retired','{}',?2,'2030-01-01T00:00:00Z')",instrukt_core::state_db::rusqlite::params![key,old.to_string()]).unwrap();
+    project.ok(["list"]);
+    let (title, key) = normalized_title(&db, "runtime_starts");
+    assert_eq!(title, key);
+    let (title, key) = normalized_title(&db, "runtime_bindings");
+    assert_eq!(title, key);
+    let (title, key) = normalized_title(&db, "procedure_responsibilities");
+    assert_eq!(title, key);
+    let (title, key) = normalized_title(&db, "procedure_generations");
+    assert_eq!(title, key);
+}
+// spec: project/instrukt/spec/feature/work/state-database UC-SD2
+#[test]
+fn old_manual_reservations_normalize_the_captured_key_only_title() {
+    let (project, db, _) = title_migration_fixture();
+    let old = include_str!("fixtures/manual-reservation-v14.json")
+        .replace("__CHECKOUT__", project.repo.path().to_str().unwrap());
+    db.execute("INSERT INTO manual_standing_reservations(responsibility,token,caller,home,declaration,request) VALUES('retained','22222222222222222222222222222222','t3:parent','project:demo','{}',?1)",[old]).unwrap();
+    project.ok(["list"]);
+    let (title, key) = normalized_title(&db, "manual_standing_reservations");
+    assert_eq!(title, key);
+}
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD2
+#[test]
+fn old_native_placement_evidence_is_normalized_before_reading_a_binding() {
+    let project = support::Project::new();
+    project.create("legacy-driver", "change", "Retain native evidence.");
+    let db = Connection::open(project.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    let id: String = db
+        .query_row("SELECT id FROM todos WHERE slug='legacy-driver'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let mut placement: serde_json::Value = serde_json::from_str(
+        &include_str!("fixtures/native-placement-v14.json")
+            .replace("__WORKTREE__", project.repo.path().to_str().unwrap())
+            .replace("__HEAD__", &project.repo.head()),
+    )
+    .unwrap();
+    let key = instrukt_runner::keyed::todo_key("demo", &id, "prepare-orchestrator", 1);
+    placement["key"] = key.clone().into();
+    let evidence = serde_json::json!({"role":"prepare-orchestrator","session":placement["session"],"worktree":placement["worktree"],"runtime":"t3","native_placement":placement,"assignment":"driver","attempt":1,"semantic_key":key});
+    db.execute("INSERT INTO session_bindings(todo_id,role,attempt,runtime,semantic_key,session,worktree,evidence) VALUES(?1,'prepare-orchestrator',1,'t3',?2,'t3:retained-native',?3,?4)",instrukt_core::state_db::rusqlite::params![id,key,project.repo.path().to_str().unwrap(),evidence.to_string()]).unwrap();
+    db.pragma_update(None, "user_version", 14).unwrap();
+    project.ok(["show", "legacy-driver"]);
+    let encoded: String = db
+        .query_row(
+            "SELECT evidence FROM session_bindings WHERE todo_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let current: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(current["native_placement"]["title"], key);
+}

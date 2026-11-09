@@ -37,16 +37,9 @@ pub struct RuntimeStart {
     pub selection_evidence: Option<String>,
     pub checkout: PathBuf,
     pub key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    pub title: String,
     pub brief: String,
     pub worktree: Option<WorktreeRequest>,
-}
-
-impl RuntimeStart {
-    pub fn display_title(&self) -> &str {
-        self.title.as_deref().unwrap_or(&self.key)
-    }
 }
 
 /// Keep labels opaque and place semantic identity last for narrow sidebars.

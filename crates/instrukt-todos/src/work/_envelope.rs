@@ -202,6 +202,19 @@ pub(crate) fn parse_record_comment(
         }
         // v1 lacks record-order numbers. Serde defaults and number_unsequenced
         // preserve retained evidence while assigning its existing order.
+        if observed < 3
+            && let Some(bindings) = value["record"]["bindings"].as_array_mut()
+        {
+            for binding in bindings {
+                if let Some(placement) = binding
+                    .get_mut("native_placement")
+                    .filter(|v| v.is_object())
+                    && placement.get("title").is_none_or(Value::is_null)
+                {
+                    placement["title"] = placement["key"].clone();
+                }
+            }
+        }
         value["record"]["schema"] = supported.into();
         let mut envelope: Envelope =
             serde_json::from_value(value).map_err(|e| invalid(e.to_string()))?;

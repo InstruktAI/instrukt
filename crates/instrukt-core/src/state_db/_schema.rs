@@ -3,8 +3,9 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] =
-    &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
+pub(super) const MIGRATIONS: &[&str] = &[
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
 const V7: &str = r#"
@@ -662,3 +663,19 @@ AND json_type(evidence,'$.native_assignment.dispatcher') IS NULL;
 
 /// Version 14: retain the CI credential failure with its observation retry deadline.
 const V14: &str = "ALTER TABLE poll_deferrals ADD COLUMN cause TEXT;";
+
+/// Captured titles are normalized before runtime or work records are deserialized.
+const V15: &str = r#"
+UPDATE runtime_starts SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
+UPDATE runtime_bindings SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
+UPDATE procedure_responsibilities SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
+UPDATE procedure_generations SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
+UPDATE manual_standing_reservations SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
+UPDATE session_bindings SET evidence=json_set(evidence,'$.native_placement.title',coalesce(display_title,json_extract(evidence,'$.native_placement.key')))
+WHERE json_type(evidence,'$.native_placement')='object' AND (json_type(evidence,'$.native_placement.title') IS NULL OR json_type(evidence,'$.native_placement.title')='null');
+UPDATE session_bindings SET display_title=json_extract(evidence,'$.native_placement.title') WHERE json_type(evidence,'$.native_placement')='object';
+UPDATE listing_copies SET record=json_set(record,'$.schema',3,'$.bindings',json((SELECT json_group_array(json(
+ CASE WHEN json_type(value,'$.native_placement')='object' AND (json_type(value,'$.native_placement.title') IS NULL OR json_type(value,'$.native_placement.title')='null')
+ THEN json_set(value,'$.native_placement.title',json_extract(value,'$.native_placement.key')) ELSE value END
+)) FROM json_each(listing_copies.record,'$.bindings')))) WHERE json_extract(record,'$.schema')<=2;
+"#;

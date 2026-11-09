@@ -1000,6 +1000,10 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
         .success();
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
     let id = links::status(&home).unwrap()[0].id.clone();
+    // The opening command has exited. Commit the incompatible source while no
+    // runner exists, then launch the first reader after that commit completes.
+    instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap()
+        .execute_batch("ALTER TABLE orchestration_v2_projection_messages RENAME COLUMN role TO unsupported_role").unwrap();
     let runner = Running(
         env.instrukt_process(env.home())
             .arg("run")
@@ -1009,19 +1013,29 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
             .unwrap(),
     );
     wait_for(|| {
-        std::fs::read_to_string(env.home().join(".local/state/instrukt-ai/instrukt/run.log"))
-            .is_ok_and(|log| log.contains("event=runner_started"))
-    });
-    instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap()
-        .execute_batch("ALTER TABLE orchestration_v2_projection_messages RENAME COLUMN role TO unsupported_role").unwrap();
-    wait_for(|| {
         let link = links::status(&home).unwrap().remove(0);
-        link.failure.is_some() || link.directions.iter().all(|d| d.failure.is_some())
+        link.directions.iter().all(|d| d.failure.is_some())
     });
-    insta::assert_snapshot!(
-        "source-failure-correlation",
-        discussion_log(&env, "run", &id).replace(env.home().to_str().unwrap(), "[HOME]")
-    );
+    wait_for(|| {
+        std::fs::read_to_string(env.home().join(".local/state/instrukt-ai/instrukt/run.log"))
+            .is_ok_and(|log| {
+                log.lines()
+                    .filter(|line| {
+                        line.contains("event=conversation_relay_failed")
+                            && line.contains(&format!("link={id}"))
+                    })
+                    .count()
+                    == 2
+            })
+    });
+    let log = discussion_log(&env, "run", &id);
+    let mut directions = log
+        .lines()
+        .map(|line| line.split_once(" event=").unwrap().1)
+        .collect::<Vec<_>>();
+    directions.sort_unstable();
+    assert_eq!(directions.len(), 2);
+    insta::assert_snapshot!("source-failure-correlation", directions.join("\n"));
     let status = env
         .run(env.home(), ["events", "status", "--json"])
         .success();

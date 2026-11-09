@@ -878,3 +878,23 @@ fn a_standing_agent_starts_with_its_procedures_resolved_model_instead_of_project
         work::redact(&String::from_utf8_lossy(&result.get_output().stdout))
     );
 }
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS10
+#[test]
+fn bound_standing_delivery_keeps_a_relabelled_threads_event_pending() {
+    let r = Responsibility::new("");
+    r.append("initial");
+    r.tick();
+    r.runtime.consume("s1");
+    let title = r.runtime.title("s1");
+    let key = title.rsplit(" · ").next().unwrap();
+    r.runtime
+        .change("s1", "title", format!("Changed label · {key}").into());
+    r.append("after-relabel");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 1);
+    assert_eq!(r.runtime.threads().len(), 1);
+    r.runtime.change("s1", "title", title.into());
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+}

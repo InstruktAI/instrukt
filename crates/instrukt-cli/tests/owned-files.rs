@@ -339,42 +339,58 @@ fn retired_project_actions_convert_for_inspection_and_persist_before_an_unchange
     insta::assert_snapshot!(String::from_utf8_lossy(&after_sync.get_output().stdout), @"peer");
 }
 
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
-#[test]
-fn history_default_migration_keeps_global_choice_and_project_overrides() {
+fn history_migration_setup(global: &str, project: &str) -> (TestEnv, common::Repo) {
     let env = TestEnv::new();
     let repo = env.git_repo("history-migration");
     std::fs::create_dir_all(env.instrukt_home()).unwrap();
-    let global = env.instrukt_home().join("instrukt.yaml");
-    std::fs::write(&global, "schema_version: 3\nmodules: {history: false}\n").unwrap();
-    repo.write(
-        "instrukt.yaml",
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"), global).unwrap();
+    repo.write("instrukt.yaml", project);
+    (env, repo)
+}
+fn effective_history(env: &TestEnv, repo: &common::Repo) -> serde_json::Value {
+    let result = env
+        .run(repo.path(), ["config", "get", "modules.history", "--json"])
+        .success();
+    serde_json::from_slice(&result.get_output().stdout).unwrap()
+}
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn history_migration_preserves_inherited_global_false_without_a_project_override() {
+    let (env, repo) = history_migration_setup(
+        "schema_version: 3\nmodules: {history: false}\n",
         "schema_version: 3\nproject: history-migration\n",
     );
-    let read = || {
-        let result = env
-            .run(repo.path(), ["config", "get", "modules.history", "--json"])
-            .success();
-        serde_json::from_slice::<serde_json::Value>(&result.get_output().stdout).unwrap()
-    };
-    assert_eq!(read(), false);
+    assert_eq!(effective_history(&env, &repo), false);
     env.run(repo.path(), ["config", "init"]).success();
-    assert_eq!(read(), false);
+    assert_eq!(effective_history(&env, &repo), false);
     let migrated: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
-    assert_eq!(migrated["schema_version"].as_u64(), Some(4));
+    assert_eq!(
+        migrated["schema_version"].as_u64(),
+        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+    );
     assert!(migrated.get("modules").is_none());
-    repo.write(
-        "instrukt.yaml",
+}
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn history_migration_preserves_an_explicit_project_override() {
+    let (env, repo) = history_migration_setup(
+        "schema_version: 3\nmodules: {history: false}\n",
         "schema_version: 3\nproject: history-migration\nmodules: {history: true}\n",
     );
     env.run(repo.path(), ["config", "init"]).success();
-    assert_eq!(read(), true);
-    std::fs::write(global, "schema_version: 3\n").unwrap();
-    repo.write(
-        "instrukt.yaml",
+    assert_eq!(effective_history(&env, &repo), true);
+}
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
+#[test]
+fn history_migration_keeps_the_default_when_neither_layer_sets_a_value() {
+    let (env, repo) = history_migration_setup(
+        "schema_version: 3\n",
         "schema_version: 3\nproject: history-migration\n",
     );
-    assert_eq!(read(), true);
+    env.run(repo.path(), ["config", "init"]).success();
+    assert_eq!(effective_history(&env, &repo), true);
 }

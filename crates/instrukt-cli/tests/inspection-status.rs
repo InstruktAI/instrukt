@@ -312,3 +312,16 @@ fn foreign_checkout_edits_cannot_change_machine_status_or_its_exit_status() {
     let second = status(&env, env.home());
     assert_eq!(first["machine"], second["machine"]);
 }
+
+// spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS2
+#[test]
+fn status_renders_the_configuration_owners_default_value() {
+    let env = TestEnv::new();
+    let configured = env
+        .run(env.home(), ["config", "get", "modules.history", "--json"])
+        .success();
+    let expected: serde_json::Value =
+        serde_json::from_slice(&configured.get_output().stdout).unwrap();
+    let report = status(&env, env.home());
+    assert_eq!(report["modules"]["history"]["enabled"], expected);
+}

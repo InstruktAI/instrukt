@@ -100,6 +100,15 @@ Version 13 canonicalizes retained native assignments with an omitted dispatcher
 to explicit unknown evidence. Its admission semantics are owned by
 `project/instrukt/spec/feature/runner/session-continuity`.
 
+Persisted runtime requests and manual standing reservations enter domain code
+with a required captured title. Migration fills a missing or null title with
+the request's original key and preserves supplied titles. It covers unresolved
+starts, bound requests, current and retired standing assignments, and manual
+reservations. Native driver placement evidence likewise retains its captured
+title; earlier placements normalize from recorded display-title evidence, or
+their original key when no display title was recorded. GitHub record conversion
+normalizes older placement evidence before current work records are consumed.
+
 ### Work tables
 
 Owned and written by work through its command contract. Reflection to

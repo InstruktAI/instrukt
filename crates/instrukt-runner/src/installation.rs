@@ -244,7 +244,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     if request.module != Some(Module::Todos) {
         if (request.module != Some(Module::History) && !demand.events.is_empty())
-            || !demand.history_owned_redis.is_empty()
+            || (request.module != Some(Module::Events) && !demand.history_owned_redis.is_empty())
         {
             if let Err(error) = _redis::ensure(request, &mut owned, &demand, &mut report) {
                 report.finding("Redis", error);

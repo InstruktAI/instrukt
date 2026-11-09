@@ -139,5 +139,5 @@ pub fn placement_evidence(env: &TestEnv, request: &NativePlacement<'_>) -> Strin
         .unwrap_or_else(|| instrukt_runner::keyed::todo_key(&project, &id, request.role, number));
     let head = env.git(request.cwd, ["rev-parse", "HEAD"]);
     let branch = env.git(request.cwd, ["branch", "--show-current"]);
-    serde_json::json!({"session":format!("t3:{}",request.session),"key":key,"worktree":request.cwd,"branch":branch,"head":head,"source":"native launch/recorded-workspace fixture plus Git HEAD"}).to_string()
+    serde_json::json!({"title":instrukt_runner::runtime::thread_title(&format!("{} · {}",request.role,request.slug), &key),"session":format!("t3:{}",request.session),"key":key,"worktree":request.cwd,"branch":branch,"head":head,"source":"native launch/recorded-workspace fixture plus Git HEAD"}).to_string()
 }

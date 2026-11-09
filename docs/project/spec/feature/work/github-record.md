@@ -252,6 +252,10 @@ reports the incompatible item rather than silently dropping it. Unrelated work
 can continue. A known incompatible record is not treated as an ordinary offline
 refresh failure permitting a stale write.
 
+Native driver placement evidence carries its captured display title. Supported
+older record conversion supplies a missing placement title from its original key
+before deserializing the current work record; existing captured titles survive.
+
 A supported older version is converted to the current in-memory record before
 consumption or mutation. Conversion preserves durable identity, relationships,
 artifact-version references, digests, stamps, actor attribution and revision

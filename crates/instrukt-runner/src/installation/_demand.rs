@@ -159,7 +159,7 @@ pub(super) fn read(
     Ok(demand)
 }
 
-fn owned_server(url: &str, owned: &std::path::Path) -> anyhow::Result<bool> {
+pub(super) fn owned_server(url: &str, owned: &std::path::Path) -> anyhow::Result<bool> {
     use redis::IntoConnectionInfo;
     let info = url.into_connection_info().map_err(|_| {
         anyhow::anyhow!("invalid local Redis reference; repair it before withdrawal")

@@ -257,8 +257,16 @@ title or the whole legacy key; an unexpected relabel is a visible conflict,
 not absence. Exact full-title evidence is retained alongside
 the decoded key. Both old key-only and new label-first threads participate in
 the same exact-key match set; one is reused, two conflict, neither permits a
-replacement for an unresolved start. Existing stored start requests without a
-display title retain their original key-only title on retry. No startup path
+replacement for an unresolved start. Persisted start requests and manual standing reservations carry a required
+captured display title. The state migration normalizes earlier requests without
+a title to their original key before domain code reads them; retry uses that
+captured key-only title. Deliberate driver placement evidence includes the exact
+native display title, retained with the work binding and supplied on later
+pickup even after a todo rename. The CLI entry boundary converts an older
+public placement proof that omitted its title to a captured whole-key title;
+domain and stored placement evidence always carry the current required field.
+Bound standing delivery verifies the captured
+full title or the whole legacy key before accepting more events. No startup path
 reads T3 databases. Titles are never rewritten on existing threads.
 
 ### Keyed dispatch and recovery
@@ -417,7 +425,7 @@ surface reports only the threads the runtime exposes.
 
 ### One worktree per todo team
 
-Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
 Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer releases its claim before cleanup; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 

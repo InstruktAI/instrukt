@@ -130,15 +130,18 @@ pub fn inspect(request: &Request<'_>) -> Report {
             ));
             json!({"enabled":null,"layer":null})
         } else {
-            match setting(project_layer.as_ref()).and_then(|project| {
-                Ok(match project {
-                    Some(value) => (value, "project"),
-                    None => match setting(global.as_ref())? {
-                        Some(value) => (value, "global"),
-                        None => (module == Module::History, "default"),
-                    },
-                })
-            }) {
+            match Configuration::load(&home, root.as_deref())
+                .and_then(|config| config.module_enabled(module))
+                .and_then(|enabled| {
+                    let source = if setting(project_layer.as_ref())?.is_some() {
+                        "project"
+                    } else if setting(global.as_ref())?.is_some() {
+                        "global"
+                    } else {
+                        "default"
+                    };
+                    Ok((enabled, source))
+                }) {
                 Ok((enabled, layer)) => json!({"enabled":enabled,"layer":layer}),
                 Err(reason) => {
                     modules_errors.push(error(request.cwd, reason));

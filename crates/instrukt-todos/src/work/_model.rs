@@ -15,7 +15,7 @@ use crate::evidence::{
 };
 
 /// The record schema this build writes and reads.
-pub(crate) const SCHEMA: u32 = 2;
+pub(crate) const SCHEMA: u32 = 3;
 
 /// A todo's durable identity: survives rename, removal and recovery.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

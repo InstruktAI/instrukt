@@ -14,6 +14,7 @@ fn manager(env: &mut TestEnv) {
 printf '%s\n' '{name}' "$@" >> '{dir}/calls'
 if [ "$1" = --user ]; then shift; fi
 operation=$1
+case $operation in load|unload|start|stop|enable|disable|restart|daemon-reload|debug) printf '%s\n' "$operation" >> '{dir}/mutations';; esac
 if [ "$operation" = list ] && [ "$#" -eq 1 ]; then
     printf 'PID\tStatus\tLabel\n'
     for path in '{dir}'/unit-*; do
@@ -402,10 +403,18 @@ impl Drop for PrivateRedis {
         let _ = self.0.wait();
     }
 }
-// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
-// spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
-#[test]
-fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() {
+struct OwnedRedisFixture {
+    _server: PrivateRedis,
+    _cluster: common::redis::RedisServer,
+    env: TestEnv,
+    repo: Repo,
+    _short: tempfile::TempDir,
+    alias: std::path::PathBuf,
+    dir: std::path::PathBuf,
+    url: String,
+    connection: redis::Connection,
+}
+fn owned_redis_fixture() -> OwnedRedisFixture {
     let mut env = TestEnv::new();
     manager(&mut env);
     let short = tempfile::Builder::new()
@@ -446,7 +455,7 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
     info = info.set_redis_settings(auth);
     let client = redis::Client::open(info).unwrap();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let mut connection = loop {
+    let connection = loop {
         if let Ok(mut c) = client.get_connection()
             && redis::cmd("PING").query::<String>(&mut c).is_ok()
         {
@@ -458,6 +467,66 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
     };
     env.run(env.home(), ["install"]).success();
     env.run(env.home(), ["install", "--check"]).success();
+    OwnedRedisFixture {
+        _server: server,
+        _cluster: cluster,
+        env,
+        repo,
+        _short: short,
+        alias,
+        dir,
+        url,
+        connection,
+    }
+}
+impl OwnedRedisFixture {
+    fn history_cluster(&self, url: &str) {
+        let file = self.env.instrukt_home().join("instrukt.yaml");
+        let mut settings: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        settings["redis"]["cluster"] = settings["redis"]["local"].clone();
+        settings["redis"]["cluster"]["url"] = url.into();
+        std::fs::write(file, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+        self.repo.write(
+            "instrukt.yaml",
+            "schema_version: 4\nproject: events\nmodules: {events: false, history: true}\n",
+        );
+    }
+    fn legacy_acl(&self) -> (std::path::PathBuf, String, String) {
+        let file = self.alias.join(".instrukt/state/redis/users.acl");
+        let current = std::fs::read_to_string(&file).unwrap();
+        let old = current
+            .replace(" +rpush +blpop +multi +exec", "")
+            .replace(" +select", "");
+        let mut record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                self.env
+                    .instrukt_home()
+                    .join("state/installation/owned.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        record["resources"]["redis"]["files"]
+            .as_object_mut()
+            .unwrap()
+            .remove(file.to_str().unwrap());
+        record["assets"][file.to_str().unwrap()] = old.clone().into();
+        std::fs::write(&file, &old).unwrap();
+        write_owned(&self.env, &record);
+        (file, current, old)
+    }
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
+#[test]
+fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() {
+    let mut fixture = owned_redis_fixture();
+    let env = &fixture.env;
+    let repo = &fixture.repo;
+    let dir = &fixture.dir;
+    let url = &fixture.url;
+    let mut connection = &mut fixture.connection;
     let mut anonymous = redis::Client::open(url.as_str())
         .unwrap()
         .get_connection()
@@ -474,41 +543,6 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
         "instrukt.yaml",
         "schema_version: 4\nproject: events\nmodules: {history: false, events: false}\n",
     );
-    // History alone can use this already-owned server as its cluster endpoint.
-    let global_file = env.instrukt_home().join("instrukt.yaml");
-    let event_settings = std::fs::read_to_string(&global_file).unwrap();
-    let mut settings: serde_yaml_ng::Value = serde_yaml_ng::from_str(&event_settings).unwrap();
-    settings["redis"]["cluster"] = settings["redis"]["local"].clone();
-    std::fs::write(&global_file, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
-    repo.write(
-        "instrukt.yaml",
-        "schema_version: 4\nproject: events\nmodules: {events: false, history: true}\n",
-    );
-    // Pre-C15 installations recorded the old stream-only ACL as a retained asset.
-    let acl_file = alias.join(".instrukt/state/redis/users.acl");
-    let current_acl = std::fs::read_to_string(&acl_file).unwrap();
-    let legacy_acl = current_acl.replace(" +rpush +blpop +multi +exec", "");
-    let mut legacy: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(env.instrukt_home().join("state/installation/owned.json")).unwrap(),
-    )
-    .unwrap();
-    legacy["resources"]["redis"]["files"]
-        .as_object_mut()
-        .unwrap()
-        .remove(acl_file.to_str().unwrap());
-    legacy["assets"][acl_file.to_str().unwrap()] = legacy_acl.clone().into();
-    std::fs::write(&acl_file, &legacy_acl).unwrap();
-    write_owned(&env, &legacy);
-    env.run(repo.path(), ["install", "--module", "history", "--check"])
-        .failure();
-    assert_eq!(std::fs::read_to_string(&acl_file).unwrap(), legacy_acl);
-    env.run(env.home(), ["install", "--module", "history"])
-        .success();
-    env.run(repo.path(), ["install", "--module", "history", "--check"])
-        .success();
-    assert_eq!(std::fs::read_to_string(&acl_file).unwrap(), current_acl);
-    assert!(dir.join("redis.sock").exists());
-    std::fs::write(&global_file, event_settings).unwrap();
     let owned_path = env.instrukt_home().join("state/installation/owned.json");
     let owned: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&owned_path).unwrap()).unwrap();
@@ -1698,9 +1732,7 @@ fn github_readiness_checks_older_issue_artifacts_after_a_full_page_of_pull_reque
     assert_eq!(github.artifacts("fixture/project", issue), artifacts);
 }
 
-// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
-#[test]
-fn history_checks_cluster_without_event_resources_or_local_credentials() {
+fn history_cluster_fixture() -> (TestEnv, Repo, common::redis::RedisServer) {
     let mut env = TestEnv::new();
     manager(&mut env);
     let repo = project(
@@ -1721,20 +1753,48 @@ fn history_checks_cluster_without_event_resources_or_local_credentials() {
         format!("{original}  local: {{url: 'unix:///missing/socket', password: '${{MISSING}}'}}\n"),
     )
     .unwrap();
-    for args in [
-        vec!["install", "--json"],
-        vec!["install", "--module", "history", "--check", "--json"],
-    ] {
-        let report = json(&env, &args);
-        assert_eq!(report["findings"].as_array().unwrap().len(), 0);
-        assert_eq!(report["resources"].as_array().unwrap().len(), 1);
-        assert_eq!(
-            report["resources"][0]["projects"],
-            serde_json::json!(["history"])
-        );
-    }
+    (env, repo, redis)
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn history_converges_cluster_without_event_resources_or_local_credentials() {
+    let (env, _repo, redis) = history_cluster_fixture();
+    let report = json(&env, &["install", "--json"]);
+    assert!(report["findings"].as_array().unwrap().is_empty());
+    assert_eq!(report["resources"].as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!(report["resources"][0]["projects"], @r#"
+    [
+      "history"
+    ]
+    "#);
     assert!(!env.path("runtime-bin/calls").exists());
     assert!(!env.instrukt_home().join("state/redis").exists());
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg("instrukt:*")
+        .query(&mut redis.connection())
+        .unwrap();
+    assert!(keys.is_empty());
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn history_inspection_checks_only_cluster_without_changing_files() {
+    let (env, repo, redis) = history_cluster_fixture();
+    let guard = common::LiveGuard::over(vec![], vec![env.home().into(), repo.path().into()]);
+    let result = env
+        .run(
+            repo.path(),
+            ["install", "--module", "history", "--check", "--json"],
+        )
+        .success();
+    let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert!(report["findings"].as_array().unwrap().is_empty());
+    assert_eq!(report["resources"].as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!(report["resources"][0]["projects"], @r#"
+    [
+      "history"
+    ]
+    "#);
+    assert!(guard.changed().is_empty());
     let keys: Vec<String> = redis::cmd("KEYS")
         .arg("instrukt:*")
         .query(&mut redis.connection())
@@ -1766,4 +1826,126 @@ fn todos_filter_keeps_history_prerequisites_out_of_its_scope() {
       "history Redis: `redis.cluster.url` required for enabled Redis transport"
     ]
     "#);
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn history_upgrades_legacy_owned_acl_through_a_qualified_socket_and_keeps_query_database() {
+    let mut f = owned_redis_fixture();
+    let url = format!("{}?db=3", f.url);
+    f.history_cluster(&url);
+    let (file, current, _) = f.legacy_acl();
+    f.env
+        .run(f.env.home(), ["install", "--module", "history"])
+        .success();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), current);
+    f.env
+        .run(
+            f.env.home(),
+            [
+                "history",
+                "search",
+                "test",
+                "--computer",
+                "bbbbbbbbbbbbbbbb",
+                "--timeout",
+                "1",
+                "--json",
+            ],
+        )
+        .failure();
+    let mut info = redis::IntoConnectionInfo::into_connection_info(url.as_str()).unwrap();
+    let password = instrukt_core::config::resolve_secret(
+        &instrukt_core::home::Home::at_user_home(f.env.home().into()),
+        "${INSTRUKT_REDIS_PASSWORD}",
+    )
+    .unwrap();
+    let auth = info
+        .redis_settings()
+        .clone()
+        .set_username("instrukt")
+        .set_password(&password);
+    info = info.set_redis_settings(auth);
+    let mut selected = redis::Client::open(info).unwrap().get_connection().unwrap();
+    assert!(
+        redis::cmd("EXISTS")
+            .arg("instrukt:history:requests:bbbbbbbbbbbbbbbb")
+            .query::<bool>(&mut selected)
+            .unwrap()
+    );
+    assert!(
+        !redis::cmd("EXISTS")
+            .arg("instrukt:history:requests:bbbbbbbbbbbbbbbb")
+            .query::<bool>(&mut f.connection)
+            .unwrap()
+    );
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn history_repairs_owned_acl_through_a_canonical_parent_alias() {
+    let f = owned_redis_fixture();
+    let alias = f._short.path().join("other");
+    std::os::unix::fs::symlink(f.env.home(), &alias).unwrap();
+    let url = format!(
+        "unix://{}",
+        alias.join(".instrukt/state/redis/redis.sock").display()
+    );
+    f.history_cluster(&url);
+    let (file, current, _) = f.legacy_acl();
+    f.env
+        .run(f.env.home(), ["install", "--module", "history"])
+        .success();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), current);
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI7
+#[test]
+fn history_only_demand_keeps_a_shared_owned_redis_registered() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    f.env.run(f.env.home(), ["install"]).success();
+    f.env.run(f.repo.path(), ["install", "--check"]).success();
+    assert!(f.dir.join("redis.sock").exists());
+    assert!(f.dir.join("users.acl").exists());
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn history_acl_upgrade_inspection_leaves_legacy_files_and_services_unchanged() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    let (file, _, old) = f.legacy_acl();
+    let calls = std::fs::read(f.env.path("runtime-bin/mutations")).unwrap();
+    f.env
+        .run(f.repo.path(), ["install", "--module", "history", "--check"])
+        .failure();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), old);
+    assert_eq!(
+        std::fs::read(f.env.path("runtime-bin/mutations")).unwrap(),
+        calls
+    );
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn events_filtered_install_does_not_repair_history_only_redis() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    let (file, _, old) = f.legacy_acl();
+    let calls = std::fs::read(f.env.path("runtime-bin/mutations")).unwrap();
+    f.env
+        .run(f.env.home(), ["install", "--module", "events"])
+        .success();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), old);
+    assert_eq!(
+        std::fs::read(f.env.path("runtime-bin/mutations")).unwrap(),
+        calls
+    );
+}
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
+#[test]
+fn events_filtered_inspection_does_not_check_history_only_redis() {
+    let f = owned_redis_fixture();
+    f.history_cluster(&f.url);
+    f.legacy_acl();
+    f.env
+        .run(f.repo.path(), ["install", "--module", "events", "--check"])
+        .success();
 }

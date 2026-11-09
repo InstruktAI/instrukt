@@ -1,0 +1,8 @@
+{
+  "session": "t3:retained-native",
+  "key": "instrukt:todo:demo/11111111111111111111111111111111:prepare-orchestrator:1",
+  "worktree": "__WORKTREE__",
+  "branch": "legacy/prepare",
+  "head": "__HEAD__",
+  "source": "native launch/recorded-workspace fixture plus Git HEAD"
+}

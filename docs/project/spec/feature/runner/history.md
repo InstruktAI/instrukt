@@ -99,7 +99,7 @@ Given a developer has conversations in T3's local state on a computer
 When instrukt extracts and loads that state
 Then the conversations are searchable in that computer's instrukt history
 And no central service or Redis is required
-But when modules.history is off
+But when the developer disables history
 Then every history data operation reports the module is off without touching its data or source
 And stored history survives disabling and can be searched after re-enabling
 ```

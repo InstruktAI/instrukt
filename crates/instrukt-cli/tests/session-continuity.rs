@@ -37,10 +37,7 @@ fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
     let title = FakeT3::create(&p.env).title("s1");
-    assert_eq!(
-        title.split(" · ").take(2).collect::<Vec<_>>(),
-        vec!["prepare-orchestrator", "parser"]
-    );
+    insta::assert_snapshot!("readable-orchestrator-title", support::redact(&title));
     let fake = FakeT3::create(&p.env);
     insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/prepare");
     assert!(fake.worktree("s1").is_dir());
@@ -960,7 +957,7 @@ fn legacy_key_only_thread_is_reused_after_a_lost_start() {
     fake.change("s1", "title", key.clone().into());
     fake.flag("silent-start", false);
     p.tick();
-    assert_eq!(fake.threads(), vec!["s1"]);
+    assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.title("s1"), key);
     assert_eq!(fake.message_count("s1"), 1);
     let out = p
@@ -993,4 +990,171 @@ fn mixed_legacy_and_readable_titles_for_one_key_conflict() {
         .failure();
     insta::assert_snapshot!("mixed-title-conflict", shown(&p, &out.get_output().stderr));
     assert_eq!(fake.threads().len(), 2);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
+#[test]
+fn a_titleless_persisted_request_retries_with_its_original_key_only_title() {
+    let p = Tracked::new(true);
+    change(&p, "old-start");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("empty-start", true);
+    p.tick();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let encoded: String = db
+        .query_row("SELECT request FROM runtime_starts", [], |r| r.get(0))
+        .unwrap();
+    let current: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let mut old: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/runtime-start-v14.json")).unwrap();
+    for (field, value) in old.as_object_mut().unwrap() {
+        *value = current[field].clone();
+    }
+    let key = old["key"].as_str().unwrap().to_owned();
+    db.execute("UPDATE runtime_starts SET request=?1", [old.to_string()])
+        .unwrap();
+    db.pragma_update(None, "user_version", 14).unwrap();
+    p.env
+        .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
+        .success();
+    fake.flag("empty-start", false);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.title("s1"), key);
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.message_count("s1"), 1);
+}
+
+fn deliberate_preparation() -> (Tracked, FakeT3, String, std::path::PathBuf, String) {
+    let p = Tracked::new(true);
+    change(&p, "native-parser");
+    let plan = p
+        .env
+        .run(p.repo.path(), ["todo", "prepare", "native-parser"])
+        .success();
+    let value: serde_json::Value = serde_json::from_slice(&plan.get_output().stdout).unwrap();
+    let placement = &value["placement"];
+    let start = p
+        .env
+        .command(std::path::Path::new("t3"), p.repo.path())
+        .args([
+            "thread",
+            "start",
+            "--title",
+            placement["title"].as_str().unwrap(),
+            "--worktree",
+            placement["from"].as_str().unwrap(),
+            "--branch",
+            placement["branch"].as_str().unwrap(),
+            "--",
+            p.repo.path().to_str().unwrap(),
+            "Native preparation opening.",
+        ])
+        .output()
+        .unwrap();
+    assert!(start.status.success());
+    let id = String::from_utf8(start.stdout).unwrap().trim().to_owned();
+    let fake = FakeT3::create(&p.env);
+    let tree = fake.worktree(&id);
+    let proof = runtime::placement_evidence(
+        &p.env,
+        &runtime::NativePlacement {
+            cwd: &tree,
+            slug: "native-parser",
+            role: "prepare-orchestrator",
+            session: &id,
+        },
+    );
+    p.env
+        .instrukt(&tree)
+        .env("T3CODE_THREAD_ID", &id)
+        .args([
+            "todo",
+            "prepare",
+            "native-parser",
+            "--placement-evidence",
+            "-",
+        ])
+        .write_stdin(proof)
+        .assert()
+        .success();
+    let title = fake.title(&id);
+    (p, fake, id, tree, title)
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17
+#[test]
+fn renamed_deliberate_driver_resumes_with_its_captured_title() {
+    let (p, fake, id, tree, title) = deliberate_preparation();
+    p.env
+        .instrukt(&tree)
+        .env("T3CODE_THREAD_ID", &id)
+        .args([
+            "todo",
+            "update",
+            "native-parser",
+            "--slug",
+            "native-parser-renamed",
+            "--unclaim",
+        ])
+        .assert()
+        .success();
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.message_count(&id), 2);
+    assert_eq!(fake.title(&id), title);
+}
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+#[test]
+fn deliberately_bound_driver_refuses_an_actual_native_relabel() {
+    let (p, fake, id, tree, title) = deliberate_preparation();
+    let key = title.rsplit(" · ").next().unwrap();
+    fake.change(&id, "title", format!("Changed label · {key}").into());
+    p.env
+        .instrukt(&tree)
+        .env("T3CODE_THREAD_ID", &id)
+        .args(["todo", "update", "native-parser", "--unclaim"])
+        .assert()
+        .success();
+    p.tick();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.message_count(&id), 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+#[test]
+fn an_older_public_placement_proof_is_normalized_before_binding() {
+    let (p, fake, id, tree, title) = deliberate_preparation();
+    let key = title.rsplit(" · ").next().unwrap();
+    fake.change(&id, "title", key.into());
+    let mut proof: serde_json::Value = serde_json::from_str(&runtime::placement_evidence(
+        &p.env,
+        &runtime::NativePlacement {
+            cwd: &tree,
+            slug: "native-parser",
+            role: "prepare-orchestrator",
+            session: &id,
+        },
+    ))
+    .unwrap();
+    proof.as_object_mut().unwrap().remove("title");
+    p.env
+        .instrukt(&tree)
+        .env("T3CODE_THREAD_ID", &id)
+        .args([
+            "todo",
+            "prepare",
+            "native-parser",
+            "--placement-evidence",
+            "-",
+        ])
+        .write_stdin(proof.to_string())
+        .assert()
+        .success();
+    assert_eq!(fake.threads().len(), 1);
+    assert_eq!(fake.message_count(&id), 1);
 }

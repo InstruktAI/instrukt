@@ -415,6 +415,11 @@ impl SessionBindings for Work {
                 }
             }
             return Ok(DispatchReservation::Existing(SessionBinding {
+                title: retained
+                    .attempt
+                    .native_placement
+                    .as_ref()
+                    .map(|p| p.title.clone()),
                 key: retained.attempt.semantic_key,
                 session: retained
                     .session
@@ -528,6 +533,11 @@ impl SessionBindings for Work {
         }) && let Some(session) = &active.session
         {
             return Ok(DispatchReservation::Existing(SessionBinding {
+                title: active
+                    .attempt
+                    .native_placement
+                    .as_ref()
+                    .map(|p| p.title.clone()),
                 key: active.attempt.semantic_key.clone(),
                 session: session.clone(),
                 worktree: active.worktree.clone(),
@@ -1033,6 +1043,7 @@ pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) 
                 Some(RoleBinding {
                     role: b.role,
                     binding: SessionBinding {
+                        title: b.attempt.native_placement.as_ref().map(|p| p.title.clone()),
                         key: b.attempt.semantic_key.clone(),
                         session: b.session?,
                         worktree: b.worktree,
