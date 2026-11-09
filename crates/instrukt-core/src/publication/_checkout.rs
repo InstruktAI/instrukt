@@ -86,6 +86,15 @@ pub(crate) fn checkout_entrypoints(
         project_index.as_ref(),
         &mut Vec::new(),
     )?;
+    // Development publication intentionally renders no checkout entrypoints.
+    // It must not consume an installed home's inventory for this same checkout.
+    if home.is_development() {
+        return Ok(if primary {
+            Checkout::Primary
+        } else {
+            Checkout::Linked
+        });
+    }
     let git_dir = PathBuf::from(crate::git::run(
         &project.worktree,
         ["rev-parse", "--absolute-git-dir"],

@@ -97,7 +97,10 @@ selection, configuration and snippets of the published revision, never proposed
 or dirty branch documentation. It does not publish, update publication records,
 write global agent files or refresh editor schemas in a linked worktree.
 Preparation reads its proposed documentation through `--target`.
-Each checkout retains its own versioned inventory of generated entrypoints in
+Explicit development execution leaves installed checkout entrypoints and their
+inventories untouched, under the isolation contract in
+`project/instrukt/spec/feature/configuration/owned-files`.
+Each installed checkout retains its own versioned inventory of generated entrypoints in
 its Git administrative area. A render retracts its previously generated files
 that are absent from the published baseline, preserves unowned files and retains
 the inventory across interrupted writes so a subsequent render can converge.

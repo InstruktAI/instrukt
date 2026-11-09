@@ -707,3 +707,27 @@ fn a_linked_checkout_retracts_its_own_withdrawn_generated_instructions() {
     assert!(linked.join("manual/AGENTS.md").is_file());
     assert_eq!(publication_bytes(&env), published);
 }
+
+// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF3
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE6
+#[test]
+fn development_checkout_rendering_preserves_the_installed_checkouts_instructions() {
+    let mut env = checkout_machine();
+    let repo = checkout_project(&env);
+    env.run(repo.path(), ["sync"]).success();
+    env.run(repo.path(), ["hooks", "run", "post-checkout"])
+        .success();
+    let instructions = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
+    let published = publication_bytes(&env);
+    let development = env.path("private-development-home");
+    env.set_env("INSTRUKT_HOME", development.to_str().unwrap());
+    env.set_env("INSTRUKT_DEVELOPMENT", "1");
+    env.run(repo.path(), ["sync"]).success();
+    env.run(repo.path(), ["hooks", "run", "post-checkout"])
+        .success();
+    assert_eq!(
+        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
+        instructions
+    );
+    assert_eq!(publication_bytes(&env), published);
+}
