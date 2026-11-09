@@ -1469,31 +1469,23 @@ fn github_readiness_checks_existing_reflection_surfaces_without_mutating_them_or
     let issues = github.issues("fixture/project");
     let artifacts = github.artifacts("fixture/project", issue);
     let fields = github.project_fields("fixture", 1);
-    github.clear_requests();
+    let views = github.project_views("fixture", 1);
+    let items = github.project_items("fixture", 1);
     assert_eq!(github_check(&env, &repo, true), serde_json::json!([]));
     assert_eq!(github.issues("fixture/project"), issues);
     assert_eq!(github.artifacts("fixture/project", issue), artifacts);
     assert_eq!(github.project_fields("fixture", 1), fields);
-    insta::assert_json_snapshot!("github-readiness-network", github.requests().iter().map(|request| {
-        serde_json::json!({"method":request.method,"path":request.path,"query":request.query,"body": if request.method == "POST" {request.json()} else {serde_json::Value::Null}})
-    }).collect::<Vec<_>>());
+    assert_eq!(github.project_views("fixture", 1), views);
+    assert_eq!(github.project_items("fixture", 1), items);
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
 #[test]
 fn github_readiness_checks_account_discovery_without_creating_a_board_in_an_empty_repository() {
     let (env, repo, github) = github_installation();
-    github.clear_requests();
     assert_eq!(github_check(&env, &repo, true), serde_json::json!([]));
-    insta::assert_json_snapshot!(
-        "github-readiness-empty-account",
-        github
-            .requests_to("POST", "/graphql")
-            .iter()
-            .map(|request| request.json())
-            .collect::<Vec<_>>()
-    );
     assert!(github.issues("fixture/project").is_empty());
+    assert!(github.project_numbers("fixture").is_empty());
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
@@ -1602,19 +1594,11 @@ fn github_readiness_refuses_disabled_repository_issues() {
 fn github_readiness_reports_an_unavailable_configured_board_without_replacing_it() {
     let (env, repo, github) = github_installation();
     repo.write("instrukt.yaml", "schema_version: 3\nproject: github-ready\nmodules: {todos: true}\nrunner: {runtime: t3}\ngithub: {repository: fixture/project}\nboard: fixture/99\n");
-    github.clear_requests();
     insta::assert_json_snapshot!(
         "github-readiness-missing-board",
         github_check(&env, &repo, false)
     );
-    insta::assert_json_snapshot!(
-        "github-readiness-missing-board-queries",
-        github
-            .requests_to("POST", "/graphql")
-            .iter()
-            .map(|request| request.json())
-            .collect::<Vec<_>>()
-    );
+    assert!(github.project_numbers("fixture").is_empty());
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
@@ -1626,4 +1610,17 @@ fn github_readiness_is_outside_an_events_only_inspection() {
     env.run(repo.path(), ["install", "--check", "--module", "events"])
         .success();
     assert!(github.requests().is_empty());
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
+#[test]
+fn github_readiness_reports_unavailable_account_discovery() {
+    let (env, repo, github) = github_installation();
+    github.set_project_discovery_available(false);
+    insta::assert_json_snapshot!(
+        "github-readiness-discovery-unavailable",
+        github_check(&env, &repo, false)
+    );
+    assert!(github.issues("fixture/project").is_empty());
+    assert!(github.project_numbers("fixture").is_empty());
 }

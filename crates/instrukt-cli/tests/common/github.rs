@@ -580,6 +580,7 @@ struct State {
     poll_interval: Option<u64>,
     /// GitHub projects (Projects v2), served through `/graphql`.
     projects: Vec<Project>,
+    project_discovery_available: bool,
     auth_clock: std::path::PathBuf,
     tokens: BTreeMap<String, (u64, jiff::Timestamp)>,
     active_token: Option<String>,
@@ -598,6 +599,7 @@ impl State {
             pauses: VecDeque::new(),
             poll_interval: None,
             projects: Vec::new(),
+            project_discovery_available: true,
             auth_clock,
             tokens: BTreeMap::new(),
             active_token: None,
@@ -2158,6 +2160,21 @@ impl ProjectField {
 }
 
 impl FakeGitHub {
+    /// The project numbers visible on an account.
+    pub fn project_numbers(&self, owner: &str) -> Vec<u64> {
+        self.lock()
+            .projects
+            .iter()
+            .filter(|project| project.owner == owner)
+            .map(|project| project.number)
+            .collect()
+    }
+
+    /// Sets account project-discovery availability at the API boundary.
+    pub fn set_project_discovery_available(&self, available: bool) {
+        self.lock().project_discovery_available = available;
+    }
+
     /// Adds the project `<owner>/<number>`.
     pub fn add_project(&self, owner: &str, number: u64) -> &Self {
         let mut state = self.lock();
@@ -2413,6 +2430,9 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
         );
     }
     if query.contains("projectsV2(first:") {
+        if !state.project_discovery_available {
+            return graphql_error("project discovery is unavailable");
+        }
         let owner = vars["owner"].as_str().unwrap();
         let nodes = state
             .projects
