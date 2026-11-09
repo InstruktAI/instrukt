@@ -15,7 +15,7 @@
 //!   question beyond the contract.
 //!
 //! An engine that cannot be found is reported with what to install;
-//! instrukt installs nothing.
+//! `instrukt install` converges the release pin.
 
 use std::fs::File;
 use std::io::{self, Write as _};
@@ -25,6 +25,9 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use instrukt_core::config::SHIPPED_BLUEPRINT_ENGINES;
+use instrukt_core::home::Home;
+
+use crate::{Graphify, GraphifyError};
 
 use crate::_contract::{ContractError, Graph};
 
@@ -35,7 +38,8 @@ pub const SHIPPED_ENGINE: &str = SHIPPED_BLUEPRINT_ENGINES[0];
 /// The shipped adapter's program.
 const GRAPHIFY: &str = "graphify";
 /// What to install when the shipped adapter's program is missing.
-const GRAPHIFY_INSTALL: &str = "install Graphify (the `graphifyy` package), e.g. `uv tool install graphifyy` or `pipx install graphifyy`";
+const GRAPHIFY_INSTALL: &str =
+    "run `instrukt install` to install the release-pinned Graphify into the instrukt home";
 /// Where Graphify writes its graph, relative to the mapped tree.
 const GRAPHIFY_OUT: &str = "graphify-out";
 const GRAPHIFY_GRAPH: &str = "graph.json";
@@ -65,7 +69,7 @@ impl Question {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Engine {
     /// The shipped adapter (Graphify).
-    Shipped,
+    Shipped { binary: PathBuf },
     /// A project's own engine: a shell command line.
     Command(String),
 }
@@ -73,6 +77,8 @@ pub enum Engine {
 /// The engine could not produce or answer.
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
+    #[error(transparent)]
+    Installation(#[from] GraphifyError),
     #[error("the graph engine `{program}` is not installed; {install}")]
     NotInstalled {
         program: &'static str,
@@ -107,17 +113,19 @@ impl Engine {
     /// The engine an effective `blueprint.engine` value selects; unset is
     /// the shipped adapter. A command reaches here only from the global
     /// layer: configuration drops a project layer's command.
-    pub fn from_setting(setting: Option<&str>) -> Self {
-        match setting.map(str::trim) {
-            None | Some("") | Some(SHIPPED_ENGINE) => Self::Shipped,
+    pub fn from_setting(home: &Home, setting: Option<&str>) -> Result<Self, EngineError> {
+        Ok(match setting.map(str::trim) {
+            None | Some("") | Some(SHIPPED_ENGINE) => Self::Shipped {
+                binary: Graphify::new(home)?.binary(),
+            },
             Some(command) => Self::Command(command.to_owned()),
-        }
+        })
     }
 
     /// Whether the engine offers `question`.
     pub fn offers(&self, question: Question) -> bool {
         match (self, question) {
-            (Self::Shipped, Question::Query | Question::Explain) => true,
+            (Self::Shipped { .. }, Question::Query | Question::Explain) => true,
             (Self::Command(_), _) => false,
         }
     }
@@ -144,12 +152,12 @@ impl Engine {
             started,
         };
         match self {
-            Self::Shipped => {
+            Self::Shipped { binary } => {
                 // A committed `graphify-out` (or a link of that name) is not
                 // the engine's output and must not redirect its writes.
                 let out = tree.join(GRAPHIFY_OUT);
                 remove_entry(&out)?;
-                let mut command = Command::new(GRAPHIFY);
+                let mut command = graphify_command(binary)?;
                 command
                     .arg("update")
                     .arg(tree)
@@ -205,10 +213,10 @@ impl Engine {
         scratch: &Path,
         timeout: Duration,
     ) -> Result<Option<String>, EngineError> {
-        if !self.offers(question) {
+        let Self::Shipped { binary } = self else {
             return Ok(None);
-        }
-        let mut command = Command::new(GRAPHIFY);
+        };
+        let mut command = graphify_command(binary)?;
         command
             .arg(question.name())
             .args(args)
@@ -227,6 +235,27 @@ impl Engine {
             source,
         })?;
         Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+    }
+}
+
+/// Check the owned executable directly: shells differ in whether an absent
+/// absolute program exits 126 or 127, and neither is an installation inventory.
+fn graphify_command(binary: &Path) -> Result<Command, EngineError> {
+    match std::fs::metadata(binary) {
+        Ok(metadata) if metadata.is_file() => Ok(Command::new(binary)),
+        Ok(_) => Err(EngineError::NotInstalled {
+            program: GRAPHIFY,
+            install: GRAPHIFY_INSTALL,
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(EngineError::NotInstalled {
+            program: GRAPHIFY,
+            install: GRAPHIFY_INSTALL,
+        }),
+        Err(source) => Err(EngineError::Io {
+            what: "cannot inspect",
+            path: binary.to_path_buf(),
+            source,
+        }),
     }
 }
 
@@ -320,12 +349,6 @@ impl Runner<'_> {
             source,
         })?;
         let status = status?;
-        if status.code() == Some(COMMAND_NOT_FOUND) && program == GRAPHIFY {
-            return Err(EngineError::NotInstalled {
-                program: GRAPHIFY,
-                install: GRAPHIFY_INSTALL,
-            });
-        }
         if !status.success() {
             let stderr = std::fs::read(&stderr_path)
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
@@ -360,9 +383,6 @@ fn go_ahead(recorded: Result<(), String>) -> Start {
 /// its arguments) with no input. Without the line — its generation is gone
 /// — it ends.
 const GO_AHEAD: &str = "IFS= read -r _ || exit 125; exec \"$0\" \"$@\" </dev/null";
-
-/// The exit status of a shell whose command was not found.
-const COMMAND_NOT_FOUND: i32 = 127;
 
 fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError> {
     let started = Instant::now();

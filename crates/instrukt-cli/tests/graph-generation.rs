@@ -143,7 +143,7 @@ fn without_the_shipped_engine_installed_the_status_says_what_to_install() {
     let names = [(one.as_str(), "one")];
     insta::assert_snapshot!(answer(&env, &repo, &["blueprint", "status"], &names), @r"
     no blueprint graph of this project yet
-    last generation: <one> failed: the graph engine `graphify` is not installed; install Graphify (the `graphifyy` package), e.g. `uv tool install graphifyy` or `pipx install graphifyy`
+    last generation: <one> failed: the graph engine `graphify` is not installed; run `instrukt install` to install the release-pinned Graphify into the instrukt home
     ");
 }
 

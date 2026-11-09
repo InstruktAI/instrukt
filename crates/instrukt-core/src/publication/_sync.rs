@@ -371,33 +371,13 @@ fn publish(
         indexes: &indexes,
         values: &values,
     };
-    let mut agents = Vec::new();
-    for master in committed
-        .masters()
-        .into_iter()
-        .filter(|_| !home.is_development())
-    {
-        let text = String::from_utf8_lossy(committed.file(master).unwrap_or_default()).into_owned();
-        let dir = Path::new(master).parent().unwrap_or(Path::new(""));
-        let rendered = if master == MASTER_FILE_NAME {
-            if project_index.is_none() {
-                notices.push(Notice {
-                    path: PathBuf::from(format!("{}/{INDEX_FILE}", Position::Project.dir())),
-                    code: NoticeCode::ProjectWithoutIndex,
-                    value: Some(format!(
-                        "the root AGENTS.md holds the purpose and the triggered procedures only; \
-                         `docs/project/{INDEX_FILE}` selects what else it includes"
-                    )),
-                });
-            }
-            let rendered = renderer.root_agents(master, &text, project_index.as_ref())?;
-            agents.extend(project_overrides(home, &rendered)?);
-            rendered
-        } else {
-            renderer.nested(master, &text)?
-        };
-        agents.push((dir.join(AGENTS_FILE), rendered));
-    }
+    let agents = project_agents(
+        home,
+        &committed,
+        &renderer,
+        project_index.as_ref(),
+        &mut notices,
+    )?;
     let (entrypoints, settings) = if !home.is_development()
         && held
             .iter()
@@ -433,6 +413,10 @@ fn publish(
     if !home.is_development() {
         *report.editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
     }
+    // Coordinate only publication application with checkout rendering. Validation
+    // and preparation retain the separate docs lock, so a checkout inside a
+    // pull/rebase never waits for that long-lived preparation phase.
+    let _outputs = lock_outputs(home)?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, request.now, &prepared, &mut tx) {
         Ok(kept) => {
@@ -448,6 +432,14 @@ fn publish(
             Err(err)
         }
     }
+}
+
+/// Serialize live publication state and checkout output writes as one snapshot.
+pub(super) fn lock_outputs(home: &Home) -> Result<LockGuard, PublicationError> {
+    Ok(LockGuard::acquire(
+        &home.locks_dir().join("publication-outputs.lock"),
+        DOCS_LOCK_TIMEOUT,
+    )?)
 }
 
 /// Checks every location the sync will write or remove, before the first
@@ -520,9 +512,47 @@ fn preflight(
     Ok(())
 }
 
-/// The project override instruction files of the supported agent CLIs
-/// installed here that read one, each holding the root `AGENTS.md`'s
-/// rendered text, relative to the primary worktree.
+/// Render every committed project master and the supported project overrides
+/// with one selection pipeline, for publication or checkout-only rendering.
+pub(super) fn project_agents(
+    home: &Home,
+    committed: &Committed,
+    renderer: &Renderer<'_>,
+    project_index: Option<&PositionIndex>,
+    notices: &mut Vec<Notice>,
+) -> Result<Files<String>, PublicationError> {
+    let mut agents = Vec::new();
+    for master in committed
+        .masters()
+        .into_iter()
+        .filter(|_| !home.is_development())
+    {
+        let text = String::from_utf8_lossy(committed.file(master).unwrap_or_default()).into_owned();
+        let dir = Path::new(master).parent().unwrap_or(Path::new(""));
+        let rendered = if master == MASTER_FILE_NAME {
+            if project_index.is_none() {
+                notices.push(Notice {
+                    path: PathBuf::from(format!("{}/{INDEX_FILE}", Position::Project.dir())),
+                    code: NoticeCode::ProjectWithoutIndex,
+                    value: Some(format!(
+                        "the root AGENTS.md holds the purpose and the triggered procedures only; \
+                         `docs/project/{INDEX_FILE}` selects what else it includes"
+                    )),
+                });
+            }
+            let rendered = renderer.root_agents(master, &text, project_index)?;
+            agents.extend(project_overrides(home, &rendered)?);
+            rendered
+        } else {
+            renderer.nested(master, &text)?
+        };
+        agents.push((dir.join(AGENTS_FILE), rendered));
+    }
+    Ok(agents)
+}
+
+/// Project override files of the supported installed CLIs, holding the root
+/// entrypoint's rendered text, relative to the checkout.
 fn project_overrides(home: &Home, root_agents: &str) -> Result<Files<String>, PublicationError> {
     let mut overrides = Vec::new();
     for target in TARGETS {
@@ -542,7 +572,7 @@ type Files<T> = Vec<(PathBuf, T)>;
 /// Every published position's `index.yaml` as this sync leaves the
 /// computer: the committed ones of the positions the project holds, the
 /// published ones of the positions other projects own.
-fn position_indexes(
+pub(super) fn position_indexes(
     home: &Home,
     committed: &Committed,
     held: &[DomainName],
@@ -574,7 +604,7 @@ fn position_indexes(
 }
 
 /// The committed `index.yaml` of `position`; `None` without one.
-fn committed_index(
+pub(super) fn committed_index(
     committed: &Committed,
     position: &Position,
 ) -> Result<Option<PositionIndex>, PublicationError> {

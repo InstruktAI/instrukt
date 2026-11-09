@@ -10,7 +10,8 @@ Options:
       --check            Compare desired and actual infrastructure without changing packages,
                          services or data
       --module <MODULE>  Limit convergence to an enabled module's dependencies. Full demand still
-                         protects shared resources [possible values: todos, events, history]
+                         protects shared resources [possible values: todos, events, history,
+                         blueprint]
       --json             Render per-resource results and findings as JSON
   -h, --help             Print help
   -V, --version          Print version

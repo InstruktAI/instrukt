@@ -16,6 +16,7 @@
 
 mod _adoption;
 mod _agents;
+mod _checkout;
 mod _editor;
 mod _fingerprint;
 mod _patch;
@@ -34,6 +35,7 @@ pub use _adoption::{
     ClaimStatus, ClaimsPreview, GlobalFiles, PublishedSchema, preview_claims, published_schema,
     wrote_project_file,
 };
+pub(crate) use _checkout::{Checkout, checkout_entrypoints};
 pub use _editor::{EditorChange, EditorChangeKind, OnLink, SCHEMAS_DIR, refresh_editor_schemas};
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
@@ -101,6 +103,16 @@ pub enum PublicationError {
     },
     #[error("cannot render a publication record: {0}")]
     Render(serde_yaml_ng::Error),
+    #[error(
+        "project `{project}` has no published baseline; run `instrukt sync` in the primary checkout, then retry checkout rendering"
+    )]
+    CheckoutUnpublished { project: ProjectSlug },
+    #[error(
+        "checkout bootstrap was refused: {0}; resolve the finding and run `instrukt sync` in the primary checkout"
+    )]
+    CheckoutRefused(String),
+    #[error("checkout bootstrap failed: {0}")]
+    CheckoutPublication(#[source] Box<SyncError>),
     #[error(transparent)]
     Git(#[from] GitError),
     #[error(transparent)]

@@ -2,7 +2,7 @@
 //! that waits for the sync it started, and the per-hook record of the last
 //! run's outcome that `hooks status` shows.
 //!
-//! A hook run never waits for what it starts. For a post-hook it writes the
+//! Checkout rendering completes before return. Other hook work is detached. For a post-hook it writes the
 //! run's record (sync `running`), starts the detached worker and returns;
 //! the worker starts `instrukt sync`, waits for it within a bound, and
 //! completes the record with sync's exit status — unless a later run of the
@@ -42,6 +42,10 @@ const MESSAGE_LIMIT: usize = 2000;
 /// `state/hooks/<project>/<hook>.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookRunRecord {
+    #[serde(default = "hook_record_version")]
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout: Option<CheckoutOutcome>,
     pub hook: Hook,
     /// Identifies the run, so a worker completes only its own run's record.
     pub run: String,
@@ -54,6 +58,20 @@ pub struct HookRunRecord {
     /// trigger for it or blueprint is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_generation: Option<GenerationOutcome>,
+}
+
+/// The first versioned hook-record shape. Unversioned records convert on read
+/// with no checkout outcome, and the next recorded run persists this shape.
+fn hook_record_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CheckoutOutcome {
+    Rendered,
+    Bootstrapped,
+    Failed { error: String },
 }
 
 /// The outcome of the sync a hook run started.
@@ -104,7 +122,8 @@ pub struct HookInvocation<'a> {
 /// Runs one hook point in the repository containing `cwd`: hands a push
 /// to main or a pull advancing main to graph generation when it is wired,
 /// and for a post-hook starts the detached worker that runs `instrukt
-/// sync`. Returns without waiting for either. Outside a working tree it
+/// sync`. Checkout first renders published entrypoints synchronously; other
+/// work returns without waiting. Outside a working tree it
 /// does nothing.
 pub fn run_hook(
     home: &Home,
@@ -118,6 +137,40 @@ pub fn run_hook(
         tracing::debug!(event = "hook_run_outside_worktree", hook = %hook, cwd = %cwd.display());
         return Ok(());
     };
+    if hook == Hook::PostCheckout {
+        let outcome = crate::publication::checkout_entrypoints(&crate::publication::SyncRequest {
+            home,
+            cwd: &root,
+            force: false,
+            wiring,
+            now: jiff::Timestamp::now(),
+        });
+        let checkout = match &outcome {
+            Ok(crate::publication::Checkout::Bootstrapped) => CheckoutOutcome::Bootstrapped,
+            Ok(_) => CheckoutOutcome::Rendered,
+            Err(error) => CheckoutOutcome::Failed {
+                error: error.to_string(),
+            },
+        };
+        if let Some(project) = config::project_slug(&root)? {
+            save(
+                home,
+                &project,
+                &HookRunRecord {
+                    schema_version: hook_record_version(),
+                    checkout: Some(checkout),
+                    hook,
+                    run: format!("{}-{}", now_ms(), std::process::id()),
+                    started_at_ms: now_ms(),
+                    sync: None,
+                    graph_generation: None,
+                },
+            )?;
+        }
+        if !matches!(outcome?, crate::publication::Checkout::Primary) {
+            return Ok(());
+        }
+    }
     if invocation.hook.starts_sync()
         && git::run(&root, ["branch", "--show-current"])? != crate::github::default_branch(&root)?
     {
@@ -151,6 +204,8 @@ pub fn run_hook(
     };
     let run = format!("{}-{}", now_ms(), std::process::id());
     let mut record = HookRunRecord {
+        schema_version: hook_record_version(),
+        checkout: (hook == Hook::PostCheckout).then_some(CheckoutOutcome::Rendered),
         hook,
         run: run.clone(),
         started_at_ms: now_ms(),
@@ -228,9 +283,18 @@ pub fn last_run(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(RepositoryError::Read { path, source }),
     };
-    serde_yaml_ng::from_str(&text)
-        .map(Some)
-        .map_err(|source| RepositoryError::Record { path, source })
+    let record: HookRunRecord =
+        serde_yaml_ng::from_str(&text).map_err(|source| RepositoryError::Record {
+            path: path.clone(),
+            source,
+        })?;
+    if record.schema_version != hook_record_version() {
+        return Err(RepositoryError::HookRecordVersion {
+            path,
+            version: record.schema_version,
+        });
+    }
+    Ok(Some(record))
 }
 
 fn start_worker(
@@ -471,6 +535,14 @@ mod tests {
 
     const SHA: &str = "1111111111111111111111111111111111111111";
     const ZERO: &str = "0000000000000000000000000000000000000000";
+
+    #[test]
+    fn unversioned_hook_records_read_as_current_without_inventing_a_checkout() {
+        let legacy = "hook: post-checkout\nrun: old\nstarted_at_ms: 1\nsync: null\n";
+        let record: HookRunRecord = serde_yaml_ng::from_str(legacy).unwrap();
+        assert_eq!(record.schema_version, hook_record_version());
+        assert_eq!(record.checkout, None);
+    }
 
     #[test]
     fn a_push_to_main_names_the_pushed_commit_and_nothing_else_does() {

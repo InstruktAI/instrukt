@@ -11,6 +11,9 @@ repository.workspace = true
 name = "instrukt"
 path = "src/main.rs"
 
+[features]
+graphify-contract = []
+
 [dependencies]
 instrukt-core.workspace = true
 instrukt-blueprint.workspace = true

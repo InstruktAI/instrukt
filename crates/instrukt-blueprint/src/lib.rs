@@ -20,6 +20,7 @@ mod _answers;
 mod _contract;
 mod _engine;
 mod _generation;
+mod _installation;
 mod _store;
 mod _trace;
 mod _traversal;
@@ -33,6 +34,7 @@ pub use _generation::{
     Generation, GenerationError, GenerationState, LastGeneration, WORKER_COMMAND, last_generation,
     run_worker,
 };
+pub use _installation::{Graphify, GraphifyError, GraphifyState, graphify_version};
 pub use _store::{CleanupFailure, GraphStore, LatestGraph, Published, StoreError};
 pub use _trace::{
     AtStake, FileTrace, SpecFolder, UntracedFile, UseCaseTrace, trace_files, trace_use_case,

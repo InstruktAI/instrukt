@@ -39,7 +39,7 @@ commands.
 
 **Hook run**
 :  What a section calls: `instrukt hooks run <hook>`, which hands the hook
-   point to the context that acts on it and returns without waiting.
+   point to the context that acts on it and completes checkout entrypoint rendering before returning, and otherwise returns without waiting.
 
 **Hook manager**
 :  A tool that generates the project's hook files itself and may drop

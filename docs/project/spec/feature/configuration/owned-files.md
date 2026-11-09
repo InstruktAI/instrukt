@@ -63,6 +63,23 @@ silently replacing it. `agents.yaml` default replacement and preservation of
 user edits follow `project/instrukt/spec/feature/configuration/agent-selection`;
 a mandatory shape conversion is distinct from replacing default choices.
 
+Hook-run records carry a shape version and an optional checkout outcome.
+Unversioned records convert in memory with no invented checkout result, and the
+next recorded hook run persists the versioned shape. Inspection never rewrites
+these records and a newer shape requires a newer binary.
+
+### Blueprint tool ownership
+
+The blueprint module owns one release pin for its external Graphify package
+(`project/instrukt/spec/feature/blueprint/graph-engine`). Its uv tool environments
+and published binaries live under the selected instrukt home's `tools/` directory:
+`tools/uv/` and `tools/bin/`. The release pin is compiled into the binary from its
+single version file; no machine configuration or PATH lookup selects another
+version. The installer verifies the actual home-owned executable's version,
+rather than trusting a marker written by a previous installation. Missing or
+drifted tools are repaired through module installation, whose read-only check
+writes no state. Development homes own their own tools too.
+
 ### Worktree isolation
 
 Worktree isolation serves development of instrukt itself. The repository's

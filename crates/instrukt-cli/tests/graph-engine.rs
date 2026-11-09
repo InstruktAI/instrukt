@@ -86,3 +86,82 @@ fn output_breaking_the_contract_is_never_served_and_the_previous_map_stays() {
     last generation: <two> failed: the graph engine's output was refused: node 0: `source_file` `../outside.rs` contains a `..` segment
     ");
 }
+
+// spec: project/instrukt/spec/feature/blueprint/graph-engine UC-BE2
+#[test]
+fn shipped_generation_and_questions_use_home_binary_and_ignore_path_graphify() {
+    let mut env = machine();
+    let path_tool = script(&env, "graphify", "touch \"$HOME/path-tool-ran\"; exit 9\n");
+    let home_tool = env.instrukt_home().join("tools/bin/graphify");
+    std::fs::create_dir_all(home_tool.parent().unwrap()).unwrap();
+    let tool = script(
+        &env,
+        "installed-graphify",
+        r#"case "$1" in
+update) mkdir -p "$2/graphify-out"; cat "$2/map.json" > "$2/graphify-out/graph.json";;
+query|explain) printf '%s\n' "$1"; cat "$4";;
+*) exit 8;;
+esac
+"#,
+    );
+    std::fs::copy(tool, &home_tool).unwrap();
+    let old_path = env.injected("PATH").unwrap().to_owned();
+    env.set_env(
+        "PATH",
+        &format!("{}:{old_path}", path_tool.parent().unwrap().display()),
+    );
+    // Home accepts a relative override; engine cwd changes must not redirect it.
+    env.set_env("INSTRUKT_HOME", "../home/.instrukt");
+    let repo = project(&env, None);
+    let one = revision(&repo, "one", Some(&mapped()));
+    push(&env, &repo);
+    assert_eq!(wait_generated(&env, &one).state, GenerationState::Mapped);
+    for question in ["query", "explain"] {
+        let output = answer(&env, &repo, &["blueprint", question, "question"], &[]);
+        assert!(!output.is_empty());
+    }
+    assert!(!env.home().join("path-tool-ran").exists());
+    std::fs::remove_file(home_tool).unwrap();
+    let two = revision(&repo, "two", Some(&mapped()));
+    push(&env, &repo);
+    assert!(wait_generated(&env, &two).is_failure());
+    assert!(!env.home().join("path-tool-ran").exists());
+}
+
+/// Dedicated CI contract test: ordinary checks never enable this feature, so
+/// only this job needs network access and a real Graphify installation.
+// spec: project/instrukt/spec/feature/blueprint/graph-engine UC-BE2
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI12
+#[cfg(feature = "graphify-contract")]
+#[test]
+fn real_pinned_graphify_contract() {
+    let mut env = machine();
+    env.set_env("UV_CACHE_DIR", env.path("uv-cache").to_str().unwrap());
+    let repo = project(&env, None);
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 4\nproject: demo\nmodules: {blueprint: true, history: false}\n",
+    );
+    repo.write(
+        "sample.py",
+        "def callee():\n    return 1\n\ndef caller():\n    return callee()\n",
+    );
+    let one = repo.commit("feat: real code-only contract fixture");
+    env.run(repo.path(), ["sync"]).success();
+    env.run(repo.path(), ["install", "--module", "blueprint"])
+        .success();
+    let inspection = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    env.run(repo.path(), ["install", "--check", "--module", "blueprint"])
+        .success();
+    assert!(
+        inspection.changed().is_empty(),
+        "{:?}",
+        inspection.changed()
+    );
+    push(&env, &repo);
+    assert_eq!(wait_generated(&env, &one).state, GenerationState::Mapped);
+    let latest = mapped::store(&env).latest().unwrap().unwrap();
+    assert_eq!(latest.sha, mapped::sha(&one));
+    assert!(!latest.graph.nodes().is_empty());
+    assert!(!latest.graph.links().is_empty());
+}

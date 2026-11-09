@@ -456,11 +456,19 @@ fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() 
     drop(blocked);
     wait_published(&env, "demo", &rebased);
     finished_run(&env, "demo", Hook::PostRewrite);
-    // The rebase's detached checkout does not publish unintegrated state.
-    assert!(
-        !env.instrukt_home()
-            .join("state/hooks/demo/post-checkout.yaml")
-            .exists()
+    // The rebase's detached checkout renders instructions but never publishes
+    // unintegrated state. Its separately recorded outcome has no sync.
+    let checkout = instrukt_core::repository::last_run(
+        &Home::at_user_home(env.home().to_path_buf()),
+        &ProjectSlug::parse("demo").unwrap(),
+        Hook::PostCheckout,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(checkout.sync, None);
+    assert_eq!(
+        checkout.checkout,
+        Some(instrukt_core::repository::CheckoutOutcome::Rendered)
     );
 }
 

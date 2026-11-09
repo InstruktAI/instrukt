@@ -1969,3 +1969,108 @@ fn events_filtered_inspection_does_not_check_history_only_redis() {
         .run(f.repo.path(), ["install", "--module", "events", "--check"])
         .success();
 }
+
+fn blueprint_machine() -> TestEnv {
+    let mut env = TestEnv::new();
+    let bin = env.path("blueprint-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for tool in ["git", "kill", "mkdir", "cat", "chmod"] {
+        let found = env
+            .command(std::path::Path::new("/usr/bin/which"), env.home())
+            .arg(tool)
+            .output()
+            .unwrap();
+        assert!(found.status.success());
+        std::os::unix::fs::symlink(
+            String::from_utf8(found.stdout).unwrap().trim(),
+            bin.join(tool),
+        )
+        .unwrap();
+    }
+    env.set_env("PATH", bin.to_str().unwrap());
+    env
+}
+
+fn fake_uv(env: &TestEnv) {
+    let pin = include_str!("../../instrukt-blueprint/graphify.version").trim();
+    let root = env.instrukt_home();
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+[ "$1" = tool ] && [ "$2" = install ] && [ "$3" = 'graphifyy=={pin}' ]
+[ "$UV_TOOL_DIR" = '{root}/tools/uv' ]
+[ "$UV_TOOL_BIN_DIR" = '{root}/tools/bin' ]
+mkdir -p "$UV_TOOL_DIR/graphifyy" "$UV_TOOL_BIN_DIR"
+cat > "$UV_TOOL_BIN_DIR/graphify" <<'TOOL'
+#!/bin/sh
+[ "$1" = --version ] && [ "$PYTHONDONTWRITEBYTECODE" = 1 ] || exit 9
+echo 'graphify {pin}'
+TOOL
+chmod +x "$UV_TOOL_BIN_DIR/graphify"
+"#,
+        root = root.display()
+    );
+    let file = env.path("runtime-bin/uv");
+    std::fs::write(&file, script).unwrap();
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI12
+#[test]
+fn blueprint_installs_private_pin_reuses_it_and_repairs_drift() {
+    let env = blueprint_machine();
+    let _repo = project(&env, "blueprint", "{blueprint: true}");
+    fake_uv(&env);
+    let before = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    env.run(env.home(), ["install", "--check", "--module", "blueprint"])
+        .failure();
+    assert!(before.changed().is_empty(), "{:?}", before.changed());
+    env.run(env.home(), ["install", "--module", "blueprint"])
+        .success();
+    let binary = env.instrukt_home().join("tools/bin/graphify");
+    assert!(binary.is_file());
+    let installed = std::fs::read(&binary).unwrap();
+    // A matching install needs no package operation (nor a working uv).
+    std::fs::write(env.path("runtime-bin/uv"), "#!/bin/sh\nexit 23\n").unwrap();
+    env.run(env.home(), ["install", "--module", "blueprint"])
+        .success();
+    env.run(env.home(), ["install", "--check"]).success();
+    assert!(!env.path("runtime-bin/calls").exists());
+    for tool in ["#!/bin/sh\necho 'graphify 0.0.0'\n", "#!/bin/sh\nexit 8\n"] {
+        std::fs::write(&binary, tool).unwrap();
+        let before = common::LiveGuard::over(vec![], vec![env.home().into()]);
+        env.run(env.home(), ["install", "--check"]).failure();
+        assert!(before.changed().is_empty(), "{:?}", before.changed());
+        fake_uv(&env);
+        env.run(env.home(), ["install"]).success();
+        assert_eq!(installed, std::fs::read(&binary).unwrap());
+    }
+    std::fs::remove_file(&binary).unwrap();
+    env.run(env.home(), ["install"]).success();
+    env.run(env.home(), ["install", "--check"]).success();
+    assert_eq!(installed, std::fs::read(&binary).unwrap());
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI12
+#[test]
+fn blueprint_missing_uv_or_failed_uv_is_unmet_and_disable_retains_tool() {
+    let env = blueprint_machine();
+    let repo = project(&env, "blueprint", "{blueprint: true}");
+    env.run(env.home(), ["install"]).failure();
+    assert!(!env.instrukt_home().join("tools/bin/graphify").exists());
+    fake_uv(&env);
+    std::fs::write(env.path("runtime-bin/uv"), "#!/bin/sh\nexit 23\n").unwrap();
+    env.run(env.home(), ["install"]).failure();
+    fake_uv(&env);
+    env.run(env.home(), ["install"]).success();
+    let binary = env.instrukt_home().join("tools/bin/graphify");
+    let bytes = std::fs::read(&binary).unwrap();
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 4\nproject: blueprint\nmodules: {history: false, blueprint: false}\n",
+    );
+    std::fs::remove_file(env.path("runtime-bin/uv")).unwrap();
+    env.run(env.home(), ["install"]).success();
+    env.run(env.home(), ["install", "--check"]).success();
+    assert_eq!(bytes, std::fs::read(binary).unwrap());
+}

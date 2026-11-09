@@ -507,3 +507,168 @@ fn retracting_the_global_files_keeps_one_the_developer_edited_and_names_it() {
     );
     assert!(!home.join(".codex/AGENTS.md").exists());
 }
+
+fn checkout_machine() -> TestEnv {
+    let mut env = TestEnv::new();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    env.set_env(
+        "PATH",
+        &format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
+    env
+}
+
+fn checkout_project(env: &TestEnv) -> Repo {
+    let repo = env.git_repo("checkout");
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 4\nproject: checkout\nmodules: {history: false}\n",
+    )
+    .write("AGENTS.master.md", "## Purpose\n\nPublished purpose.\n")
+    .write(
+        "docs/project/index.yaml",
+        "expanded: [project/checkout/policy/rules]\n",
+    )
+    .write(
+        "docs/project/policy/rules.md",
+        &snippet("policy", "Published rules", "", &[]),
+    )
+    .write(".gitignore", "AGENTS.md\n");
+    repo.commit("docs: main baseline");
+    env.run(repo.path(), ["hooks", "install"]).success();
+    repo
+}
+
+fn publication_bytes(env: &TestEnv) -> Vec<u8> {
+    std::fs::read(env.instrukt_home().join("state/publication/checkout.yaml")).unwrap()
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE6
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK5
+#[test]
+fn linked_checkout_renders_published_baseline_before_return_without_publication() {
+    let env = checkout_machine();
+    let repo = checkout_project(&env);
+    env.run(repo.path(), ["sync"]).success();
+    let published = publication_bytes(&env);
+    let baseline = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
+    let blocked = instrukt_core::fsx::LockGuard::acquire(
+        &env.instrukt_home().join("locks/docs.lock"),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    let linked = env.path("linked");
+    repo.git([
+        std::ffi::OsStr::new("worktree"),
+        std::ffi::OsStr::new("add"),
+        linked.as_os_str(),
+        std::ffi::OsStr::new("-b"),
+        std::ffi::OsStr::new("proposal"),
+    ]);
+    assert_eq!(std::fs::read(linked.join("AGENTS.md")).unwrap(), baseline);
+    std::fs::write(
+        linked.join("AGENTS.master.md"),
+        "## Purpose\n\nProposed purpose.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        linked.join("docs/project/policy/rules.md"),
+        snippet("policy", "Proposed rules", "", &[]),
+    )
+    .unwrap();
+    env.git(&linked, ["add", "--all"]);
+    env.git(
+        &linked,
+        ["commit", "--quiet", "-m", "docs: propose a new baseline"],
+    );
+    std::fs::remove_file(linked.join("AGENTS.md")).unwrap();
+    env.git(&linked, ["checkout", "--detach"]);
+    assert_eq!(std::fs::read(linked.join("AGENTS.md")).unwrap(), baseline);
+    drop(blocked);
+    assert_eq!(publication_bytes(&env), published);
+    assert_eq!(
+        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
+        baseline
+    );
+    let status = instrukt_core::repository::last_run(
+        &instrukt_core::home::Home::at_user_home(env.home().to_path_buf()),
+        &instrukt_core::ids::ProjectSlug::parse("checkout").unwrap(),
+        instrukt_core::repository::Hook::PostCheckout,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        status.checkout,
+        Some(instrukt_core::repository::CheckoutOutcome::Rendered)
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE7
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK5
+#[test]
+fn primary_checkout_bootstraps_once_and_later_renders_published_state() {
+    let env = checkout_machine();
+    let repo = checkout_project(&env);
+    let own = repo.path().join(".git/hooks/post-checkout");
+    let mut hook = std::fs::read_to_string(&own).unwrap();
+    hook.push_str("echo ran > own-checkout-ran\n");
+    std::fs::write(&own, hook).unwrap();
+    repo.git(["checkout", "-b", "feature"]);
+    assert!(repo.path().join("AGENTS.md").is_file());
+    assert!(repo.path().join("own-checkout-ran").is_file());
+    let published = publication_bytes(&env);
+    let baseline = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
+    repo.write("docs/project/policy/rules.md", "invalid proposed snippet");
+    std::fs::remove_file(repo.path().join("AGENTS.md")).unwrap();
+    repo.git(["checkout", "-b", "another"]);
+    assert_eq!(
+        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
+        baseline
+    );
+    assert_eq!(publication_bytes(&env), published);
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE7
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK5
+#[test]
+fn unpublished_linked_checkout_reports_prerequisite_without_publishing_or_failing_git() {
+    let env = checkout_machine();
+    let repo = checkout_project(&env);
+    let linked = env.path("unpublished");
+    repo.git([
+        std::ffi::OsStr::new("worktree"),
+        std::ffi::OsStr::new("add"),
+        linked.as_os_str(),
+        std::ffi::OsStr::new("-b"),
+        std::ffi::OsStr::new("proposal"),
+    ]);
+    assert!(!linked.join("AGENTS.md").exists());
+    assert!(
+        !env.instrukt_home()
+            .join("state/publication/checkout.yaml")
+            .exists()
+    );
+    let result = env
+        .run(&linked, ["hooks", "run", "post-checkout"])
+        .success();
+    assert!(!result.get_output().stderr.is_empty());
+    let status = instrukt_core::repository::last_run(
+        &instrukt_core::home::Home::at_user_home(env.home().to_path_buf()),
+        &instrukt_core::ids::ProjectSlug::parse("checkout").unwrap(),
+        instrukt_core::repository::Hook::PostCheckout,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        status.checkout,
+        Some(instrukt_core::repository::CheckoutOutcome::Failed { .. })
+    ));
+    let status = env.run(&linked, ["hooks", "status"]).success();
+    insta::assert_snapshot!(stdout(&env, &status));
+}

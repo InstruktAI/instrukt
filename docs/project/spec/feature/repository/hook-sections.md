@@ -1,5 +1,5 @@
 ---
-description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`ing a command, never blocking git; post-hooks start publication, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
+description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`ing a command; checkout renders before return and other post-hooks start publication detached, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
 delivered_by: [instrukt-first-build]
 ---
 # Hook Sections — Spec
@@ -9,7 +9,7 @@ delivered_by: [instrukt-first-build]
 Git hooks are shared: a project, its hook manager and other tools all put
 behaviour there. instrukt owns one marked section per hook file it uses and
 touches nothing else. Its post-hook sections keep publication current after
-every change to main — commit, merge, rebase or checkout — by starting a sync
+every change to main — commit, merge or rebase — by starting a sync
 and returning at once. When blueprint is enabled, its hook sections hand
 pushes to main and pulls advancing main to blueprint
 (`project/instrukt/spec/feature/blueprint/graph-generation`). instrukt adds no lint or test hooks;
@@ -24,19 +24,24 @@ projects keep their own tooling.
 | `post-commit` | always | starts `instrukt sync` detached |
 | `post-merge` | always | starts `instrukt sync` detached; when a pull or runner fast-forward advances main to its fetched upstream head and blueprint is enabled, hands the revision to blueprint |
 | `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
-| `post-checkout` | always | starts `instrukt sync` detached |
+| `post-checkout` | always | renders project entrypoints in this checkout from published state; an unpublished primary checkout bootstraps full publication from main once; a previously published primary checkout on main also retains its detached sync trigger |
 | `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |
 
 - Graph-generation policy belongs to
   `project/instrukt/spec/feature/blueprint/graph-generation`; each
   handoff starts generation detached. Local commits and unrelated merges
   are not graph-generation triggers.
+- Checkout rendering is the synchronous entrypoint-only operation in
+  `project/instrukt/spec/feature/publication/agent-entrypoints`, including its
+  primary-checkout bootstrap and missing-publication behavior. It runs on every
+  branch and in linked worktrees; other post-hooks retain their main guard.
 - A started sync runs under the publication lock and does nothing when main
   equals the published commit
   (`project/instrukt/spec/feature/publication/project-publication`), so
   hooks firing on a branch, in a linked worktree or several times in a row
   cost nothing.
-- A hook run returns without waiting for what it started and never fails the
+- Publication and graph generation started by other hooks stay detached.
+  Checkout rendering completes before return; no hook ever fails the
   git operation: a missing `instrukt` binary, a refused sync or a failed start
   leaves git's result unchanged.
 
@@ -124,6 +129,16 @@ Given a developer's repository with instrukt's hooks installed beside their own 
 When the developer removes instrukt's hooks
 Then instrukt's sections are absent
 And the developer's own hook content and hook files remain unchanged
+```
+
+### UC-HK5: Checkout gives each worktree its project instructions
+
+```gherkin
+Given a repository has instrukt post-checkout installed beside its own hook content
+When git checks out a branch or adds a linked worktree
+Then the checkout receives the entrypoints specified by the agent-entrypoints contract before git returns
+And the developer's own hook still runs
+And a rendering failure leaves git's result unchanged and is reported
 ```
 
 ## Known caveats

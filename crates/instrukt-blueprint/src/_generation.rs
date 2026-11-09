@@ -503,8 +503,9 @@ fn map(
         Some(graph) => graph,
         None => {
             let engine = Engine::from_setting(
+                home,
                 Configuration::load(home, Some(&queued.project_root))?.blueprint_engine()?,
-            );
+            )?;
             std::fs::create_dir_all(&files.dir).map_err(|source| GenerationError::Read {
                 path: files.dir.clone(),
                 source,

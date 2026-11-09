@@ -20,6 +20,7 @@ hex.workspace = true
 form_urlencoded.workspace = true
 tiny_http.workspace = true
 instrukt-core.workspace = true
+instrukt-blueprint.workspace = true
 jiff.workspace = true
 redis.workspace = true
 serde.workspace = true

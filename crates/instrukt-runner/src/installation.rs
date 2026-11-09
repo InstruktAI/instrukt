@@ -7,6 +7,7 @@ mod _redis;
 mod _services;
 use crate::install::{Scheduler, WakeUp};
 use _demand::Demand;
+use instrukt_blueprint::{Graphify, GraphifyState, graphify_version};
 use instrukt_core::{
     config::{Configuration, Env, Module},
     fsx::LockGuard,
@@ -52,6 +53,8 @@ pub enum ResourceKind {
     Receiver,
     #[serde(rename = "local Redis")]
     LocalRedis,
+    #[serde(rename = "graphify")]
+    Graphify,
 }
 impl ResourceKind {
     pub fn name(self) -> &'static str {
@@ -60,6 +63,7 @@ impl ResourceKind {
             Self::Redis => "redis",
             Self::Receiver => "receiver",
             Self::LocalRedis => "local Redis",
+            Self::Graphify => "graphify",
         }
     }
 }
@@ -202,19 +206,25 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             }
         }
     }
-    let mut owned = _services::Owned::load(request.home)
-        .map_err(|e| InstallationError::Ownership(e.to_string()))?;
-    if !request.check {
-        owned
-            .persist_migration(request.home)
-            .map_err(|e| InstallationError::Ownership(e.to_string()))?;
-    }
     let global = Configuration::load_global(request.home)?;
     if let Some(notice) =
         instrukt_core::config::inspect_layer(request.home, &instrukt_core::config::Layer::Global)?
             .migration
     {
         report.notices.push(notice);
+    }
+    if request.module.is_none() || request.module == Some(Module::Blueprint) {
+        graphify(request, &demand.blueprint, &mut report);
+    }
+    if request.module == Some(Module::Blueprint) {
+        return Ok(report);
+    }
+    let mut owned = _services::Owned::load(request.home)
+        .map_err(|e| InstallationError::Ownership(e.to_string()))?;
+    if !request.check {
+        owned
+            .persist_migration(request.home)
+            .map_err(|e| InstallationError::Ownership(e.to_string()))?;
     }
     if request.module != Some(Module::History)
         && (request.module != Some(Module::Events) || !demand.events.is_empty())
@@ -270,6 +280,48 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     Ok(report)
 }
+fn graphify(request: &Request<'_>, projects: &[String], report: &mut Report) {
+    if projects.is_empty() {
+        return;
+    }
+    let tool = match Graphify::new(request.home) {
+        Ok(tool) => tool,
+        Err(error) => {
+            report.finding("Graphify", error);
+            return;
+        }
+    };
+    let state = tool.inspect();
+    let disposition = match state {
+        GraphifyState::Ready => Disposition::Reused,
+        other if request.check => {
+            report.finding(
+                "Graphify",
+                format!(
+                    "expected graphify {}: {other:?}; run `instrukt install`",
+                    graphify_version()
+                ),
+            );
+            Disposition::Unmet
+        }
+        other => match tool.install() {
+            Ok(()) if other == GraphifyState::Missing => Disposition::Installed,
+            Ok(()) => Disposition::Repaired,
+            Err(error) => {
+                report.finding("Graphify", error);
+                Disposition::Unmet
+            }
+        },
+    };
+    report.resource(
+        ResourceKind::Graphify,
+        disposition,
+        vec![tool.binary()],
+        projects,
+        format!("release pin {}", graphify_version()),
+    );
+}
+
 fn receiver(
     request: &Request<'_>,
     owned: &mut _services::Owned,

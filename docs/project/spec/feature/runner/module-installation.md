@@ -33,6 +33,7 @@ unused; withdrawal waits for a complete demand read.
 | Effective demand | Infrastructure and prerequisites |
 | --- | --- |
 | Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
+| Blueprint enabled | Release-pinned Graphify in the instrukt home via `uv tool install graphifyy==<pin>`; uv is an unmet prerequisite when installation is needed and uv is absent. No wake-up, Redis or receiver solely for blueprint. |
 | History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no project sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
@@ -56,8 +57,8 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt config get [<path>] [--global] [--json]` and `instrukt config get --revision [--global]` | Read settings and revision with credentials redacted or references preserved. |
 | `instrukt config patch --revision <rev> [--global] --from-file <file>` | Validate and atomically record desired configuration; standard input and `--yaml` retain their existing alternatives. Installs nothing. |
 | `instrukt config validate [--global]` | Validate layer, effective module/runtime prerequisites and source references; names findings without exposing secret values. |
-| `instrukt install [--module todos\|events\|history]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
-| `instrukt install --check [--module todos\|events\|history]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
+| `instrukt install [--module todos\|events\|history\|blueprint]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
+| `instrukt install --check [--module todos\|events\|history\|blueprint]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
 | `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures and receiver placement/health; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
@@ -84,6 +85,19 @@ owned and can be reconciled or withdrawn.
 Reports name installed, reused, repaired, withdrawn, externally supplied or
 unmet resources, their paths/units and demanding project identities, without
 expanded credentials. A failed prerequisite never produces an overall success.
+
+### Graphify installation
+
+For blueprint demand, use the lifecycle and pin owned by
+`project/instrukt/spec/feature/blueprint/graph-engine`. Installation reuses a
+matching tool, installs a missing one and repairs a different or broken version;
+it verifies the installed version before reporting success. uv's tool and binary
+directories both remain inside the instrukt home. A missing uv or failed install
+is an unmet prerequisite with its repair door, never a successful installation.
+`install --check` detects a missing, broken or differently versioned home-owned
+binary without installing, repairing, creating bytecode or changing files.
+Disabling blueprint installs nothing and retains its existing tool; it creates
+no background infrastructure demand.
 
 ### GitHub reflection readiness
 
@@ -343,6 +357,22 @@ When installation converges the complete demand set
 Then only unneeded instrukt-owned units are stopped and unregistered
 And durable work, Redis data, credentials and pending activations remain
 And foreign services and shared executables are unchanged
+```
+
+### UC-MI12: Converge the release-pinned blueprint engine without host dependence
+
+```gherkin
+Given an adopted project enables only blueprint with other modules explicitly off
+When installation converges with uv available
+Then the pinned Graphify is installed with uv's tool and binary directories inside the instrukt home
+And repeating installation reuses a matching version and repairs a missing, broken or drifted version
+And no wake-up, Redis or receiver is installed
+When installation is checked with a missing, broken or drifted Graphify
+Then it reports unmet demand and changes no files
+When Graphify needs installation and uv is absent or fails
+Then installation reports the unmet prerequisite and its repair door
+But with blueprint disabled
+Then Graphify is neither installed nor required and an existing tool is retained
 ```
 
 ## Known caveats

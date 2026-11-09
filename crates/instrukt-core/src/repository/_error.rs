@@ -70,6 +70,8 @@ pub enum RepositoryError {
         path: PathBuf,
         source: serde_yaml_ng::Error,
     },
+    #[error("{path} has hook-record version {version}; upgrade instrukt before reading it")]
+    HookRecordVersion { path: PathBuf, version: u32 },
     #[error("cannot render the hook run record: {0}")]
     RenderRecord(serde_yaml_ng::Error),
     #[error("cannot start {program}: {source}")]

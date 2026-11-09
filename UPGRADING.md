@@ -2,6 +2,21 @@
 
 ## 0.1.0
 
+### Blueprint tool and checkout instructions
+
+For projects with blueprint enabled, make `uv` available on the computer, then
+run `instrukt install --module blueprint` followed by `instrukt install --check
+--module blueprint`. The shipped adapter now uses the release-pinned Graphify
+inside the selected instrukt home. A host `graphify` on PATH no longer supplies
+the shipped adapter; existing configured `blueprint.engine` commands retain
+their command behavior.
+
+Run `instrukt hooks install` in each adopted repository to retain its
+post-checkout section. Existing published projects render their baseline into
+new linked worktrees. For a previously created worktree without an entrypoint,
+run `instrukt hooks run post-checkout` there. An unpublished linked worktree
+requires one `instrukt sync` from its primary checkout first.
+
 ### GitHub App identities
 
 Existing installations using `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`

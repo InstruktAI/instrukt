@@ -253,6 +253,9 @@ fn run_hook(args: &RunArgs, ctx: &Ctx) -> anyhow::Result<ExitCode> {
     })?;
     if let Err(err) = start_hook_run(hook, args, ctx) {
         tracing::warn!(event = "hook_run_failed", hook = %hook, error = %format!("{err:#}"));
+        if hook == Hook::PostCheckout {
+            eprintln!("instrukt post-checkout: {err:#}");
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -311,6 +314,18 @@ fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
 
 fn last_run_text(record: &HookRunRecord) -> String {
     let mut parts = Vec::new();
+    match &record.checkout {
+        Some(repository::CheckoutOutcome::Rendered) => {
+            parts.push("checkout entrypoints rendered".to_owned())
+        }
+        Some(repository::CheckoutOutcome::Bootstrapped) => {
+            parts.push("checkout publication bootstrapped".to_owned())
+        }
+        Some(repository::CheckoutOutcome::Failed { error }) => {
+            parts.push(format!("checkout rendering failed: {error}"))
+        }
+        None => {}
+    }
     match &record.sync {
         None => {}
         Some(SyncOutcome::Running) => parts.push("sync running".to_owned()),

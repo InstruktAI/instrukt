@@ -83,7 +83,7 @@ use-case bindings that trace joins with the graph, or the engine's extraction.
 
 ## Canonical fields
 
-“Main” means the repository default branch. The machine generates graphs on pushes and pulls advancing that branch, never per local commit. The user installs the engine; a missing engine reports what to install and instrukt installs nothing. `instrukt blueprint status` shows the last generation outcome.
+“Main” means the repository default branch. The machine generates graphs on pushes and pulls advancing that branch, never per local commit. The shipped Graphify adapter uses the release-pinned home-owned installation described by `project/instrukt/spec/feature/blueprint/graph-engine`; module installation converges it. A configured engine command remains developer-supplied. `instrukt blueprint status` shows the last generation outcome.
 
 ### Aggregates
 

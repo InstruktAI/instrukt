@@ -172,13 +172,13 @@ fn with_no_graph_or_the_module_off_path_answers_as_blast_radius_does() {
     insta::assert_snapshot!(String::from_utf8_lossy(&assert.get_output().stderr), @"instrukt: the blueprint module is off; switch it on with `modules.blueprint: true` in instrukt.yaml");
 }
 
-/// Puts a stand-in for Graphify, the shipped adapter's program, on the
-/// machine's `PATH`: it prints the question it was asked, the arguments it
+/// Installs a process-line Graphify stand-in in this temporary instrukt home's
+/// owned binary directory: it prints the question it was asked, the arguments it
 /// received and how many nodes the graph it was given holds.
-fn with_graphify(env: &mut TestEnv) {
+fn with_graphify(env: &TestEnv) {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let bin = env.path("engine-bin");
+    let bin = env.instrukt_home().join("tools/bin");
     std::fs::create_dir_all(&bin).unwrap();
     let graphify = bin.join("graphify");
     std::fs::write(
@@ -195,19 +195,13 @@ fn with_graphify(env: &mut TestEnv) {
     )
     .unwrap();
     std::fs::set_permissions(&graphify, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    env.set_env("PATH", &path);
 }
 
 // spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
-    let mut env = TestEnv::new();
-    with_graphify(&mut env);
+    let env = TestEnv::new();
+    with_graphify(&env);
     let repo = project(&env, true);
     seed(&env, mapped());
     let out = stdout(
@@ -231,8 +225,8 @@ fn a_free_query_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
 // spec: project/instrukt/spec/feature/blueprint/graph-navigation UC-BN2
 #[test]
 fn an_explanation_is_forwarded_to_the_shipped_engine_over_the_latest_graph() {
-    let mut env = TestEnv::new();
-    with_graphify(&mut env);
+    let env = TestEnv::new();
+    with_graphify(&env);
     let repo = project(&env, true);
     seed(&env, mapped());
     let out = stdout(

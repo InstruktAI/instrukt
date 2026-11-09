@@ -74,7 +74,7 @@ unresolved.
   project's authored entry. It holds only `## Purpose`. A root master carrying
   `## Required reads` is a finding that refuses the sync, naming the master
   and `docs/project/index.yaml` as the place that selects what is included.
-- **The root `AGENTS.md`**, written in the project's primary worktree when the
+- **The root `AGENTS.md`**, written in every checkout, including linked worktrees, when the
   root master exists in the committed tree: the master's `## Purpose`,
   followed by the rendering of `docs/project/index.yaml` (`expanded`, then
   `listed`, then the project's triggered procedures), as above.
@@ -88,6 +88,27 @@ unresolved.
   finds it gone.
 - An `AGENTS.md` is a generated file; an edit to it is overwritten by the next
   sync that publishes.
+
+### Checkout rendering
+
+The installed `post-checkout` hook renders the checkout's project entrypoints
+from the already-published state. This uses the purpose, masters, project
+selection, configuration and snippets of the published revision, never proposed
+or dirty branch documentation. It does not publish, update publication records,
+write global agent files or refresh editor schemas in a linked worktree.
+Preparation reads its proposed documentation through `--target`.
+Checkout rendering shares a lock with publication's live output application, so
+its recorded revision and published indexes form one coherent view and its
+primary-checkout writes cannot overwrite a newer publication. It does not take
+the long-lived publication preparation lock; checkout during pull/rebase does
+not wait for that preparation.
+
+In the primary checkout only, if the project has not published yet, checkout
+runs the full publication once from canonical main, then renders its entrypoints.
+Later checkouts render from existing publication; primary-main checkouts also
+retain their existing detached sync trigger. Publication remains tied to main. Checkout rendering completes before the hook returns so an agent opened
+immediately sees its entrypoint. Failure leaves git's operation successful and
+reports the cause and repair door; it never publishes a linked worktree's docs.
 
 ### Global agent files
 
@@ -198,6 +219,26 @@ When publication runs for the project
 Then the domain is published and the developer is told it has no index
 And the agents' global instructions do not name it
 And the domain's snippets are still found by listing that domain
+```
+
+### UC-AE6: An agent in a linked worktree receives the published baseline
+
+```gherkin
+Given a project has published its main revision and installed instrukt hooks
+When a linked worktree is checked out on a branch with different proposed documentation
+Then that checkout has the project entrypoints rendered from the published revision
+And publication state, global agent files and primary checkout outputs are unchanged
+```
+
+### UC-AE7: A fresh primary checkout bootstraps publication once
+
+```gherkin
+Given a primary checkout has installed instrukt hooks but no project publication
+When checkout runs
+Then canonical main is published and its project entrypoints are present before git returns
+When a later checkout occurs without advancing main
+Then existing published state supplies the entrypoints and no publication runs again
+But a linked worktree with no publication reports the missing prerequisite without publishing
 ```
 
 ## Known caveats

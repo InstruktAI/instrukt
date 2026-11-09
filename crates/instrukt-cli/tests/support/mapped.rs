@@ -51,20 +51,11 @@ pub fn machine_without_graphify() -> TestEnv {
     let mut env = TestEnv::new();
     let tools = env.path("tools");
     std::fs::create_dir_all(&tools).unwrap();
-    let git = which("git");
-    std::os::unix::fs::symlink(&git, tools.join("git")).unwrap();
-    let path = format!(
-        "{}:{}:/usr/bin:/bin",
-        tools.display(),
-        instrukt_dir().display()
-    );
-    for dir in std::env::split_paths(&path) {
-        assert!(
-            !dir.join("graphify").exists(),
-            "the test needs a PATH without graphify, but {} has one",
-            dir.display()
-        );
+    for tool in ["git", "kill", "cat", "rm", "mkdir", "mktemp", "dirname"] {
+        std::os::unix::fs::symlink(which(tool), tools.join(tool)).unwrap();
     }
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_instrukt"), tools.join("instrukt")).unwrap();
+    let path = tools.display().to_string();
     env.set_env("PATH", &path);
     env
 }

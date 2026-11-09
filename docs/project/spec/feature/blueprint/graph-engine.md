@@ -36,6 +36,25 @@ A graph is one JSON object:
 - Nodes or links that are not objects, or that lack a required member, are
   skipped by answers rather than refusing the graph.
 
+### Shipped Graphify lifecycle
+
+The shipped adapter uses the external PyPI package `graphifyy`. One version
+file owned by the blueprint module pins it per instrukt release. Installation
+converges that version under the instrukt home; its tool environment and binary
+directories are private to that home, as specified by
+`project/instrukt/spec/feature/configuration/owned-files`.
+The adapter invokes that installed binary by its absolute path for generation,
+query and explain; a `graphify` on `PATH` never substitutes for it. A missing
+binary reports the `instrukt install` repair door. A configured engine command
+continues using the existing command contract below.
+
+CI installs the version from the same file and exercises the real tool's
+code-only generation through the adapter and the node-link contract. Ordinary
+tests fake uv and Graphify only at the process boundary. Renovate updates Cargo
+dependencies, GitHub Actions SHA pins and the Graphify pin (PyPI datasource);
+dependency PRs merge automatically after required CI checks pass, without a
+human technical approval gate (C16's dependency policy).
+
 ### Engine selection
 
 `blueprint.engine` selects the engine
@@ -69,6 +88,18 @@ And agents ask the same questions they would ask of the shipped engine
 
 Extension of UC-BE1: invalid engine output is never served as the project
 map; agents continue receiving answers from the previous complete map.
+
+### UC-BE2: The shipped adapter uses only the release-owned installation
+
+```gherkin
+Given a blueprint-enabled project and the release-pinned Graphify installed in its instrukt home
+And another graphify executable is available on PATH
+When a revision is mapped or an engine question is asked
+Then the adapter runs the home-owned binary and never the PATH executable
+And its code-only output satisfies the node-link contract
+But when the home-owned binary is missing
+Then generation fails with the instrukt install repair door and no PATH substitute runs
+```
 
 ## Known caveats
 

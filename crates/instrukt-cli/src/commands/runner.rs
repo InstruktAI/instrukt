@@ -267,7 +267,7 @@ pub struct InstallArgs {
     #[arg(long)]
     check: bool,
     /// Limit convergence to an enabled module's dependencies. Full demand still protects shared resources.
-    #[arg(long, value_parser = ["todos", "events", "history"])]
+    #[arg(long, value_parser = ["todos", "events", "history", "blueprint"])]
     module: Option<String>,
     /// Render per-resource results and findings as JSON.
     #[arg(long)]

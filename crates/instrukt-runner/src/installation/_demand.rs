@@ -16,6 +16,7 @@ pub(super) struct WorkDemand {
 pub(super) struct Demand {
     pub work: Vec<WorkDemand>,
     pub todos: Vec<String>,
+    pub blueprint: Vec<String>,
     pub events: Vec<String>,
     pub history: Vec<String>,
     pub history_owned_redis: Vec<String>,
@@ -40,6 +41,7 @@ pub(super) fn read(
     let mut demand = Demand {
         work: vec![],
         todos: vec![],
+        blueprint: vec![],
         events: vec![],
         history: vec![],
         history_owned_redis: vec![],
@@ -82,6 +84,9 @@ pub(super) fn read(
                 .unwrap_or(false)
             {
                 demand.redis_references.push(record.project.to_string());
+            }
+            if config.module_enabled(Module::Blueprint)? {
+                demand.blueprint.push(record.project.to_string());
             }
             let todos = config.module_enabled(Module::Todos)?;
             let events = config.module_enabled(Module::Events)?;

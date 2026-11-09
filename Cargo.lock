@@ -928,6 +928,7 @@ dependencies = [
  "hex",
  "hmac",
  "insta",
+ "instrukt-blueprint",
  "instrukt-core",
  "jiff",
  "notify",

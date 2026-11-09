@@ -183,10 +183,11 @@ fn ask(
     let config =
         Configuration::load(&ctx.home, root).context("cannot read the blueprint engine setting")?;
     let engine = Engine::from_setting(
+        &ctx.home,
         config
             .blueprint_engine()
             .context("cannot read the blueprint engine setting")?,
-    );
+    )?;
     if !engine.offers(question) {
         ctx.out.line(&format!(
             "the configured engine does not offer `{}`",
