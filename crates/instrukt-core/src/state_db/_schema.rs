@@ -671,11 +671,35 @@ UPDATE runtime_bindings SET request=json_set(request,'$.title',json_extract(requ
 UPDATE procedure_responsibilities SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
 UPDATE procedure_generations SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
 UPDATE manual_standing_reservations SET request=json_set(request,'$.title',json_extract(request,'$.key')) WHERE request IS NOT NULL AND (json_type(request,'$.title') IS NULL OR json_type(request,'$.title')='null');
-UPDATE session_bindings SET evidence=json_set(evidence,'$.native_placement.title',coalesce(display_title,json_extract(evidence,'$.native_placement.key')))
+UPDATE session_bindings SET evidence=json_set(evidence,'$.native_placement.title',coalesce(
+ display_title,
+ (SELECT coalesce(json_extract(r.request,'$.title'),r.display_title)
+  FROM runtime_bindings r
+  WHERE r.semantic_key=json_extract(evidence,'$.native_placement.key') AND r.session=json_extract(evidence,'$.native_placement.session')),
+ CASE
+
+ WHEN length(json_extract(evidence,'$.native_placement.branch'))>8 AND substr(json_extract(evidence,'$.native_placement.branch'),-8)='/prepare'
+ THEN json_extract(evidence,'$.role') || ' · ' || substr(json_extract(evidence,'$.native_placement.branch'),1,length(json_extract(evidence,'$.native_placement.branch'))-8) || ' · ' || json_extract(evidence,'$.native_placement.key')
+ WHEN length(json_extract(evidence,'$.native_placement.branch'))>5 AND substr(json_extract(evidence,'$.native_placement.branch'),-5)='/work'
+ THEN json_extract(evidence,'$.role') || ' · ' || substr(json_extract(evidence,'$.native_placement.branch'),1,length(json_extract(evidence,'$.native_placement.branch'))-5) || ' · ' || json_extract(evidence,'$.native_placement.key')
+ END))
 WHERE json_type(evidence,'$.native_placement')='object' AND (json_type(evidence,'$.native_placement.title') IS NULL OR json_type(evidence,'$.native_placement.title')='null');
-UPDATE session_bindings SET display_title=json_extract(evidence,'$.native_placement.title') WHERE json_type(evidence,'$.native_placement')='object';
 UPDATE listing_copies SET record=json_set(record,'$.schema',3,'$.bindings',json((SELECT json_group_array(json(
  CASE WHEN json_type(value,'$.native_placement')='object' AND (json_type(value,'$.native_placement.title') IS NULL OR json_type(value,'$.native_placement.title')='null')
- THEN json_set(value,'$.native_placement.title',json_extract(value,'$.native_placement.key')) ELSE value END
+ THEN json_set(value,'$.native_placement.title',coalesce((SELECT coalesce(json_extract(r.request,'$.title'),r.display_title)
+  FROM runtime_bindings r
+  WHERE r.semantic_key=json_extract(value,'$.native_placement.key') AND r.session=json_extract(value,'$.native_placement.session')),
+ CASE
+
+ WHEN length(json_extract(value,'$.native_placement.branch'))>8 AND substr(json_extract(value,'$.native_placement.branch'),-8)='/prepare'
+ THEN json_extract(value,'$.role') || ' · ' || substr(json_extract(value,'$.native_placement.branch'),1,length(json_extract(value,'$.native_placement.branch'))-8) || ' · ' || json_extract(value,'$.native_placement.key')
+ WHEN length(json_extract(value,'$.native_placement.branch'))>5 AND substr(json_extract(value,'$.native_placement.branch'),-5)='/work'
+ THEN json_extract(value,'$.role') || ' · ' || substr(json_extract(value,'$.native_placement.branch'),1,length(json_extract(value,'$.native_placement.branch'))-5) || ' · ' || json_extract(value,'$.native_placement.key')
+ END)) ELSE value END
 )) FROM json_each(listing_copies.record,'$.bindings')))) WHERE json_extract(record,'$.schema')<=2;
+CREATE TEMP TABLE native_title_recovery_guard(title TEXT NOT NULL CHECK(length(title)>0));
+INSERT INTO native_title_recovery_guard SELECT json_extract(evidence,'$.native_placement.title') FROM session_bindings WHERE json_type(evidence,'$.native_placement')='object';
+INSERT INTO native_title_recovery_guard SELECT json_extract(value,'$.native_placement.title') FROM listing_copies,json_each(listing_copies.record,'$.bindings') WHERE json_type(value,'$.native_placement')='object';
+DROP TABLE native_title_recovery_guard;
+UPDATE session_bindings SET display_title=json_extract(evidence,'$.native_placement.title') WHERE json_type(evidence,'$.native_placement')='object';
 "#;

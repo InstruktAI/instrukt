@@ -2034,8 +2034,12 @@ fn old_remote_native_placement_is_converted_before_record_mutation() {
         "Continue after upgrade.",
     ]);
     let current = latest_envelope(&project.github);
-    assert_eq!(
-        current["record"]["bindings"][0]["native_placement"]["title"],
-        key
+    insta::assert_snapshot!(
+        "converted-old-native-placement-title",
+        redact(
+            current["record"]["bindings"][0]["native_placement"]["title"]
+                .as_str()
+                .unwrap()
+        )
     );
 }

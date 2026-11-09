@@ -262,8 +262,13 @@ captured display title. The state migration normalizes earlier requests without
 a title to their original key before domain code reads them; retry uses that
 captured key-only title. Deliberate driver placement evidence includes the exact
 native display title, retained with the work binding and supplied on later
-pickup even after a todo rename. The CLI entry boundary converts an older
-public placement proof that omitted its title to a captured whole-key title;
+pickup even after a todo rename. Older deliberate placements recover their
+title from retained evidence first, including a verified runtime binding even
+when its request is unknown, then from the recorded role and original phase
+branch. The current todo slug supplies no historical title evidence. Missing
+recovery facts refuse conversion; omission alone establishes no captured title. The CLI entry boundary converts an older
+public placement proof that omitted its title from its role and original phase
+branch, while retaining the whole-key native allowance;
 domain and stored placement evidence always carry the current required field.
 Bound standing delivery verifies the captured
 full title or the whole legacy key before accepting more events. No startup path

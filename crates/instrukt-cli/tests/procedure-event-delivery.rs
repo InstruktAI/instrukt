@@ -566,6 +566,18 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     // Schema 9's producer persisted this same semantic effort plus native options.
     // The caller is interrupted before it can start or bind a native thread.
     let db = r.computer.db();
+    let original_fields: serde_json::Value =
+        serde_json::from_slice(&first.get_output().stdout).unwrap();
+    let mut old: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/manual-reservation-v14.json")).unwrap();
+    for (field, value) in old.as_object_mut().unwrap() {
+        *value = original_fields[field].clone();
+    }
+    db.execute(
+        "UPDATE manual_standing_reservations SET request=?1",
+        [old.to_string()],
+    )
+    .unwrap();
     db.execute_batch("DROP TABLE conversation_relay_positions; DROP TABLE conversation_links;")
         .unwrap();
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
@@ -578,6 +590,19 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     let replay: instrukt_runner::standing::ManualReservation =
         serde_json::from_slice(&replay.get_output().stdout).unwrap();
     assert!(!replay.start_allowed);
+    assert_eq!(replay.title, original.key);
+    let normalized: String = r
+        .computer
+        .db()
+        .query_row(
+            "SELECT request FROM manual_standing_reservations",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let normalized: serde_json::Value = serde_json::from_str(&normalized).unwrap();
+    assert_eq!(normalized["title"], original.key);
+
     assert_eq!(
         r.computer
             .db()

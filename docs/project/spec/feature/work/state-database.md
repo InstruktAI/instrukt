@@ -105,9 +105,10 @@ with a required captured title. Migration fills a missing or null title with
 the request's original key and preserves supplied titles. It covers unresolved
 starts, bound requests, current and retired standing assignments, and manual
 reservations. Native driver placement evidence likewise retains its captured
-title; earlier placements normalize from recorded display-title evidence, or
-their original key when no display title was recorded. GitHub record conversion
-normalizes older placement evidence before current work records are consumed.
+title; earlier placements recover it from retained title evidence, including
+verified runtime bindings, or from their recorded role and original phase branch.
+An omitted placement title does not establish a key-only native title. Remote
+conversion is owned by `project/instrukt/spec/feature/work/github-record`.
 
 ### Work tables
 

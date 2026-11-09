@@ -206,12 +206,21 @@ pub(crate) fn parse_record_comment(
             && let Some(bindings) = value["record"]["bindings"].as_array_mut()
         {
             for binding in bindings {
+                let role = binding
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
                 if let Some(placement) = binding
                     .get_mut("native_placement")
                     .filter(|v| v.is_object())
                     && placement.get("title").is_none_or(Value::is_null)
                 {
-                    placement["title"] = placement["key"].clone();
+                    let title = role.as_deref()
+                        .zip(placement.get("branch").and_then(Value::as_str))
+                        .zip(placement.get("key").and_then(Value::as_str))
+                        .and_then(|((role, branch), key)| instrukt_runner::runtime::legacy_driver_title(role, branch, key))
+                        .ok_or_else(|| invalid("legacy native placement lacks retained title or original role/phase evidence; restore that evidence before retrying".into()))?;
+                    placement["title"] = title.into();
                 }
             }
         }

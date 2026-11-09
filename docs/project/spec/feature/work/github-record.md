@@ -253,8 +253,11 @@ can continue. A known incompatible record is not treated as an ordinary offline
 refresh failure permitting a stale write.
 
 Native driver placement evidence carries its captured display title. Supported
-older record conversion supplies a missing placement title from its original key
-before deserializing the current work record; existing captured titles survive.
+older record conversion preserves retained title evidence or recovers the old
+producer's readable title from the binding's role and original phase branch before
+deserializing the current work record. It uses no current todo slug, treats no
+omission as proof of a key-only native title, and refuses missing recovery facts.
+The whole-key native-title allowance remains with session continuity.
 
 A supported older version is converted to the current in-memory record before
 consumption or mutation. Conversion preserves durable identity, relationships,
