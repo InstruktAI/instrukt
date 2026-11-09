@@ -99,8 +99,10 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3
 #[test]
-fn a_version_one_agents_file_migrates_edited_choices_to_neutral_effort() {
+fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_write() {
     let env = TestEnv::new();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
     let file = env.instrukt_home().join("agents.yaml");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let old = CONFIG
@@ -108,6 +110,26 @@ fn a_version_one_agents_file_migrates_edited_choices_to_neutral_effort() {
         .replace("effort: high", "reasoningEffort: high");
     std::fs::write(&file, &old).unwrap();
     let output = env.run(env.home(), ["config", "show", "agents"]).success();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), old);
+    let revision = env
+        .run(env.home(), ["config", "get", "--global", "--revision"])
+        .success();
+    let revision = String::from_utf8_lossy(&revision.get_output().stdout)
+        .trim()
+        .to_owned();
+    env.run(
+        env.home(),
+        [
+            "config",
+            "patch",
+            "--global",
+            "--revision",
+            &revision,
+            "--yaml",
+            "ticks: off",
+        ],
+    )
+    .success();
     let current: Agents = Agents::parse(&std::fs::read_to_string(file).unwrap()).unwrap();
     assert_eq!(
         current.select(Some("builder"), None, None).unwrap()[0].effort,

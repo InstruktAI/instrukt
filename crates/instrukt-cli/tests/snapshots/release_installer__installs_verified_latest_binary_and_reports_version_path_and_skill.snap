@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/release-installer.rs
+expression: "String::from_utf8_lossy(&output.stdout).replace(release.env.home().to_str().unwrap(),\"[HOME]\")"
+---
+instrukt 0.1.0 installed at [HOME]/.local/bin/instrukt
+Add the directory to PATH: export PATH="[HOME]/.local/bin:$PATH"
+Next: instrukt -h
+npx skills add InstruktAI/instrukt@v0.1.0 --skill instrukt -g -y

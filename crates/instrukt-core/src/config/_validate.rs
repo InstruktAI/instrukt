@@ -10,7 +10,7 @@ use super::_effective::effective_value;
 use super::_error::{ConfigError, Finding, FindingKind};
 use super::_features::{Feature, Unavailable, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
-use super::_layer::{Layer, read, read_usable, require_usable};
+use super::_layer::{Layer, read_usable};
 use super::_module::Module;
 use super::_runtime::Runtime;
 use super::_schema::{self, CURRENT_SCHEMA_VERSION, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
@@ -22,6 +22,15 @@ pub(crate) fn findings_for(
     layer: &Layer,
     path: &Path,
     value: &Value,
+) -> Result<Vec<Finding>, ConfigError> {
+    findings_in_scope(home, layer, path, value, true)
+}
+fn findings_in_scope(
+    home: &Home,
+    layer: &Layer,
+    path: &Path,
+    value: &Value,
+    other_projects: bool,
 ) -> Result<Vec<Finding>, ConfigError> {
     let global = match layer.kind() {
         LayerKind::Global => None,
@@ -88,7 +97,8 @@ pub(crate) fn findings_for(
         LayerKind::Project => effective_value(global.as_ref(), Some(value)),
     }?;
     workflow_capabilities(home, &effective, &mut found);
-    if layer.kind() == LayerKind::Global
+    if other_projects
+        && layer.kind() == LayerKind::Global
         && effective
             .get("modules")
             .and_then(|m| m.get("todos"))
@@ -173,14 +183,13 @@ fn code_on_github(
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
     let path = layer.path(home);
-    let Some(doc) = read(&path)? else {
+    let Some(value) = super::_layer::inspect_layer(home, layer)?.value else {
         return Err(ConfigError::NoLayer {
             path,
             door: layer.init_door(),
         });
     };
-    require_usable(layer, &path, &doc.value)?;
-    let mut findings = findings_for(home, layer, &path, &doc.value)?;
+    let mut findings = findings_for(home, layer, &path, &value)?;
     if layer.kind() == LayerKind::Global
         && let Err(error) = super::Agents::load(home)
     {
@@ -192,6 +201,29 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     }
     Ok(findings)
+}
+
+/// Validate the addressed layer using machine records, without other checkout reads.
+pub fn validate_local(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
+    let view = super::_layer::inspect_layer(home, layer)?;
+    let Some(value) = view.value else {
+        return Err(ConfigError::NoLayer {
+            path: view.path,
+            door: layer.init_door(),
+        });
+    };
+    let mut found = findings_in_scope(home, layer, &view.path, &value, false)?;
+    if layer.kind() == LayerKind::Global
+        && let Err(error) = super::Agents::load(&home.for_inspection())
+    {
+        found.push(Finding {
+            document: home.agents_file(),
+            key: "agents".into(),
+            kind: FindingKind::InvalidValue,
+            message: error.to_string(),
+        });
+    }
+    Ok(found)
 }
 
 /// The findings of a layer document of kind `kind`; a project layer is

@@ -27,7 +27,7 @@ fn either_member_closes_the_whole_link_and_retains_progress() {
         .run(env.home(), ["events", "status", "--json"])
         .success();
     let public: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
-    assert_eq!(public[0]["active"], false);
+    assert_eq!(public["links"][0]["active"], false);
 }
 #[allow(
     dead_code,
@@ -1027,8 +1027,8 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
         .success();
     let public: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
     assert!(
-        public[0]["failure"].is_string()
-            || public[0]["directions"]
+        public["links"][0]["failure"].is_string()
+            || public["links"][0]["directions"]
                 .as_array()
                 .unwrap()
                 .iter()

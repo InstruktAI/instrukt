@@ -47,14 +47,51 @@ pub enum WebhookError {
     Listen(std::io::Error),
 }
 
-/// Internal service entry. Installation/socket inheritance is owned by S7.
+/// Internal service entry for a direct, placement-checked loopback listener.
 pub fn serve(
     home: &Home,
     env: &Env,
     clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
 ) -> Result<(), WebhookError> {
+    serve_with_socket(home, env, clock, false)
+}
+
+pub fn serve_with_socket(
+    home: &Home,
+    env: &Env,
+    clock: std::sync::Arc<dyn Fn() -> Timestamp + Send + Sync>,
+    socket_activation: bool,
+) -> Result<(), WebhookError> {
+    serve_prepared(ServeRequest {
+        home,
+        env,
+        clock,
+        socket_activation,
+        prepared: None,
+    })
+}
+pub struct PreparedReceiver {
+    listener: TcpListener,
+    installed_port: Option<u16>,
+}
+pub struct ServeRequest<'a> {
+    pub home: &'a Home,
+    pub env: &'a Env,
+    pub clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
+    pub socket_activation: bool,
+    pub prepared: Option<PreparedReceiver>,
+}
+pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
+    let ServeRequest {
+        home,
+        env,
+        clock,
+        socket_activation,
+        prepared,
+    } = request;
+    let inspection = home.for_inspection();
     let computer = machine_id(home)?;
-    let ingress = Configuration::load_global(home)?.ingress()?;
+    let ingress = Configuration::load_global(&inspection)?.ingress()?;
     if ingress.computer != computer {
         return Err(WebhookError::Placement);
     }
@@ -62,7 +99,7 @@ pub fn serve(
     let mut invalid = None;
     for record in PublishedRecord::load_all(home)? {
         let declaration = (|| -> Result<bool, String> {
-            let config = Configuration::load(home, Some(&record.checkout))
+            let config = Configuration::load(&inspection, Some(&record.checkout))
                 .map_err(|_| "cannot read webhook configuration".to_owned())?;
             let sources = config.webhooks().map_err(|error| error.to_string())?;
             if !config
@@ -90,7 +127,30 @@ pub fn serve(
     if !demand {
         return Err(invalid.unwrap_or(WebhookError::NoSources));
     }
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ingress.port))
+    let prepared = if socket_activation {
+        Some(match prepared {
+            Some(prepared) => prepared,
+            None => prepare_activation(home)?,
+        })
+    } else {
+        None
+    };
+    let installed_port = prepared.as_ref().and_then(|p| p.installed_port);
+    let listener = match prepared {
+        Some(prepared) => prepared.listener,
+        None => TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ingress.port))
+            .map_err(WebhookError::Listen)?,
+    };
+    let address = listener.local_addr().map_err(WebhookError::Listen)?;
+    if address.ip() != std::net::Ipv4Addr::LOCALHOST
+        || address.port() != installed_port.unwrap_or(ingress.port)
+    {
+        return Err(WebhookError::Listen(std::io::Error::other(
+            "service-manager socket does not match configured loopback ingress port",
+        )));
+    }
+    listener
+        .set_nonblocking(false)
         .map_err(WebhookError::Listen)?;
     let server = Server::from_listener(listener, None)
         .map_err(|_| WebhookError::Listen(std::io::Error::other("cannot create HTTP server")))?;
@@ -101,7 +161,7 @@ pub fn serve(
     );
     loop {
         // A valid placement change withdraws this receiver even when no requests arrive.
-        match Configuration::load_global(home).and_then(|config| config.ingress()) {
+        match Configuration::load_global(&inspection).and_then(|config| config.ingress()) {
             Ok(current) if current.computer != computer => return Err(WebhookError::Placement),
             Err(error) => tracing::warn!(event = "webhook_configuration_invalid", error = %error),
             _ => {}
@@ -112,12 +172,95 @@ pub fn serve(
         else {
             continue;
         };
-        let response = receive(home, env, computer.as_str(), &mut request, clock());
+        let response = if request.method() == &Method::Get
+            && request.url() == crate::installation::_launch::PROBE_PATH
+        {
+            match crate::installation::_launch::running(address.port()) {
+                Ok(proof) => (200, proof),
+                Err(error) => {
+                    tracing::warn!(event = "receiver_execution_unproven", error = %error);
+                    (503, "receiver execution unproven\n".into())
+                }
+            }
+        } else {
+            receive(home, env, computer.as_str(), &mut request, clock())
+        };
         if let Err(error) =
             request.respond(Response::from_string(response.1).with_status_code(response.0))
         {
             tracing::warn!(event = "webhook_response_failed", error = %error);
         }
+    }
+}
+
+/// Apply a proven effective invocation before logging or receiver configuration reads.
+/// Exec retains the listening descriptor and leaves the manager's socket intact.
+pub fn prepare_activation(home: &Home) -> Result<PreparedReceiver, WebhookError> {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+    let listener = managed_listener()?;
+    let address = listener.local_addr().map_err(WebhookError::Listen)?;
+    if !address.ip().is_loopback() {
+        return Err(WebhookError::Listen(std::io::Error::other(
+            "activation socket must be loopback",
+        )));
+    }
+    let effective = crate::installation::_launch::owned(home, address.port())
+        .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
+    let installed_port = effective.as_ref().map(|_| address.port());
+    if let Some((effective, digest)) = effective
+        && !effective.applied(&digest)
+    {
+        rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
+            .map_err(|e| WebhookError::Listen(e.into()))?;
+        let error = std::process::Command::new(&effective.executable)
+            .args(["webhooks", "serve", "--socket-activation"])
+            .envs(&effective.environment)
+            .env("INSTRUKT_RECEIVER_FD", listener.as_raw_fd().to_string())
+            .env("INSTRUKT_RECEIVER_APPLIED", digest)
+            .exec();
+        return Err(WebhookError::Listen(error));
+    }
+    if installed_port.is_some() {
+        crate::installation::_launch::arm(home, address.port())
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
+    }
+    Ok(PreparedReceiver {
+        listener,
+        installed_port,
+    })
+}
+fn managed_listener() -> Result<TcpListener, WebhookError> {
+    let binding = if let Ok(fd) = std::env::var("INSTRUKT_RECEIVER_FD") {
+        let fd = fd
+            .parse::<i32>()
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
+        service_binding::Binding::FileDescriptor(fd)
+    } else {
+        let name = if std::env::var_os("LISTEN_FDS").is_some() {
+            if std::env::var("LISTEN_PID").ok().as_deref() != Some(&std::process::id().to_string())
+                || std::env::var("LISTEN_FDS").ok().as_deref() != Some("1")
+                || std::env::var("LISTEN_FDNAMES").ok().as_deref() != Some("instrukt")
+            {
+                return Err(WebhookError::Listen(std::io::Error::other(
+                    "invalid service-manager socket handoff",
+                )));
+            }
+            "fd://"
+        } else {
+            "fd://instrukt"
+        };
+        name.parse::<service_binding::Binding>()
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?
+    };
+    match service_binding::Listener::try_from(binding).map_err(WebhookError::Listen)? {
+        service_binding::Listener::Tcp(listener) => Ok(listener),
+        service_binding::Listener::Unix(listener) => {
+            let descriptor: std::os::fd::OwnedFd = listener.into();
+            Ok(TcpListener::from(descriptor))
+        }
+        _ => Err(WebhookError::Listen(std::io::Error::other(
+            "service manager did not pass a TCP listener",
+        ))),
     }
 }
 
@@ -165,7 +308,8 @@ fn receive(
     if !record.checkout.join("instrukt.yaml").is_file() {
         return fail_config();
     }
-    let Ok(config) = Configuration::load(home, Some(&record.checkout)) else {
+    let inspection = home.for_inspection();
+    let Ok(config) = Configuration::load(&inspection, Some(&record.checkout)) else {
         return fail_config();
     };
     if !config
@@ -285,7 +429,10 @@ fn receive(
         }
     };
     let result = (|| -> Result<(), crate::transport::TransportError> {
-        let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(home))?;
+        let writing = home.for_writing();
+        // Only a verified, valid delivery reaches the writing migration boundary.
+        Configuration::load(&writing, Some(&record.checkout))?;
+        let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(&writing))?;
         transport.publish_claimed(&event, &claim, CLAIM_TTL)?;
         Ok(())
     })();

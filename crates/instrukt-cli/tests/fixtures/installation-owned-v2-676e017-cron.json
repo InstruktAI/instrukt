@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "resources": {
+    "wake-up": {
+      "name": "wake-up",
+      "unit": "* * * * * PATH='__PATH__' HOME='__HOME__' INSTRUKT_HOME='__HOME__/.instrukt' INSTRUKT_DEVELOPMENT=0 '__EXE__' tick # instrukt-tick",
+      "scheduler": "cron",
+      "files": {},
+      "registered": true
+    }
+  },
+  "assets": {"__HOME__/.instrukt/state/retained.conf": "retained ownership evidence\n"},
+  "pending_receiver": null
+}

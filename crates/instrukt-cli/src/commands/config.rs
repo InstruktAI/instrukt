@@ -137,6 +137,11 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 fn patch(args: PatchArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    if args.global
+        && let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)?
+    {
+        config::migrate(&ctx.home, &Layer::Project(root))?;
+    }
     let layer = layer(args.global, ctx)?;
     let text = match (&args.yaml, &args.from_file) {
         (Some(text), _) => text.clone(),

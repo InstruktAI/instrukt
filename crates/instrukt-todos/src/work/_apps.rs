@@ -113,6 +113,52 @@ impl instrukt_runner::interfaces::GitHubCredentials for GitHubAccess {
         })
     }
 }
+impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
+    fn reflection_ready(
+        &self,
+        repository: &str,
+        board: Option<&instrukt_core::config::BoardRef>,
+        now: Timestamp,
+    ) -> Result<(), AppError> {
+        self.with_apps(|apps| {
+            let record = apps.issue(repository, None, Operation::Record, now)?;
+            apps.verified_bots(repository, now)?;
+            let gh = super::_github::GitHub::new(&apps.api, repository, record.token().into());
+            let inspect = || -> Result<(), super::GitHubError> {
+                let repository = gh.read("")?;
+                if repository["has_issues"] == false {
+                    return Err(setup("repository issues are disabled").into());
+                }
+                let issues = gh.read("/issues?state=all&per_page=100")?;
+                let issues = issues
+                    .as_array()
+                    .ok_or_else(|| setup("unreadable issue listing"))?;
+                if let Some(number) = issues
+                    .iter()
+                    .find(|issue| issue.get("pull_request").is_none())
+                    .and_then(|issue| issue["number"].as_u64())
+                {
+                    gh.list(&format!("/issues/{number}/artifacts"))?;
+                }
+                Ok(())
+            };
+            inspect().map_err(readiness_error)?;
+            let account = apps.issue(repository, None, Operation::Board, now)?;
+            let gh = super::_github::GitHub::new(&apps.api, repository, account.token().into());
+            super::_board::inspect(&gh, board).map_err(readiness_error)
+        })
+    }
+}
+
+fn readiness_error(error: super::GitHubError) -> AppError {
+    match error {
+        super::GitHubError::App(error) => error,
+        super::GitHubError::RateLimited { until } => AppError::RateLimited { until },
+        super::GitHubError::Unreachable(_) => AppError::Unreachable,
+        error => setup(&error.to_string()),
+    }
+}
+
 fn permissions(operation: Operation) -> Value {
     match operation {
         Operation::Record => json!({"issues":"write","contents":"read","pull_requests":"read"}),

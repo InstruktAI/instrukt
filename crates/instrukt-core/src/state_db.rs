@@ -15,6 +15,7 @@
 //! module, which sits in core because both depend on core.
 
 mod _schema;
+mod _snapshot;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -206,11 +207,15 @@ impl StateRead {
         if !path.exists() {
             return Ok(None);
         }
-        let conn = Connection::open_with_flags(
-            &path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(StateDbError::sqlite(&path))?;
+        let conn = if home.is_state_read_only() {
+            _snapshot::read(home, &path)?
+        } else {
+            Connection::open_with_flags(
+                &path,
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(StateDbError::sqlite(&path))?
+        };
         configure(&conn, &path)?;
         let found = user_version(&conn, &path)?;
         let known = schema_version();
@@ -221,6 +226,9 @@ impl StateRead {
             return Err(StateDbError::Newer { path, found, known });
         }
         if found < known {
+            if home.is_state_read_only() {
+                return Err(StateDbError::Older { path, found, known });
+            }
             drop(conn);
             drop(StateDb::open(home)?);
             return Self::open(home);
@@ -318,6 +326,38 @@ mod tests {
             user_version(&conn, Path::new(":memory:")).unwrap(),
             schema_version()
         );
+    }
+
+    #[test]
+    fn every_earlier_schema_upgrades_to_the_current_schema_without_losing_work() {
+        for earlier in 1..schema_version() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.pragma_update(None, "foreign_keys", true).unwrap();
+            for migration in _schema::MIGRATIONS.iter().take(earlier as usize) {
+                conn.execute_batch(migration).unwrap();
+            }
+            conn.pragma_update(None, "user_version", earlier).unwrap();
+            conn.execute("INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence) VALUES('retained','project','retained','bug','active','2026-11-03T10:00:00Z','{}',1,'once',1)", []).unwrap();
+            migrate(&mut conn, Path::new(":memory:")).unwrap();
+            assert_eq!(
+                user_version(&conn, Path::new(":memory:")).unwrap(),
+                schema_version()
+            );
+            let revision: i64 = conn
+                .query_row(
+                    "SELECT revision FROM todos WHERE id='retained'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(revision, 1);
+            let rows: i64 = conn
+                .query_row("SELECT count(cause) FROM poll_deferrals", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(rows, 0);
+        }
     }
 
     #[test]

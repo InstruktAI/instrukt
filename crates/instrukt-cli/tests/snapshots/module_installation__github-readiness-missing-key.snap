@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/module-installation.rs
+expression: "github_check(&env, &repo, false)"
+---
+[
+  "project github-ready GitHub reflection: GitHub App setup incomplete: selected App key unavailable in owner-only secrets.env; use instrukt secrets set; repair github.apps and its repository installation with the configuration skill"
+]

@@ -23,7 +23,7 @@ fn only_the_selected_adapters_native_caller_context_supplies_identity() {
     let mut env = TestEnv::new();
     let file = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(file, "schema_version: 1\nrunner: {runtime: t3}\n").unwrap();
+    std::fs::write(file, "schema_version: 3\nrunner: {runtime: t3}\n").unwrap();
     env.set_env("T3CODE_THREAD_ID", "native-thread:42");
     let cwd = env.path("");
     let out = env

@@ -2,10 +2,15 @@
 source: crates/instrukt-cli/tests/harness.rs
 expression: help
 ---
-Register the machine's runner wake-up with the OS scheduler
+Converge/check module infrastructure across adopted projects; repair with the same command
 
-Usage: instrukt install
+Usage: instrukt install [OPTIONS]
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+      --check            Compare desired and actual infrastructure without changing packages,
+                         services or data
+      --module <MODULE>  Limit convergence to an enabled module's dependencies. Full demand still
+                         protects shared resources [possible values: todos, events]
+      --json             Render per-resource results and findings as JSON
+  -h, --help             Print help
+  -V, --version          Print version

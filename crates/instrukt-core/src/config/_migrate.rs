@@ -3,12 +3,17 @@ use super::{Agents, ConfigError, Layer, SHIPPED_AGENTS};
 use crate::{fsx::atomic_write, home::Home};
 use serde_yaml_ng::Value;
 
-pub(super) fn selection(home: &Home, layer: &Layer, value: &mut Value) -> Result<(), ConfigError> {
+pub(super) fn selection(
+    home: &Home,
+    layer: &Layer,
+    value: &mut Value,
+    persist: bool,
+) -> Result<Option<Value>, ConfigError> {
     if !matches!(layer, Layer::Global) {
-        return Ok(());
+        return Ok(None);
     }
     let Some(old) = value.get_mut("agents").and_then(Value::as_mapping_mut) else {
-        return Ok(());
+        return Ok(None);
     };
     let mut next: Value =
         serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))?;
@@ -66,10 +71,6 @@ pub(super) fn selection(home: &Home, layer: &Layer, value: &mut Value) -> Result
         }
     }
     if changed {
-        let _lock = crate::fsx::LockGuard::acquire(
-            &home.locks_dir().join("agents.lock"),
-            std::time::Duration::from_secs(10),
-        )?;
         if let Some(order) = next["default"]["order"].as_sequence_mut() {
             for item in order {
                 if item.as_str() == Some("gemini") {
@@ -77,6 +78,13 @@ pub(super) fn selection(home: &Home, layer: &Layer, value: &mut Value) -> Result
                 }
             }
         }
+        Agents::parse(&super::render_yaml(&next).map_err(|e| invalid(e.to_string()))?)?;
+    }
+    if changed && persist {
+        let _lock = crate::fsx::LockGuard::acquire(
+            &home.locks_dir().join("agents.lock"),
+            std::time::Duration::from_secs(10),
+        )?;
         let text = super::render_yaml(&next).map_err(|e| invalid(e.to_string()))?;
         Agents::parse(&text)?;
         let dest = home.agents_file();
@@ -103,7 +111,7 @@ pub(super) fn selection(home: &Home, layer: &Layer, value: &mut Value) -> Result
         }
     }
     old.retain(|_, v| v.as_mapping().is_none_or(|m| !m.is_empty()));
-    Ok(())
+    Ok(changed.then_some(next))
 }
 fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::InvalidValue {

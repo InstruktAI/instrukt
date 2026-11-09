@@ -18,15 +18,35 @@ pub struct Ctx {
     pub out: Output,
     /// The clock every command takes its time from.
     pub clock: Clock,
+    pub receiver: Option<instrukt_runner::webhooks::PreparedReceiver>,
 }
 
 impl Ctx {
     pub fn from_process() -> anyhow::Result<Self> {
+        Self::load(false)
+    }
+    pub fn inspection() -> anyhow::Result<Self> {
+        Self::load(true)
+    }
+    pub fn configuration_read() -> anyhow::Result<Self> {
+        let mut ctx = Self::load(true)?;
+        ctx.home = ctx.home.for_configuration_read();
+        Ok(ctx)
+    }
+    fn load(inspection: bool) -> anyhow::Result<Self> {
         let home = Home::from_env()?;
+        let home = if inspection {
+            home.for_inspection()
+        } else {
+            home
+        };
         let cwd = std::env::current_dir().context("cannot read the working directory")?;
         // Every command enters with current owned configuration, before its
         // module's refusal or unchanged-work decision.
-        instrukt_core::config::Configuration::load_at(&home, &cwd)?;
+        if !inspection {
+            instrukt_core::config::Agents::migrate_shape(&home)?;
+            instrukt_core::config::Configuration::load_at(&home, &cwd)?;
+        }
         let clock = Clock::from_process()?;
         let github = std::sync::Arc::new(instrukt_todos::work::GitHubAccess::new(home.clone()));
         Ok(Self {
@@ -35,6 +55,7 @@ impl Ctx {
             cwd,
             out: Output::stdout(),
             clock,
+            receiver: None,
         })
     }
 }

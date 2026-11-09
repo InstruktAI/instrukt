@@ -11,13 +11,11 @@ use std::time::Duration;
 use anyhow::{Context as _, bail};
 use instrukt_core::config::{Configuration, Module};
 use instrukt_core::ids::SessionRef;
-use instrukt_runner::install::{self, Scheduler, WakeUp};
+use instrukt_runner::install::{Scheduler, WakeUp};
 use instrukt_runner::keyed;
 use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
 use instrukt_runner::sessions::Sessions;
 
-use instrukt_runner::state::RunnerState;
-use instrukt_runner::ticks;
 use jiff::tz::TimeZone;
 use serde_json::json;
 
@@ -96,21 +94,24 @@ struct JsonArgs {
 pub fn run_ticks(args: TicksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         TicksCommand::Status(args) => {
-            let state = RunnerState::new(&ctx.home);
-            let status = ticks::status(ticks::last_wakeup(&state)?, ctx.clock.now());
+            let status = with_installation(ctx, true, None, |request| {
+                instrukt_runner::installation::ticks_status(request, ctx.clock.now())
+            })?;
             if args.json {
                 ctx.out.json(&status)?;
             } else {
+                ctx.out.line(&format!("registration: {}", status.mode))?;
                 match status.last_wakeup {
                     None => ctx.out.line("no wake-up ever recorded")?,
-                    Some(last) => {
-                        ctx.out.line(&format!("last wake-up: {last}"))?;
-                        if status.stale {
-                            ctx.out.line(
-                                "warning: no wake-up for more than five minutes; check `instrukt install`",
-                            )?;
-                        }
-                    }
+                    Some(last) => ctx.out.line(&format!("last wake-up: {last}"))?,
+                }
+                if status.stale {
+                    ctx.out.line(
+                        "warning: no wake-up for more than five minutes; check `instrukt install`",
+                    )?;
+                }
+                for finding in status.registration.findings {
+                    ctx.out.line(&format!("unmet: {finding}"))?;
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -261,43 +262,97 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
 }
 
 #[derive(Debug, clap::Args)]
-pub struct InstallArgs {}
+pub struct InstallArgs {
+    /// Compare desired and actual infrastructure without changing packages, services or data.
+    #[arg(long)]
+    check: bool,
+    /// Limit convergence to an enabled module's dependencies. Full demand still protects shared resources.
+    #[arg(long, value_parser = ["todos", "events"])]
+    module: Option<String>,
+    /// Render per-resource results and findings as JSON.
+    #[arg(long)]
+    json: bool,
+}
 
-/// Registers `instrukt tick` every minute with the OS scheduler.
-pub fn run_install(_args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let config = Configuration::load_global(&ctx.home)?;
-    if !config.ticks_enabled()? {
-        ctx.out
-            .line("the wake-up is off (`ticks: off`); nothing was installed")?;
-        return Ok(ExitCode::SUCCESS);
+/// Converge infrastructure demanded by adopted projects; modules off withdraw
+/// only unneeded owned units. Resolve reported prerequisites and rerun this command.
+pub fn run_install(args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let module = args.module.as_deref().and_then(Module::from_key);
+    let report = with_installation(
+        ctx,
+        args.check,
+        module,
+        instrukt_runner::installation::converge,
+    )?;
+    let healthy = report.healthy();
+    if args.json {
+        ctx.out.json(&report)?;
+    } else {
+        for notice in &report.notices {
+            ctx.out.line(&format!("notice: {notice}"))?;
+        }
+        if report.resources.is_empty() && report.findings.is_empty() {
+            ctx.out
+                .line("no enabled adopted project demands background infrastructure")?;
+        }
+        for resource in report.resources {
+            ctx.out.line(&format!(
+                "{}: {} | {} | projects: {} | {}",
+                resource.disposition,
+                resource.name,
+                resource
+                    .paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                resource.projects.join(", "),
+                resource.detail
+            ))?;
+        }
+        for finding in report.findings {
+            ctx.out.line(&format!("unmet: {finding}"))?;
+        }
     }
+    Ok(if healthy {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+pub fn with_installation<T, E>(
+    ctx: &Ctx,
+    check: bool,
+    module: Option<Module>,
+    action: impl FnOnce(&instrukt_runner::installation::Request<'_>) -> Result<T, E>,
+) -> anyhow::Result<T>
+where
+    E: Into<anyhow::Error>,
+{
     let path_env = std::env::var("PATH").unwrap_or_default();
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
     let executable = executable()?;
-    let scheduler = Scheduler::detect(Some(&path_env));
-    let installed = install::install(
-        scheduler,
-        &WakeUp {
-            user_home: ctx.home.user_home(),
+    let env = crate::wiring::environment(ctx)?;
+    action(&instrukt_runner::installation::Request {
+        home: &ctx.home,
+        cwd: &ctx.cwd,
+        env: &env,
+        scheduler: Scheduler::detect(Some(&path_env)),
+        wake: WakeUp {
+            home: &ctx.home,
             config_home: config_home.as_deref(),
             executable: &executable,
             path_env: &path_env,
         },
-    )?;
-    match &installed.file {
-        Some(file) => ctx.out.line(&format!(
-            "installed: `instrukt tick` every minute through {} ({})",
-            installed.scheduler.name(),
-            file.display()
-        ))?,
-        None => ctx.out.line(&format!(
-            "installed: `instrukt tick` every minute through {}",
-            installed.scheduler.name()
-        ))?,
-    }
-    Ok(ExitCode::SUCCESS)
+        check,
+        module,
+        github: ctx.github.as_ref(),
+        now: ctx.clock.now(),
+    })
+    .map_err(Into::into)
 }
 
 /// `sessions`, `run` and `tick` refuse only when both `modules.todos` and

@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/configuration-editing.rs
 expression: "stderr(&env, &refused)"
 ---
-instrukt: the configuration changed since revision 6a0fb93313c5d1c0 (current revision f98cfbda4eb4af81); nothing was written — read it again
+instrukt: the configuration changed since revision 6a0fb93313c5d1c0 (current revision f98cfbda4eb4af81); the patch was not applied — read it again

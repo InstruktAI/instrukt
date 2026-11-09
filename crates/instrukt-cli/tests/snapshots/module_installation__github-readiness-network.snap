@@ -1,0 +1,116 @@
+---
+source: crates/instrukt-cli/tests/module-installation.rs
+expression: "github.requests().iter().map(|request|\n{\n    serde_json::json!({\"method\":request.method,\"path\":request.path,\"query\":request.query,\"body\":\n        if request.method == \"POST\" {request.json()} else\n        {serde_json::Value::Null}})\n}).collect::<Vec<_>>()"
+---
+[
+  {
+    "method": "GET",
+    "path": "/app",
+    "query": "",
+    "body": null
+  },
+  {
+    "method": "GET",
+    "path": "/repos/fixture/project/installation",
+    "query": "",
+    "body": null
+  },
+  {
+    "method": "POST",
+    "path": "/app/installations/1/access_tokens",
+    "query": "",
+    "body": {
+      "repositories": [
+        "project"
+      ],
+      "permissions": {
+        "issues": "write",
+        "contents": "read",
+        "pull_requests": "read"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/installation/repositories",
+    "query": "per_page=100",
+    "body": null
+  },
+  {
+    "method": "POST",
+    "path": "/graphql",
+    "query": "",
+    "body": {
+      "query": "query { viewer { id login databaseId } }"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/users/instruktai-author[bot]",
+    "query": "",
+    "body": null
+  },
+  {
+    "method": "GET",
+    "path": "/users/instruktai-reviewer[bot]",
+    "query": "",
+    "body": null
+  },
+  {
+    "method": "GET",
+    "path": "/repos/fixture/project",
+    "query": "",
+    "body": null
+  },
+  {
+    "method": "GET",
+    "path": "/repos/fixture/project/issues",
+    "query": "state=all&per_page=100",
+    "body": null
+  },
+  {
+    "method": "GET",
+    "path": "/repos/fixture/project/issues/1/artifacts",
+    "query": "per_page=100&page=1",
+    "body": null
+  },
+  {
+    "method": "POST",
+    "path": "/app/installations/1/access_tokens",
+    "query": "",
+    "body": {
+      "repositories": [
+        "project"
+      ],
+      "permissions": {
+        "organization_projects": "write"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/installation/repositories",
+    "query": "per_page=100",
+    "body": null
+  },
+  {
+    "method": "POST",
+    "path": "/graphql",
+    "query": "",
+    "body": {
+      "query": "query { viewer { id login databaseId } }"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/graphql",
+    "query": "",
+    "body": {
+      "query": "query($owner: String!, $number: Int!) {\n  repositoryOwner(login: $owner) {\n    ... on ProjectV2Owner {\n      projectV2(number: $number) {\n        id\n        fields(first: 100) {\n          nodes {\n            ... on ProjectV2SingleSelectField { id databaseId name options { id name color description } }\n          }\n        }\n      }\n    }\n  }\n}",
+      "variables": {
+        "owner": "fixture",
+        "number": 1
+      }
+    }
+  }
+]

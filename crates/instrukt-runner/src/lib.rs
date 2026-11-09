@@ -55,3 +55,5 @@ pub mod assignments;
 
 pub mod envelopes;
 pub mod links;
+
+pub mod installation;

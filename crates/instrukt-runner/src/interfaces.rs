@@ -685,6 +685,16 @@ impl std::fmt::Debug for RunnerWiring {
     }
 }
 
+/// Work-owned, non-mutating inspection of shared-record GitHub prerequisites.
+pub trait GitHubReadiness: Send + Sync {
+    fn reflection_ready(
+        &self,
+        repository: &str,
+        board: Option<&instrukt_core::config::BoardRef>,
+        now: Timestamp,
+    ) -> Result<(), instrukt_core::github::AppError>;
+}
+
 /// Bounded work-owned GitHub credentials, composed by CLI for observation.
 pub trait GitHubCredentials: Send + Sync {
     fn credential(

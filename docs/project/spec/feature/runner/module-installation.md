@@ -22,8 +22,13 @@ remote routing and user interview are outside this contract.
 Publication's adopted-project identities and registered checkout paths supply
 the project set. Evaluate project-over-global module settings for each. A global
 default without an adopted enabled project creates no infrastructure demand.
-An unreadable or invalid project's desired state is a finding, never proof that
-its shared resources are unused; withdrawal waits for a complete demand read.
+Writing installation reads the registered checkouts and retains their validated
+project settings and resolved repository identities in this computer's own
+installation state. Inspection reads the current repository and those retained
+facts for other projects; it does not traverse other working checkouts. Missing
+retained facts are findings with the `instrukt install` door. An unreadable or
+invalid project's desired state is never proof that its shared resources are
+unused; withdrawal waits for a complete demand read.
 
 | Effective demand | Infrastructure and prerequisites |
 | --- | --- |
@@ -51,7 +56,7 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt config patch --revision <rev> [--global] --from-file <file>` | Validate and atomically record desired configuration; standard input and `--yaml` retain their existing alternatives. Installs nothing. |
 | `instrukt config validate [--global]` | Validate layer, effective module/runtime prerequisites and source references; names findings without exposing secret values. |
 | `instrukt install [--module todos\|events]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
-| `instrukt install --check [--module todos\|events]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. No package, service, configuration, group-position or data mutation. |
+| `instrukt install --check [--module todos\|events]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
 | `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures and receiver placement/health; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
@@ -72,9 +77,27 @@ finding's named prerequisite is resolved. No separate repair installer exists.
 Successful configuration is distinct from successful installation. An interrupted
 or partially failed install reports its completed and remaining resources;
 rerunning reconciles observed state rather than assuming the prior run completed.
+The ownership journal retains both pre-write and desired definitions until the
+transition completes, so each interrupted file-write prefix remains provably
+owned and can be reconciled or withdrawn.
 Reports name installed, reused, repaired, withdrawn, externally supplied or
 unmet resources, their paths/units and demanding project identities, without
 expanded credentials. A failed prerequisite never produces an overall success.
+
+### GitHub reflection readiness
+
+For enabled todos, inspection consumes work's CLI-composed GitHub readiness
+port. Work verifies the project App, protected key, repository installation,
+record and account-board permission scopes, expiry and stable bot identities.
+It reads repository issues, existing issue artifacts when an issue is available,
+and the configured board or its account's project listing. Unavailable access
+or reflection capabilities are unmet findings with the configuration repair door.
+Inspection neither reflects pending work nor creates issues, artifacts, boards,
+fields or views, and it writes no local state. Other projects use only this
+machine's retained repository and board settings; their checkouts are not read.
+Read-only readiness establishes declared write permissions and available read
+surfaces; it cannot prove a future remote write, or artifact access on an empty
+repository, without performing a mutation.
 
 ### Shared minute wake-up
 
@@ -107,10 +130,15 @@ systemd service survives runner exit. Package provisioning must preserve foreign
 service state; inability to do that is a prerequisite finding, never permission
 to stop or reconfigure another Redis.
 
-Verify executable/version and required Streams, groups, stale-pending reclaim,
-Lua and ACL operations using disposable diagnostic keys. Authenticate and check
-socket permissions before recording the new local endpoint. Check cluster URL,
-logical namespace, reachability and permissions separately. A lone computer may
+Redis 7.0 or later is required. Verify executable/version and required Streams,
+groups, stale-pending reclaim, Lua and ACL operations using disposable diagnostic
+keys. Read-only checks use `ACL DRYRUN` as their non-mutating permission proof.
+The proof covers the actual publisher's `EVALSHA` and cache-miss `SCRIPT LOAD`,
+as well as `XADD` on the production event/dead-letter stream keys; permission on
+a diagnostic key alone is insufficient. Older servers are an unmet prerequisite,
+with the Redis upgrade door. Authenticate and check
+socket permissions before recording the new local endpoint. Check cluster endpoint/database, reachability and permissions separately.
+The logical key namespace is the code-owned `instrukt:*`; there is no user namespace setting. A lone computer may
 explicitly use the same instance for both scopes; identical connection identity
 is read once. No cluster host is selected or provisioned on another computer.
 
@@ -131,7 +159,7 @@ values fail with the project/reference named. Signing material resolves only
 from the ingress computer's owner-only `~/.instrukt/secrets.env`; other
 computers need no signing values. Ticks and interactive paths use that same
 file for their required signing, Redis and other instrukt secrets.
-All participants agree on ingress ID and logical cluster Redis/namespace;
+All participants agree on ingress ID and cluster Redis endpoint plus database;
 local sockets, runtime and tick policy remain local. Configuration management
 distributes those facts; instrukt has no shared configuration layer.
 
@@ -147,8 +175,16 @@ The socket and receiver agree on loopback and configured port. A receiver exits
 before serving after loss of ingress designation; a later convergence removes
 only its obsolete owned units. Valid source edits are read per request without
 restart. Invalid changes do not replace a working validated listener config.
-Owned configuration changes that require receiver restart keep socket custody;
-port changes are reported as an edge-route change requiring operator alignment.
+Owned execution changes take effect for existing and new installations while
+receiver ownership remains proven. Same-port restarts retain the registered
+listening socket; health and inspection establish that the desired installed
+executable and configuration are running. See the
+[receiver activation implementation](../../../../../crates/instrukt-runner/src/installation/_launch.rs)
+for the concrete mechanism. A port change
+registers and checks the replacement listener before withdrawing the prior owned
+units, and reports the edge-route change for operator alignment without waiting
+for the operator. Interrupted replacement retains its recorded ownership for
+reconciliation on the next installation run.
 
 Prepare all new retained groups at the current tail before admitting relevant
 producers or enabling intake. Existing groups keep their own progress; startup
@@ -173,13 +209,17 @@ evaluation; config edits themselves remove no units. A subsequent explicit
 `instrukt install` withdraws only instrukt-owned resources with no remaining
 enabled project demand. Shared dependency users are counted across modules and
 projects, including explicitly configured references to an owned Redis instance.
+Physical server identity protects Unix socket references regardless of URL database
+qualification (`?db=0` or any other database).
 Removing the last source withdraws the receiver while retaining event transport
 for still-enabled events. Disabling events retains the wake-up if todos need it.
 
 Ownership requires the installation's recorded resource identity and matching
 owned definition. An unrelated unit, listener, socket, config or changed foreign
 definition at the desired address is a conflict with a named repair door, never
-overwritten or removed. Withdrawal stops/unregisters owned units only; it never
+overwritten or removed. Cron withdrawal compares the entire marked definition
+against the retained owned line and preserves the whole table on conflict.
+Withdrawal stops/unregisters owned units only; it never
 deletes the database, Redis data, streams, pending delivery records, credentials
 or foreign services, and never uninstalls a shared Redis executable. Re-enable
 reuses retained resources and progress within transport retention. Pending

@@ -85,6 +85,7 @@ pub enum Notify {
 pub struct Configuration {
     value: Value,
     project_root: Option<PathBuf>,
+    project_value: Option<Value>,
     home: Home,
 }
 
@@ -99,11 +100,13 @@ impl Configuration {
             None => None,
         };
         let project_root = project.as_ref().and(repo_root).map(Path::to_path_buf);
-        Ok(Self::from_value(
+        let mut config = Self::from_value(
             effective_value(global.as_ref(), project.as_ref())?,
             project_root,
             home.clone(),
-        ))
+        );
+        config.project_value = project;
+        Ok(config)
     }
 
     /// The effective configuration for a caller whose working directory is
@@ -122,6 +125,7 @@ impl Configuration {
         Self {
             value,
             project_root,
+            project_value: None,
             home,
         }
     }
@@ -157,6 +161,85 @@ impl Configuration {
     /// Read machine-owned Redis settings, resolving credential references for I/O.
     pub fn redis(&self, env: &Env) -> Result<super::RedisSettings, ConfigError> {
         super::_redis::settings(self, env)
+    }
+
+    /// Whether this project explicitly refers to a local Redis endpoint, independently
+    /// of inherited defaults or module enablement. Installation retains such demand.
+    pub fn project_local_redis(&self) -> Result<Option<String>, ConfigError> {
+        let Some(value) = &self.project_value else {
+            return Ok(None);
+        };
+        value
+            .get("redis")
+            .and_then(|r| r.get("local"))
+            .and_then(|r| r.get("url"))
+            .and_then(Value::as_str)
+            .map(|text| self.secret_template(text))
+            .transpose()
+    }
+
+    fn recorded_path(home: &Home, project: &ProjectSlug) -> PathBuf {
+        home.state_dir()
+            .join("configuration")
+            .join(format!("{project}.yaml"))
+    }
+    /// Retain desired project settings for inspection without reopening its checkout.
+    pub fn record_project(
+        &self,
+        project: &ProjectSlug,
+        repository: Option<&str>,
+    ) -> Result<(), ConfigError> {
+        let path = Self::recorded_path(&self.home, project);
+        let value = self
+            .project_value
+            .as_ref()
+            .ok_or_else(|| invalid("project", "no project layer to retain"))?
+            .clone();
+        let mut value = value;
+        if let Some(repository) = repository {
+            value["github"]["repository"] = Value::String(repository.into());
+        }
+        let text = super::render_yaml(&value).map_err(|source| ConfigError::Render {
+            path: path.clone(),
+            source,
+        })?;
+        use std::os::unix::fs::PermissionsExt;
+        crate::fsx::atomic_write_with_permissions(
+            &path,
+            text.as_bytes(),
+            std::fs::Permissions::from_mode(0o600),
+        )?;
+        Ok(())
+    }
+    pub fn load_recorded_project(
+        home: &Home,
+        project: &ProjectSlug,
+        checkout: &Path,
+    ) -> Result<Self, ConfigError> {
+        let path = Self::recorded_path(home, project);
+        let Some(document) = super::_layer::read(&path)? else {
+            return Err(ConfigError::InvalidValue {
+                key: project.to_string(),
+                message: format!(
+                    "{} has no retained desired configuration; run instrukt install to record it",
+                    path.display()
+                ),
+            });
+        };
+        let value = super::_layer::current_view(
+            home,
+            &Layer::Project(checkout.into()),
+            &path,
+            document.value,
+        )?;
+        let global = read_usable(home, &Layer::Global)?;
+        let mut config = Self::from_value(
+            effective_value(global.as_ref(), Some(&value))?,
+            Some(checkout.into()),
+            home.clone(),
+        );
+        config.project_value = Some(value);
+        Ok(config)
     }
 
     pub fn webhooks(&self) -> Result<super::WebhookSources, ConfigError> {

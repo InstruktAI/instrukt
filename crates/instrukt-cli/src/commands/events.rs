@@ -14,8 +14,13 @@ pub struct EventsArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum EventsCommand {
-    /// Inspect conversation links, progress and failed handovers.
+    /// Inspect module infrastructure, scoped transport, retained readers, failures and conversation links.
     Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect retained dead-letter identities, original coordinates and failure facts.
+    DeadLetters {
         #[arg(long)]
         json: bool,
     },
@@ -72,13 +77,30 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let catalog = EventCatalog::builtin()?;
     match args.command {
         EventsCommand::Status { json } => {
-            let links = instrukt_runner::links::status(&ctx.home)?;
+            let status = super::runner::with_installation(
+                ctx,
+                true,
+                None,
+                instrukt_runner::installation::events_status,
+            )?;
             if json {
-                ctx.out.json(&links)?;
+                ctx.out.json(&status)?;
             } else {
-                for link in links {
-                    ctx.out.line(&serde_json::to_string_pretty(&link)?)?;
-                }
+                ctx.out.line(&serde_json::to_string_pretty(&status)?)?;
+            }
+        }
+
+        EventsCommand::DeadLetters { json } => {
+            let records = super::runner::with_installation(
+                ctx,
+                true,
+                None,
+                instrukt_runner::installation::dead_letters,
+            )?;
+            if json {
+                ctx.out.json(&records)?;
+            } else {
+                ctx.out.line(&serde_json::to_string_pretty(&records)?)?;
             }
         }
         EventsCommand::Bind(args) => {

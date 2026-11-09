@@ -254,3 +254,5 @@ fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
     home.publication_state_dir()
         .join(format!("{}.yaml", project.as_str()))
 }
+
+pub mod status;

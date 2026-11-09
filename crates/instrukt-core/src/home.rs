@@ -29,6 +29,8 @@ pub struct Home {
     root: PathBuf,
     machine_user_home: PathBuf,
     development: bool,
+    inspection: bool,
+    state_read_only: bool,
 }
 
 impl Home {
@@ -63,7 +65,35 @@ impl Home {
             user_home,
             root,
             development: false,
+            inspection: false,
+            state_read_only: false,
         }
+    }
+
+    /// Select nonmutating owned-configuration reads for this invocation.
+    pub fn for_inspection(&self) -> Self {
+        let mut home = self.clone();
+        home.inspection = true;
+        home.state_read_only = true;
+        home
+    }
+    pub fn for_writing(&self) -> Self {
+        let mut home = self.clone();
+        home.inspection = false;
+        home.state_read_only = false;
+        home
+    }
+    pub fn for_configuration_read(&self) -> Self {
+        let mut home = self.clone();
+        home.inspection = true;
+        home.state_read_only = false;
+        home
+    }
+    pub fn is_state_read_only(&self) -> bool {
+        self.state_read_only
+    }
+    pub fn is_inspection(&self) -> bool {
+        self.inspection
     }
 
     pub fn machine_user_home(&self) -> &Path {

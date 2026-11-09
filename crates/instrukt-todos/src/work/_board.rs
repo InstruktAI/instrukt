@@ -365,6 +365,28 @@ pub(crate) fn reflect(
     Ok(item)
 }
 
+/// Read the configured cockpit or the account's discovery surface without setup.
+pub(crate) fn inspect(gh: &GitHub, configured: Option<&BoardRef>) -> Result<(), GitHubError> {
+    if let Some(board) = configured {
+        let data = gh.graphql(RESOLVE, &json!({"owner":board.owner,"number":board.number}))?;
+        let project = &data["repositoryOwner"]["projectV2"];
+        if project["id"].as_str().is_none() || !project["fields"]["nodes"].is_array() {
+            return Err(unreadable("configured board or its fields are unavailable"));
+        }
+    } else {
+        let owner = gh.repository().split('/').next().unwrap_or_default();
+        let data = gh.graphql(
+            "query($owner:String!){ repositoryOwner(login:$owner){ id ... on ProjectV2Owner { projectsV2(first:1){nodes{id number title}}}}}",
+            &json!({"owner":owner}),
+        )?;
+        let owner = &data["repositoryOwner"];
+        if owner["id"].as_str().is_none() || !owner["projectsV2"]["nodes"].is_array() {
+            return Err(unreadable("account project discovery is unavailable"));
+        }
+    }
+    Ok(())
+}
+
 /// Discover the repository's cockpit before creating one. Its stable title
 /// allows a retry after a lost acknowledgement to find the same resource.
 pub(crate) fn setup(gh: &GitHub, configured: Option<&BoardRef>) -> Result<BoardRef, GitHubError> {

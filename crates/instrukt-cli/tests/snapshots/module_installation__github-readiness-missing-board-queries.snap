@@ -1,0 +1,19 @@
+---
+source: crates/instrukt-cli/tests/module-installation.rs
+expression: "github.requests_to(\"POST\",\n\"/graphql\").iter().map(|request| request.json()).collect::<Vec<_>>()"
+---
+[
+  {
+    "query": "query { viewer { id login databaseId } }"
+  },
+  {
+    "query": "query { viewer { id login databaseId } }"
+  },
+  {
+    "query": "query($owner: String!, $number: Int!) {\n  repositoryOwner(login: $owner) {\n    ... on ProjectV2Owner {\n      projectV2(number: $number) {\n        id\n        fields(first: 100) {\n          nodes {\n            ... on ProjectV2SingleSelectField { id databaseId name options { id name color description } }\n          }\n        }\n      }\n    }\n  }\n}",
+    "variables": {
+      "owner": "fixture",
+      "number": 99
+    }
+  }
+]
