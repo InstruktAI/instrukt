@@ -98,8 +98,10 @@ revision and retry-convergence rules remain in force.
 Work verifies the project App, protected key, repository installation,
 record and account-board permission scopes, expiry and stable bot identities.
 It reads repository issues, existing issue artifacts when an issue is available,
-and the configured board or its account's project listing. Unavailable access
-or reflection capabilities are unmet findings with the configuration repair door.
+and the configured board or its account's project listing. Newer pages containing
+only pull requests do not exclude older issues from artifact readiness checks.
+Unavailable access or reflection capabilities are unmet findings with the
+configuration repair door.
 Read-only readiness creates no issues, artifacts, boards, fields or views.
 It establishes declared write permissions and available read surfaces; it cannot
 prove a future remote write, or artifact access on an empty repository, without

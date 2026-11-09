@@ -1624,3 +1624,36 @@ fn github_readiness_reports_unavailable_account_discovery() {
     assert!(github.issues("fixture/project").is_empty());
     assert!(github.project_numbers("fixture").is_empty());
 }
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI2
+#[test]
+fn github_readiness_checks_older_issue_artifacts_after_a_full_page_of_pull_requests() {
+    let (env, repo, github) = github_installation();
+    let issue = github.seed_issue("fixture/project", common::github::IssueSeed::default());
+    for index in 0..100 {
+        github.seed_pull_request(
+            "fixture/project",
+            common::github::IssueSeed {
+                title: format!("Newer pull request {index}"),
+                ..Default::default()
+            },
+        );
+    }
+    let issues = github.issues("fixture/project");
+    let artifacts = github.artifacts("fixture/project", issue);
+    github.respond_once(
+        "GET",
+        &format!("/repos/fixture/project/issues/{issue}/artifacts"),
+        common::github::CannedResponse {
+            status: 404,
+            headers: vec![],
+            body: serde_json::json!({"message":"Not Found"}),
+        },
+    );
+    insta::assert_json_snapshot!(
+        "github-readiness-paginated-artifacts-unavailable",
+        github_check(&env, &repo, false)
+    );
+    assert_eq!(github.issues("fixture/project"), issues);
+    assert_eq!(github.artifacts("fixture/project", issue), artifacts);
+}

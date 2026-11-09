@@ -129,10 +129,7 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
                 if repository["has_issues"] == false {
                     return Err(setup("repository issues are disabled").into());
                 }
-                let issues = gh.read("/issues?state=all&per_page=100")?;
-                let issues = issues
-                    .as_array()
-                    .ok_or_else(|| setup("unreadable issue listing"))?;
+                let issues = gh.list("/issues?state=all")?;
                 if let Some(number) = issues
                     .iter()
                     .find(|issue| issue.get("pull_request").is_none())

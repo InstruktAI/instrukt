@@ -290,6 +290,18 @@ impl FakeGitHub {
         number
     }
 
+    /// Seeds a pull request in the repository's shared issue-number space.
+    pub fn seed_pull_request(&self, repo: &str, seed: IssueSeed) -> u64 {
+        let number = self.seed_issue(repo, seed);
+        self.lock().repo(repo).issues.get_mut(&number).unwrap().pull = Some(Pull {
+            head: format!("pull-{number}"),
+            base: "main".into(),
+            merged: false,
+            reviews: Vec::new(),
+        });
+        number
+    }
+
     /// Changes an issue out of band, as another computer or a person on
     /// GitHub would: the issue's `updated_at` and `ETag` move.
     pub fn edit_issue(&self, repo: &str, number: u64, edit: impl FnOnce(&mut IssueView)) {
