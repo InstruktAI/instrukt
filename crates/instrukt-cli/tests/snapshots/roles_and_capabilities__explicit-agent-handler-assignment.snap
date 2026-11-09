@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/roles-and-capabilities.rs
-assertion_line: 478
 expression: h.help()
 ---
 Context engineering for coding agents
@@ -8,6 +7,7 @@ Context engineering for coding agents
 Usage: instrukt <COMMAND>
 
 Commands:
+  bugs       Park, inspect and remove known-issue dispositions for the log bug hunter
   discuss    Open or close this native thread's conversation link
   agents     Configured profiles and expiring profile/model availability
   secrets    Store or generate protected machine-local secrets
@@ -28,7 +28,8 @@ Commands:
   tick       One runner wake-up, as the OS scheduler invokes it
   ticks      Scheduled tick status
   sessions   Inspect keyed runtime threads and resolve uncertain unattended starts
-  install    Register the machine's runner wake-up with the OS scheduler
+  install    Converge/check module infrastructure across adopted projects; repair with the same
+             command
   help       Print this message or the help of the given subcommand(s)
 
 Options:

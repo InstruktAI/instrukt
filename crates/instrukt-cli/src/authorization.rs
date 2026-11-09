@@ -28,6 +28,8 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
 pub fn action(path: &[&str]) -> Option<Action> {
     use Action::*;
     Some(match path {
+        ["bugs", "suppressions"] => TodoRead,
+        ["bugs", "suppress" | "unsuppress"] => TodoWrite,
         ["docs", "fold"] => DocsWrite,
         ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
         ["todo", "list" | "show" | "refresh"] => TodoRead,
@@ -47,7 +49,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["history", "search" | "show"] => HistoryRead,
         ["history", "import-teleclaude" | "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,
-        ["events", "list" | "schema" | "status"] => EventsRead,
+        ["events", "list" | "schema" | "status" | "dead-letters"] => EventsRead,
         ["agents", "list" | "availability"] => AgentsRead,
         ["agents", "status"] => AgentsWrite,
         ["config", "get" | "show" | "validate"] => ConfigRead,
@@ -81,7 +83,12 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         path.push(name);
         leaf = sub;
     }
-    let action = action(&path).ok_or_else(|| {
+    let action = if path == ["install"] && leaf.get_flag("check") {
+        Some(Action::InstallationRead)
+    } else {
+        action(&path)
+    }
+    .ok_or_else(|| {
         anyhow::anyhow!(
             "command `{}` has no action mapping; report this catalog defect",
             path.join(" ")

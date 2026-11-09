@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+service-binding = "=3.0.0"
 notify.workspace = true
 base64.workspace = true
 tungstenite.workspace = true

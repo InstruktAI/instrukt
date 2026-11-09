@@ -16,8 +16,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, config, discuss, docs, eval, events, history, repository, runner, secrets,
-    specs, sync, todo, webhooks,
+    agents, blueprint, bugs, config, discuss, docs, eval, events, history, repository, runner,
+    secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -33,6 +33,8 @@ struct Cli {
 enum Command {
     #[command(hide = true)]
     DevSeed,
+    /// Park, inspect and remove known-issue dispositions for the log bug hunter.
+    Bugs(bugs::BugsArgs),
     /// Open or close this native thread's conversation link.
     Discuss(discuss::DiscussArgs),
     /// Configured profiles and expiring profile/model availability.
@@ -73,7 +75,7 @@ enum Command {
     Ticks(runner::TicksArgs),
     /// Inspect keyed runtime threads and resolve uncertain unattended starts.
     Sessions(runner::SessionsArgs),
-    /// Register the machine's runner wake-up with the OS scheduler.
+    /// Converge/check module infrastructure across adopted projects; repair with the same command.
     Install(runner::InstallArgs),
 }
 
@@ -113,6 +115,7 @@ fn main() -> ExitCode {
         return report(&error);
     }
     let outcome = match cli.command {
+        Command::Bugs(args) => bugs::run(args, &mut ctx),
         Command::DevSeed => seed_development(&mut ctx),
         Command::Discuss(args) => discuss::run(args, &mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
@@ -153,6 +156,7 @@ fn report(err: &anyhow::Error) -> ExitCode {
 fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let source = match command {
         Command::DevSeed => "dev-seed",
+        Command::Bugs(_) => "bugs",
         Command::Discuss(_) => "discuss",
         Command::Agents(_) => "agents",
         Command::Secrets(_) => "secrets",

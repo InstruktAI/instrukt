@@ -883,6 +883,7 @@ dependencies = [
 name = "instrukt-runner"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64",
  "form_urlencoded",
  "hex",
@@ -896,6 +897,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "service-binding",
  "sha2",
  "thiserror",
  "tiny_http",
@@ -1352,6 +1354,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "raunch"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a67226789ccd419c55f5c826e04f7d58690b0593364f61bc8ed6e7dbbab49c5"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "redis"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1659,6 +1670,15 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
+]
+
+[[package]]
+name = "service-binding"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25663b9d8b83193ef83183edb3fd01e5447adb3e5baa35466ff9a6cd2408d6e8"
+dependencies = [
+ "raunch",
 ]
 
 [[package]]

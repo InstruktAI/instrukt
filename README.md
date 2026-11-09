@@ -1,5 +1,13 @@
 # instrukt
 
+```sh
+curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh
+npx skills add InstruktAI/instrukt@v0.1.0 --skill instrukt -g -y
+```
+
+The installer prints the skill command pinned to the release it installed.
+Run `instrukt -h` for commands.
+
 Context engineering for coding agents: documentation as the way agents are
 instructed — snippets, progressive disclosure, docs before code, and
 publication to the agents a machine runs — with optional modules for a work

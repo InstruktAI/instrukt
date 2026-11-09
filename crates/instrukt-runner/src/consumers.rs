@@ -261,3 +261,29 @@ impl Drop for ConsumerWorkers {
         }
     }
 }
+
+/// Prepare the runner's retained readers before installation admits producers.
+/// Uses the same registrations and source handover as ordinary runner startup.
+pub fn prepare_installation(
+    home: &instrukt_core::home::Home,
+    env: &instrukt_core::config::Env,
+) -> anyhow::Result<()> {
+    let state = RunnerState::new(home);
+    let config = instrukt_core::config::Configuration::load_global(home)?;
+    let transport = ScopedTransport::from_config(&config, env, &state)?;
+    let computer = instrukt_core::machine::machine_id(home)?;
+    let (wakeup, _) = std::sync::mpsc::sync_channel(1);
+    let runtime = ConsumerRuntime::new(
+        state.clone(),
+        transport,
+        computer.as_str(),
+        vec![activation_consumer(home, &state, wakeup)?],
+    )?;
+    let local = runtime.prepare_scope(EventScope::Local);
+    let cluster = runtime.prepare_scope(EventScope::Cluster);
+    anyhow::ensure!(
+        local && cluster,
+        "retained reader preparation failed; restore Redis and rerun instrukt install"
+    );
+    Ok(())
+}

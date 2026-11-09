@@ -8,7 +8,15 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: verify release versions
+        run: scripts/check-release-version.sh "$GITHUB_REF_NAME"
+
   build:
+    needs: validate
     name: build ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -36,15 +44,23 @@ jobs:
           path: instrukt-*.tar.gz
 
   publish:
-    needs: build
+    needs: [validate, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           merge-multiple: true
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" instrukt-*.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: |
+          scripts/check-release-version.sh "$GITHUB_REF_NAME"
+          for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            test -f "instrukt-$GITHUB_REF_NAME-$target.tar.gz"
+          done
+          sha256sum instrukt-*.tar.gz > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" instrukt-*.tar.gz SHA256SUMS scripts/install.sh --repo "$GITHUB_REPOSITORY" --generate-notes --draft --verify-tag
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/roles-and-capabilities.rs
-assertion_line: 240
 expression: h.help()
 ---
 Context engineering for coding agents
@@ -8,6 +7,7 @@ Context engineering for coding agents
 Usage: instrukt <COMMAND>
 
 Commands:
+  bugs       Park, inspect and remove known-issue dispositions for the log bug hunter
   agents     Configured profiles and expiring profile/model availability
   config     Read, edit, initialize and validate `instrukt.yaml`
   docs       Validate, list and read documentation snippets

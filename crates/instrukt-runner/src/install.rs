@@ -55,7 +55,7 @@ impl Scheduler {
 /// What the wake-up runs: this binary's `tick`, in this environment.
 #[derive(Debug, Clone)]
 pub struct WakeUp<'a> {
-    pub user_home: &'a Path,
+    pub home: &'a instrukt_core::home::Home,
     /// `$XDG_CONFIG_HOME`, when set.
     pub config_home: Option<&'a Path>,
     pub executable: &'a Path,
@@ -93,7 +93,7 @@ pub struct Installed {
 pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<RegistrationFile> {
     match scheduler {
         Scheduler::Launchd => vec![RegistrationFile {
-            path: launch_agent(wake.user_home),
+            path: launch_agent(wake.home.user_home()),
             contents: plist(wake),
         }],
         Scheduler::SystemdUser => {
@@ -102,8 +102,11 @@ pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<Regist
                 RegistrationFile {
                     path: dir.join(format!("{SYSTEMD_UNIT}.service")),
                     contents: format!(
-                        "[Unit]\nDescription=instrukt runner wake-up\n\n[Service]\nType=oneshot\nEnvironment=PATH={}\nExecStart={} tick\n",
+                        "[Unit]\nDescription=instrukt runner wake-up\n\n[Service]\nType=oneshot\nEnvironment=PATH={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nExecStart={} tick\n",
                         wake.path_env,
+                        systemd_quote(&format!("HOME={}",wake.home.machine_user_home().display())),
+                        systemd_quote(&format!("INSTRUKT_HOME={}",wake.home.root().display())),
+                        systemd_quote(&format!("INSTRUKT_DEVELOPMENT={}",u8::from(wake.home.is_development()))),
                         systemd_quote(&wake.executable.display().to_string())
                     ),
                 },
@@ -125,8 +128,11 @@ pub fn crontab_with_wakeup(current: &str, wake: &WakeUp<'_>) -> String {
         .map(str::to_owned)
         .collect();
     lines.push(format!(
-        "* * * * * PATH={} {} tick {CRON_MARKER}",
+        "* * * * * PATH={} HOME={} INSTRUKT_HOME={} INSTRUKT_DEVELOPMENT={} {} tick {CRON_MARKER}",
         crate::process::shell_quote(wake.path_env),
+        crate::process::shell_quote(&wake.home.machine_user_home().display().to_string()),
+        crate::process::shell_quote(&wake.home.root().display().to_string()),
+        u8::from(wake.home.is_development()),
         crate::process::shell_quote(&wake.executable.display().to_string())
     ));
     let mut text = lines.join("\n");
@@ -142,7 +148,7 @@ pub fn install(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Installed, Ins
     }
     match scheduler {
         Scheduler::Launchd => {
-            let plist = launch_agent(wake.user_home).display().to_string();
+            let plist = launch_agent(wake.home.user_home()).display().to_string();
             let unloaded =
                 Invocation::program("launchctl", &["unload", &plist]).run(REGISTRAR_TIMEOUT)?;
             if !unloaded.success {
@@ -222,7 +228,7 @@ fn launch_agent(user_home: &Path) -> PathBuf {
 
 fn systemd_dir(wake: &WakeUp<'_>) -> PathBuf {
     wake.config_home
-        .map_or_else(|| wake.user_home.join(".config"), Path::to_path_buf)
+        .map_or_else(|| wake.home.user_home().join(".config"), Path::to_path_buf)
         .join("systemd")
         .join("user")
 }
@@ -246,6 +252,8 @@ fn plist(wake: &WakeUp<'_>) -> String {
         <string>{}</string>\n\
         <key>HOME</key>\n\
         <string>{}</string>\n\
+        <key>INSTRUKT_HOME</key><string>{}</string>\n\
+        <key>INSTRUKT_DEVELOPMENT</key><string>{}</string>\n\
     </dict>\n\
     <key>StartInterval</key>\n\
     <integer>60</integer>\n\
@@ -255,7 +263,9 @@ fn plist(wake: &WakeUp<'_>) -> String {
 </plist>\n",
         xml_escape(&wake.executable.display().to_string()),
         xml_escape(wake.path_env),
-        xml_escape(&wake.user_home.display().to_string()),
+        xml_escape(&wake.home.machine_user_home().display().to_string()),
+        xml_escape(&wake.home.root().display().to_string()),
+        u8::from(wake.home.is_development()),
     )
 }
 
@@ -285,10 +295,10 @@ mod tests {
 
     #[test]
     fn the_crontab_keeps_other_lines_and_one_instrukt_line() {
-        let home = PathBuf::from("/home/dev");
+        let home = instrukt_core::home::Home::at_user_home(PathBuf::from("/home/dev"));
         let exe = PathBuf::from("/opt/instrukt");
         let wake = WakeUp {
-            user_home: &home,
+            home: &home,
             config_home: None,
             executable: &exe,
             path_env: "/usr/bin",
@@ -318,18 +328,22 @@ mod tests {
 
     #[test]
     fn registration_files_live_in_the_users_home() {
-        let home = PathBuf::from("/home/dev");
+        let home = instrukt_core::home::Home::at_user_home(PathBuf::from("/home/dev"));
         let config = PathBuf::from("/home/dev/.cfg");
         let exe = PathBuf::from("/opt/instrukt");
         let wake = WakeUp {
-            user_home: &home,
+            home: &home,
             config_home: Some(&config),
             executable: &exe,
             path_env: "/usr/bin",
         };
         for scheduler in [Scheduler::Launchd, Scheduler::SystemdUser] {
             for file in registration_files(scheduler, &wake) {
-                assert!(file.path.starts_with(&home), "{}", file.path.display());
+                assert!(
+                    file.path.starts_with(home.user_home()),
+                    "{}",
+                    file.path.display()
+                );
             }
         }
         assert!(registration_files(Scheduler::Crontab, &wake).is_empty());

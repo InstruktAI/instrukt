@@ -13,13 +13,22 @@ pub struct WebhooksArgs {
 enum WebhooksCommand {
     /// Serve declared signed native/GitHub endpoints on ingress.port at 127.0.0.1.
     /// Requires this computer's stable ID to equal global ingress.computer.
-    Serve,
+    Serve {
+        /// Take the service-manager-owned named loopback socket instead of binding one.
+        #[arg(long)]
+        socket_activation: bool,
+    },
 }
 
 pub fn run(args: WebhooksArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
-        WebhooksCommand::Serve => {
-            instrukt_runner::webhooks::serve(&ctx.home, &Env::from_process(), ctx.clock.shared())?
+        WebhooksCommand::Serve { socket_activation } => {
+            instrukt_runner::webhooks::serve_with_socket(
+                &ctx.home,
+                &Env::from_process(),
+                ctx.clock.shared(),
+                socket_activation,
+            )?
         }
     }
     Ok(ExitCode::SUCCESS)

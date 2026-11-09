@@ -146,6 +146,25 @@ impl Configuration {
         super::_redis::settings(self, env)
     }
 
+    /// Whether this project explicitly refers to a local Redis endpoint, independently
+    /// of inherited defaults or module enablement. Installation retains such demand.
+    pub fn project_local_redis(&self) -> Result<Option<String>, ConfigError> {
+        let Some(root) = &self.project_root else {
+            return Ok(None);
+        };
+        let Some(document) = super::_layer::read(&root.join(super::CONFIG_FILE_NAME))? else {
+            return Ok(None);
+        };
+        document
+            .value
+            .get("redis")
+            .and_then(|r| r.get("local"))
+            .and_then(|r| r.get("url"))
+            .and_then(Value::as_str)
+            .map(|text| self.secret_template(text))
+            .transpose()
+    }
+
     pub fn webhooks(&self) -> Result<super::WebhookSources, ConfigError> {
         super::_webhooks::parse(self.value.get("webhooks"))
     }

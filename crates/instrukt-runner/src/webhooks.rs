@@ -47,11 +47,20 @@ pub enum WebhookError {
     Listen(std::io::Error),
 }
 
-/// Internal service entry. Installation/socket inheritance is owned by S7.
+/// Internal service entry for a direct, placement-checked loopback listener.
 pub fn serve(
     home: &Home,
     env: &Env,
     clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
+) -> Result<(), WebhookError> {
+    serve_with_socket(home, env, clock, false)
+}
+
+pub fn serve_with_socket(
+    home: &Home,
+    env: &Env,
+    clock: std::sync::Arc<dyn Fn() -> Timestamp + Send + Sync>,
+    socket_activation: bool,
 ) -> Result<(), WebhookError> {
     let computer = machine_id(home)?;
     let ingress = Configuration::load_global(home)?.ingress()?;
@@ -90,7 +99,50 @@ pub fn serve(
     if !demand {
         return Err(invalid.unwrap_or(WebhookError::NoSources));
     }
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ingress.port))
+    let listener = if socket_activation {
+        let socket_name = if std::env::var_os("LISTEN_FDS").is_some() {
+            if std::env::var("LISTEN_PID").ok().as_deref() != Some(&std::process::id().to_string())
+                || std::env::var("LISTEN_FDS").ok().as_deref() != Some("1")
+                || std::env::var("LISTEN_FDNAMES").ok().as_deref() != Some("instrukt")
+            {
+                return Err(WebhookError::Listen(std::io::Error::other(
+                    "invalid service-manager socket handoff",
+                )));
+            }
+            "fd://"
+        } else {
+            "fd://instrukt"
+        };
+        let binding: service_binding::Binding = socket_name
+            .parse()
+            .map_err(|e| WebhookError::Listen(std::io::Error::other(e)))?;
+        match service_binding::Listener::try_from(binding).map_err(WebhookError::Listen)? {
+            service_binding::Listener::Tcp(listener) => listener,
+            // service-binding wraps inherited descriptors as UnixListener even
+            // for TCP. Transfer ownership without touching the socket, then
+            // validate its actual address below.
+            service_binding::Listener::Unix(listener) => {
+                let descriptor: std::os::fd::OwnedFd = listener.into();
+                TcpListener::from(descriptor)
+            }
+            _ => {
+                return Err(WebhookError::Listen(std::io::Error::other(
+                    "service manager did not pass a TCP listener",
+                )));
+            }
+        }
+    } else {
+        TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, ingress.port))
+            .map_err(WebhookError::Listen)?
+    };
+    let address = listener.local_addr().map_err(WebhookError::Listen)?;
+    if address.ip() != std::net::Ipv4Addr::LOCALHOST || address.port() != ingress.port {
+        return Err(WebhookError::Listen(std::io::Error::other(
+            "service-manager socket does not match configured loopback ingress port",
+        )));
+    }
+    listener
+        .set_nonblocking(false)
         .map_err(WebhookError::Listen)?;
     let server = Server::from_listener(listener, None)
         .map_err(|_| WebhookError::Listen(std::io::Error::other("cannot create HTTP server")))?;

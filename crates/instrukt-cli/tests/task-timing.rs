@@ -37,7 +37,7 @@ fn registrar_stubs(env: &mut TestEnv) -> PathBuf {
     let log = dir.join("calls");
     for name in ["launchctl", "systemctl", "crontab"] {
         let script = format!(
-            "#!/bin/sh\nprintf '%s' \"{name}\" >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" >> '{log}'; done\necho >> '{log}'\n\
+            "#!/bin/sh\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = list ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = load ]; then touch '{dir}/loaded'; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = is-active ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = enable ]; then touch '{dir}/loaded'; fi\nprintf '%s' \"{name}\" >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" >> '{log}'; done\necho >> '{log}'\n\
              if [ \"{name}\" = crontab ] && [ \"${{1:-}}\" = - ]; then cat > '{dir}/crontab'; fi\n\
              if [ \"{name}\" = crontab ] && [ \"${{1:-}}\" = -l ]; then cat '{dir}/crontab' 2>/dev/null || exit 1; fi\n",
             log = log.display(),

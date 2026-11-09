@@ -27,3 +27,5 @@ pub(crate) fn not_built(command: &str) -> anyhow::Result<ExitCode> {
 }
 
 pub mod secrets;
+
+pub mod bugs;
