@@ -142,7 +142,7 @@ fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
 fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both() {
     let env = TestEnv::new();
     let rt = FakeRuntime::new(&env, "rt", false);
-    global_layer(&env, "todos: false, events: false", &[&rt]);
+    global_layer(&env, "todos: false, events: false, history: false", &[&rt]);
     let repo = env.git_repo("demo");
     repo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
     repo.commit("the developer's project");

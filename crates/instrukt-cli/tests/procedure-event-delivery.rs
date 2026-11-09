@@ -500,8 +500,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         request["key"].as_str().unwrap(),
         request["brief"].as_str().unwrap(),
     );
-    let evidence =
-        serde_json::json!({"session":"t3:s1","title":request["key"],"assignment":request["brief"]});
+    let evidence = serde_json::json!({"session":"t3:s1","title":request["title"],"assignment":request["brief"]});
     let bind = || {
         r.computer
             .env
@@ -624,7 +623,7 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
 
     r.runtime.seed("s1", root, &retried.key, &retried.brief);
     let evidence =
-        serde_json::json!({"session":"t3:s1","title":retried.key,"assignment":retried.brief});
+        serde_json::json!({"session":"t3:s1","title":retried.title,"assignment":retried.brief});
     r.computer
         .env
         .instrukt(root)

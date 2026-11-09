@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/work-dispatch.rs
 expression: "String::from_utf8_lossy(&refused.get_output().stderr)"
 ---
-instrukt: `instrukt run` serves the todos and events modules, and both are off; switch on `modules.todos` or `modules.events`
+instrukt: `instrukt run` serves the todos, events and history modules, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`

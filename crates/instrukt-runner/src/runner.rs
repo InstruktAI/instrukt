@@ -160,22 +160,7 @@ pub fn run(
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);
     let mut platform: Option<EventPlatform> = None;
     let mut _readers = None;
-    let history = match Configuration::load_global(cx.home)?.runner_runtime()? {
-        Some(runtime)
-            if crate::runtime::adapter(runtime)
-                .supports(crate::runtime::Capability::ConversationSource) =>
-        {
-            Some(crate::history::start(cx.home, cx.env)?)
-        }
-        Some(runtime) => {
-            tracing::warn!(
-                event = "history_source_unsupported",
-                runtime = runtime.name()
-            );
-            None
-        }
-        None => None,
-    };
+    let mut history = crate::history::Readers::default();
     let mut relay = match Configuration::load_global(cx.home)?.runner_runtime()? {
         Some(_) => match crate::links::Worker::start(cx.home, cx.env) {
             Ok(worker) => Some(worker),
@@ -186,7 +171,6 @@ pub fn run(
         },
         None => None,
     };
-    let mut history_search = None;
     tracing::info!(event = "runner_started");
     loop {
         if let Some(relay) = &mut relay
@@ -194,15 +178,11 @@ pub fn run(
         {
             crate::links::record_failure(cx.home, &error);
         }
+        history.refresh(cx.home, cx.env)?;
         let considered = considered_projects(cx.home)?;
         if platform.is_none()
             && let Some(prepared) = event_platform(cx, &state, &considered)?
         {
-            history_search = Some(crate::history::SearchWorker::start(
-                cx.home,
-                cx.env,
-                &prepared.transport,
-            )?);
             _readers = Some(prepared.runtime.start(Arc::clone(&clock))?);
             platform = Some(prepared);
         }
@@ -222,12 +202,6 @@ pub fn run(
             tracing::error!(event = "runner_wakeup_failed", error = %err);
         }
         drop(invocation);
-        if let Some(history) = &history {
-            history.check()?;
-        }
-        if let Some(search) = &history_search {
-            search.check()?;
-        }
         if let Some(platform) = &platform {
             let receiver = platform
                 .wakeups

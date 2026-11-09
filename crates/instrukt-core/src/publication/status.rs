@@ -114,7 +114,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
         || (root.is_none() && !repository_errors.is_empty());
     let mut modules_errors = Vec::new();
     let mut modules = serde_json::Map::new();
-    for module in [Module::Blueprint, Module::Todos, Module::Events] {
+    for module in Module::ALL {
         let setting = |view: Option<&LayerInspection>| {
             view.map(|v| v.module_setting(module))
                 .transpose()
@@ -135,7 +135,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
                     Some(value) => (value, "project"),
                     None => match setting(global.as_ref())? {
                         Some(value) => (value, "global"),
-                        None => (false, "default"),
+                        None => (module == Module::History, "default"),
                     },
                 })
             }) {
@@ -256,6 +256,7 @@ fn features(runtime: Option<Runtime>, unreadable: bool) -> Value {
     let mut result = serde_json::Map::new();
     for (key, feature) in [
         ("standing_agents", Feature::StandingAgents),
+        ("history_extraction", Feature::HistoryExtraction),
         ("todo_dispatch", Feature::TodoDispatch),
         ("recurring_tasks", Feature::RecurringTasks),
         ("anomaly_notification", Feature::AnomalyNotification),

@@ -2787,7 +2787,7 @@ pub fn configure_apps(env: &TestEnv, api: &str, clock: &std::path::Path) {
     let mut layer: serde_yaml_ng::Value = std::fs::read_to_string(&file)
         .ok()
         .map(|s| serde_yaml_ng::from_str(&s).unwrap())
-        .unwrap_or_else(|| serde_yaml_ng::from_str("schema_version: 3").unwrap());
+        .unwrap_or_else(|| serde_yaml_ng::from_str("schema_version: 4").unwrap());
     let mut profiles = serde_json::Map::new();
     for (id, name) in [(1, "project"), (2, "author"), (3, "reviewer")] {
         let login = app_login(id);

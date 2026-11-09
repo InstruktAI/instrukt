@@ -23,7 +23,7 @@ expression: "support::redact(&String::from_utf8_lossy(&result.get_output().stdou
   "role": "planner",
   "attempt": 1,
   "semantic_key": "instrukt:todo:demo/<id 1>:planner:1",
-  "title": "instrukt:todo:demo/<id 1>:planner:1",
+  "title": "planner · native-selection · instrukt:todo:demo/<id 1>:planner:1",
   "worktree": "[TMP]/team-native-selection-prepare",
   "branch": "native-selection/prepare",
   "base": "<commit 1>",

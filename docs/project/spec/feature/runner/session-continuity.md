@@ -161,6 +161,7 @@ adapter verb templates.
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
+| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unset or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
@@ -180,7 +181,7 @@ unavailable on T3's published CLI; instrukt does not rebuild it.
 
 Every instrukt-owned start has a stable semantic key distinct from its display
 title. The selected adapter establishes exact discoverable key evidence; T3
-encodes the key in its `--title`, while another adapter may use a native label.
+encodes the key as the final component of its `--title`, while another adapter may use a native label.
 Renaming display text never changes semantic identity or proves absence. Missing
 or conflicting key evidence stays unresolved. Keys are scoped to the
 selected runtime and execution checkout. Todo/task/run keys retain registered project scope:
@@ -235,6 +236,31 @@ The machine runtime-dispatch guard serializes eligible owners, including `resolv
 A successor holding that lock may recover a dead invocation's key ownership
 while retaining unresolved markers; elapsed time alone permits no new start.
 
+### Human-facing thread titles
+
+Every instrukt-owned start supplies `<label> · <semantic key>`. Labels use:
+
+| Assignment | Label |
+| --- | --- |
+| Todo orchestrator or native child | `<role> · <todo-slug>` (including `prepare-orchestrator`, `work-orchestrator`, `builder`, reviewer and other declared roles) |
+| Standing procedure | procedure name (last id component), followed by ` · <typed-subject>` when present |
+| Task occurrence | `task · <task-slug>` |
+| Other unattended run | `run · <procedure-name>` |
+
+The complete title is captured with the start request and survives retries and
+renames. T3 retains supplied titles. Discovery reads the complete native title
+from CLI listing/show only: the whole legacy key-only title or the suffix after
+the last ` · ` must be an instrukt start key with a recognized assignment prefix
+and no whitespace. The prefix is opaque;
+nothing interprets its label. Recovery verifies the complete captured display
+title or the whole legacy key; an unexpected relabel is a visible conflict,
+not absence. Exact full-title evidence is retained alongside
+the decoded key. Both old key-only and new label-first threads participate in
+the same exact-key match set; one is reused, two conflict, neither permits a
+replacement for an unresolved start. Existing stored start requests without a
+display title retain their original key-only title on retry. No startup path
+reads T3 databases. Titles are never rewritten on existing threads.
+
 ### Keyed dispatch and recovery
 
 Every unattended path selects its adapter through `runner.runtime`. Under the
@@ -250,7 +276,8 @@ The same discovery and start rules govern every key, for both `start` and
 `start_or_wake`:
 
 1. Under the key lock, run `t3 thread list --project <checkout> --json`.
-   Require a complete, valid project listing. Match `title` exactly and retain
+   Require a complete, valid project listing. Decode only the canonical trailing
+   semantic key (or whole legacy key-only title), match that key exactly and retain
    `threadId` and any available `projectId`. Native project id is optional
    metadata, independent of instrukt project identity. The `runtime_bindings` mapping is a cache, never
    proof of absence.
@@ -266,7 +293,7 @@ The same discovery and start rules govern every key, for both `start` and
    combined message. Only-at-entry input remains in instrukt until idle.
 3. Zero matches permits a new start only with no unresolved `runtime_starts`
    marker, bound session or recorded delivery target. Commit the marker,
-   key, brief and worktree request before `t3 thread start --title <key>
+   key, brief and worktree request before `t3 thread start --title <display-title>
    <checkout> -`, adding worktree creation flags where requested. Its initial
    message delivers the opening assignment brief, with any initial event retained
    separately; an acknowledged start needs no second send. Commit the complete binding and acceptance before clearing the marker.
@@ -371,7 +398,7 @@ instruction prose is a separate configuration surface.
 
 | Operation | CLI translation and evidence |
 | --- | --- |
-| Plain start | `t3 thread start --title <key> <checkout> -`; stdout supplies the native id. No `--wait`: execution and acceptance are separate. |
+| Plain start | `t3 thread start --title <display-title> <checkout> -`; stdout supplies the native id. No `--wait`: execution and acceptance are separate. |
 | Todo phase orchestrator start | Preparation: `--worktree origin/main --branch <slug>/prepare`. Work: `--worktree origin/main --branch <slug>/work`; resumption on another computer: `--worktree origin/<slug>/work --branch <slug>/work`. Creation refuses an existing local phase branch. Native shared children inherit the orchestrator's recorded phase worktree. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
@@ -390,7 +417,7 @@ surface reports only the threads the runtime exposes.
 
 ### One worktree per todo team
 
-Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
 Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer releases its claim before cleanup; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
@@ -439,7 +466,7 @@ conversations remains the runtime's responsibility.
 ### Fresh canonical base
 
 Before creating either `<slug>/prepare` or `<slug>/work`, fetch origin and use
-`t3 thread start <project> - --worktree origin/main --branch <slug>/<phase> --title <key>`.
+`t3 thread start <project> - --worktree origin/main --branch <slug>/<phase> --title <display-title>`.
 Only the integrator writes and pushes gate-green exact commits to main; local
 main can lag and supplies no new-phase base. A fetch failure leaves startup
 unperformed, with its cause visible. A retained published `<slug>/work` on
@@ -626,6 +653,8 @@ And the JSON form carries the same facts
 Given a developer's standing agent has been settled longer than the sessions-list window
 When a later activation needs that responsibility
 Then keyed discovery searches all project threads and finds its exact semantic key independently of display title
+And old key-only titles and new readable titles are both discovered
+And duplicate old/new titles for one key are reported as a conflict
 And the existing conversation wakes without a new thread
 And the listing window has no part in that decision
 ```

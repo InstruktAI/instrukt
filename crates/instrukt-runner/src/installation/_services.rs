@@ -153,6 +153,45 @@ impl Owned {
         }
         Ok(())
     }
+    /// Bring the legacy ACL asset under the resource transition journal before updating it.
+    pub fn redis_acl(
+        &mut self,
+        request: &Request<'_>,
+        desired: &mut Definition,
+        file: &Path,
+        content: String,
+    ) -> anyhow::Result<()> {
+        let current = read(file)?;
+        if current.is_some() {
+            anyhow::ensure!(
+                std::fs::metadata(file)?.permissions().mode() & 0o077 == 0,
+                "private Redis ACL must be owner-only at {}",
+                file.display()
+            );
+        }
+        if let Some(legacy) = self.assets.get(file).cloned() {
+            anyhow::ensure!(
+                current.as_ref().is_none_or(|actual| actual == &legacy),
+                "ownership conflict at {}; restore the recorded Redis ACL before repair",
+                file.display()
+            );
+            let resource = self
+                .resources
+                .get_mut(&ResourceKind::Redis)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "legacy Redis ACL has no service ownership; restore its installation record"
+                    )
+                })?;
+            resource.files.insert(file.into(), legacy);
+            self.assets.remove(file);
+            if !request.check {
+                self.save(request.home)?;
+            }
+        }
+        desired.files.insert(file.into(), content);
+        Ok(())
+    }
     pub fn retained_file(
         &mut self,
         request: &Request<'_>,
@@ -308,6 +347,9 @@ impl Owned {
         if desired.name == ResourceKind::WakeUp {
             crate::install::register(request.scheduler, &request.wake)?;
         } else {
+            if desired.name == ResourceKind::Redis && active {
+                stop(desired)?;
+            }
             start(desired)?;
         }
         let mut recorded = desired.clone();
@@ -537,7 +579,11 @@ impl Owned {
                     "ownership conflict at {}; restore a recorded definition",
                     file.display()
                 );
-                std::fs::remove_file(file)?;
+                if definition.name != ResourceKind::Redis
+                    || file.file_name().is_none_or(|name| name != "users.acl")
+                {
+                    std::fs::remove_file(file)?;
+                }
             }
         }
         Ok(())
@@ -593,8 +639,17 @@ impl Owned {
         report.resource(name, Disposition::Withdrawn,
             definitions.iter().flat_map(|d| d.files.keys().cloned()).collect(), &[],
             "owned registrations withdrawn; retained data, credentials and shared executables unchanged");
+        let retained_acl = if name == ResourceKind::Redis {
+            let file = request.home.state_dir().join("redis/users.acl");
+            read(&file)?.map(|content| (file, content))
+        } else {
+            None
+        };
         if let Some(record) = self.resources.get_mut(&name) {
             record.registered = false;
+            if let Some((file, content)) = retained_acl {
+                record.files.insert(file, content);
+            }
         }
         if name == ResourceKind::Receiver {
             self.pending_receiver = None;

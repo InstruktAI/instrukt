@@ -4,7 +4,7 @@ use serde_yaml_ng::Value;
 
 use super::_error::ConfigError;
 use super::_interpolate::mask_references;
-use super::{Configuration, Env};
+use super::Configuration;
 
 pub const REDIS_BLOCK_SECONDS: u64 = 10;
 pub const REDIS_MAX_CONNECTIONS: u64 = 50;
@@ -32,7 +32,10 @@ pub struct RedisSettings {
     pub local: Option<RedisEndpoint>,
 }
 
-pub(super) fn settings(config: &Configuration, _env: &Env) -> Result<RedisSettings, ConfigError> {
+pub(super) fn settings(
+    config: &Configuration,
+    include_local: bool,
+) -> Result<RedisSettings, ConfigError> {
     let raw = config.redis_raw();
     if raw.is_some_and(|value| !value.is_mapping()) {
         return Err(ConfigError::InvalidValue {
@@ -106,9 +109,13 @@ pub(super) fn settings(config: &Configuration, _env: &Env) -> Result<RedisSettin
     Ok(RedisSettings {
         cluster: endpoint("cluster")?.ok_or_else(|| ConfigError::InvalidValue {
             key: "redis.cluster.url".into(),
-            message: "required for enabled event transport".into(),
+            message: "required for enabled Redis transport".into(),
         })?,
-        local: endpoint("local")?,
+        local: if include_local {
+            endpoint("local")?
+        } else {
+            None
+        },
     })
 }
 

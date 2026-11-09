@@ -267,7 +267,7 @@ pub struct InstallArgs {
     #[arg(long)]
     check: bool,
     /// Limit convergence to an enabled module's dependencies. Full demand still protects shared resources.
-    #[arg(long, value_parser = ["todos", "events"])]
+    #[arg(long, value_parser = ["todos", "events", "history"])]
     module: Option<String>,
     /// Render per-resource results and findings as JSON.
     #[arg(long)]
@@ -366,6 +366,9 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
+    if command == "run" && instrukt_runner::history::enabled(&ctx.home)? {
+        return Ok(());
+    }
     if config.module_enabled(Module::Todos)? || config.module_enabled(Module::Events)? {
         return Ok(());
     }
@@ -375,6 +378,11 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
     }
     if !runner::considered_projects(&ctx.home)?.is_empty() {
         return Ok(());
+    }
+    if command == "run" {
+        bail!(
+            "`instrukt run` serves the todos, events and history modules, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`"
+        );
     }
     bail!(
         "`instrukt {command}` serves the todos and events modules, and both are off; switch on `modules.todos` or `modules.events`"

@@ -73,6 +73,18 @@ pub struct ScopedTransport {
 }
 
 impl ScopedTransport {
+    /// Cluster-only consumers neither resolve local credentials nor create local scopes.
+    pub fn cluster_only(
+        config: &Configuration,
+        state: &RunnerState,
+    ) -> Result<Self, TransportError> {
+        let endpoint = Arc::new(Endpoint::new(&config.cluster_redis()?, "cluster", state)?);
+        Ok(Self {
+            local: Arc::clone(&endpoint),
+            cluster: endpoint,
+        })
+    }
+
     pub fn from_config(
         config: &Configuration,
         env: &Env,

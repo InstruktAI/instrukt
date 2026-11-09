@@ -51,6 +51,11 @@ performs conversion under the same configuration write lock. Receiver inspection
 and signature rejection use the in-memory view; a verified valid delivery persists
 conversion before event publication.
 
+Configuration schema version 4 adds `modules.history`. Existing documents
+without the key retain the default-on behavior, while explicit false survives
+migration. Migration does not insert a project override that would mask a global
+choice. Inspection remains in-memory; writing paths persist version 4 atomically.
+
 Other owned files gain a version when their shape first changes. Their readers
 use the owned migration path rather than treating prior data as malformed or
 silently replacing it. `agents.yaml` default replacement and preservation of

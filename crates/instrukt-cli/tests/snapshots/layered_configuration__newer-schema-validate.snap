@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/layered-configuration.rs
 expression: "stderr(&env, &refused)"
 ---
-instrukt: [TMP]/future/instrukt.yaml has schema_version 4, newer than this instrukt supports (3); upgrade instrukt
+instrukt: [TMP]/future/instrukt.yaml has schema_version 5, newer than this instrukt supports (4); upgrade instrukt

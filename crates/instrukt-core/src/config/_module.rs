@@ -6,11 +6,17 @@ pub enum Module {
     Blueprint,
     Todos,
     Events,
+    History,
 }
 
 impl Module {
     /// Every switchable module, in the order the schema lists them.
-    pub const ALL: [Module; 3] = [Module::Blueprint, Module::Todos, Module::Events];
+    pub const ALL: [Module; 4] = [
+        Module::Blueprint,
+        Module::Todos,
+        Module::Events,
+        Module::History,
+    ];
 
     /// The key below `modules` that switches it, and its name in `requires`.
     pub fn key(self) -> &'static str {
@@ -18,6 +24,7 @@ impl Module {
             Module::Blueprint => "blueprint",
             Module::Todos => "todos",
             Module::Events => "events",
+            Module::History => "history",
         }
     }
 

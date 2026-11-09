@@ -36,6 +36,11 @@ fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
     change(&p, "parser");
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
+    let title = FakeT3::create(&p.env).title("s1");
+    assert_eq!(
+        title.split(" · ").take(2).collect::<Vec<_>>(),
+        vec!["prepare-orchestrator", "parser"]
+    );
     let fake = FakeT3::create(&p.env);
     insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/prepare");
     assert!(fake.worktree("s1").is_dir());
@@ -94,7 +99,7 @@ fn conflicting_keyed_threads_never_admit_a_replacement() {
     fake.flag("duplicate", true);
     p.tick();
     assert_eq!(fake.threads().len(), 1);
-    let key = fake.title("s1");
+    let key = fake.title("s1").rsplit(" · ").next().unwrap().to_owned();
     let out = p
         .env
         .run(
@@ -421,7 +426,7 @@ fn disappearing_optional_native_project_metadata_still_recovers_the_same_reserve
     let fake = FakeT3::create(&p.env);
     fake.flag("silent-start", true);
     p.tick();
-    let key = fake.title("s1");
+    let key = fake.title("s1").rsplit(" · ").next().unwrap().to_owned();
     p.env
         .run(
             p.repo.path(),
@@ -939,4 +944,53 @@ fn a_kickback_round_trip_resumes_the_retained_work_driver_without_resetting_its_
         "kickback-retained-driver",
         support::redact(&p.todo(["show", slug]))
     );
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS20
+#[test]
+fn legacy_key_only_thread_is_reused_after_a_lost_start() {
+    let p = Tracked::new(true);
+    change(&p, "legacy-parser");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("silent-start", true);
+    p.tick();
+    let labelled = fake.title("s1");
+    let key = labelled.rsplit(" · ").next().unwrap().to_owned();
+    fake.change("s1", "title", key.clone().into());
+    fake.flag("silent-start", false);
+    p.tick();
+    assert_eq!(fake.threads(), vec!["s1"]);
+    assert_eq!(fake.title("s1"), key);
+    assert_eq!(fake.message_count("s1"), 1);
+    let out = p
+        .env
+        .run(p.repo.path(), ["sessions", "list", "--all", "--json"])
+        .success();
+    let sessions: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(sessions[0]["semantic_key"], key);
+    assert_eq!(sessions[0]["title"], key);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
+#[test]
+fn mixed_legacy_and_readable_titles_for_one_key_conflict() {
+    let p = Tracked::new(true);
+    change(&p, "duplicate-parser");
+    let fake = FakeT3::create(&p.env);
+    fake.flag("silent-start", true);
+    p.tick();
+    let title = fake.title("s1");
+    let key = title.rsplit(" · ").next().unwrap();
+    fake.seed("legacy", p.repo.path(), key, &fake.message("s1", 0));
+    let out = p
+        .env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", key, "--session", "t3:s1"],
+        )
+        .failure();
+    insta::assert_snapshot!("mixed-title-conflict", shown(&p, &out.get_output().stderr));
+    assert_eq!(fake.threads().len(), 2);
 }

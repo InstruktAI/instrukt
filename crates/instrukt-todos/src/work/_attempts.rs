@@ -423,7 +423,10 @@ impl Work {
             role: role.clone(),
             attempt: number,
             semantic_key: key.clone(),
-            title: key.clone(),
+            title: instrukt_runner::runtime::thread_title(
+                &format!("{role} · {}", record.slug),
+                &key,
+            ),
             worktree: canonical(&path)?,
             branch: branch.clone(),
             base: head(&path, "HEAD")?,
@@ -815,6 +818,7 @@ pub(super) fn readiness(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
+    pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection: Option<instrukt_core::config::AgentSelection>,
     pub key: String,
@@ -1048,6 +1052,7 @@ impl Work {
             native_selection(&s, &s.items[index].record, procedure.as_deref())?
         };
         Ok(Some(WorkspaceEntry {
+            title: instrukt_runner::runtime::thread_title(&format!("{role} · {todo}"), &key),
             selection,
             key,
             from,

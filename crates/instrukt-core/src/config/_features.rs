@@ -4,6 +4,7 @@ use super::Runtime;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feature {
     StandingAgents,
+    HistoryExtraction,
     TodoDispatch,
     RecurringTasks,
     AnomalyNotification,
@@ -15,6 +16,7 @@ impl Feature {
     pub fn name(self) -> &'static str {
         match self {
             Self::StandingAgents => "standing agents",
+            Self::HistoryExtraction => "history extraction",
             Self::TodoDispatch => "todo dispatch",
             Self::RecurringTasks => "recurring tasks",
             Self::AnomalyNotification => "anomaly notification",

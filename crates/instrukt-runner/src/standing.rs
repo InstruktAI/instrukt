@@ -303,6 +303,7 @@ fn deliver_group(
                 selection: None,
                 selection_evidence: None,
                 checkout: root.clone(),
+                title: thread.title.clone(),
                 key: responsibility.into(),
                 brief: original,
                 worktree: None,
@@ -442,7 +443,7 @@ fn deliver_group(
         } else {
             if found.len() != 1
                 || found[0].session != *target
-                || thread.title.as_deref() != Some(&original.key)
+                || thread.semantic_key.as_deref() != Some(&original.key)
             {
                 return Err(SessionsError::KeyConflict(original.key));
             }
@@ -492,6 +493,7 @@ fn deliver_group(
                 adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
             ),
             checkout: root.clone(),
+            title: Some(standing_title(&first.procedure, subject, responsibility)),
             key: responsibility.into(),
             brief: content,
             worktree: None,
@@ -638,6 +640,8 @@ pub struct ManualReservation {
     pub preferences: Vec<crate::agents::AgentChoice>,
     #[serde(default)]
     pub selection: Option<instrukt_core::config::AgentSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub reservation: String,
     pub key: String,
     pub brief: String,
@@ -739,6 +743,7 @@ pub fn reserve_manual(
             .into_iter()
             .next()
             .map(|selection| crate::runtime::adapter(runtime).native_selection(&selection)),
+        title: Some(standing_title(entry.id.as_str(), None, &key)),
         reservation: keyed::request_id()?,
         key: key.clone(),
         brief: initialized,
@@ -780,8 +785,8 @@ pub fn bind_manual(
         let fixed:IndexEntry=serde_json::from_str(&declaration).map_err(|e|state::invalid(&db,e))?;
         if owner!=caller.to_string() || fixed.id.as_str()!=procedure { return Err(state::invalid(&db,"reservation belongs to another caller or procedure")); }
         if let Some(e)=evidence {
-            if e.session.runtime.as_str()!=runtime.name() || e.title!=request.key || e.assignment!=request.brief || bound.as_deref().is_some_and(|s|s!=e.session.to_string()) { return Err(state::invalid(&db,"native identity or initialized assignment differs from reserved facts")); }
-            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None};
+            if e.session.runtime.as_str()!=runtime.name() || e.title!=request.title.as_deref().unwrap_or(&request.key) || e.assignment!=request.brief || bound.as_deref().is_some_and(|s|s!=e.session.to_string()) { return Err(state::invalid(&db,"native identity or initialized assignment differs from reserved facts")); }
+            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),title:request.title.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None};
             tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",params![responsibility,procedure,home,request.checkout.to_string_lossy(),declaration,serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?,e.session.to_string()]).map_err(state::sql(&db))?;
             tx.execute("UPDATE manual_standing_reservations SET session=?2 WHERE token=?1",params![token,e.session.to_string()]).map_err(state::sql(&db))?;
             inputs::retain(tx,&e.session,&Entry{id:&format!("assignment:{}",request.key),kind:InputKind::Recovery,assignment:None,source_at:None,arrived_at:now,intent:Intent::Asap,content:&request.brief})?;
@@ -852,7 +857,7 @@ fn prepare_successor(
         let entries=pending.iter().map(log_entry).collect::<Result<Vec<_>,_>>()?;
         let (count,content)=inputs::compose(cx.now,&prefix,&entries)?;
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);pending.truncate(count);
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),key:next_key.clone(),brief:content,worktree:None};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:Some(standing_title(cx.current.id.as_str(), cx.subject, &next_key)),key:next_key.clone(),brief:content,worktree:None};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;
@@ -863,4 +868,10 @@ fn prepare_successor(
         tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at) VALUES (?7,?1,?2,'standing',?1,?3,?4,?5,?6,0,'retry_allowed','successor_prepared_before_creation','instrukt',?6)",params![next_key,cx.project,cx.root.to_string_lossy(),request.brief,encoded,cx.now.to_string(),cx.old_session.runtime.as_str()]).map_err(state::sql(&path))?;
         Ok((encoded,pending))
     })
+}
+
+fn standing_title(procedure: &str, subject: Option<&str>, key: &str) -> String {
+    let name = procedure.rsplit('/').next().unwrap_or(procedure);
+    let label = subject.map_or_else(|| name.to_owned(), |subject| format!("{name} · {subject}"));
+    crate::runtime::thread_title(&label, key)
 }

@@ -31,6 +31,7 @@ home, and the flows.
 | `core` | docs, configuration, publication, repository, specs | always on | files, git |
 | `blueprint` | blueprint | on/off | a graph engine adapter |
 | `todos` | work, workflow; the runner dispatching todos | on/off; `runner.autostart` | GitHub, a runtime adapter |
+| `history` | runner history extraction, retained search and merged queries | on by default | runtime conversation source for extraction; cluster Redis for merged search only, independently of events |
 | `events` | runner sources, scoped transport, independent consumers and procedure activation | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
 
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,

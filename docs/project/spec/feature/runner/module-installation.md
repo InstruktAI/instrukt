@@ -32,7 +32,8 @@ unused; withdrawal waits for a complete demand read.
 
 | Effective demand | Infrastructure and prerequisites |
 | --- | --- |
-| Core, or no project with todos/events enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
+| Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
+| History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no project sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
 | Events enabled with nonempty valid project `webhooks:` | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
@@ -55,8 +56,8 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt config get [<path>] [--global] [--json]` and `instrukt config get --revision [--global]` | Read settings and revision with credentials redacted or references preserved. |
 | `instrukt config patch --revision <rev> [--global] --from-file <file>` | Validate and atomically record desired configuration; standard input and `--yaml` retain their existing alternatives. Installs nothing. |
 | `instrukt config validate [--global]` | Validate layer, effective module/runtime prerequisites and source references; names findings without exposing secret values. |
-| `instrukt install [--module todos\|events]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
-| `instrukt install --check [--module todos\|events]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
+| `instrukt install [--module todos\|events\|history]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
+| `instrukt install --check [--module todos\|events\|history]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
 | `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures and receiver placement/health; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
@@ -65,7 +66,7 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 The optional module filter limits which dependency set is converged or checked;
 it never overrides disabled configuration, ingress placement or other projects'
 demand. Full demand is always read before withdrawing a shared resource. Without
-a filter, obsolete owned resources are included even when both modules are off.
+a filter, obsolete owned resources are included even when all modules are off.
 `install` and `install --check` remain available with modules off. Event
 inspection can report retained infrastructure/failures after disable and creates
 no event workload. Commands' `-h` describes these boundaries and the repair door.
@@ -111,6 +112,17 @@ mode reports inactivity without treating it as broken required infrastructure.
 One wake proves neither delivered activation nor completed task.
 
 ### Local and cluster Redis
+
+Each module contributes its own Redis demand. History checks cluster-only
+request/reply permissions (lists, transactions, expiry and readiness keys).
+When history uses an existing instrukt-owned Redis as its cluster endpoint,
+installation retains and maintains that service and its shared ACL even with
+events off; it prepares no event consumers solely for history. Existing
+stream-only owned ACL assets migrate into the resource transition journal,
+which retains the before/after proof while the service restarts to load the
+request/reply permissions. Read-only inspection reports the pending repair
+without changing files or services. An unused local
+event Redis is withdrawn when history points at an external cluster.
 
 For events, reuse an explicitly configured working local Unix-socket Redis
 without rewriting its config, credentials or service. Otherwise install the
@@ -225,7 +237,7 @@ delivery is suspended while disabled, not silently settled.
 ### UC-MI1: Adopt core without background infrastructure
 
 ```gherkin
-Given a developer adopts instrukt with todos and events off
+Given a developer adopts instrukt with todos, events and history off
 When the configuration agent converges installation
 Then no wake-up, Redis or webhook receiver is installed for that project
 And documentation and configuration remain usable without a runtime
@@ -235,7 +247,7 @@ And documentation and configuration remain usable without a runtime
 
 ```gherkin
 Given a developer enables todos in a GitHub-backed project with a capable selected runtime
-And no project enables events
+And no project enables events or history
 When its configuration agent runs installation
 Then one shared minute wake-up is registered unless ticks are off
 And no Redis or receiver is installed solely for todos
@@ -249,6 +261,9 @@ When installation converges
 Then local or explicit fallback Redis and cluster capabilities are checked with retained readers prepared
 And the shared wake-up follows tick policy
 And no receiver is installed
+But when only history is enabled
+Then installation checks cluster Redis without requiring events or preparing event consumers
+And no wake-up or receiver is installed solely for history
 ```
 
 ### UC-MI4: Receive project webhooks only on the designated ingress

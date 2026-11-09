@@ -22,6 +22,15 @@ against the selected runtime's native and adapter capabilities, never executable
 configuration. Agent-native instructions are configuration prose rendered at read time;
 they are not adapter command templates.
 
+### History enablement
+
+`modules.history` defaults on in both-layer effective configuration; a project
+override wins. Off suspends extraction, import, search, retained-document reads
+and the runner history readers, preserving stored conversations and positions.
+Local operations need no Redis. Merged search independently demands cluster Redis
+under module-installation; events need not be enabled. History alone adds no
+minute wake-up or webhook receiver.
+
 ### Event enablement
 
 The effective `modules.events` switch is authoritative. Subscriptions remain in
@@ -38,7 +47,7 @@ enable events. Installation and withdrawal are owned by
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
 | `agents.<name>.git_author` | global only | commit composition |
-| `modules: {blueprint, todos, events}` (booleans, default off; core has no switch) | both (project overrides global) | each module |
+| `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
 | `events.watch: [{remote, ref}]` | project only | runner |
 | `webhooks.<domain>` | project only; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
@@ -183,7 +192,7 @@ agent-facing consumers retrieve the value through its alias.
 | `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
 | `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
 | `discuss` | When asked to open a discussion, use `instrukt discuss open <thread> [--message <text>]`; the native caller is the other member. Use `instrukt discuss close [--message <text>]` to deliver an optional final contribution and close for both members. The running instrukt runner shares finished turns automatically under project/instrukt/spec/feature/runner/conversation-links. |
-| `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <key>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
+| `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a preparation orchestrator, start t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>. After reviewed docs integrate to main, the integrator removes that worktree and deletes the prepare branch locally and on origin. Start work later from updated main with --worktree origin/main --branch <slug>/work; on another computer use --worktree origin/<slug>/work --branch <slug>/work. instrukt derives these names; creation refuses an existing local branch. Native shared children inherit the phase worktree. After deliberate native startup, enter todo prepare/work with --placement-evidence containing native session, key, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
 | `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
 | `finish_thread` | Preserve unfinished obligations. Automation never settles a standing agent; it remains unsettled in the sidebar. For other threads use native settling, which applies when its current turn ends. A human-settled standing thread stays reachable and wakes on a message. |
 | `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |

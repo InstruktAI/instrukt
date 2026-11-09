@@ -286,7 +286,13 @@ fn dispatch_one(
             worktree,
         } => (key, creation, None, worktree),
     };
+    let label = if occurrence.is_some() {
+        format!("task · {todo}")
+    } else {
+        format!("{bind_role} · {todo}")
+    };
     let request = StartRequest {
+        label: &label,
         now: cx.now,
         invocation: cx.invocation,
         creation,

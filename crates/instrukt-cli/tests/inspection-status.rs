@@ -15,6 +15,7 @@ fn fresh_status_is_complete_and_writes_nothing() {
     let repo = env.git_repo("fresh");
     let report = status(&env, repo.path());
     assert_eq!(report["machine"]["configured"], false);
+    assert_eq!(report["modules"]["history"]["enabled"], true);
     assert_eq!(report["runtime"]["selected"], serde_json::Value::Null);
     insta::assert_json_snapshot!(report["repository"]["adoption"], @r#"
 "not_adopted"
@@ -66,7 +67,7 @@ fn status_uses_compiled_capabilities_and_recognizes_native_caller_without_runtim
     std::fs::create_dir_all(env.instrukt_home()).unwrap();
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 3\nrunner: {runtime: t3}\n",
+        "schema_version: 4\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     env.set_env("T3CODE_THREAD_ID", "caller");
@@ -151,10 +152,10 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
     );
     documented::sync(&env, &second);
     env.run(first.path(), ["hooks", "install"]).success();
-    first.write("instrukt.yaml","schema_version: 3\nproject: first\nmodules: {todos: true}\ngithub: {repository: example/project}\n");
+    first.write("instrukt.yaml","schema_version: 4\nproject: first\nmodules: {todos: true}\ngithub: {repository: example/project}\n");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 3\nrunner: {runtime: t3}\n",
+        "schema_version: 4\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let report = status(&env, first.path());
@@ -274,7 +275,7 @@ fn admission_reads_existing_database_and_live_wal_without_creating_or_changing_f
     drop(StateDb::open(&home).unwrap());
     std::fs::write(
         home.global_config(),
-        "schema_version: 3\nrunner: {runtime: t3}\n",
+        "schema_version: 4\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     env.set_env("T3CODE_THREAD_ID", "caller");
@@ -303,7 +304,7 @@ fn foreign_checkout_edits_cannot_change_machine_status_or_its_exit_status() {
     documented::sync(&env, &foreign);
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 3\nmodules: {todos: true}\nrunner: {runtime: t3}\n",
+        "schema_version: 4\nmodules: {todos: true}\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let first = status(&env, env.home());
