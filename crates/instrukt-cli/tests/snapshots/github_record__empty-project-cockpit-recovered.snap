@@ -1,0 +1,59 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: cockpit()
+---
+{
+  "fields": [
+    [
+      "User field",
+      [
+        "theirs"
+      ]
+    ],
+    [
+      "Record status",
+      [
+        "active",
+        "iceboxed",
+        "held",
+        "delivered",
+        "withdrawn"
+      ]
+    ],
+    [
+      "Needs you",
+      [
+        "Yes"
+      ]
+    ]
+  ],
+  "views": [
+    {
+      "name": "Board",
+      "layout": "board",
+      "filter": "",
+      "columns": [
+        "Record status"
+      ]
+    },
+    {
+      "name": "My view",
+      "layout": "table",
+      "filter": "label:mine",
+      "columns": []
+    },
+    {
+      "name": "Needs you",
+      "layout": "table",
+      "filter": "needs-you:Yes",
+      "columns": []
+    }
+  ],
+  "workflows": [
+    {
+      "id": "workflow-1",
+      "enabled": true,
+      "name": "Auto-close"
+    }
+  ]
+}

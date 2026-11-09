@@ -1939,6 +1939,29 @@ fn cockpit_repair_failure_stays_pending_for_an_already_reflected_item() {
 #[test]
 fn an_empty_projects_cockpit_failure_is_a_project_reflection_failure() {
     let project = flavor::Tracked::new(false);
+    project
+        .github
+        .add_project_field("acme", 1, "User field", Some(&["theirs"]));
+    project
+        .github
+        .seed_project_view("acme", 1, "My view", "table", "label:mine", &[]);
+    project.github.seed_project_workflow(
+        "acme",
+        1,
+        serde_json::json!({"id":"workflow-1","enabled":true,"name":"Auto-close"}),
+    );
+    let user_field = project.github.project_field_details("acme", 1)[0].clone();
+    let user_view = project.github.project_views("acme", 1)[0].clone();
+    let workflows = project.github.project_workflows("acme", 1);
+    let cockpit = || {
+        let fields = project.github.project_field_details("acme", 1);
+        let mut views=project.github.project_views("acme",1).into_iter().map(|view| {
+            let columns=view["vertical_group_by"].as_array().unwrap().iter().map(|id|fields.iter().find(|field|field["databaseId"]==*id).unwrap()["name"].clone()).collect::<Vec<_>>();
+            serde_json::json!({"name":view["name"],"layout":view["layout"],"filter":view["filter"],"columns":columns})
+        }).collect::<Vec<_>>();
+        views.sort_by_key(|view| view["name"].as_str().unwrap().to_owned());
+        serde_json::json!({"fields":project.github.project_fields("acme",1),"views":views,"workflows":project.github.project_workflows("acme",1)})
+    };
     project.github.respond_once(
         "POST",
         "/orgs/acme/projectsV2/1/views",
@@ -1949,18 +1972,33 @@ fn an_empty_projects_cockpit_failure_is_a_project_reflection_failure() {
         },
     );
     project.tick().success();
-    let log = std::fs::read_to_string(
-        project
-            .env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/tick.log"),
-    )
-    .unwrap();
-    let failures = log
-        .lines()
-        .filter(|line| line.contains("reflection_failed"))
-        .map(|line| line.split_once(' ').unwrap().1)
-        .collect::<Vec<_>>();
-    assert_eq!(failures.len(), 1);
-    insta::assert_snapshot!("empty-project-cockpit-pending", failures.join("\n"));
+    assert!(project.github.issues(REPOSITORY).is_empty());
+    assert_eq!(
+        project.github.project_views("acme", 1),
+        vec![user_view.clone()]
+    );
+    assert_eq!(
+        project.github.project_field_details("acme", 1)[0],
+        user_field
+    );
+    assert_eq!(project.github.project_workflows("acme", 1), workflows);
+    insta::assert_json_snapshot!("empty-project-cockpit-failed", cockpit());
+
+    project.tick().success();
+    assert!(project.github.issues(REPOSITORY).is_empty());
+    let views = project.github.project_views("acme", 1);
+    assert_eq!(views.len(), 3);
+    assert_eq!(
+        views
+            .iter()
+            .find(|view| view["node_id"] == user_view["node_id"])
+            .unwrap(),
+        &user_view
+    );
+    assert_eq!(
+        project.github.project_field_details("acme", 1)[0],
+        user_field
+    );
+    assert_eq!(project.github.project_workflows("acme", 1), workflows);
+    insta::assert_json_snapshot!("empty-project-cockpit-recovered", cockpit());
 }
