@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+jsonwebtoken = "=9.3.1"
+ureq.workspace = true
+url.workspace = true
 dotenvy.workspace = true
 hex.workspace = true
 indexmap.workspace = true

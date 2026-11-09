@@ -93,3 +93,8 @@ pub fn module_enabled(
 ) -> Result<bool, ConfigError> {
     Configuration::load(home, repo_root)?.module_enabled(module)
 }
+
+/// Whether text is an exact protected machine-local secret reference.
+pub fn is_secret_reference(text: &str) -> bool {
+    _secrets::reference(text).is_some()
+}

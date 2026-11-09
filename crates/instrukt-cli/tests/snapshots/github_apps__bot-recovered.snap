@@ -1,0 +1,20 @@
+---
+source: crates/instrukt-cli/tests/github-apps.rs
+expression: "support::redact(&shown)"
+---
+app-record · bug · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 2
+intent:
+  Verify bot recovery.
+reflection: read from GitHub; not on this computer
+issue: #1
+claim: not held
+hold: recovered from configured bot (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

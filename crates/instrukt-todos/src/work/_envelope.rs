@@ -171,16 +171,44 @@ pub(crate) fn record_comment(record: &TodoRecord, base: u64) -> Result<String, s
 /// `Some(Err)` when its record line does not parse. Content an envelope
 /// supplies is dropped: evidence content comes only from verified
 /// artifact versions.
-pub(crate) fn parse_record_comment(body: &str) -> Option<Result<Envelope, serde_json::Error>> {
-    let line = body
-        .lines()
-        .find(|line| line.starts_with(RECORD_MARKER) && line.ends_with(COMMENT_CLOSE))?;
-    let payload = &line[RECORD_MARKER.len()..line.len() - COMMENT_CLOSE.len()];
-    Some(serde_json::from_str::<Envelope>(payload).map(|envelope| {
-        let mut record = envelope.record.without_contents();
-        record.number_unsequenced();
-        Envelope { record, ..envelope }
-    }))
+pub(crate) fn parse_record_comment(
+    body: &str,
+) -> Option<Result<Envelope, super::_github::GitHubError>> {
+    let line = body.lines().find(|line| {
+        line.starts_with("<!-- instrukt:work-record:v") && line.ends_with(COMMENT_CLOSE)
+    })?;
+    let wire = &line["<!-- instrukt:work-record:v".len()..line.len() - COMMENT_CLOSE.len()];
+    let (envelope_version, payload) = wire.split_once(':').unwrap_or((wire, ""));
+    Some((|| {
+        let invalid = |message: String| super::_github::GitHubError::RecordSchema { message };
+        if envelope_version != "2" {
+            return Err(invalid(format!(
+                "unsupported GitHub record envelope version {envelope_version} (supported: 2); upgrade instrukt before acting on this todo"
+            )));
+        }
+        let mut value: Value = serde_json::from_str(payload).map_err(|e| invalid(e.to_string()))?;
+        let observed = value["record"]["schema"].as_u64().ok_or_else(|| {
+            invalid(
+                "record has no schema version; upgrade instrukt or restore a supported record"
+                    .into(),
+            )
+        })?;
+        let supported = u64::from(super::_model::SCHEMA);
+        if !(1..=supported).contains(&observed) {
+            return Err(invalid(format!(
+                "todo `{}` has record schema {observed}; this binary supports 1..={supported}; upgrade instrukt before acting on this todo",
+                value["record"]["slug"].as_str().unwrap_or("unknown")
+            )));
+        }
+        // v1 lacks record-order numbers. Serde defaults and number_unsequenced
+        // preserve retained evidence while assigning its existing order.
+        value["record"]["schema"] = supported.into();
+        let mut envelope: Envelope =
+            serde_json::from_value(value).map_err(|e| invalid(e.to_string()))?;
+        envelope.record = envelope.record.without_contents();
+        envelope.record.number_unsequenced();
+        Ok(envelope)
+    })())
 }
 
 /// Keeps JSON inside an HTML comment: `<`, `>` and `&` as JSON escapes.
@@ -249,7 +277,7 @@ mod tests {
 
     fn record() -> TodoRecord {
         TodoRecord {
-            schema: 1,
+            schema: super::super::_model::SCHEMA,
             id: TodoId::parse(&"ab".repeat(16)).unwrap(),
             project: ProjectSlug::parse("demo").unwrap(),
             slug: TodoSlug::parse("depth").unwrap(),

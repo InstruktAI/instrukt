@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/github-record.rs
+expression: "told(&project.env, &result)"
+---
+instrukt: GitHub: todo `schema-change` has record schema 999; this binary supports 1..=2; upgrade instrukt before acting on this todo: todo `schema-change` has record schema 999; this binary supports 1..=2; upgrade instrukt before acting on this todo

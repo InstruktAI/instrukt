@@ -2,33 +2,33 @@
 schema_version: 2
 default: {class: agent, can: [all], order: [claude, codex, antigravity], tier: standard}
 roles:
-  builder: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  finalizer: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  drift-analyzer: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  deferrer: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  diagnoser: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  knowledge-author: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  project-analyst: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  third-party-researcher: {class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
-  config-assessor: {class: focused, can: [read, configure, worker, record], order: [claude, codex, antigravity], tier: strong}
-  prepare-orchestrator: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  work-orchestrator: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  intaker: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  architect: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  planner: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  diagnosis-driver: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  task-preparer: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  task-runner: {class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  integrator: {class: standing, can: [read, record, orchestrate, integrate], order: [claude, codex, antigravity], tier: strong}
-  coordinator: {class: standing, can: [read, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  bug-hunter: {class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
-  upstream-watcher: {class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
-  event-handler: {class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
-  prd-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
-  architecture-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
-  plan-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
-  build-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
-  commit-reviewer: {class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  builder: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  finalizer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  drift-analyzer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  deferrer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  diagnoser: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  knowledge-author: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  project-analyst: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  third-party-researcher: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  config-assessor: {github_app: author, class: focused, can: [read, configure, worker, record], order: [claude, codex, antigravity], tier: strong}
+  prepare-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  work-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  intaker: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  architect: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  planner: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  diagnosis-driver: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  task-preparer: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  task-runner: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  integrator: {github_app: project, class: standing, can: [read, record, orchestrate, integrate], order: [claude, codex, antigravity], tier: strong}
+  coordinator: {github_app: project, class: standing, can: [read, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  bug-hunter: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
+  upstream-watcher: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
+  event-handler: {github_app: project, class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
+  prd-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  architecture-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  build-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  commit-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
 bundles:
   read:
     - {action: docs-read, scope: any}

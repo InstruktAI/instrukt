@@ -81,6 +81,7 @@ enum Shape {
     Bool,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
     Board,
+    Apps,
     Str,
     OnOff,
     Approver,
@@ -121,6 +122,8 @@ fn schema() -> Node {
                 ("approvers", Leaf(ProjectOnly, Shape::StrList)),
                 ("repository", Leaf(ProjectOnly, Shape::Str)),
                 ("api_url", Leaf(GlobalOnly, Shape::Str)),
+                ("apps", Leaf(GlobalOnly, Shape::Apps)),
+                ("project_app", Leaf(GlobalOnly, Shape::Str)),
             ]),
         ),
         (
@@ -420,6 +423,11 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
         },
         Shape::Domain => check_field(Field::Domain, value, path, out),
         Shape::Bool => check_field(Field::Bool, value, path, out),
+        Shape::Apps => {
+            if let Err(error) = crate::github::inventory(value) {
+                out.push(invalid(&error.to_string()));
+            }
+        }
         Shape::Board => match value {
             Value::Bool(false) => {}
             Value::Bool(true) => out.push(invalid(
@@ -703,6 +711,7 @@ fn json_shape(shape: Shape) -> serde_json::Value {
         Shape::Version => json!({ "type": "integer", "minimum": 1 }),
         Shape::Slug | Shape::Domain | Shape::Str | Shape::Identity => json!({ "type": "string" }),
         Shape::Bool => json!({ "type": "boolean" }),
+        Shape::Apps => json!({"type":"object", "additionalProperties":{"type":"object"}}),
         Shape::Board => json!({
             "anyOf": [{ "const": false }, { "type": "string", "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$" }],
         }),

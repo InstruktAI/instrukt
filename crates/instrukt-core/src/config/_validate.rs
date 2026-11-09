@@ -52,6 +52,37 @@ pub(crate) fn findings_for(
             }
         }
     }
+    if layer.kind() == LayerKind::Global
+        && let Some(value) = value.get("github")
+        && let Some(raw) = value.get("apps")
+        && let Ok(apps) = crate::github::inventory(raw)
+    {
+        let project = value.get("project_app").and_then(Value::as_str);
+        if project.is_none_or(|p| !apps.contains_key(p)) {
+            found.push(KeyFinding::new(
+                "github.project_app",
+                FindingKind::UnresolvedReference,
+                "name a profile in github.apps",
+            ));
+        }
+        if let Ok(text) = std::fs::read_to_string(home.agents_file())
+            && let Ok(agents) = super::Agents::parse(&text)
+        {
+            for (role, selection) in agents.roles {
+                if selection
+                    .github_app
+                    .as_ref()
+                    .is_some_and(|p| !apps.contains_key(p))
+                {
+                    found.push(KeyFinding::new(
+                        &format!("roles.{role}.github_app"),
+                        FindingKind::UnresolvedReference,
+                        "name a profile in github.apps",
+                    ));
+                }
+            }
+        }
+    }
     let effective = match layer.kind() {
         LayerKind::Global => effective_value(Some(value), None),
         LayerKind::Project => effective_value(global.as_ref(), Some(value)),
@@ -301,7 +332,7 @@ fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<K
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
-        if path == "webhooks" || path.starts_with("webhooks.") {
+        if path == "webhooks" || path.starts_with("webhooks.") || path.starts_with("github.apps.") {
             continue;
         }
         let error = Interpolator::new(effective, Mode::Check)

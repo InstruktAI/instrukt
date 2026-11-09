@@ -68,6 +68,15 @@ pub(crate) fn accept_listing(
     true
 }
 
+/// Check every trusted envelope before dependent reflection or acknowledgements.
+pub(crate) fn check_compatible(gh: &GitHub, item: &LocalItem) -> Result<(), GitHubError> {
+    if let Some(issue) = item.reflection.issue {
+        let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+        committed(&comments, &item.record.id, &gh.bots())?;
+    }
+    Ok(())
+}
+
 /// What a pull found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pulled {
@@ -89,17 +98,23 @@ pub(crate) struct Committed {
 /// The head of the revision chain of todo `id` among `comments`: trusted
 /// envelopes in comment order, each accepted only when built on the head
 /// before it.
-pub(crate) fn committed(comments: &[Value], id: &TodoId) -> Option<Committed> {
-    let mut ordered: Vec<(u64, Envelope)> = comments
-        .iter()
-        .filter_map(|comment| {
-            let number = comment["id"].as_u64()?;
-            match trusted_envelope(comment)? {
-                Ok(envelope) if &envelope.record.id == id => Some((number, envelope)),
-                _ => None,
+pub(crate) fn committed(
+    comments: &[Value],
+    id: &TodoId,
+    bots: &[instrukt_core::github::Bot],
+) -> Result<Option<Committed>, GitHubError> {
+    let mut ordered = Vec::new();
+    for comment in comments {
+        let Some(number) = comment["id"].as_u64() else {
+            continue;
+        };
+        if let Some(parsed) = trusted_envelope(comment, bots) {
+            let envelope = parsed?;
+            if &envelope.record.id == id {
+                ordered.push((number, envelope));
             }
-        })
-        .collect();
+        }
+    }
     ordered.sort_by_key(|(number, _)| *number);
     let mut head: Option<Committed> = None;
     for (comment, envelope) in ordered {
@@ -117,7 +132,7 @@ pub(crate) fn committed(comments: &[Value], id: &TodoId) -> Option<Committed> {
             });
         }
     }
-    head
+    Ok(head)
 }
 
 /// The `/instrukt` command comments not yet answered.
@@ -143,10 +158,9 @@ pub(crate) fn reply(
 ) -> Result<(), GitHubError> {
     let text = format!("{text}\n\n<!-- instrukt:command-reply:{source} -->");
     let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
-    if comments
-        .iter()
-        .any(|comment| has_write_access(comment) && comment["body"].as_str() == Some(&text))
-    {
+    if comments.iter().any(|comment| {
+        (has_write_access(comment) || gh.trusts(comment)) && comment["body"].as_str() == Some(&text)
+    }) {
         return Ok(());
     }
     gh.post(
@@ -189,7 +203,7 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
     };
     let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
     item.reflection.inbound = commands(&comments, &item.reflection.commands_seen);
-    let Some(head) = committed(&comments, &item.record.id) else {
+    let Some(head) = committed(&comments, &item.record.id, &gh.bots())? else {
         item.reflection.etag = etag;
         return Ok(Pulled::Current);
     };
@@ -233,7 +247,7 @@ pub(crate) fn refresh(gh: &GitHub, item: &mut LocalItem) -> Result<(), GitHubErr
         },
     };
     let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
-    let Some(head) = committed(&comments, &item.record.id) else {
+    let Some(head) = committed(&comments, &item.record.id, &gh.bots())? else {
         item.reflection.issue = Some(issue);
         item.reflection.conflicted = false;
         return Ok(());
@@ -271,7 +285,7 @@ pub(crate) fn flush(
     if item.reflection.pending {
         let issue = ensure_issue(gh, item)?;
         let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
-        let head = committed(&comments, &item.record.id);
+        let head = committed(&comments, &item.record.id, &gh.bots())?;
         if let Some(head) = &head
             && Some(head.comment) != item.reflection.record_comment
         {
@@ -295,7 +309,7 @@ pub(crate) fn flush(
             upload_artifacts(gh, item, issue)?;
             let posted = write_revision(gh, item, issue)?;
             let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
-            match committed(&comments, &item.record.id) {
+            match committed(&comments, &item.record.id, &gh.bots())? {
                 Some(head) if head.comment == posted => {
                     item.reflection.record_comment = Some(posted);
                     item.reflection.remote_revision = Some(item.record.revision);
@@ -334,24 +348,10 @@ pub(crate) fn flush(
     {
         reflect_pull_request(gh, item, issue, base)?;
     }
-    if let (Some(board), Some(issue)) = (board, item.reflection.issue)
-        && board_owed(item, board)
-    {
+    if let (Some(board), Some(issue)) = (board, item.reflection.issue) {
         reflect_board(gh, board, item, issue)?;
     }
     Ok(())
-}
-
-/// Whether the item is not on `board` or shows another status there.
-pub(crate) fn board_owed(item: &LocalItem, board: &BoardRef) -> bool {
-    board_item_on(item, board).is_none()
-        || item.reflection.board_status.as_deref() != Some(_envelope::record_status(&item.record))
-}
-
-/// The item's board item id when its recorded membership is of `board`.
-fn board_item_on<'i>(item: &'i LocalItem, board: &BoardRef) -> Option<&'i str> {
-    let on = item.reflection.board.as_deref() == Some(board_key(board).as_str());
-    item.reflection.board_item.as_deref().filter(|_| on)
 }
 
 /// A board's identity as membership records it: `<owner>/<number>`.
@@ -369,20 +369,16 @@ fn reflect_board(
     issue: IssueRef,
 ) -> Result<(), GitHubError> {
     let status = _envelope::record_status(&item.record);
-    // Membership of another board is no membership of this one.
-    let member = board_item_on(item, board).map(str::to_owned);
     let attempt = (|| {
-        let content = match member {
-            Some(_) => String::new(),
-            None => gh.read(&format!("/issues/{}", issue.number))?["node_id"]
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| GitHubError::Decode {
-                    path: format!("/issues/{}", issue.number),
-                    message: "an issue without a node id".to_owned(),
-                })?,
-        };
-        super::_board::reflect(gh, board, member.as_deref(), &content, status)
+        let content = gh.read(&format!("/issues/{}", issue.number))?["node_id"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| GitHubError::Decode {
+                path: format!("/issues/{}", issue.number),
+                message: "an issue without a node id".to_owned(),
+            })?;
+        let account = gh.for_role(None, instrukt_core::github::Operation::Board)?;
+        super::_board::reflect(&account, board, &content, status)
     })();
     match attempt {
         Ok(board_item) => {
@@ -392,7 +388,17 @@ fn reflect_board(
             item.reflection.board_failure = None;
             Ok(())
         }
-        Err(err) if err.is_reach() => Err(err),
+        Err(
+            err @ (GitHubError::RateLimited { .. }
+            | GitHubError::Unreachable(_)
+            | GitHubError::App(
+                instrukt_core::github::AppError::RateLimited { .. }
+                | instrukt_core::github::AppError::Unreachable,
+            )),
+        ) => {
+            item.reflection.board_failure = Some(err.to_string());
+            Err(err)
+        }
         Err(err) => {
             tracing::warn!(
                 event = "work_board_pending",
@@ -440,14 +446,17 @@ pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
 /// Every reflected todo of the repository, read directly (issues and the
 /// heads of their revision chains), oldest first. `open_only` limits the
 /// read to addressable work.
-pub(crate) fn remote_records(
-    gh: &GitHub,
-    open_only: bool,
-) -> Result<Vec<(TodoRecord, IssueRef)>, GitHubError> {
+pub(crate) struct RemoteRecords {
+    pub records: Vec<(TodoRecord, IssueRef)>,
+    pub incompatible: Vec<(TodoId, GitHubError)>,
+}
+
+pub(crate) fn remote_records(gh: &GitHub, open_only: bool) -> Result<RemoteRecords, GitHubError> {
     let state = if open_only { "open" } else { "all" };
     let mut issues = gh.list(&format!("/issues?labels={TODO_LABEL}&state={state}"))?;
     issues.reverse();
     let mut records = Vec::new();
+    let mut incompatible = Vec::new();
     for issue in issues {
         if issue.get("pull_request").is_some() {
             continue;
@@ -459,7 +468,15 @@ pub(crate) fn remote_records(
             continue;
         };
         let comments = gh.list(&format!("/issues/{number}/comments"))?;
-        if let Some(head) = committed(&comments, &id) {
+        let head = match committed(&comments, &id, &gh.bots()) {
+            Ok(head) => head,
+            Err(error @ GitHubError::RecordSchema { .. }) => {
+                incompatible.push((id, error));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(head) = head {
             records.push((
                 head.record,
                 IssueRef {
@@ -469,7 +486,10 @@ pub(crate) fn remote_records(
             ));
         }
     }
-    Ok(records)
+    Ok(RemoteRecords {
+        records,
+        incompatible,
+    })
 }
 
 /// The todo on issue `number` as GitHub holds it now, with the artifact
@@ -490,7 +510,7 @@ pub(crate) fn read_one(gh: &GitHub, number: u64) -> Result<Option<LocalItem>, Gi
     };
     let issue = issue_ref(&issue, &path)?;
     let comments = gh.list(&format!("/issues/{number}/comments"))?;
-    let Some(head) = committed(&comments, &id) else {
+    let Some(head) = committed(&comments, &id, &gh.bots())? else {
         return Ok(None);
     };
     localize_head(gh, issue, head).map(Some)
@@ -504,7 +524,7 @@ pub(crate) fn localize(
     issue: IssueRef,
 ) -> Result<LocalItem, GitHubError> {
     let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
-    let Some(head) = committed(&comments, &record.id) else {
+    let Some(head) = committed(&comments, &record.id, &gh.bots())? else {
         return Err(GitHubError::Decode {
             path: format!("/issues/{}/comments", issue.number),
             message: "the issue carries no committed record".to_owned(),
@@ -580,9 +600,12 @@ pub(crate) fn has_write_access(comment: &Value) -> bool {
 /// The envelope a comment carries, when its author can write to the
 /// repository. An envelope by anyone else (anyone can comment on a public
 /// repository) is reported and never applied.
-fn trusted_envelope(comment: &Value) -> Option<Result<Envelope, serde_json::Error>> {
+fn trusted_envelope(
+    comment: &Value,
+    bots: &[instrukt_core::github::Bot],
+) -> Option<Result<Envelope, GitHubError>> {
     let parsed = _envelope::parse_record_comment(comment["body"].as_str()?)?;
-    if has_write_access(comment) {
+    if has_write_access(comment) || bots.iter().any(|bot| bot.matches(&comment["user"])) {
         return Some(parsed);
     }
     tracing::warn!(
@@ -734,6 +757,13 @@ fn reflect_pull_request(
     let Some(branch) = item.record.branch.clone() else {
         return Ok(());
     };
+    let role = item
+        .record
+        .bindings
+        .iter()
+        .find(|binding| binding.attempt.branch.as_ref() == Some(&branch))
+        .map(|binding| binding.role.as_str());
+    let author = gh.for_role(role, instrukt_core::github::Operation::Author)?;
     if item.reflection.pull.is_none() {
         let owner = gh.repository().split('/').next().unwrap_or_default();
         let head = encode(&format!("{owner}:{branch}"));
@@ -751,7 +781,7 @@ fn reflect_pull_request(
                 }
                 Err(err) => return Err(err),
             }
-            let created = gh.post(
+            let created = author.post(
                 "/pulls",
                 &json!({
                     "title": item.record.slug.as_str(),
@@ -780,21 +810,38 @@ fn reflect_pull_request(
     };
     item.reflection.pull_outstanding = Some(format!("pull request #{pull} is not up to date"));
     let verdicts = build_verdicts(&item.record);
-    for (verdict, commit, report) in verdicts.iter().skip(item.reflection.reviews_reflected) {
-        gh.post(
-            &format!("/pulls/{pull}/reviews"),
-            &json!({
-                "event": "COMMENT",
-                "commit_id": commit,
-                "body": format!(
-                    "[instrukt build review] verdict: {verdict} · reviewed commit {commit} · report {report}"
-                ),
-            }),
-        )?;
+    for (verdict, commit, report, role) in verdicts.iter().skip(item.reflection.reviews_reflected) {
+        let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review)?;
+        let bot = reviewer.bot()?;
+        let pull_actor = gh.read(&format!("/pulls/{pull}"))?;
+        if bot.matches(&pull_actor["user"]) {
+            return Err(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into()).into());
+        }
+        let body = format!(
+            "[instrukt build review] verdict: {verdict} · reviewed commit {commit} · report {report}"
+        );
+        let state = if *verdict == "approve" {
+            "APPROVED"
+        } else {
+            "CHANGES_REQUESTED"
+        };
+        let reviews = gh.list(&format!("/pulls/{pull}/reviews"))?;
+        let landed = reviews.iter().any(|review| {
+            bot.matches(&review["user"])
+                && review["commit_id"].as_str() == Some(commit)
+                && review["body"].as_str() == Some(&body)
+                && review["state"].as_str() == Some(state)
+        });
+        if !landed {
+            reviewer.post(
+                &format!("/pulls/{pull}/reviews"),
+                &json!({"event":if *verdict=="approve" {"APPROVE"} else {"REQUEST_CHANGES"}, "commit_id":commit, "body":body}),
+            )?;
+        }
         item.reflection.reviews_reflected += 1;
     }
     if item.record.delivery.is_some() && !item.reflection.pull_closed {
-        gh.patch(
+        author.patch(
             &format!("/pulls/{pull}"),
             &json!({"state": "closed", "body": pull_body(&item.record, issue)}),
         )?;
@@ -816,7 +863,7 @@ fn pull_body(record: &TodoRecord, issue: IssueRef) -> String {
 
 /// The record's build-review verdicts, oldest first: (verdict, reviewed
 /// commit, report digest).
-fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String)> {
+fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String, Option<String>)> {
     record
         .stamps
         .iter()
@@ -832,6 +879,14 @@ fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String)> {
                 },
                 target.to_string(),
                 report.to_string(),
+                match &stamp.actor {
+                    crate::evidence::Actor::Session(session) => record
+                        .bindings
+                        .iter()
+                        .find(|b| b.session.as_ref() == Some(session))
+                        .map(|b| b.role.to_string()),
+                    _ => None,
+                },
             )),
             _ => None,
         })
@@ -998,7 +1053,7 @@ mod tests {
             comment(11, 1, &theirs),
             comment(12, 1, &mine),
         ];
-        let head = committed(&comments, &first.id).unwrap();
+        let head = committed(&comments, &first.id, &[]).unwrap().unwrap();
         assert_eq!((head.comment, head.record), (11, theirs));
     }
 
@@ -1007,71 +1062,12 @@ mod tests {
         let first = record(1, "depth");
         let second = record(4, "depth");
         let comments = [comment(10, 0, &first), comment(11, 1, &second)];
-        assert_eq!(committed(&comments, &first.id).unwrap().comment, 11);
-    }
-
-    #[test]
-    fn membership_of_one_board_is_none_of_another() {
-        let a = BoardRef {
-            owner: "acme".into(),
-            number: 7,
-        };
-        let b = BoardRef {
-            owner: "acme".into(),
-            number: 8,
-        };
-        let mut item = LocalItem {
-            record: record(1, "depth"),
-            reflection: Default::default(),
-        };
-        item.reflection.board_item = Some("PVTI_a".into());
-        item.reflection.board_status = Some(_envelope::record_status(&item.record).into());
-        // Recorded before membership carried its board: owed again.
-        assert!(board_owed(&item, &a));
-        item.reflection.board = Some(board_key(&a));
-        assert!(!board_owed(&item, &a));
-        assert_eq!(board_item_on(&item, &b), None);
-        assert!(board_owed(&item, &b));
-    }
-
-    /// A local item whose board membership carries no board: an item id
-    /// and status, no `board`.
-    fn membership_without_board() -> LocalItem {
-        let record: TodoRecord = serde_json::from_value(serde_json::json!({
-            "schema": 1,
-            "id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-            "project": "demo",
-            "slug": "depth",
-            "kind": "change",
-            "status": "active",
-            "created": "2026-10-01T09:00:00Z",
-            "created_by": {"person": {"name": "dev"}},
-            "revision": 3,
-        }))
-        .unwrap();
-        LocalItem {
-            record,
-            reflection: ReflectionState {
-                issue: Some(IssueRef {
-                    number: 4,
-                    id: 4004,
-                }),
-                board_item: Some("PVTI_old".into()),
-                board_status: Some("active".into()),
-                ..ReflectionState::default()
-            },
-        }
-    }
-
-    #[test]
-    fn a_membership_stored_without_its_board_is_owed_on_the_configured_board() {
-        let item = membership_without_board();
-        let configured = BoardRef {
-            owner: "acme".into(),
-            number: 7,
-        };
-        assert!(board_owed(&item, &configured));
-        // The old item id is never reused for the configured board.
-        assert_eq!(board_item_on(&item, &configured), None);
+        assert_eq!(
+            committed(&comments, &first.id, &[])
+                .unwrap()
+                .unwrap()
+                .comment,
+            11
+        );
     }
 }

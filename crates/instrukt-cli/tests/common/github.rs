@@ -231,6 +231,7 @@ impl FakeGitHub {
             .insert("api_url".into(), self.url().into());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, serde_yaml_ng::to_string(&layer).unwrap()).unwrap();
+        configure_apps(env, &self.url());
     }
 
     /// Stops answering: connections to the address are refused.
@@ -770,7 +771,8 @@ struct ArtifactVersion {
 }
 
 fn actor(login: &str) -> Value {
-    json!({"login": login, "id": login.bytes().map(u64::from).sum::<u64>(), "type": "User"})
+    let id = login.bytes().map(u64::from).sum::<u64>();
+    json!({"login":login,"id":id,"node_id":format!("BOT_{id}"),"type":if login.ends_with("[bot]"){"Bot"}else{"User"}})
 }
 
 impl Repo {
@@ -794,6 +796,7 @@ impl Repo {
             "id": self.id,
             "name": self.name,
             "full_name": format!("{}/{}", self.owner, self.name),
+            "node_id":format!("R_{}",self.id),
             "owner": actor(&self.owner),
             "default_branch": "main",
             "private": true,
@@ -1080,14 +1083,31 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         .iter()
         .position(|c| (c.method.is_empty() || c.method == method) && path.ends_with(&c.path_suffix))
         .and_then(|at| guard.canned.remove(at));
-    let mut reply = match canned {
-        Some(canned) => Reply {
-            status: canned.response.status,
-            body: Some(canned.response.body),
-            headers: canned.response.headers,
-        },
-        None => route(&mut guard, &method, &path, &query, &body),
+    let authorization = headers
+        .get("authorization")
+        .map(String::as_str)
+        .unwrap_or("");
+    let app_id = authorization
+        .strip_prefix("Bearer app-token-")
+        .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| jwt_app(authorization));
+    let previous_login = guard.login.clone();
+    if let Some(id) = app_id {
+        guard.login = app_login(id).into();
+    }
+    let mut reply = if authorization == "Bearer" {
+        Reply::json(401, json!({"message":"Bad credentials"}))
+    } else {
+        match canned {
+            Some(canned) => Reply {
+                status: canned.response.status,
+                body: Some(canned.response.body),
+                headers: canned.response.headers,
+            },
+            None => route(&mut guard, &method, &path, &query, &body),
+        }
     };
+    guard.login = previous_login;
     if let Some(seconds) = guard.poll_interval {
         reply
             .headers
@@ -1118,7 +1138,17 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         method,
         path,
         query,
-        headers,
+        headers: headers
+            .into_iter()
+            .map(|(key, value)| {
+                let value = if key == "authorization" {
+                    "<redacted>".into()
+                } else {
+                    value
+                };
+                (key, value)
+            })
+            .collect(),
         body,
         status,
     });
@@ -1246,6 +1276,42 @@ fn paginate(base: &str, path: &str, query: &str, items: Vec<Value>) -> Reply {
 }
 
 fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -> Reply {
+    if path == "/app" && method == "GET" {
+        let id = match state.login.as_str() {
+            "instruktai-author[bot]" => 2,
+            "instruktai-reviewer[bot]" => 3,
+            _ => 1,
+        };
+        return Reply::ok(json!({"id":id,"slug":app_login(id).trim_end_matches("[bot]")}));
+    }
+    if let Some(slug) = path.strip_prefix("/apps/") {
+        let id = match slug {
+            "instruktai" => 1,
+            "instruktai-author" => 2,
+            "instruktai-reviewer" => 3,
+            _ => return Reply::not_found(),
+        };
+        return Reply::ok(json!({"id":id,"slug":slug}));
+    }
+    if let Some(login) = path.strip_prefix("/users/") {
+        return Reply::ok(actor(login));
+    }
+    if path.starts_with("/app/installations/") && path.ends_with("/access_tokens") {
+        let id = path
+            .split('/')
+            .nth(3)
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1);
+        let input: Value = serde_json::from_str(body).unwrap();
+        return Reply::created(
+            json!({"token":format!("app-token-{id}"),"expires_at":"2099-01-01T00:00:00Z","permissions":input["permissions"]}),
+        );
+    }
+    if path == "/installation/repositories" {
+        return Reply::ok(
+            json!({"repositories":state.repos.values().map(Repo::json).collect::<Vec<_>>()}),
+        );
+    }
     if method == "POST" && path == "/graphql" {
         let input: Value = serde_json::from_str(body).unwrap_or(Value::Null);
         return graphql(state, &input);
@@ -1268,6 +1334,16 @@ fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -
     let login = state.login.clone();
     let number = |text: &str| text.parse::<u64>().ok();
     match (method, rest) {
+        ("GET", ["installation"]) => {
+            let id = match state.login.as_str() {
+                "instruktai-author[bot]" => 2,
+                "instruktai-reviewer[bot]" => 3,
+                _ => 1,
+            };
+            Reply::ok(
+                json!({"id":id,"app_id":id,"permissions":{"issues":"write","contents":"write","pull_requests":"write","checks":"read","statuses":"read","organization_projects":"write"}}),
+            )
+        }
         ("GET", []) => Reply::ok(state.repo(&full).json()),
         ("GET", ["collaborators", login, "permission"]) => {
             let allowed = state.repo(&full).comments.values().any(|c| {
@@ -1903,6 +1979,11 @@ fn pull_route(
             Reply::ok(Value::Array(reviews))
         }
         ("POST", ["reviews"]) => {
+            if matches!(input["event"].as_str(), Some("APPROVE" | "REQUEST_CHANGES"))
+                && state.repo(full).issues[&n].login == login
+            {
+                return Reply::invalid("Can not review your own pull request");
+            }
             let id = state.next_id();
             let now = state.now();
             let review_state = match input["event"].as_str() {
@@ -1947,6 +2028,7 @@ struct Project {
     id: String,
     owner: String,
     number: u64,
+    title: String,
     fields: Vec<ProjectField>,
     items: Vec<ProjectItem>,
 }
@@ -2001,6 +2083,7 @@ impl FakeGitHub {
             id,
             owner: owner.to_owned(),
             number,
+            title: String::new(),
             fields: Vec::new(),
             items: Vec::new(),
         });
@@ -2040,6 +2123,34 @@ impl FakeGitHub {
         });
     }
 
+    pub fn remove_project_field(&self, owner: &str, number: u64, name: &str) {
+        let mut state = self.lock();
+        state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .fields
+            .retain(|f| f.name != name);
+    }
+    pub fn clear_project_items(&self, owner: &str, number: u64) {
+        let mut state = self.lock();
+        state
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .unwrap()
+            .items
+            .clear();
+    }
+    pub fn reviews(&self, repo: &str, number: u64) -> Vec<Value> {
+        self.lock().repos[repo].issues[&number]
+            .pull
+            .as_ref()
+            .unwrap()
+            .reviews
+            .clone()
+    }
     /// A project's fields, each with its option names, in order.
     pub fn project_fields(&self, owner: &str, number: u64) -> Vec<(String, Vec<String>)> {
         let state = self.lock();
@@ -2101,6 +2212,51 @@ fn field_payload(field: &ProjectField) -> Value {
 fn graphql(state: &mut State, input: &Value) -> Reply {
     let query = input["query"].as_str().unwrap_or_default();
     let vars = &input["variables"];
+    if query.contains("viewer { id login databaseId }") {
+        let bot = actor(&state.login);
+        return Reply::ok(
+            json!({"data":{"viewer":{"id":bot["node_id"],"databaseId":bot["id"],"login":bot["login"]}}}),
+        );
+    }
+    if query.contains("projectsV2(first:") {
+        let owner = vars["owner"].as_str().unwrap();
+        let nodes = state
+            .projects
+            .iter()
+            .filter(|p| p.owner == owner)
+            .map(|p| json!({"id":p.id,"number":p.number,"title":p.title}))
+            .collect::<Vec<_>>();
+        return Reply::ok(
+            json!({"data":{"repositoryOwner":{"id":format!("OWNER_{owner}"),"projectsV2":{"nodes":nodes,"pageInfo":{"hasNextPage":false}}}}}),
+        );
+    }
+    if query.contains("createProjectV2(input:") {
+        let owner = vars["owner"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("OWNER_")
+            .to_owned();
+        let number = state
+            .projects
+            .iter()
+            .filter(|p| p.owner == owner)
+            .map(|p| p.number)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let id = format!("PVT_{}", state.next_id());
+        state.projects.push(Project {
+            id: id.clone(),
+            owner,
+            number,
+            title: vars["title"].as_str().unwrap().into(),
+            fields: Vec::new(),
+            items: Vec::new(),
+        });
+        return Reply::ok(
+            json!({"data":{"createProjectV2":{"projectV2":{"id":id,"number":number}}}}),
+        );
+    }
     if query.contains("repositoryOwner") {
         let owner = vars["owner"].as_str().unwrap_or_default();
         let number = vars["number"].as_u64().unwrap_or_default();
@@ -2223,4 +2379,75 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
         );
     }
     graphql_error("the fake GitHub does not serve this document")
+}
+
+fn app_login(id: u64) -> &'static str {
+    match id {
+        2 => "instruktai-author[bot]",
+        3 => "instruktai-reviewer[bot]",
+        _ => "instruktai[bot]",
+    }
+}
+
+/// Ephemeral RSA material generated for the HTTP fake only, never real App keys.
+fn test_keys() -> &'static (String, String) {
+    static KEYS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    KEYS.get_or_init(|| {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("test-app.pem");
+        assert!(
+            std::process::Command::new("openssl")
+                .args(["genrsa", "-out"])
+                .arg(&file)
+                .arg("2048")
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let public = std::process::Command::new("openssl")
+            .args(["rsa", "-pubout", "-in"])
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(public.status.success());
+        (
+            std::fs::read_to_string(file).unwrap(),
+            String::from_utf8(public.stdout).unwrap(),
+        )
+    })
+}
+fn jwt_app(authorization: &str) -> Option<u64> {
+    let jwt = authorization.strip_prefix("Bearer ")?;
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.validate_exp = false;
+    let claims = jsonwebtoken::decode::<Value>(
+        jwt,
+        &jsonwebtoken::DecodingKey::from_rsa_pem(test_keys().1.as_bytes()).ok()?,
+        &validation,
+    )
+    .ok()?
+    .claims;
+    claims["iss"].as_str()?.parse().ok()
+}
+
+pub fn configure_apps(env: &TestEnv, api: &str) {
+    let file = env.instrukt_home().join("instrukt.yaml");
+    let mut layer: serde_yaml_ng::Value = std::fs::read_to_string(&file)
+        .ok()
+        .map(|s| serde_yaml_ng::from_str(&s).unwrap())
+        .unwrap_or_else(|| serde_yaml_ng::from_str("schema_version: 3").unwrap());
+    let mut profiles = serde_json::Map::new();
+    for (id, name) in [(1, "project"), (2, "author"), (3, "reviewer")] {
+        let login = app_login(id);
+        profiles.insert(name.into(),json!({"app_id":id,"slug":login.trim_end_matches("[bot]"),"bot":actor(login).as_object().unwrap().iter().filter(|(k,_)|k.as_str()!="type").map(|(k,v)|(k.clone(),v.clone())).collect::<serde_json::Map<_,_>>(),"private_key":"${TEST_APP_KEY}"}));
+    }
+    layer["github"]["api_url"] = api.into();
+    layer["github"]["project_app"] = "project".into();
+    layer["github"]["apps"] = serde_yaml_ng::to_value(profiles).unwrap();
+    std::fs::write(file, serde_yaml_ng::to_string(&layer).unwrap()).unwrap();
+    let home = instrukt_core::home::Home::at_user_home(
+        env.instrukt_home().parent().unwrap().to_path_buf(),
+    );
+    instrukt_core::config::set_secret(&home, "TEST_APP_KEY", &test_keys().0).unwrap();
 }

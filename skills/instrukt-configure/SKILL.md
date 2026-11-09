@@ -21,6 +21,9 @@ computers, use the installed command help for their supported behavior:
 
 - project/instrukt/spec/feature/configuration/layered-configuration
 - project/instrukt/spec/feature/configuration/configuration-editing
+- project/instrukt/spec/feature/work/github-apps
+- project/instrukt/spec/feature/work/github-record
+- project/instrukt/spec/feature/configuration/roles-and-capabilities
 - project/instrukt/spec/feature/configuration/owned-files
 - project/instrukt/spec/feature/runner/module-installation
 - project/instrukt/spec/feature/runner/single-ingress-webhook-termination
@@ -61,6 +64,30 @@ machine's global layer remains its own; project placement uses existing homes
 rather than an added routing setting. Carry credential references and masked
 findings in briefs and reports, with secret values resolved only at their
 declaring computer.
+
+## Configure GitHub identities
+
+For projects enabling todos, configure the machine's public `github.apps`
+inventory and `github.project_app`, and the shared `agents.yaml` role entries'
+`github_app` references under the GitHub Apps contract. Reuse the existing
+TeleClaude project, author and reviewer Apps when present on the installation;
+record their observed App ids, slugs and stable bot account ids/node ids/logins.
+For a new installation, guide the developer through creating and installing
+three distinct Apps, using the actual assigned identities and the repository
+and account permissions required by their responsibilities. The project App
+maintains records, issues, bugs and the board; authoring and native review use
+different Apps. Preserve the role's other capabilities and model choices.
+
+Store each private key through `instrukt secrets set NAME`, with redirected
+stdin or a protected input file, and put only `${NAME}` in the public profile's
+`private_key`. Each computer keeps its own protected key material. Configuration
+reports carry public identities and reference names. Verify the configured App
+and stable bot identities, the repository installation, permission scopes and
+credential issuance through the available App-authenticated operation. Report
+missing command/API capabilities or credentials as incomplete setup with their
+repair door; verification remains pending until observed. Board setup and repair
+run automatically with reflection, including when a project has no `board`
+reference yet. Preserve unrelated project fields and existing matching resources.
 
 ## Route the work
 

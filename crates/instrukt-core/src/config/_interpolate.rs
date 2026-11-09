@@ -56,7 +56,11 @@ impl<'a> Interpolator<'a> {
     }
 
     fn expand_value(&self, value: &Value, path: &str) -> Result<Value, ConfigError> {
-        if path == "webhooks" || path.starts_with("webhooks.") {
+        if path == "webhooks"
+            || path.starts_with("webhooks.")
+            || path == "github.apps"
+            || path.starts_with("github.apps.")
+        {
             return Ok(value.clone());
         }
         match value {
@@ -119,7 +123,7 @@ impl<'a> Interpolator<'a> {
         value: &Value,
         stack: &mut Vec<String>,
     ) -> Result<String, ConfigError> {
-        if path.starts_with("webhooks.") {
+        if path.starts_with("webhooks.") || path.starts_with("github.apps.") {
             return value
                 .as_str()
                 .map(str::to_owned)

@@ -1,27 +1,16 @@
-//! Which GitHub repository a project's work lives in, at which API
-//! address, and with what credentials (`github-record`, "Writer and
-//! convergence": repository and credentials). Resolution only: callers
-//! bring their own client.
-//!
-//! - [`api_url`]: `github.api_url` from the machine's global layer only,
-//!   never a repository's, because the token is sent there.
-//! - [`repository`]: `github.repository`, else the remote the default
-//!   branch tracks when it is a repository on the API's host.
-//! - [`code_host`]: whether the project's code is on GitHub, which todos
-//!   need; [`todos_need_github`] is the refusal when it is not.
-//! - [`credentials`]: `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`;
-//!   never stored.
+//! Machine-owned App authentication and repository resolution. Public profile
+//! identities are verified at GitHub; protected keys issue bounded, memory-only
+//! installation credentials. Project configuration selects the repository,
+//! while only the global layer selects the credential destination.
 
 use std::path::Path;
-use std::process::Command;
-use std::time::Duration;
 
-use crate::config::{ConfigError, Configuration, Env};
+use crate::config::{ConfigError, Configuration};
 use crate::git::{self, GitError};
 use crate::home::Home;
 
-/// How long `gh auth token` may take.
-const GH_TIMEOUT: Duration = Duration::from_secs(10);
+mod _apps;
+pub use _apps::{App, AppError, Apps, Bot, Credential, Operation, inventory};
 
 /// The repository could not be resolved.
 #[derive(Debug, thiserror::Error)]
@@ -130,17 +119,6 @@ pub fn todos_need_github(reason: &str) -> String {
     )
 }
 
-/// The token to authenticate with: `GITHUB_TOKEN`, `GH_TOKEN`, then
-/// `gh auth token`. `None` when none is available. Never stored.
-pub fn credentials(env: &Env) -> Option<String> {
-    for name in ["GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Some(value) = env.get(name).map(str::trim).filter(|v| !v.is_empty()) {
-            return Some(value.to_owned());
-        }
-    }
-    gh_auth_token()
-}
-
 /// The project's default branch: the remote's `HEAD`, then
 /// `init.defaultBranch`, then `main`.
 pub fn default_branch(root: &Path) -> Result<String, GitError> {
@@ -155,31 +133,6 @@ pub fn default_branch(root: &Path) -> Result<String, GitError> {
         }
     }
     Ok(git_value(root, &["config", "init.defaultBranch"])?.unwrap_or_else(|| "main".to_owned()))
-}
-
-/// `gh auth token`, bounded; absent when `gh` is missing, signed out or
-/// slow.
-fn gh_auth_token() -> Option<String> {
-    let mut command = Command::new("gh");
-    command.args(["auth", "token"]);
-    let output = match crate::process::output(&mut command, None, GH_TIMEOUT) {
-        Ok(output) => output,
-        Err(crate::process::ProcessError::Spawn { source, .. })
-            if source.kind() == std::io::ErrorKind::NotFound =>
-        {
-            return None;
-        }
-        Err(error) => {
-            tracing::warn!(event="gh_token_unavailable",error=%error);
-            return None;
-        }
-    };
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let token = text.trim();
-    (!token.is_empty()).then(|| token.to_owned())
 }
 
 /// A git query whose "no answer" is a non-zero exit with no output.
@@ -285,13 +238,5 @@ mod tests {
         for bad in ["acme", "acme/", "../demo", "acme/de mo", "a/b/c"] {
             assert_eq!(owner_repo(bad), None, "{bad}");
         }
-    }
-
-    #[test]
-    fn the_first_token_variable_set_is_the_credential() {
-        let env = Env::from_pairs([("GH_TOKEN", "second"), ("GITHUB_TOKEN", "first")]);
-        assert_eq!(credentials(&env).as_deref(), Some("first"));
-        let env = Env::from_pairs([("GITHUB_TOKEN", " "), ("GH_TOKEN", "second")]);
-        assert_eq!(credentials(&env).as_deref(), Some("second"));
     }
 }

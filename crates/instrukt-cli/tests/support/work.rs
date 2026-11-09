@@ -36,7 +36,7 @@ impl Project {
     /// identified by `session_env`.
     pub fn with_runtime(session_env: Option<&str>) -> Self {
         let github = FakeGitHub::start();
-        github.add_repo(REPOSITORY);
+        github.add_repo(REPOSITORY).add_project("acme", 1);
         let (env, repo) = machine(&github.url(), session_env);
         Self { env, github, repo }
     }
@@ -121,18 +121,18 @@ fn machine(api_url: &str, session_env: Option<&str>) -> (TestEnv, Repo) {
     let mut env = TestEnv::new();
     let mut global =
         format!("schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {api_url}\n");
-    if session_env.is_some() {
-        global.push_str("runner: {runtime: t3}\n");
-    }
+    let _ = session_env;
+    global.push_str("runner: {runtime: t3}\n");
     let path = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, global).unwrap();
+    crate::common::github::configure_apps(&env, api_url);
     env.set_env("GITHUB_TOKEN", "test-token");
     let repo = env.git_repo("demo");
     repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\n"
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\n"
             ),
         );
     repo.write("README.md", "# demo\n");

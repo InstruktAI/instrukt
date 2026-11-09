@@ -494,7 +494,15 @@ fn read_sources(
     let client = CiClient::new(
         &api_url,
         &repository,
-        github::credentials(cx.env),
+        match github::Apps::load(cx.home)
+            .and_then(|apps| apps.issue(&repository, None, github::Operation::Observe, now))
+        {
+            Ok(credential) => Some(credential.token().to_owned()),
+            Err(error) => {
+                tracing::warn!(event="ci_app_unavailable", error=%error);
+                None
+            }
+        },
         state,
         &project.slug,
     );

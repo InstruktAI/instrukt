@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/github-record.rs
 expression: "redact(&format!(\"{recorded}---\\n{reflected}---\\n{}---\\n{refreshed}---\\n{rerecorded}---\\n{shown}\",\nString::from_utf8_lossy(&refused.get_output().stderr)))"
 ---
 wrote prd of nested-lists: <digest 1>
-reflection: pending: no credentials
+reflection: pending: GitHub: GitHub App setup incomplete: selected App key unavailable in owner-only secrets.env; use instrukt secrets set; repair github.apps and its repository installation with the configuration skill
 ---
 nested-lists · feature · active
 identity: <id 1>

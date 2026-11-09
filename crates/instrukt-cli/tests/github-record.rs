@@ -66,6 +66,7 @@ fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
 fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending() {
     let mut project = Project::new();
     project.create("nested-lists", "feature", INTENT);
+    std::fs::remove_file(project.env.instrukt_home().join("secrets.env")).unwrap();
     let requests_before = project.github.requests().len();
     let gh_config = project.env.path("gh-config");
     std::fs::create_dir_all(&gh_config).unwrap();
@@ -152,6 +153,8 @@ fn a_revision_github_accepted_whose_answer_was_lost_completes_without_a_conflict
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR2
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA1
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC1
 #[test]
 fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() {
     let crew = workflow::Crew::new();
@@ -166,15 +169,6 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         "1. Track depth in the parser.\n2. Render it.",
     ]);
     let workspace = crew.workspace("nested-lists");
-    std::fs::write(workspace.join("parser.rs"), "fn parse() {}\n").unwrap();
-    project.env.git(&workspace, ["add", "parser.rs"]);
-    project
-        .env
-        .git(&workspace, ["commit", "--quiet", "-m", "Track list depth"]);
-    let built = project.env.git(&workspace, ["rev-parse", "HEAD"]);
-    project
-        .github
-        .set_branch(REPOSITORY, "nested-lists/work", &built);
     project.ok([
         "artifacts",
         "write",
@@ -202,6 +196,30 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         &["--verdict", "approve", "--phase", "plan_review"],
     );
     crew.next("work", "nested-lists");
+    common::agent_profiles(
+        &project.env,
+        "roles: {work-lead: {github_app: author}, build-reviewer: {github_app: reviewer}}",
+    );
+    std::fs::write(workspace.join("parser.rs"), "fn parse() {}\n").unwrap();
+    project.env.git(&workspace, ["add", "parser.rs"]);
+    project
+        .env
+        .instrukt(&workspace)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["repo", "commit", "--message", "Track list depth"])
+        .assert()
+        .success();
+    assert_eq!(
+        project
+            .env
+            .git(&workspace, ["log", "-1", "--format=%an <%ae>"]),
+        "instruktai-author[bot] <2315+instruktai-author[bot]@users.noreply.github.com>"
+    );
+    let built = project.env.git(&workspace, ["rev-parse", "HEAD"]);
+    project
+        .github
+        .set_branch(REPOSITORY, "nested-lists/work", &built);
+
     crew.todo_in(&workspace, ["stamp", "nested-lists", "--build-started"]);
     let worker = crew.worker(
         "nested-lists",
@@ -231,6 +249,30 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         .assert()
         .success();
 
+    let remote = project.github.issues(REPOSITORY);
+    assert_eq!(
+        remote
+            .iter()
+            .find(|i| i.get("pull_request").is_some())
+            .unwrap()["user"]["login"],
+        "instruktai-author[bot]"
+    );
+    let pull = remote
+        .iter()
+        .find(|i| i.get("pull_request").is_some())
+        .unwrap()["number"]
+        .as_u64()
+        .unwrap();
+    let reviews = project.github.reviews(REPOSITORY, pull);
+    assert_eq!(
+        reviews.last().unwrap()["user"]["login"],
+        "instruktai-reviewer[bot]"
+    );
+    assert_eq!(reviews.last().unwrap()["state"], "APPROVED");
+    // Reconstruction must recognize the native verdict already on GitHub.
+    let other = project.other_computer();
+    other.ok(["update", "nested-lists"]);
+    assert_eq!(project.github.reviews(REPOSITORY, pull), reviews);
     project.ok(["deliver", "nested-lists", "--commit", &built]);
 
     insta::assert_snapshot!("delivery-on-github", redact(&github_view(project)));
@@ -249,6 +291,11 @@ fn progress_that_loses_to_a_change_made_elsewhere_is_reflected_only_after_refres
         .env
         .remove_env("GITHUB_TOKEN")
         .set_env("GH_CONFIG_DIR", gh_config.to_str().unwrap());
+    std::fs::rename(
+        project.env.instrukt_home().join("secrets.env"),
+        project.env.instrukt_home().join("secrets.saved"),
+    )
+    .unwrap();
     let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
     // Meanwhile the other computer's change reaches GitHub first.
     elsewhere.ok([
@@ -260,6 +307,11 @@ fn progress_that_loses_to_a_change_made_elsewhere_is_reflected_only_after_refres
     ]);
     let chain_before = revision_headers(&project);
 
+    std::fs::rename(
+        project.env.instrukt_home().join("secrets.saved"),
+        project.env.instrukt_home().join("secrets.env"),
+    )
+    .unwrap();
     project.env.set_env("GITHUB_TOKEN", "test-token");
     let reflected = project.ok(["show", "nested-lists"]);
     let refused = project
@@ -1352,10 +1404,6 @@ fn a_decision_imported_by_another_computer_reaches_the_claim_host_once() {
         .replace("github:\n", "github:\n  approvers: [maintainer]\n");
     other.repo.write("instrukt.yaml", &source);
     let fake = runtime::FakeRuntime::new(&other.env, "other", false);
-    let global = other.env.instrukt_home().join("instrukt.yaml");
-    let mut config = std::fs::read_to_string(&global).unwrap();
-    config.push_str("runner: {runtime: t3}\n");
-    std::fs::write(global, config).unwrap();
     project.github.seed_comment(
         REPOSITORY,
         1,
@@ -1443,5 +1491,93 @@ fn imported_accepted_label_identity_supersedes_local_ignored_bookkeeping_through
     insta::assert_snapshot!(
         "accepted-label-identity-reconstructed",
         redact(&other.ok(["show", slug]))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR10
+#[test]
+fn newer_remote_schema_refuses_progress_before_any_write() {
+    let project = Project::new();
+    project.create("schema-change", "bug", INTENT);
+    project.create("unrelated-record", "bug", "Continue independent work.");
+    seed_revision(&project.github, |record| record["schema"] = 999.into());
+    let before = project.github.comments(REPOSITORY, 1);
+    let artifacts = project.github.artifacts(REPOSITORY, 1);
+    let result = project
+        .todo([
+            "artifacts",
+            "write",
+            "schema-change",
+            "log",
+            "must not append",
+        ])
+        .failure();
+    insta::assert_snapshot!("newer-schema-refusal", told(&project.env, &result));
+    assert_eq!(project.github.comments(REPOSITORY, 1), before);
+    assert_eq!(project.github.artifacts(REPOSITORY, 1), artifacts);
+    project.ok([
+        "artifacts",
+        "write",
+        "unrelated-record",
+        "log",
+        "independent progress",
+    ]);
+    assert_eq!(project.github.comments(REPOSITORY, 1), before);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR10
+#[test]
+fn older_remote_schema_converts_without_losing_retained_evidence() {
+    let project = Project::new();
+    project.create("schema-change", "bug", INTENT);
+    seed_revision(&project.github, |record| record["schema"] = 1.into());
+    project.ok([
+        "artifacts",
+        "write",
+        "schema-change",
+        "log",
+        "continued after conversion",
+    ]);
+    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 2);
+    insta::assert_snapshot!(
+        "converted-schema-evidence",
+        project.ok(["artifacts", "read", "schema-change", "input"])
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR5
+#[test]
+fn missing_board_is_set_up_automatically_and_reused() {
+    let project = Project::new();
+    // This project has no board reference; the existing unrelated board is preserved.
+    let file = project.repo.path().join("instrukt.yaml");
+    let config = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("board: acme/1\n", "");
+    std::fs::write(file, config).unwrap();
+    project.create("cockpit", "bug", INTENT);
+    let board = project
+        .env
+        .run(project.repo.path(), ["config", "get", "board"])
+        .success();
+    insta::assert_snapshot!("automatic-board-reference", told(&project.env, &board));
+    project
+        .github
+        .add_project_field("acme", 2, "User field", Some(&["theirs"]));
+    project
+        .github
+        .remove_project_field("acme", 2, "Record status");
+    project.github.clear_project_items("acme", 2);
+    project.ok(["update", "cockpit"]);
+    assert_eq!(project.github.project_items("acme", 2).len(), 1);
+    assert_eq!(project.github.project_fields("acme", 2).len(), 2);
+    insta::assert_snapshot!(
+        "automatic-board-state",
+        board_state(
+            &project,
+            "acme",
+            2,
+            &[(1, issue_node(&project, 1).as_str())]
+        )
     );
 }

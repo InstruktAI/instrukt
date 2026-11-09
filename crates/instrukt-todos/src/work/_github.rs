@@ -20,6 +20,10 @@ const API_VERSION: &str = "2022-11-28";
 /// A GitHub request did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GitHubError {
+    #[error("{message}")]
+    RecordSchema { message: String },
+    #[error(transparent)]
+    App(#[from] instrukt_core::github::AppError),
     #[error("GitHub is unreachable ({0})")]
     Unreachable(String),
     #[error("GitHub deferred requests (rate limited)")]
@@ -46,6 +50,7 @@ impl GitHubError {
         matches!(
             self,
             GitHubError::Unreachable(_)
+                | GitHubError::App(_)
                 | GitHubError::RateLimited { .. }
                 | GitHubError::Unauthorized { .. }
         )
@@ -64,7 +69,14 @@ pub(crate) struct GitHub {
     agent: ureq::Agent,
     api: String,
     repository: String,
-    token: String,
+    token: std::cell::RefCell<String>,
+    credential: std::cell::RefCell<Option<instrukt_core::github::Credential>>,
+    role: Option<String>,
+    operation: instrukt_core::github::Operation,
+    started: Instant,
+    apps: Option<std::sync::Arc<instrukt_core::github::Apps>>,
+    bots: std::cell::RefCell<Vec<instrukt_core::github::Bot>>,
+    now: Timestamp,
 }
 
 impl GitHub {
@@ -83,8 +95,93 @@ impl GitHub {
             agent,
             api: api_url.trim_end_matches('/').to_owned(),
             repository: repository.to_owned(),
-            token,
+            token: std::cell::RefCell::new(token),
+            credential: Default::default(),
+            role: None,
+            operation: instrukt_core::github::Operation::Record,
+            started: Instant::now(),
+            apps: None,
+            bots: Default::default(),
+            now: Timestamp::now(),
         }
+    }
+
+    pub fn for_app(
+        home: &instrukt_core::home::Home,
+        api: &str,
+        repository: &str,
+        role: Option<&str>,
+        operation: instrukt_core::github::Operation,
+        now: Timestamp,
+    ) -> Result<Self, GitHubError> {
+        let apps = std::sync::Arc::new(instrukt_core::github::Apps::load(home)?);
+        let mut gh = Self::new(api, repository, String::new());
+        gh.apps = Some(apps);
+        gh.now = now;
+        gh.role = role.map(str::to_owned);
+        gh.operation = operation;
+        Ok(gh)
+    }
+    pub fn for_role(
+        &self,
+        role: Option<&str>,
+        operation: instrukt_core::github::Operation,
+    ) -> Result<Self, GitHubError> {
+        let mut gh = Self::new(&self.api, &self.repository, String::new());
+        gh.apps = self.apps.clone();
+        gh.now = self.current_time()?;
+        gh.role = role.map(str::to_owned);
+        gh.operation = operation;
+        Ok(gh)
+    }
+    pub fn bots(&self) -> std::cell::Ref<'_, Vec<instrukt_core::github::Bot>> {
+        self.bots.borrow()
+    }
+    pub fn trusts(&self, comment: &Value) -> bool {
+        self.bots
+            .borrow()
+            .iter()
+            .any(|bot| bot.matches(&comment["user"]))
+    }
+    pub fn bot(&self) -> Result<instrukt_core::github::Bot, GitHubError> {
+        self.credential()?;
+        self.credential
+            .borrow()
+            .as_ref()
+            .map(|c| c.bot.clone())
+            .ok_or_else(|| GitHubError::Decode {
+                path: "App".into(),
+                message: "verified bot unavailable".into(),
+            })
+    }
+    fn current_time(&self) -> Result<Timestamp, GitHubError> {
+        let elapsed = i64::try_from(self.started.elapsed().as_secs()).unwrap_or(i64::MAX);
+        Timestamp::from_second(self.now.as_second().saturating_add(elapsed)).map_err(|_| {
+            GitHubError::Decode {
+                path: "App".into(),
+                message: "credential clock is out of range".into(),
+            }
+        })
+    }
+    fn credential(&self) -> Result<(), GitHubError> {
+        let Some(apps) = &self.apps else {
+            return Ok(());
+        };
+        let now = self.current_time()?;
+        if self
+            .credential
+            .borrow()
+            .as_ref()
+            .is_none_or(|c| c.expires.as_second() <= now.as_second() + 30)
+        {
+            let credential =
+                apps.issue(&self.repository, self.role.as_deref(), self.operation, now)?;
+            let bots = apps.verified_bots(now)?;
+            *self.token.borrow_mut() = credential.token().to_owned();
+            *self.credential.borrow_mut() = Some(credential);
+            *self.bots.borrow_mut() = bots;
+        }
+        Ok(())
     }
 
     pub fn can_write(&self, login: &str) -> Result<bool, GitHubError> {
@@ -110,7 +207,7 @@ impl GitHub {
     /// `GET /repos/{repository}{path}`, conditional on `etag`.
     pub fn get(&self, path: &str, etag: Option<&str>) -> Result<Fetched, GitHubError> {
         let url = self.url(path);
-        let mut request = self.with_headers(self.agent.get(&url));
+        let mut request = self.with_headers(self.agent.get(&url))?;
         if let Some(etag) = etag {
             request = request.header("If-None-Match", etag);
         }
@@ -126,7 +223,13 @@ impl GitHub {
             .body_mut()
             .read_to_string()
             .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
-        check(status, &response, "GET", path, &text)?;
+        check(
+            status,
+            &response,
+            "GET",
+            path,
+            &text.replace(self.token.borrow().as_str(), "<credential>"),
+        )?;
         Ok(Fetched::Fresh {
             body: decode(path, &text)?,
             etag,
@@ -185,11 +288,11 @@ impl GitHub {
         let started = Instant::now();
         let result = match method {
             "POST" => self
-                .with_headers(self.agent.post(&url))
+                .with_headers(self.agent.post(&url))?
                 .header("Content-Type", "application/json")
                 .send(&text),
             _ => self
-                .with_headers(self.agent.patch(&url))
+                .with_headers(self.agent.patch(&url))?
                 .header("Content-Type", "application/json")
                 .send(&text),
         };
@@ -200,7 +303,13 @@ impl GitHub {
             .body_mut()
             .read_to_string()
             .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
-        check(status, &response, method, path, &answer)?;
+        check(
+            status,
+            &response,
+            method,
+            path,
+            &answer.replace(self.token.borrow().as_str(), "<credential>"),
+        )?;
         if answer.trim().is_empty() {
             return Ok(Value::Null);
         }
@@ -215,7 +324,7 @@ impl GitHub {
         let text = serde_json::json!({ "query": document, "variables": variables }).to_string();
         let started = Instant::now();
         let mut response = self
-            .with_headers(self.agent.post(&url))
+            .with_headers(self.agent.post(&url))?
             .header("Content-Type", "application/json")
             .send(&text)
             .map_err(transport)?;
@@ -225,7 +334,13 @@ impl GitHub {
             .body_mut()
             .read_to_string()
             .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
-        check(status, &response, "POST", "/graphql", &answer)?;
+        check(
+            status,
+            &response,
+            "POST",
+            "/graphql",
+            &answer.replace(self.token.borrow().as_str(), "<credential>"),
+        )?;
         let value = decode("/graphql", &answer)?;
         if let Some(errors) = value["errors"].as_array().filter(|e| !e.is_empty()) {
             let message = errors
@@ -237,7 +352,7 @@ impl GitHub {
                 method: "POST",
                 path: "/graphql".to_owned(),
                 status,
-                message,
+                message: message.replace(self.token.borrow().as_str(), "<credential>"),
             });
         }
         Ok(value["data"].clone())
@@ -256,11 +371,15 @@ impl GitHub {
         format!("{}/repos/{}{}", self.api, self.repository, path)
     }
 
-    fn with_headers<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
-        request
+    fn with_headers<B>(
+        &self,
+        request: ureq::RequestBuilder<B>,
+    ) -> Result<ureq::RequestBuilder<B>, GitHubError> {
+        self.credential()?;
+        Ok(request
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", API_VERSION)
-            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Authorization", &format!("Bearer {}", self.token.borrow())))
     }
 }
 

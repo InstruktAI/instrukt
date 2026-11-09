@@ -291,7 +291,7 @@ fn an_approval_on_github_applies_to_the_evidence_it_names_attributed_to_the_appr
     let answers: Vec<String> = github
         .comments(REPOSITORY, 1)
         .iter()
-        .filter(|c| c["user"]["login"] == "instrukt-test")
+        .filter(|c| c["user"]["login"] == "instruktai[bot]")
         .filter_map(|c| c["body"].as_str())
         .filter(|b| b.starts_with('@'))
         .map(str::to_owned)

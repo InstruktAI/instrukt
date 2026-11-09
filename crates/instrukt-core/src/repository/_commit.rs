@@ -65,7 +65,29 @@ pub fn commit(
         return Err(RepositoryError::CanonicalAuthoring);
     }
     let configuration = Configuration::load(home, Some(&root))?;
-    let author = agent_author(&configuration, env)?;
+    let author = match configuration.caller(env)? {
+        Some(caller) => match wiring
+            .session_role
+            .as_ref()
+            .map(|lookup| lookup.role(&caller))
+            .transpose()?
+            .flatten()
+        {
+            Some(role) => {
+                let api = crate::github::api_url(home)?;
+                let repository = crate::github::repository(&configuration, &api, &root)?;
+                let credential = crate::github::Apps::load(home)?.issue(
+                    &repository,
+                    Some(role.as_str()),
+                    crate::github::Operation::Author,
+                    jiff::Timestamp::now(),
+                )?;
+                Some(credential.bot.author())
+            }
+            None => agent_author(&configuration, env)?,
+        },
+        None => agent_author(&configuration, env)?,
+    };
     let session = session(&configuration, env)?;
     let todo = match &request.todo {
         Some(slug) => Some(todo_trailer(&configuration, wiring, slug)?),

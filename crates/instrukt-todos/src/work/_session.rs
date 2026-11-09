@@ -34,7 +34,7 @@ const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
 /// Why reflection is pending.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingReason {
-    /// No token in `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`.
+    /// The machine has no usable App credentials.
     NoCredentials,
     Unreachable,
     /// GitHub deferred requests, until the time it named.
@@ -65,7 +65,7 @@ pub enum GitHubRead {
 
 enum Remote {
     Client {
-        gh: GitHub,
+        gh: Box<GitHub>,
         /// Set when GitHub stopped answering during this command.
         down: Option<GitHubError>,
     },
@@ -103,6 +103,7 @@ pub(crate) struct Session<'w> {
     /// being unreachable: what is not local is then undetermined, never
     /// absent.
     lookup_failed: Option<GitHubError>,
+    pub incompatible: std::collections::BTreeSet<TodoId>,
     pub now: Timestamp,
     /// The project's default branch.
     pub base: String,
@@ -137,16 +138,23 @@ impl<'w> Session<'w> {
         let items = store.items()?;
         let copies = store.copies()?;
         let now = work.now();
-        let remote = match github::credentials(work.env()) {
-            None => Remote::Unavailable(PendingReason::NoCredentials),
-            Some(token) => match store.provider()?.deferred_until {
-                Some(until) if until > now => {
-                    Remote::Unavailable(PendingReason::RateLimited { until: Some(until) })
-                }
-                _ => Remote::Client {
-                    gh: GitHub::new(&api_url, &repository, token),
+        let remote = match store.provider()?.deferred_until {
+            Some(until) if until > now => {
+                Remote::Unavailable(PendingReason::RateLimited { until: Some(until) })
+            }
+            _ => match GitHub::for_app(
+                work.home(),
+                &api_url,
+                &repository,
+                None,
+                github::Operation::Record,
+                now,
+            ) {
+                Ok(gh) => Remote::Client {
+                    gh: Box::new(gh),
                     down: None,
                 },
+                Err(err) => Remote::Unavailable(reason_of(&err)),
             },
         };
         let base = github::default_branch(&project.root)?;
@@ -161,6 +169,7 @@ impl<'w> Session<'w> {
             listed: None,
             current: Vec::new(),
             lookup_failed: None,
+            incompatible: Default::default(),
             now,
             base,
             purged: Vec::new(),
@@ -322,6 +331,12 @@ impl<'w> Session<'w> {
                 revision = self.items[index].record.revision,
                 "a newer remote revision entered the local record"
             ),
+            Some(Err(err @ GitHubError::RecordSchema { .. })) => {
+                self.incompatible
+                    .insert(self.items[index].record.id.clone());
+                self.lookup_failure(err.clone());
+                return Err(err.into());
+            }
             Some(Err(err)) => self.note(err),
             _ => {}
         }
@@ -724,6 +739,12 @@ impl<'w> Session<'w> {
         for index in 0..self.items.len() {
             match self.pull_through(index) {
                 Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+                Err(WorkError::GitHub(error @ GitHubError::RecordSchema { .. })) => {
+                    self.incompatible
+                        .insert(self.items[index].record.id.clone());
+                    self.current.retain(|id| id != &self.items[index].record.id);
+                    tracing::warn!(event="work_incompatible_record",error=%error);
+                }
                 Err(err) => return Err(err),
             }
         }
@@ -769,6 +790,13 @@ impl<'w> Session<'w> {
         })
     }
 
+    fn schema_ready(&self) -> Result<(), WorkError> {
+        if self.current.iter().any(|id| self.incompatible.contains(id)) {
+            return Err(self.lookup_failed.clone().map(WorkError::GitHub).unwrap_or_else(||WorkError::refused("a record this operation depends on has an incompatible schema; upgrade instrukt")));
+        }
+        Ok(())
+    }
+
     /// Commits a work change and its related runner rows together. The
     /// runner owns the additional writes; work owns their transaction.
     pub fn commit_with<T>(
@@ -777,6 +805,7 @@ impl<'w> Session<'w> {
         change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
         write_related: impl FnOnce(&Transaction<'_>) -> Result<(), WorkError>,
     ) -> Result<T, WorkError> {
+        self.schema_ready()?;
         let before: Vec<LocalItem> = self.items.clone();
         let value = match change(self) {
             Ok(value) => value,
@@ -785,6 +814,10 @@ impl<'w> Session<'w> {
                 return Err(err);
             }
         };
+        if let Err(error) = self.schema_ready() {
+            self.restore(before);
+            return Err(error);
+        }
         let mut changed = Vec::new();
         for index in 0..self.items.len() {
             let differs = before
@@ -877,23 +910,64 @@ impl<'w> Session<'w> {
 
     /// Flushes pending reflection of every local item under the lock.
     pub fn flush(&mut self) -> Result<(), WorkError> {
-        // The optional board; a board setting naming no project is reported
-        // and never blocks the issue or the record.
-        let board = match self.config.board() {
-            Ok(board) => board,
-            Err(err) => {
-                tracing::warn!(event = "work_board_unconfigured", error = %err, "board reflection skipped");
-                None
+        let board_result = (|| {
+            let configured = self.config.board()?;
+            let gh = match &self.remote {
+                Remote::Client { gh, down: None } => gh,
+                Remote::Client {
+                    down: Some(error), ..
+                } => return Err(error.clone().into()),
+                Remote::Unavailable(reason) => return Err(WorkError::refused(describe(reason))),
+            };
+            let account = gh.for_role(None, github::Operation::Board)?;
+            let board = super::_board::setup(&account, configured.as_ref())?;
+            if configured.as_ref() != Some(&board) {
+                let layer = instrukt_core::config::Layer::Project(self.project.root.clone());
+                let revision = instrukt_core::config::revision(self.home(), &layer)?;
+                let patch =
+                    serde_yaml_ng::from_str(&format!("board: {}/{}", board.owner, board.number))
+                        .map_err(|e| WorkError::refused(e.to_string()))?;
+                instrukt_core::config::patch(self.home(), &layer, &revision, &patch)?;
+                self.config = Configuration::load(self.home(), Some(&self.project.root))?;
+            }
+            Ok(board)
+        })();
+        let (board, board_error) = match board_result {
+            Ok(board) => (Some(board), None),
+            Err(error) => {
+                if let WorkError::GitHub(
+                    gh_error @ (GitHubError::RateLimited { .. }
+                    | GitHubError::App(github::AppError::RateLimited { .. })),
+                ) = &error
+                {
+                    self.note(gh_error.clone());
+                }
+                tracing::warn!(event="work_board_setup_pending", error=%error);
+                (None, Some(error.to_string()))
             }
         };
         for index in 0..self.items.len() {
+            // A known incompatible remote must stop before acknowledgements.
+            if let Remote::Client { gh, down: None } = &self.remote
+                && self.items[index].reflection.issue.is_some()
+            {
+                match _reflect::check_compatible(gh, &self.items[index]) {
+                    Err(error @ GitHubError::RecordSchema { .. }) => {
+                        self.items[index].reflection.failure = Some(error.to_string());
+                        self.store.save(&self.items[index])?;
+                        continue;
+                    }
+                    Err(error) => self.note(error),
+                    Ok(_) => {}
+                }
+            }
+            if !self.items[index].reflection.pending {
+                self.items[index].reflection.failure = None;
+            }
             self.flush_command_replies(index)?;
             let owed = self.items[index].reflection.pending
                 || _reflect::pull_request_owed(&self.items[index])
-                || board.as_ref().is_some_and(|board| {
-                    self.items[index].reflection.issue.is_some()
-                        && _reflect::board_owed(&self.items[index], board)
-                });
+                || (board.is_some() && self.items[index].reflection.issue.is_some());
             if !owed || self.items[index].reflection.conflicted {
                 continue;
             }
@@ -921,6 +995,9 @@ impl<'w> Session<'w> {
                     self.items[index].reflection.failure = Some(err.to_string());
                 }
             }
+            if let Some(error) = &board_error {
+                self.items[index].reflection.board_failure = Some(error.clone());
+            }
             if self.items[index] != before {
                 self.store.save(&self.items[index])?;
             }
@@ -934,9 +1011,15 @@ impl<'w> Session<'w> {
         if reflection.conflicted {
             return ReflectionStatus::Conflicted;
         }
+        if let Some(error) = &reflection.failure {
+            return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
+        }
         // Outstanding pull-request creation, reviews or closing are
         // reflection still owed.
         let pull_owed = _reflect::pull_request_owed(&self.items[index]);
+        if let Some(error) = &reflection.board_failure {
+            return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
+        }
         if !reflection.pending && !pull_owed {
             return ReflectionStatus::Reflected;
         }
@@ -987,7 +1070,13 @@ impl<'w> Session<'w> {
             _ => None,
         };
         let records = match result {
-            Some(Ok(records)) => records,
+            Some(Ok(remote)) => {
+                for (id, error) in remote.incompatible {
+                    self.incompatible.insert(id);
+                    self.lookup_failure(error);
+                }
+                remote.records
+            }
             Some(Err(err)) => {
                 self.lookup_failure(err);
                 self.listed = Some(Vec::new());
@@ -1105,12 +1194,19 @@ impl<'w> Session<'w> {
         match result {
             // Withdrawn work past its recovery window is gone: GitHub keeps
             // the closed issue as history, not as recoverable work.
-            Ok(records) => Some(
-                records
-                    .into_iter()
-                    .filter(|(record, _)| !past_recovery(record, self.now))
-                    .collect(),
-            ),
+            Ok(remote) => {
+                for (id, error) in remote.incompatible {
+                    self.incompatible.insert(id);
+                    self.lookup_failure(error);
+                }
+                Some(
+                    remote
+                        .records
+                        .into_iter()
+                        .filter(|(record, _)| !past_recovery(record, self.now))
+                        .collect(),
+                )
+            }
             Err(err) => {
                 self.lookup_failure(err);
                 None
@@ -1385,6 +1481,10 @@ impl<'w> Session<'w> {
                 && self.refreshed()
                 && let Err(err) = self.refresh_copy(copy.issue_number)
             {
+                if let WorkError::GitHub(error @ GitHubError::RecordSchema { .. }) = &err {
+                    self.incompatible.insert(id.clone());
+                    self.lookup_failure(error.clone());
+                }
                 tracing::debug!(event = "work_relationship_unrefreshed", error = %err, "judged as last known");
             }
         }
@@ -1431,7 +1531,9 @@ impl<'w> Session<'w> {
     /// Records that GitHub stopped answering; a rate limit is remembered
     /// across commands until the provider permits requests again.
     fn note(&mut self, err: GitHubError) {
-        if let GitHubError::RateLimited { until: Some(until) } = &err {
+        if let GitHubError::RateLimited { until: Some(until) }
+        | GitHubError::App(github::AppError::RateLimited { until: Some(until) }) = &err
+        {
             let saved = self.store.provider().and_then(|mut state| {
                 state.deferred_until = Some(*until);
                 self.store.save_provider(&state)
@@ -1494,6 +1596,10 @@ fn past_recovery(record: &TodoRecord, now: Timestamp) -> bool {
 fn reason_of(err: &GitHubError) -> PendingReason {
     match err {
         GitHubError::Unreachable(_) => PendingReason::Unreachable,
+        GitHubError::App(github::AppError::Unreachable) => PendingReason::Unreachable,
+        GitHubError::App(github::AppError::RateLimited { until }) => {
+            PendingReason::RateLimited { until: *until }
+        }
         GitHubError::RateLimited { until } => PendingReason::RateLimited { until: *until },
         GitHubError::Unauthorized { .. } => PendingReason::Unauthorized,
         other => PendingReason::Failed(other.to_string()),

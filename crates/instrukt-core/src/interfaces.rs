@@ -30,6 +30,11 @@ pub trait CallerIdentityLookup: Send + Sync {
     fn caller_variables(&self) -> &'static [&'static str];
 }
 
+/// Recorded session role, supplied by the assignment owners at composition.
+pub trait SessionRoleLookup: Send + Sync {
+    fn role(&self, session: &crate::ids::SessionRef) -> Result<Option<RoleName>, InterfaceError>;
+}
+
 /// An optional module could not answer a core question.
 #[derive(Debug, thiserror::Error)]
 #[error("{module}: {message}")]
@@ -126,6 +131,7 @@ pub trait GraphGeneration: Send + Sync {
 #[derive(Clone, Default)]
 pub struct CoreWiring {
     pub caller_identity: Option<Arc<dyn CallerIdentityLookup>>,
+    pub session_role: Option<Arc<dyn SessionRoleLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,

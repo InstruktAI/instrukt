@@ -58,7 +58,7 @@ impl Pickup for Work {
         let mut records: Vec<TodoRecord> = s
             .items
             .iter()
-            .filter(|it| !it.reflection.conflicted)
+            .filter(|it| !it.reflection.conflicted && !s.incompatible.contains(&it.record.id))
             .map(|it| {
                 let newer = listed.iter().find(|(remote, _)| {
                     remote.id == it.record.id
@@ -69,6 +69,9 @@ impl Pickup for Work {
             })
             .collect();
         for copy in &s.copies {
+            if s.incompatible.contains(&copy.record.id) {
+                continue;
+            }
             if !records.iter().any(|r| r.id == copy.record.id) {
                 records.push(copy.record.clone());
             }

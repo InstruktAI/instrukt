@@ -152,7 +152,7 @@ impl Tracked {
     fn build(autostart: bool, modules: &str, project_modules: &str, integrator: bool) -> Self {
         let mut env = TestEnv::new();
         let github = FakeGitHub::start();
-        github.add_repo(REPOSITORY);
+        github.add_repo(REPOSITORY).add_project("acme", 1);
         let rt = FakeRuntime::new(&env, "rt", false);
         global_layer(&env, modules, &[&rt]);
         github.configure(&env);
@@ -161,7 +161,7 @@ impl Tracked {
         repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: 1\nproject: demo\nmodules: {{{project_modules}}}\n\
+                "schema_version: 1\nproject: demo\nboard: acme/1\nmodules: {{{project_modules}}}\n\
                  runner: {{autostart: {autostart}}}\nworkflow: {{domain: acme}}\n\
                  github: {{repository: {REPOSITORY}}}\n"
             ),

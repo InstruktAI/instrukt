@@ -15,6 +15,10 @@ use super::_section::SectionError;
 /// it concerned.
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
+    #[error(transparent)]
+    App(#[from] crate::github::AppError),
+    #[error(transparent)]
+    GitHubRepository(#[from] crate::github::ResolveError),
     #[error(
         "main is integrator-only; commit in the todo worktree or a short-lived ad hoc worktree, then review its head before integration"
     )]

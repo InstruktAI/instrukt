@@ -62,6 +62,7 @@ pub fn environment(ctx: &Ctx) -> anyhow::Result<instrukt_core::config::Env> {
 pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     Ok(CoreWiring {
         caller_identity: caller_lookup(ctx)?,
+        session_role: Some(Arc::new(RecordedRole(ctx.home.clone()))),
         todo_existence: _work::todo_existence(ctx)?,
         flavor_roles: _workflow::flavor_roles(ctx)?,
         flavor_schema: Some(Arc::new(WorkflowSchema)),
@@ -75,6 +76,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
 pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     Ok(CoreWiring {
         caller_identity: caller_lookup(ctx)?,
+        session_role: Some(Arc::new(RecordedRole(ctx.home.clone()))),
         todo_existence: _work::available_todo_existence(ctx)?,
         flavor_roles: Some(_workflow::available_flavor_roles(ctx)),
         flavor_schema: Some(Arc::new(WorkflowSchema)),
@@ -114,4 +116,24 @@ pub fn work_evidence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn WorkEvidence>>>
 )]
 pub fn event_log(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn EventLog>>> {
     _runner::event_log(ctx)
+}
+
+struct RecordedRole(instrukt_core::home::Home);
+impl instrukt_core::interfaces::SessionRoleLookup for RecordedRole {
+    fn role(
+        &self,
+        session: &instrukt_core::ids::SessionRef,
+    ) -> Result<Option<instrukt_core::ids::RoleName>, instrukt_core::interfaces::InterfaceError>
+    {
+        instrukt_runner::assignments::resolve(
+            &self.0,
+            session,
+            instrukt_todos::work::recorded_assignment,
+        )
+        .map(|a| a.map(|a| a.role))
+        .map_err(|e| instrukt_core::interfaces::InterfaceError {
+            module: "assignments",
+            message: e.to_string(),
+        })
+    }
 }

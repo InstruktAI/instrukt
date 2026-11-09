@@ -417,11 +417,12 @@ impl Crew {
             project.github.url()
         );
         std::fs::write(project.env.instrukt_home().join("instrukt.yaml"), global).unwrap();
+        project.github.configure(&project.env);
         let flavor = Flavor::publish(&project.env);
         project.repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\n"
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\n"
             ),
         );
         project.repo.commit("select the crew workflow");

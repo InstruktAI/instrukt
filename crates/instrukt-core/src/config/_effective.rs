@@ -138,6 +138,19 @@ impl Configuration {
         let mut value = self.value.clone();
         super::_redis::redact(&mut value, "");
         super::_webhooks::redact(&mut value);
+        if let Some(apps) = value
+            .get_mut("github")
+            .and_then(|g| g.get_mut("apps"))
+            .and_then(Value::as_mapping_mut)
+        {
+            for app in apps.values_mut() {
+                if let Some(key) = app.get_mut("private_key")
+                    && !key.as_str().is_some_and(super::is_secret_reference)
+                {
+                    *key = Value::String("<protected-file reference>".into());
+                }
+            }
+        }
         Interpolator::new(&value, Mode::Expand(env)).get(path)
     }
 
@@ -236,6 +249,18 @@ impl Configuration {
 
     pub(super) fn secret(&self, reference: &str) -> Result<String, ConfigError> {
         super::resolve_secret(&self.home, reference)
+    }
+
+    pub fn github_apps(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, crate::github::App>, ConfigError> {
+        let Some(value) = self.at(&["github", "apps"]) else {
+            return Ok(Default::default());
+        };
+        crate::github::inventory(value).map_err(|e| invalid("github.apps", &e.to_string()))
+    }
+    pub fn github_project_app(&self) -> Result<Option<&str>, ConfigError> {
+        self.str_at(&["github", "project_app"])
     }
 
     /// `github.api_url` (default `https://api.github.com`).
@@ -350,9 +375,8 @@ impl Configuration {
         }
     }
 
-    /// The GitHub project todos are reflected to (`board`: `false`, the
-    /// default, or `<owner>/<number>`). `true` names no project and is
-    /// refused, asking for the reference.
+    /// The cockpit reference. Absent or legacy `false` means automatic
+    /// setup is owed; a reference selects the existing board to reconcile.
     pub fn board(&self) -> Result<Option<BoardRef>, ConfigError> {
         match self.at(&["board"]) {
             None | Some(Value::Null) | Some(Value::Bool(false)) => Ok(None),

@@ -1,4 +1,4 @@
-//! The optional project board (`github-record`, "Issues and visible
+//! The automatically reconciled project board (`github-record`, "Issues and visible
 //! work"): each reflected todo's issue is an item of the GitHub project
 //! `board` names, with a single-select field `Record status` that instrukt
 //! owns set to the record's status. The field is created when absent and
@@ -84,11 +84,10 @@ fn new_option(name: &str) -> Value {
 }
 
 /// Puts the issue `content` (its node id) on the board with `status`;
-/// `item` is its board item when one is known. Returns the item's id.
+/// Returns the reconciled item's id.
 pub(crate) fn reflect(
     gh: &GitHub,
     board: &BoardRef,
-    item: Option<&str>,
     content: &str,
     status: &str,
 ) -> Result<String, GitHubError> {
@@ -145,24 +144,81 @@ pub(crate) fn reflect(
             message: format!("the `{FIELD}` field has no `{status}` option"),
         });
     };
-    let item_id = match item {
-        Some(item) => item.to_owned(),
-        None => gh.graphql(
-            ADD_ITEM,
-            &json!({"project": project_id, "content": content}),
-        )?["addProjectV2ItemById"]["item"]["id"]
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| GitHubError::Decode {
-                path: "/graphql".to_owned(),
-                message: "an added board item without an id".to_owned(),
-            })?,
-    };
+    let item_id = gh.graphql(
+        ADD_ITEM,
+        &json!({"project": project_id, "content": content}),
+    )?["addProjectV2ItemById"]["item"]["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| GitHubError::Decode {
+            path: "/graphql".to_owned(),
+            message: "an added board item without an id".to_owned(),
+        })?;
     gh.graphql(
         SET_VALUE,
         &json!({"project": project_id, "item": item_id, "field": field_id, "option": option_id}),
     )?;
     Ok(item_id)
+}
+
+/// Discover the repository's cockpit before creating one. Its stable title
+/// allows a retry after a lost acknowledgement to find the same resource.
+pub(crate) fn setup(gh: &GitHub, configured: Option<&BoardRef>) -> Result<BoardRef, GitHubError> {
+    if let Some(board) = configured {
+        let data = gh.graphql(RESOLVE, &json!({"owner":board.owner,"number":board.number}))?;
+        if data["repositoryOwner"]["projectV2"]["id"]
+            .as_str()
+            .is_some()
+        {
+            return Ok(board.clone());
+        }
+    }
+    let owner = gh.repository().split('/').next().unwrap_or_default();
+    let title = format!("instrukt: {}", gh.repository());
+    let mut after = Value::Null;
+    let owner_id = loop {
+        let data=gh.graphql("query($owner:String!,$after:String){ repositoryOwner(login:$owner){ id ... on ProjectV2Owner { projectsV2(first:100,after:$after){nodes{id number title} pageInfo{hasNextPage endCursor}}}}}",&json!({"owner":owner,"after":after}))?;
+        let node = &data["repositoryOwner"];
+        if let Some(number) = node["projectsV2"]["nodes"]
+            .as_array()
+            .and_then(|nodes| nodes.iter().find(|n| n["title"].as_str() == Some(&title)))
+            .and_then(|n| n["number"].as_u64())
+        {
+            return Ok(BoardRef {
+                owner: owner.into(),
+                number,
+            });
+        }
+        if node["projectsV2"]["pageInfo"]["hasNextPage"] == true {
+            let cursor = node["projectsV2"]["pageInfo"]["endCursor"].clone();
+            if cursor.is_null() || cursor == after {
+                return Err(GitHubError::Decode {
+                    path: "/graphql".into(),
+                    message: "project listing has no advancing cursor".into(),
+                });
+            }
+            after = cursor;
+        } else {
+            break node["id"]
+                .as_str()
+                .ok_or_else(|| GitHubError::NotFound {
+                    path: format!("project owner {owner}"),
+                })?
+                .to_owned();
+        }
+    };
+    let repository = gh.read("")?;
+    let created=gh.graphql("mutation($owner:ID!,$title:String!,$repository:ID!){ createProjectV2(input:{ownerId:$owner,title:$title,repositoryId:$repository}){projectV2{id number}}}",&json!({"owner":owner_id,"title":title,"repository":repository["node_id"]}))?;
+    let number = created["createProjectV2"]["projectV2"]["number"]
+        .as_u64()
+        .ok_or_else(|| GitHubError::Decode {
+            path: "/graphql".into(),
+            message: "created project has no number".into(),
+        })?;
+    Ok(BoardRef {
+        owner: owner.into(),
+        number,
+    })
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/github-record.rs
 expression: "redact(&format!(\"{recorded}---\\n{shown}---\\n{read}\"))"
 ---
 wrote prd of nested-lists: <digest 1>
-reflection: pending: GitHub is unreachable
+reflection: pending: GitHub: GitHub App API unavailable; retry the pending operation
 ---
 nested-lists · feature · active
 identity: <id 1>
@@ -12,7 +12,7 @@ created: <time> by Test Developer
 revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: pending: GitHub is unreachable
+reflection: pending: GitHub: GitHub App API unavailable; retry the pending operation
 not refreshed from GitHub (GitHub is unreachable); shown as this computer last knew it
 issue: #1
 claim: not held
