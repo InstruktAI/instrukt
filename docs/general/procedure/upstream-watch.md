@@ -1,5 +1,5 @@
 ---
-description: Report watched upstream changes and turn an accepted reconciliation into reviewed work that preserves local modifications.
+description: Assess watched upstream changes against project needs, admit and route warranted work, and report the outcome.
 visibility: public
 role: upstream-watcher
 subscriptions:
@@ -16,45 +16,57 @@ interruptible: false
 
 ## Goal
 
-The developer sees what changed upstream and can accept a reviewed
-reconciliation that preserves the fork's local modifications.
+Upstream changes are assessed against the project's contracts and relevant
+work reaches its owning delivery path, with the assessment and disposition
+reported.
 
 ## Preconditions
 
 - The runner delivered `runner.upstream_changed` for a project, remote, ref
   and observed revision.
-- The project's checkout and upstream history are accessible.
+- The project's checkout and the relevant upstream history are accessible.
 
 ## Steps
 
-1. Read the event's project, remote, ref and revision. Inspect current upstream
-   history and the fork's local changes. Reconcile a repeated event against
-   existing work before proposing or filing anything.
-2. Report the upstream changes and their likely effect on the fork. Identify
-   local modifications the reconciliation must preserve and offer to reconcile
-   through the project's reviewed todo workflow. The event supplies information;
-   the human supplies the decision to reconcile.
-3. On one affirmative answer, record that intent with the upstream revision and
-   preservation of local modifications. Apply the creation policy's admission
-   and duplicate checks, then file bounded work with
-   `instrukt todo create <slug> <content> --kind change --approved`, passing
-   content as one quoted argument. That answer supplies the reconciliation
-   intent; carry it into the todo without asking for it again.
-4. Route the item through `instrukt todo prepare <slug>` and the normal
-   build, independent review and integration path. Keep the local modifications
-   in the work's recorded scope; conflicts are reviewed as part of that work.
-   Report the todo slug and the upstream revision it addresses.
+1. Read the event's project, remote, ref and revision. Read the project's fill
+   of the extension point below when it exists, using its id from the project
+   baseline. When none exists, include that fact in the report and ground the
+   assessment in the project's available contracts and dependency evidence.
+2. Inspect the upstream change against the project's affected contracts,
+   including the language-specific contracts the change engages. Establish
+   which consumed surfaces changed and what adaptation, if any, the project
+   needs. For a fork reconciliation, identify the local modifications the work
+   must preserve.
+3. Apply admission, evidence and duplicate checks before filing or amending
+   work (`sdlc/policy/todo-creation-discipline`). Reconcile repeated events
+   with existing work. Record the observed revision, affected contracts and
+   bounded outcome in the appropriate artifact. File warranted work through
+   that policy's admitted route; an assessment requiring no change records
+   that disposition in the report.
+4. Route admitted work through its owning project's normal preparation,
+   build, independent review and integration path. Carry any fork-preservation
+   requirements into that work. Report the assessment, disposition, routed
+   work addresses and upstream revision. Reach the human only for input or
+   exposure reserved to them (`general/policy/human-contract`), continuing
+   the settled work while that part remains open.
+
+### Project extension point
+
+`project/<slug>/spec/upstream-watch-focus` — the upstream dependencies,
+consumed surfaces and project contracts to assess when this procedure runs.
 
 ## Outputs
 
-- An upstream-change report naming its observed revision and local impact.
-- On acceptance, one recorded reconciliation todo carrying the preservation
-  requirement and the normal review obligations.
+- An upstream-change report naming the observed revision, project focus used
+  or its absence, affected contracts, assessment and disposition.
+- Addresses of existing or newly admitted work and its routing, including
+  preservation requirements for a fork reconciliation.
 
 ## Recovery
 
-- If history or the checkout is unavailable, report the missing evidence before
-  offering a concrete reconciliation.
-- If an equivalent todo already exists, use that record and report its slug.
-- If the human has not accepted, leave the offer in its conversation. A later
-  upstream event is compared with current history and existing work.
+- If history, the checkout or a declared focus fill cannot be read, report
+  the missing evidence and the assessment that remains unfinished.
+- If equivalent work already exists, use its admitted amendment or routing
+  path and report its address.
+- If a human-owned question remains, report that question and the affected
+  portion of work under `general/policy/human-contract`.

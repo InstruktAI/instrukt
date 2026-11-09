@@ -98,11 +98,9 @@ discover whether anything changed. Time-based task due logic belongs to
 ### Fork-upstream response
 
 The shipped `general/procedure/upstream-watch` subscribes a standing agent to
-`runner.upstream_changed`. The
-agent reports the upstream changes and offers reconciliation that retains the
-fork's local modifications. A person's affirmative response turns that offer
-into a todo with review through work and workflow. The
-event itself does not authorize reconciliation of the fork.
+`runner.upstream_changed` and owns assessment, admission, routing and reporting
+of the upstream response, including preservation of local modifications for a
+fork reconciliation.
 
 Human questions stay in the responding agent's thread, as governed by
 `project/instrukt/spec/feature/runner/anomaly-notification`.
@@ -147,14 +145,13 @@ Procedure-event-delivery owns selection, combining and untrusted data framing.
 
 ## Use cases
 
-### UC-EA1: Learn about an upstream change before reconciling a fork
+### UC-EA1: Activate upstream assessment for a watched fork
 
 ```gherkin
   Given a developer has adopted instrukt for a fork with local modifications
   And the developer has enabled event responses for its upstream
   When the upstream changes
-  Then a standing agent reports the changes
-  And offers reconciliation that retains the fork's local modifications
+  Then the subscribed upstream-watch standing agent receives the upstream-change event
 ```
 
 ### UC-EA2: A developer's integrator learns of failed dependency checks

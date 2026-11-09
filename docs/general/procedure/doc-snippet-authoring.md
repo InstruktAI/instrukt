@@ -103,6 +103,22 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     one agent CLI's observed default, written as a `policy` snippet. Never
     edit the generated documentation index; publication writes it.
 
+    **Project extension points.** Ask: "Does this procedure have to behave
+    differently per project? Then declare an extension point." The general
+    procedure declares the extension point's fixed name and purpose in its own
+    text and is its single owner. A project that needs it fills that name in
+    its own documentation and lists the fill in `docs/project/index.yaml`.
+    Project-specific content belongs in the project's fill; the general
+    procedure carries the declaration and the instruction to read the fill
+    when it runs (`general/policy/referencing-doc-snippets`).
+
+    For project baselines, put what every agent needs on every run in
+    `expanded`, including policies and contracts mandatory routines always
+    apply; put what only a specific procedure needs when it runs in `listed`.
+    Everything else in the project index remains the publisher's choice.
+    Rendering semantics belong to the position-index spec
+    (`project/instrukt/spec/feature/docs/position-index`).
+
 12. **Give a procedure an `activation_trigger` only when a user will ask for it
     by name.** Every trigger is a line in every agent's context on every
     computer that adopts its domain (`general/policy/snippet-value-contract`,
