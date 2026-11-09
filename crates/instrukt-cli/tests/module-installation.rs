@@ -542,3 +542,26 @@ impl Drop for ReceiverHealth {
         }
     }
 }
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
+#[test]
+fn shared_local_cluster_identity_still_checks_local_socket_permissions() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let _repo = project(&env, "events", "{events: true}");
+    let redis = common::redis::RedisServer::new(&env);
+    event_config(&env, Some(&redis.url), &redis.url, None);
+    env.run(env.home(), ["install"]).success();
+    let socket = std::path::Path::new(redis.url.strip_prefix("unix://").unwrap());
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o777)).unwrap();
+    env.run(env.home(), ["install", "--check"]).failure();
+    let status = json(&env, &["events", "status", "--json"]);
+    assert!(
+        !status["infrastructure"]["findings"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o700)).unwrap();
+    env.run(env.home(), ["install", "--check"]).success();
+}

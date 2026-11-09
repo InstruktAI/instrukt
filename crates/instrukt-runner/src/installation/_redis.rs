@@ -153,14 +153,14 @@ pub(super) fn ensure(
         let Some(endpoint) = endpoint else {
             continue;
         };
+        if scope == "local" {
+            private_socket(endpoint)?;
+        }
         let identity = Endpoint::new(endpoint, scope, &state)?.identity;
         if identities.contains(&identity) {
             continue;
         }
         identities.push(identity);
-        if scope == "local" {
-            private_socket(endpoint)?;
-        }
         let mut connection = connect(endpoint)?;
         permissions(&mut connection)?;
         if !request.check {
@@ -348,6 +348,22 @@ pub(super) fn inspect(request: &Request<'_>, report: &mut Report) -> anyhow::Res
             continue;
         };
         let identity = Endpoint::new(endpoint, scope, &state)?.identity;
+        // Local filesystem requirements still apply when both scopes share a connection.
+        if scope == "local"
+            && let Err(error) = private_socket(endpoint)
+        {
+            report.finding("Redis local", error);
+            let reachable = checked
+                .get(&identity)
+                .and_then(|value| value.get("reachable"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            result.push(
+                json!({"scope":scope,"reachable":reachable,"healthy":false,"socket_private":false}),
+            );
+            continue;
+        }
+
         if let Some(shared) = checked.get(&identity) {
             let mut value = shared.clone();
             value["scope"] = scope.into();
