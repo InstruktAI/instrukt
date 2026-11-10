@@ -81,19 +81,10 @@ repository polling remains an independent source-reconciliation mechanism.
 External events carry the ingress computer as source. Only that computer
 activates matching procedures, and a missing local home is a visible failure.
 
-<!-- planned-change:t3-contract -->
 Polling checks only active subjects: a waiting integrate candidate, remote
 canonical main's head commit, dependency-update heads, local items on this computer and configured
 watched upstreams. All check-run pages are read before classification and failure delivery. Each
 page participates in the existing conditional-request cache and source deferral.
-<!-- change:t3-contract -->
-Polling checks active integrate/canonical/dependency heads, local work,
-configured upstream refs and completed executions of selected scheduled
-dependency workflows. All relevant pages are read before classification,
-failure delivery and progress accounting. Each page participates in the
-existing conditional-request cache and source deferral.
-<!-- /planned-change:t3-contract -->
-
 API requests reuse
 the previous ETag; an unchanged `304` does not consume GitHub rate quota.
 Upstream refs use `git ls-remote`, consuming no API quota. Where GitHub sends
@@ -103,47 +94,6 @@ State watching is source acquisition. Standing agents still
 wake on the resulting event; they do not repeatedly inspect repositories to
 discover whether anything changed. Time-based task due logic belongs to
 `project/instrukt/spec/feature/runner/task-timing`.
-
-<!-- planned:t3-contract -->
-### Scheduled dependency-check failures
-
-`ci.scheduled_dependency_workflows`, whose layer and shape belong to
-`project/instrukt/spec/feature/configuration/layered-configuration`, selects
-repository workflows. A scheduled run on the default branch is observed by its
-workflow/execution identity, not solely through checks on the current commit.
-Completed failing executions and their failed jobs enter the existing
-`runner.dependency_failing` occurrence route. Ordinary branch observations keep
-their existing identity and payload.
-
-For a scheduled result, `branch` identifies the run's default branch and `head`
-is the instrukt revision actually evaluated. Additional scheduled evidence
-retains the workflow path, execution ID, attempt and URL, failed check identity
-and conclusion, checked upstream tag/SHA and result-manifest address. An
-acquisition failure retains whatever release identity was resolved and explicitly
-marks unavailable evidence. A result is not inferred from an agent summary.
-
-Scheduled occurrence identity includes project, workflow, execution, attempt,
-failed check and conclusion. A new execution or rerun on the same instrukt SHA
-is fresh evidence. Reobserving it is idempotent. Successful, skipped and unfinished
-jobs supply no failure occurrence. Catch-up visits retained completed executions
-since durable source progress; a later green run or a new default-branch head
-does not hide an earlier unreported failure. Progress advances only after the
-relevant occurrence is durably appended. Failed reads leave it retryable.
-
-Selected scheduled dependency results are excluded from ordinary candidate and
-canonical CI aggregation, using workflow/run provenance. A red unpinned upstream
-candidate neither emits `runner.main_failing` nor changes the pinned candidate's
-verification result. Checks for the pinned dependency in ordinary CI retain
-their existing gate meaning.
-
-The source reuses the selected GitHub observation credential and conditional
-request/deferral behavior. Workflow-run, job and result-artifact reads require
-the corresponding Actions read capability; incomplete credentials or missing
-evidence report a source failure rather than losing a result. Agent assessment
-uses the existing integrator subscription, transport and admission path under
-`project/instrukt/spec/feature/workflow/integration-gate`. Selecting a workflow
-leaves `modules.events` authoritative; the CI check runs independently of it.
-<!-- /planned:t3-contract -->
 
 ### Fork-upstream response
 
@@ -210,28 +160,7 @@ And repeated observation of that same failure creates no duplicate delivery
 But unrelated branches and successful or unfinished checks do not produce this failure delivery
 ```
 
-<!-- planned:t3-contract -->
-### UC-EA3: A developer receives distinct scheduled dependency failures
-
-```gherkin
-Given a developer has enabled failure responses for a selected scheduled dependency check
-And the same project revision is checked against successive upstream candidates
-When a new check execution fails
-Then their integrator receives that execution's failed check and evaluated upstream candidate
-And a previous failure on the same project revision does not suppress it
-And reobserving that execution creates no duplicate delivery
-And the upstream warning does not report a broken canonical delivery
-```
-
-<!-- /planned:t3-contract -->
-
 ## Known caveats
-
-<!-- planned:t3-contract -->
-- Scheduled failure catch-up is bounded by GitHub's retained executions and
-  artifacts. Disabled events retain no promise of immediate activation; expired
-  or unreadable evidence is an explicit source gap when observation resumes.
-<!-- /planned:t3-contract -->
 
 - Company/person origins and references travel intact, but resolving those homes
   is unsupported in this release and fails visibly. Unknown never means none.

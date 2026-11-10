@@ -22,8 +22,8 @@ owned by `project/instrukt/spec/feature/runner/session-continuity`.
 
 ### Supported release and acquisition
 
-`crates/instrukt-runner/t3.version` owns the verified stable version, independently
-of the Graphify pin. Renovate tracks that file with the `github-releases`
+`crates/instrukt-runner/t3.version` owns the default branch's verified stable
+version, independently of the Graphify pin. Renovate tracks that file with the `github-releases`
 datasource for `pingdotgg/t3code`, strips the tag's leading `v`, accepts stable
 releases only and uses the repository's green-check PR automerge policy. This
 pin identifies instrukt's tested dependency; it neither installs nor constrains
@@ -110,16 +110,33 @@ hook and test commands retain their existing scope.
 
 `.github/workflows/t3-nightly.yml` runs hourly on the default branch. It resolves
 the newest version-ordered `v*-nightly.*` tag and its commit using
-`git ls-remote --tags --refs`, without the releases API for discovery. It records
-the selected tag and SHA and invokes the same suite with that release as its
-target; it does not rewrite the stable pin or a person's installation.
+`git ls-remote --tags --refs`, without the releases API for discovery. It compares
+that version with the pin recorded on the workflow-owned `upstream/t3-nightly`
+branch. An unchanged nightly skips the update and check. A missing branch or
+changed nightly produces a pin-bump commit on that branch, using the current
+default-branch source with `crates/instrukt-runner/t3.version` set to the nightly
+version. The default branch's stable pin and the person's installation stay
+unchanged. The nightly branch is retained for dependency-head observation and
+is not promoted or automatically merged into the default branch.
 
-A completed-check checkpoint identifies the tag and upstream SHA already
-checked. A retained matching checkpoint skips another execution. Missing state
-causes a check, never an assumed pass. A completed failing check is checkpointed
-only after its failure evidence is retained; interrupted acquisition or an
-unfinished suite supplies no completed checkpoint. Concurrent scheduled runs
-serialize checkpoint updates. A manual rerun can retry a failed execution.
+After pushing the new head with `GITHUB_TOKEN`, the scheduled job explicitly
+dispatches `.github/workflows/t3-contract.yml` with `ref: upstream/t3-nightly`.
+That workflow is present on the default branch, declares `workflow_dispatch`
+and runs the same UC-TC1 suite using the dispatched branch's pin and source.
+Its check belongs to the dependency commit, not the default-branch scheduler
+commit. The workflow-owned branch uses the `upstream/` namespace, separate from
+Renovate's branches. Concurrent nightly updates serialize; a changed branch
+head is not overwritten without checking the expected previous head.
+
+The scheduled job requires repository-token permissions to write the pin-bump
+commit and dispatch Actions workflows (`contents: write`, `actions: write`).
+It does not rely on a push trigger: GitHub suppresses push-workflow recursion
+for pushes made with `GITHUB_TOKEN`, while `workflow_dispatch` is an explicit
+exception. GitHub's dispatch API accepts a branch/tag `ref`; its current token
+and trigger requirements are documented in the GitHub sources under See Also.
+A failed push or dispatch fails the scheduled job visibly. A recorded pin is
+not a claim that its check completed or passed; the contract workflow also
+supports redispatch against the recorded branch after a failed dispatch.
 
 The result manifest records the evaluated instrukt revision, release tag,
 upstream SHA when resolved, archive name and digest, exercised surfaces, fake
@@ -128,13 +145,25 @@ The workflow retains it and diagnostic output on failure as well as success;
 credentials and conversation bodies are not diagnostics. Acquisition or harness
 failure remains distinguishable from an incompatible T3 response.
 
-Failure observation is owned by
-`project/instrukt/spec/feature/runner/event-activation`. Scheduled results carry
-their upstream tag and exact workflow execution, independently of the current
-default-branch commit. Integrator assessment and warranted, deduplicated bug
-filing follow
-`project/instrukt/spec/feature/workflow/integration-gate`. A failed nightly does
-not by itself mean instrukt's pinned release or canonical delivery is broken.
+### Existing dependency-failure route and prerequisites
+
+Instrukt's own project enables `modules.events` in `instrukt.yaml` and selects
+both `renovate/` and `upstream/` in `ci.dependency_branch_prefixes`. Its watch
+list is empty. These are prerequisites for the existing dependency-failure
+route for stable Renovate updates as well as nightly checks; a prefix does not
+implicitly enable events. The enabled route needs its existing installed event
+infrastructure, observation credentials and integrator participant.
+
+`project/instrukt/spec/feature/runner/event-activation` owns observation of the
+current selected branch heads. Each new nightly pin produces a new commit, so
+its failed contract check enters the existing `runner.dependency_failing`
+route with that branch, head, check-run identity and conclusion. Existing
+occurrence deduplication remains unchanged. The branch's pin and retained
+contract result identify the upstream release for the integrator's assessment
+and warranted, deduplicated bug filing under
+`project/instrukt/spec/feature/workflow/integration-gate`. A nightly failure
+belongs to the dependency branch and does not report a broken canonical
+delivery. Successful checks wake no T3 watcher.
 
 ## Use cases
 
@@ -157,6 +186,12 @@ And it leaves the maintainer's runtime and home untouched
   within the hour can reach stable before its check finishes. Only the newest
   nightly at each observation is selected; intervening nightlies are not all
   enumerated. Scheduler delay and unavailable CI can lengthen the warning gap.
+- Dependency observation sees current selected branch heads. A failure on a
+  head replaced by a newer nightly before observation may be missed; retained
+  Actions diagnostics do not provide catch-up through this route.
+- A pin commit records the selected nightly, not completed verification. An
+  interrupted or failed dispatch needs redispatch against that branch; unchanged
+  nightly discovery does not itself prove that a check ran.
 - Provider-free checks cover migration shape and the payloads actually produced
   by management/deferred-input operations. Successful model execution, assistant
   streaming/completion, reasoning/tool/diff payload generation, provider-created
@@ -172,10 +207,9 @@ And it leaves the maintainer's runtime and home untouched
 - Reapplying current migrations to a fresh database does not prove every upgrade
   from a historical T3 database. Linux-x64 is the CI target; other release
   platforms require their own execution evidence.
-- Failure evidence remains available in GitHub while event activation is off or
-  the integrator is unavailable. Automated assessment/bug filing requires the
-  existing enabled failure route, credentials and a running participant; the
-  contract check itself does not enable events. T3 upstream watching is absent.
+- Without the enabled project event route, installed prerequisites and a running
+  participant, CI still produces results but automatic assessment/bug filing is
+  unavailable. T3 upstream watch entries and a watching agent are absent.
 
 ## See Also
 
@@ -187,3 +221,5 @@ And it leaves the maintainer's runtime and home untouched
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)
 - [project/instrukt/policy/testing](../../../policy/testing.md)
 - https://github.com/pingdotgg/t3code/tree/bf469bb19669671d0df2efda74ed73867a7137c0 — inspected v0.1.8 source; CLI, RPC, migrations and projection writer are the upstream evidence.
+- https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow — repository-token recursion rules, the dispatch exception and default-branch workflow registration.
+- https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event — dispatch trigger declaration, branch/tag ref and Actions write capability.

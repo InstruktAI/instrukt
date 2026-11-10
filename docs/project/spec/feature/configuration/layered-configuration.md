@@ -44,16 +44,6 @@ enable events. Installation and withdrawal are owned by
 
 ### Layer rules
 
-<!-- planned:t3-contract -->
-`ci.scheduled_dependency_workflows` is a project-only list of repository-relative
-workflow paths under `.github/workflows/`; absence or `[]` selects none. Entries
-are nonempty strings identifying workflow files, not shell commands or branch
-prefixes. Invalid entries and use in the global layer are configuration findings.
-The runner owns observation of completed scheduled dependency checks under
-`project/instrukt/spec/feature/runner/event-activation`. Selection enables no
-module or infrastructure and changes no existing dependency-branch selection.
-<!-- /planned:t3-contract -->
-
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
