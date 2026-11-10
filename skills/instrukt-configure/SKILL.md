@@ -21,6 +21,8 @@ computers, use the installed command help for their supported behavior:
 
 - project/instrukt/spec/feature/configuration/layered-configuration
 - project/instrukt/spec/feature/configuration/configuration-editing
+- project/instrukt/spec/feature/configuration/configuration-skill
+- project/instrukt/spec/feature/configuration/agent-selection
 - project/instrukt/spec/feature/work/github-apps
 - project/instrukt/spec/feature/work/github-record
 - project/instrukt/spec/feature/configuration/roles-and-capabilities
@@ -109,6 +111,22 @@ computer's brief and this skill directory's location to run locally there.
 Continue independent reachable work and leave that computer pending until its
 report arrives. Core configuration can be completed without choosing a runtime.
 
+## Configure agent profiles and readiness
+
+Include this phase in every computer's local assignment. Read its user-owned
+`~/.instrukt/agents.yaml` and `instrukt config show agents`; show the current
+role mappings and profile order before changing selection. Through the configured
+runtime's available operations, discover ACP instances already configured in T3,
+ask where the developer wants them in that order, and write the corresponding
+profiles and order changes under the agent-selection contract. Preserve unrelated
+role capabilities, App references and model choices, then validate and read back
+the effective mapping.
+
+For a supported harness that is not ready, guide the developer through its login
+or key setup in T3 and wait for observed readiness. T3 owns provider instances
+and model-provider credentials. Report an unavailable discovery or readiness
+surface, or unfinished setup, as an unmet prerequisite for that computer.
+
 ## Converge and verify locally
 
 The local agent's outputs are the addressed computer's intended configuration,
@@ -146,7 +164,8 @@ in the report.
 
 For each computer, return its identity, addressed project paths, configuration
 differences or already-matching state, validation and installation/check
-results, relevant status findings and remaining repair doors. Include only
+results, agent profiles and role/profile order changes, observed harness
+readiness, relevant status findings and remaining repair doors. Include only
 masked endpoints and credential references. Existing consumer positions and
 durable work are retained by the installation contract.
 

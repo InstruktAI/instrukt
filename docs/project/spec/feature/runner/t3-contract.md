@@ -1,7 +1,6 @@
 ---
 description: Deterministic release checks of instrukt's consumed T3 surfaces and its test double, with a verified stable pin and unattended nightly warning.
 visibility: public
-delivered_by: [t3-contract]
 ---
 # T3 Contract — Spec
 

@@ -332,9 +332,7 @@ has no origin, as declared in Canonical fields.
 
 ## Use cases
 
-<!-- planned:t3-contract -->
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
-<!-- /planned:t3-contract -->
 
 - **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3, one-time TeleClaude mirror import and merged search across computers.
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
