@@ -1459,6 +1459,15 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
     .unwrap();
     let unit = record["resources"]["receiver"]["unit"].as_str().unwrap();
     fixture.request(&["kickstart", "-k", &format!("gui/1/{unit}")]);
+    common::wait_until(
+        "legacy receiver started",
+        std::time::Duration::from_secs(15),
+        || {
+            fixture.request(&["inspect", unit])["pid"]
+                .as_u64()
+                .is_some()
+        },
+    );
     let before = fixture.request(&["inspect", unit]);
     let untouched = common::LiveGuard::over(vec![], vec![env.home().into()]);
     env.run(env.home(), ["install", "--check"]).failure();
@@ -1495,6 +1504,14 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
     assert!(inspection_only.changed().is_empty());
     std::fs::rename(moved, repo.path()).unwrap();
     fixture.request(&["force-legacy", unit]);
+    common::wait_until(
+        "legacy receiver restarted",
+        std::time::Duration::from_secs(15),
+        || {
+            let job = fixture.request(&["inspect", unit]);
+            job["pid"].as_u64().is_some() && job["pid"] != after["pid"]
+        },
+    );
     let unchanged = common::LiveGuard::over(vec![], vec![env.home().into()]);
     assert!(!inspect().status.success());
     assert!(unchanged.changed().is_empty());
@@ -1508,11 +1525,28 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
     assert_receiver_execution(&env, &repaired, &copied, port);
     // Native debug overrides are one-shot: the running receiver prepares the next start too.
     fixture.request(&["kickstart", "-k", &format!("gui/1/{unit}")]);
+    // A kickstart reply reports the fork, not receiver readiness. Wait for the
+    // replacement process and its successful public installation inspection.
+    common::wait_until(
+        "receiver restart completed",
+        std::time::Duration::from_secs(15),
+        || {
+            let job = fixture.request(&["inspect", unit]);
+            job["pid"].as_u64().is_some()
+                && job["pid"] != repaired["pid"]
+                && inspect().status.success()
+        },
+    );
     assert!(inspect().status.success());
     let restarted = fixture.request(&["inspect", unit]);
     assert_eq!(before["custody"], restarted["custody"]);
     assert_receiver_execution(&env, &restarted, &copied, port);
     fixture.request(&["stop-process", unit]);
+    common::wait_until(
+        "receiver stopped",
+        std::time::Duration::from_secs(15),
+        || fixture.request(&["inspect", unit])["pid"].is_null(),
+    );
     let cold = common::LiveGuard::over(vec![], vec![env.home().into()]);
     assert!(!inspect().status.success());
     assert!(cold.changed().is_empty());
