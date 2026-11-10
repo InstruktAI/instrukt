@@ -12,7 +12,6 @@ use crate::{
     fixtures::t3::FakeT3,
 };
 use instrukt_core::home::Home;
-use instrukt_runner::runtime::{RuntimeAdapter, T3};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
@@ -43,7 +42,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
             release::real(root)
         } else {
             (|| -> anyhow::Result<()> {
-                T3::default().provider_snapshot(&Home::from_env()?)?;
+                let readiness = release::readiness()?;
                 release::cli(
                     &["thread", "send", "--", "contract-thread", "-"],
                     Some("contract queued input"),
@@ -51,7 +50,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                 let result = release::observe("contract-thread")?;
                 fs::write(
                     root.join("fake.json"),
-                    json!({"adapter":result}).to_string(),
+                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?}).to_string(),
                 )?;
                 Ok(())
             })()
@@ -60,7 +59,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         return;
     }
     let version = release::VERSION.trim();
-    let mut manifest = json!({"version":version,"instrukt_revision":option_env!("GITHUB_SHA"),"upstream_sha":std::env::var("T3_CONTRACT_UPSTREAM_SHA").ok(),"outcome":"failure","operation":"fixture prerequisites","exclusions":["provider execution and successful CLI start","ready-thread consumption and completed-turn relay","provider-generated assistant/reasoning/tool/diff/subagent payloads","authenticated provider quota/account behavior","worktree launch with an opening model turn"],"fake_operations":{"version":"not reached","auth session issue/revoke":"not reached","thread list/show":"not reached","thread send":"not reached","thread start":"provider-dependent success path unverified","consume/finish":"provider-entry/completion fixture control, not live verified","fault flags":"fault injection, not vendor behavior"}});
+    let mut manifest = json!({"version":version,"instrukt_revision":option_env!("GITHUB_SHA"),"upstream_sha":std::env::var("T3_CONTRACT_UPSTREAM_SHA").ok(),"outcome":"failure","operation":"fixture prerequisites","exclusions":["provider execution and successful CLI start","ready-thread consumption and completed-turn relay","provider-generated assistant/reasoning/tool/diff/subagent payloads","authenticated provider quota/account behavior","worktree launch with an opening model turn"],"fake_operations":{"readiness translation":"not verified","version":"not verified","auth session issue/revoke":"not verified","thread list/show":"not verified","thread send":"not verified","thread start":"provider-dependent success path unverified","consume/finish":"provider-entry/completion fixture control, not live verified","fault flags":"fault injection, not vendor behavior"}});
     let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut env = TestEnv::new();
         manifest["operation"] = json!("release acquisition/checksum");
@@ -92,7 +91,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         let fake = FakeT3::create(&fake_env);
         fake.release(&format!("t3 v{version}"));
         common::t3_readiness::update(&fake_env, |value| {
-            value["providers"] = real["providers"].clone()
+            value["providers"] = real["readiness"]["providers"].clone()
         });
         let project = fake_env.git_repo("project");
         project.commit("feat: fake boundary project");
@@ -110,23 +109,67 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
             "messages",
             real["fixture"]["messages"].clone(),
         );
-        manifest["operation"] = json!("verified fake queue and input boundary");
+        manifest["operation"] =
+            json!("fake readiness, queued input, transcript and steering boundaries");
         release::worker(&fake_env, "fake", &fake_env.path("")).unwrap();
         let emulated: Value =
             serde_json::from_slice(&fs::read(fake_env.path("fake.json")).unwrap()).unwrap();
-        assert_eq!(
-            real["adapter"], emulated["adapter"],
-            "fake/real consumed boundary differs"
+        manifest["operation"] = json!("fake thread show transcript comparison");
+        assert!(
+            real["adapter"]["transcript"] == emulated["adapter"]["transcript"],
+            "fake thread show transcript differs in content or native run relationships"
         );
-        manifest["observations"] = real["adapter"].clone();
-        manifest["fake_operations"]["version"] =
-            json!("diagnostic response; release equality is not an adapter gate");
-        manifest["fake_operations"]["auth session issue/revoke"] =
-            json!("verified readiness CLI; fake signature remains fixture-only");
-        manifest["fake_operations"]["thread list/show"] =
-            json!("verified consumed provider-free fields and states");
-        manifest["fake_operations"]["thread send"] =
-            json!("verified queued acceptance, hidden transcript and allocated run reference");
+        manifest["operation"] = json!("fake persisted input/run relationship comparison");
+        assert!(
+            real["adapter"]["relationships"] == emulated["adapter"]["relationships"],
+            "fake persisted input/run relationships differ"
+        );
+        let mut observed = real["adapter"].clone();
+        let mut fake_observed = emulated["adapter"].clone();
+        for value in [&mut observed, &mut fake_observed] {
+            value.as_object_mut().unwrap().remove("transcript");
+            value.as_object_mut().unwrap().remove("relationships");
+        }
+        assert!(
+            observed == fake_observed,
+            "fake input observation or selected thread metadata differs"
+        );
+        manifest["operation"] =
+            json!("fake readiness translation and revoked-credential denial comparison");
+        assert!(
+            real["readiness"]["translated"] == emulated["readiness"]["translated"],
+            "fake translated readiness profiles differ"
+        );
+        assert!(
+            real["readiness"]["revoked_denied"] == emulated["readiness"]["revoked_denied"],
+            "fake revoked credential denial differs"
+        );
+        observed["transcript_messages_compared"] = json!(
+            real["adapter"]["transcript"]["messages"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        observed["input_relationships_compared"] =
+            json!(real["adapter"]["relationships"].as_array().unwrap().len());
+        manifest["observations"] = observed;
+        manifest["readiness"] = json!({"explicitly_unready":real["readiness"]["explicitly_unready"],"translated":real["readiness"]["translated"],"real_revoked_denied":real["readiness"]["revoked_denied"],"fake_revoked_denied":emulated["readiness"]["revoked_denied"]});
+        manifest["steering_fixture"] = emulated["steering"].clone();
+        manifest["fake_operations"]["version"] = json!(
+            "diagnostic response only; content is not compared and release equality is not an adapter gate"
+        );
+        manifest["fake_operations"]["auth session issue/revoke"] = json!(
+            "compared read-scoped acquisition and revoked credential denial on both boundaries; fake signature is fixture-only"
+        );
+        manifest["fake_operations"]["thread list/show"] = json!(
+            "compared fixture listing membership, selected decoded metadata and every bounded transcript field, including text and run relationships"
+        );
+        manifest["fake_operations"]["thread send"] = json!(
+            "compared queued acceptance, transcript visibility and consumed persisted input/run fields"
+        );
+        manifest["fake_operations"]["readiness translation"] = json!(
+            "compared normalized profiles and checked explicit native unready facts against translated unavailability; cause wording is not compared"
+        );
         manifest["outcome"] = json!("success");
         manifest["operation"] = json!("complete");
     }));

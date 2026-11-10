@@ -172,12 +172,11 @@ impl Server {
 }
 impl Drop for Server {
     fn drop(&mut self) {
-        if let Some(pid) = rustix::process::Pid::from_raw(self.child.id() as i32) {
-            if let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
-                if error != rustix::io::Errno::SRCH {
-                    eprintln!("T3 termination failed: {error}");
-                }
-            }
+        if let Some(pid) = rustix::process::Pid::from_raw(self.child.id() as i32)
+            && let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM)
+            && error != rustix::io::Errno::SRCH
+        {
+            eprintln!("T3 termination failed: {error}");
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
@@ -314,8 +313,217 @@ pub fn observe(id: &str) -> Result<Value> {
         conversation.messages.len() == 1,
         "queued input must remain outside the recent transcript"
     );
+    let deferred_run = deferred
+        .reference
+        .as_deref()
+        .context("deferred input has no allocated run")?;
+    let queued_run = queued
+        .reference
+        .as_deref()
+        .context("queued input has no allocated run")?;
+    ensure!(
+        deferred_run != queued_run,
+        "independent queued input reused the opening run"
+    );
+    let messages = conversation
+        .messages
+        .iter()
+        .map(|message| -> Result<Value> {
+            Ok(json!({"role": message.role, "text": message.text,
+            "run": canonical_run(message.run_id.as_deref(), deferred_run, queued_run)?}))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let inputs = json!({
+        "deferred": {"state": input_state(deferred.state), "run": canonical_run(deferred.reference.as_deref(), deferred_run, queued_run)?},
+        "queued": {"state": input_state(queued.state), "run": canonical_run(queued.reference.as_deref(), deferred_run, queued_run)?}
+    });
     Ok(
-        json!({"operational_running":true,"deferred_accepted":true,"queued_accepted":true,"project_listed":true,"unknown_gone":true,"title_present":state.title.is_some(),"project_present":state.project_id.is_some(),"activity_present":state.activity.is_some(),"provider":state.provider,"model":state.model,"settled":state.settled,"worktree_present":state.worktree.is_some(),"branch_present":state.branch.is_some(),"title":state.title,"visible_messages":conversation.messages.len(),"visible_role":conversation.messages[0].role,"visible_run_assigned":conversation.messages[0].run_id.is_some(),"queued_run_assigned":queued.reference.is_some()}),
+        json!({"operational_running":true,"project_listed":true,"unknown_gone":true,
+        "title_present":state.title.is_some(),"project_present":state.project_id.is_some(),
+        "activity_present":state.activity.is_some(),"provider":state.provider,"model":state.model,
+        "settled":state.settled,"worktree_present":state.worktree.is_some(),"branch_present":state.branch.is_some(),"title":state.title,
+        "transcript":{"session":conversation.session.to_string(),"limit":conversation.limit,"bounded":conversation.bounded,"messages":messages},
+        "inputs":inputs,"relationships":input_relationships(id,deferred_run,queued_run)?}),
+    )
+}
+
+fn input_state(state: InputState) -> &'static str {
+    match state {
+        InputState::Unknown => "unknown",
+        InputState::Accepted => "accepted",
+        InputState::Consumed => "consumed",
+    }
+}
+
+fn canonical_run(reference: Option<&str>, deferred: &str, queued: &str) -> Result<Value> {
+    match reference {
+        None => Ok(Value::Null),
+        Some(id) if id == deferred => Ok(json!("deferred-run")),
+        Some(id) if id == queued => Ok(json!("queued-run")),
+        Some(_) => bail!("input/transcript references an unrelated run"),
+    }
+}
+
+fn input_database() -> Result<instrukt_core::state_db::rusqlite::Connection> {
+    Ok(
+        instrukt_core::state_db::rusqlite::Connection::open_with_flags(
+            Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
+            instrukt_core::state_db::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?,
+    )
+}
+
+fn input_relationships(thread: &str, deferred: &str, queued: &str) -> Result<Value> {
+    let db = input_database()?;
+    let mut statement = db.prepare("SELECT m.message_id,m.payload_json,r.payload_json FROM orchestration_v2_projection_messages m LEFT JOIN orchestration_v2_projection_runs r ON r.thread_id=m.thread_id AND r.run_id=json_extract(m.payload_json,'$.runId') WHERE m.thread_id=?1 AND m.role='user' ORDER BY m.rowid")?;
+    let rows = statement
+        .query_map([thread], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure!(
+        rows.len() == 2,
+        "persisted input set differs from the two accepted inputs"
+    );
+    let mut identities = std::collections::BTreeMap::new();
+    for (id, message, _) in &rows {
+        let message: Value = serde_json::from_str(message)?;
+        let label = match message["runId"].as_str() {
+            Some(id) if id == deferred => "deferred-input",
+            Some(id) if id == queued => "queued-input",
+            _ => bail!("persisted input references an unrelated run"),
+        };
+        identities.insert(id.clone(), json!(label));
+    }
+    let mut relationships = Vec::new();
+    for (_, message, run) in rows {
+        let message: Value = serde_json::from_str(&message)?;
+        let run: Value = serde_json::from_str(&run)?;
+        let message_id = message["id"]
+            .as_str()
+            .context("persisted message identity")?;
+        let opening = run["userMessageId"]
+            .as_str()
+            .context("persisted opening identity")?;
+        let entry = if run["startedAt"].is_null() {
+            Value::Null
+        } else {
+            run["startedAt"]
+                .as_str()
+                .context("entry timestamp shape")?
+                .parse::<jiff::Timestamp>()?;
+            json!("<timestamp>")
+        };
+        relationships.push(json!({
+            "message":{"id":identities.get(message_id).context("unrelated persisted message identity")?,"thread":message["threadId"],"role":message["role"],"text":message["text"],"run":canonical_run(message["runId"].as_str(),deferred,queued)?},
+            "run":{"id":canonical_run(run["id"].as_str(),deferred,queued)?,"thread":run["threadId"],"opening_input":identities.get(opening).context("unrelated opening input")?,"status":run["status"],"startedAt":entry}
+        }));
+    }
+    Ok(json!(relationships))
+}
+
+pub fn readiness() -> Result<Value> {
+    let mut token = Token::issue(false)?;
+    let config = rpc(&token.secret, "server.getConfig", json!({}))?;
+    let providers = config["providers"]
+        .as_array()
+        .context("native provider array")?;
+    token.revoke()?;
+    ensure!(
+        connect(&token.secret).is_err(),
+        "readiness credential revocation did not deny reuse"
+    );
+    let translated = T3::default().provider_snapshot(&Home::from_env()?)?;
+    ensure!(
+        providers.len() == translated.providers.len(),
+        "readiness lost a provider instance"
+    );
+    let mut unready = 0;
+    for raw in providers {
+        let id = raw["instanceId"]
+            .as_str()
+            .context("native provider identity")?;
+        let facts = translated
+            .providers
+            .iter()
+            .find(|facts| facts.instance.as_str() == id)
+            .context("translated provider identity")?;
+        let explicitly_unready = raw["enabled"] == false
+            || raw["installed"] == false
+            || matches!(raw["status"].as_str(), Some("disabled" | "error"))
+            || raw["auth"]["status"] == "unauthenticated"
+            || raw["availability"] == "unavailable"
+            || (raw["driver"] == "claudeAgent"
+                && raw["status"] == "warning"
+                && raw["auth"]["status"] == "unknown");
+        if explicitly_unready {
+            unready += 1;
+            ensure!(
+                facts
+                    .unavailable_reason
+                    .as_ref()
+                    .is_some_and(|reason| !reason.is_empty()),
+                "readiness promoted an explicitly unready provider to available: {id}"
+            );
+        }
+    }
+    ensure!(
+        unready > 0,
+        "provider-free readiness produced no explicitly unready evidence"
+    );
+    let mut profiles=translated.providers.iter().map(|facts| json!({
+        "instance":facts.instance,"kind":facts.kind,"unavailable":facts.unavailable_reason.is_some(),
+        "reason_present":facts.unavailable_reason.as_ref().is_some_and(|reason|!reason.is_empty()),
+        "models":facts.models.iter().map(|model|json!({"name":model.name,"aliases":model.aliases})).collect::<Vec<_>>(),
+        "usage":facts.usage.iter().map(|window|json!({"id":window.id,"used_percent":window.used_percent,"resets_at":window.resets_at})).collect::<Vec<_>>()
+    })).collect::<Vec<_>>();
+    profiles.sort_by(|a, b| a["instance"].as_str().cmp(&b["instance"].as_str()));
+    Ok(
+        json!({"providers":providers,"translated":{"profiles":profiles,"native_picks":translated.native_picks},"explicitly_unready":unready,"revoked_denied":true}),
+    )
+}
+
+/// Source-grounded steering data is a fixture control, not live provider execution.
+pub fn fake_steering(root: &Path) -> Result<Value> {
+    let path = root.join("t3-state/contract-thread.json");
+    let mut thread: Value = serde_json::from_slice(&fs::read(&path)?)?;
+    let run = thread["messages"][0]["runId"].clone();
+    thread["status"] = json!("running");
+    thread["messages"]
+        .as_array_mut()
+        .context("fixture messages")?
+        .push(json!({"role":"user","text":"contract steering input","runId":run}));
+    fs::write(path, thread.to_string())?;
+    let adapter = T3::default();
+    let session = SessionRef::parse("t3:contract-thread")?;
+    let now = "2026-11-10T12:00:00Z".parse()?;
+    ensure!(
+        adapter
+            .observe_input(&session, "contract queued input", now)?
+            .state
+            == InputState::Accepted,
+        "unrelated steering invalidated queued input recovery"
+    );
+    ensure!(
+        adapter
+            .observe_input(&session, "contract steering input", now)?
+            .state
+            == InputState::Accepted,
+        "an earlier run start proved later steering entry"
+    );
+    ensure!(
+        adapter
+            .observe_input(&session, "contract deferred input", now)?
+            .state
+            == InputState::Consumed,
+        "opening input lost its own entry evidence"
+    );
+    Ok(
+        json!({"opening_entered":true,"queued_accepted":true,"unproved_steering_accepted":true,"provenance":"synthetic fixture from v0.1.8 steering producer; no provider executed"}),
     )
 }
 
@@ -325,12 +533,7 @@ pub fn real(root: &Path) -> Result<()> {
     let adapter = T3::default();
     let home = Home::from_env()?;
     let env = instrukt_core::config::Env::from_process();
-    adapter.provider_snapshot(&home)?;
-    let mut read = Token::issue(false)?;
-    let config = rpc(&read.secret, "server.getConfig", json!({}))?;
-    ensure!(config["providers"].is_array(), "provider snapshot shape");
-    read.revoke()?;
-    ensure!(connect(&read.secret).is_err(), "revoked credential reused");
+    let readiness = readiness()?;
     let mut token = Token::issue(true)?;
     let db = instrukt_core::state_db::rusqlite::Connection::open_with_flags(
         Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
@@ -432,7 +635,7 @@ pub fn real(root: &Path) -> Result<()> {
     );
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"providers":config["providers"]}).to_string(),
+        json!({"adapter":result,"fixture":shown,"readiness":readiness}).to_string(),
     )?;
     token.revoke()?;
     Ok(())

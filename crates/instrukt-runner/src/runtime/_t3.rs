@@ -26,6 +26,7 @@ impl T3 {
     fn input_evidence(
         &self,
         session: &SessionRef,
+        text: Option<&str>,
     ) -> Result<Vec<super::_t3_conversations::NativeInput>, SessionsError> {
         let user_home = self
             .env
@@ -33,7 +34,7 @@ impl T3 {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| failure("input observation", "machine home is unavailable"))?;
         let home = instrukt_core::home::Home::at_user_home(user_home.into());
-        super::_t3_conversations::inputs(&home, &self.env, session.id.as_str())
+        super::_t3_conversations::inputs(&home, &self.env, session.id.as_str(), text)
             .map_err(|error| failure("input observation", error.to_string()))
     }
 
@@ -259,7 +260,7 @@ impl RuntimeAdapter for T3 {
         now: jiff::Timestamp,
     ) -> Result<super::InputObservation, SessionsError> {
         self.show(session, 0)?;
-        let inputs = self.input_evidence(session)?;
+        let inputs = self.input_evidence(session, Some(text))?;
         let message = inputs.into_iter().find(|input| input.text == text);
         Ok(super::InputObservation {
             state: message
@@ -294,7 +295,7 @@ impl RuntimeAdapter for T3 {
             .text
             .clone();
         let waiting = self
-            .input_evidence(session)?
+            .input_evidence(session, None)?
             .into_iter()
             .find(|m| {
                 m.state != super::InputState::Consumed

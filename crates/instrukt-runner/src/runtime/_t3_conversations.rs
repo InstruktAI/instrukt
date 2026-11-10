@@ -133,15 +133,20 @@ pub(super) fn inputs(
     home: &Home,
     env: &Env,
     thread: &str,
+    text: Option<&str>,
 ) -> Result<Vec<NativeInput>, SourceError> {
     let db = open(&T3Home::discover(home, env).database())?;
     let mut statement = db.prepare(
-        "SELECT m.message_id,m.payload_json,r.payload_json FROM orchestration_v2_projection_messages m \
+        "SELECT m.message_id,m.payload_json,r.payload_json FROM \
+         (SELECT message_id,thread_id,payload_json,rowid AS native_position \
+          FROM orchestration_v2_projection_messages WHERE thread_id=?1 AND role='user' \
+          ORDER BY rowid DESC LIMIT 100) m \
          LEFT JOIN orchestration_v2_projection_runs r ON r.thread_id=m.thread_id \
-         AND r.run_id=json_extract(m.payload_json,'$.runId') \
-         WHERE m.thread_id=?1 AND m.role='user' ORDER BY m.rowid DESC LIMIT 100",
+         AND r.run_id=CASE WHEN json_valid(m.payload_json) THEN json_extract(m.payload_json,'$.runId') END \
+         WHERE (?2 IS NULL OR CASE WHEN json_valid(m.payload_json) THEN json_extract(m.payload_json,'$.text')=?2 ELSE 0 END) \
+         ORDER BY m.native_position DESC LIMIT CASE WHEN ?2 IS NULL THEN 100 ELSE 1 END",
     )?;
-    let mut rows = statement.query(params![thread])?;
+    let mut rows = statement.query(params![thread, text])?;
     let mut inputs = Vec::new();
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
@@ -161,9 +166,13 @@ pub(super) fn inputs(
         let mut state = super::InputState::Accepted;
         if let Some(payload) = row.get::<_, Option<String>>(2)? {
             let run: Value = serde_json::from_str(&payload)?;
-            if run["id"].as_str() != reference.as_deref() || run["userMessageId"] != id {
+            if run["id"].as_str() != reference.as_deref() || run["threadId"] != thread {
                 return Err(source_error("input run relationship"));
             }
+            let opening = run["userMessageId"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| source_error("run opening input identity"))?;
             let status = run["status"]
                 .as_str()
                 .ok_or_else(|| source_error("input run status"))?;
@@ -182,7 +191,12 @@ pub(super) fn inputs(
             ) {
                 return Err(source_error("unsupported input run status"));
             }
-            if !matches!(status, "queued" | "preparing") && !run["startedAt"].is_null() {
+            // T3 appends steering messages before its steer effect runs. The run's
+            // earlier start proves entry only for its opening userMessageId.
+            if opening == id
+                && !matches!(status, "queued" | "preparing")
+                && !run["startedAt"].is_null()
+            {
                 run["startedAt"]
                     .as_str()
                     .ok_or_else(|| source_error("run entry timestamp"))?

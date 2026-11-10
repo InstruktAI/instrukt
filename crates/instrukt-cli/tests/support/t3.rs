@@ -64,6 +64,7 @@ def sync_inputs():
             updates=','.join(column+'=excluded.'+column for column in columns)
             connection.execute('INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+') ON CONFLICT DO UPDATE SET '+updates+' WHERE payload_json!=excluded.payload_json',[values[column] for column in columns])
         for thread in all_threads():
+            runs=set()
             for index,message in enumerate(thread['messages']):
                 if message['role']!='user': continue
                 identity='fake:'+thread['threadId']+':input:'+str(index)
@@ -71,9 +72,12 @@ def sync_inputs():
                 at='2026-11-06T10:00:00Z'
                 payload=dict(message,id=identity,threadId=thread['threadId'],streaming=False,createdAt=at,updatedAt=at)
                 upsert('orchestration_v2_projection_messages',dict(message_id=identity,thread_id=thread['threadId'],role='user',run_id=run,node_id=None,streaming=0,created_at=at,updated_at=at,payload_json=json.dumps(payload)))
-                if run:
-                    entered=not message.get('queued',False) and thread['status'] not in ['preparing','queued']
-                    native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':'running' if entered else 'queued','startedAt':at if entered else None,'requestedAt':at,'completedAt':None}
+                if run and run not in runs:
+                    runs.add(run)
+                    queued=message.get('queued',False)
+                    entered=not queued and thread['status'] not in ['preparing','queued']
+                    status='queued' if queued else (thread['status'] if thread['status'] in ['preparing','queued'] else 'running')
+                    native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':status,'startedAt':at if entered else None,'requestedAt':at,'completedAt':None}
                     upsert('orchestration_v2_projection_runs',dict(run_id=run,thread_id=thread['threadId'],status=native['status'],requested_at=at,completed_at=None,payload_json=json.dumps(native)))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
