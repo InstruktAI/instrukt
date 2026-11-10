@@ -25,6 +25,10 @@
     reason = "test harness: a failed setup step fails the test"
 )]
 
+#[path = "../../../../tests/support/wait.rs"]
+mod polling;
+pub use polling::wait_until;
+
 pub mod github;
 pub mod redis;
 pub mod redis_proxy;

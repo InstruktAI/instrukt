@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tempfile::TempDir;
 
@@ -89,21 +89,16 @@ fn spawn(home: &Path, dir: &Path, socket: &Path) -> Child {
 
 fn ready(child: &mut Child, url: &str) {
     let client = redis::Client::open(url).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    super::wait_until("disposable Redis startup", Duration::from_secs(10), || {
         if let Ok(mut conn) = client.get_connection()
             && redis::cmd("PING").query::<String>(&mut conn).is_ok()
         {
-            break;
+            return true;
         }
         assert!(
             child.try_wait().unwrap().is_none(),
             "disposable Redis stopped during startup"
         );
-        assert!(
-            Instant::now() < deadline,
-            "disposable Redis failed to start"
-        );
-        std::thread::yield_now();
-    }
+        false
+    });
 }

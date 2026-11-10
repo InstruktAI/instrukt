@@ -40,3 +40,7 @@ pub use _trace::{
     AtStake, FileTrace, SpecFolder, UntracedFile, UseCaseTrace, trace_files, trace_use_case,
 };
 pub use _traversal::Direction;
+
+#[cfg(test)]
+#[path = "../../../tests/support/wait.rs"]
+mod test_support;

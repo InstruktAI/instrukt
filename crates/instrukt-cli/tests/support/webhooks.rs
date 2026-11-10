@@ -8,7 +8,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use hmac::{Hmac, Mac};
 use instrukt_runner::events::EventEnvelope;
@@ -72,38 +72,46 @@ impl Receiver {
             .spawn()
             .unwrap();
         let mut receiver = Self { child, port };
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            if receiver.child.try_wait().unwrap().is_some() {
-                let mut error = String::new();
-                receiver
-                    .child
-                    .stderr
-                    .take()
-                    .unwrap()
-                    .read_to_string(&mut error)
-                    .unwrap();
-                return Err(error);
-            }
-            match std::fs::File::open(&log) {
-                Ok(mut file) => {
-                    file.seek(SeekFrom::Start(offset)).unwrap();
-                    let mut startup = String::new();
-                    file.read_to_string(&mut startup).unwrap();
-                    // Only this spawn's new records synchronize readiness.
-                    // The tests assert real HTTP/Redis outcomes, never logs.
-                    if startup.contains("event=webhooks_listening") {
-                        return Ok(receiver);
+        let mut outcome = None;
+        crate::common::wait_until(
+            "webhook receiver readiness",
+            Duration::from_secs(15),
+            || {
+                if receiver.child.try_wait().unwrap().is_some() {
+                    let mut error = String::new();
+                    receiver
+                        .child
+                        .stderr
+                        .take()
+                        .unwrap()
+                        .read_to_string(&mut error)
+                        .unwrap();
+                    outcome = Some(Err(error));
+                    return true;
+                }
+                match std::fs::File::open(&log) {
+                    Ok(mut file) => {
+                        file.seek(SeekFrom::Start(offset)).unwrap();
+                        let mut startup = String::new();
+                        file.read_to_string(&mut startup).unwrap();
+                        // Only this spawn's new records synchronize readiness.
+                        // The tests assert real HTTP/Redis outcomes, never logs.
+                        if startup.contains("event=webhooks_listening") {
+                            outcome = Some(Ok(()));
+                            return true;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        outcome = Some(Err(error.to_string()));
+                        return true;
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.to_string()),
-            }
-            if Instant::now() >= deadline {
-                return Err("receiver readiness was not observed in its log".into());
-            }
-            std::thread::yield_now();
-        }
+                false
+            },
+        );
+        outcome.unwrap()?;
+        Ok(receiver)
     }
 
     pub fn request(

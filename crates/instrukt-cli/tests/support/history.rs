@@ -2,11 +2,7 @@
 use crate::common::TestEnv;
 use instrukt_core::state_db::rusqlite::{Connection, params};
 use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    process::Child,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, process::Child, time::Duration};
 
 pub struct T3Store {
     pub file: PathBuf,
@@ -246,7 +242,6 @@ pub fn runner(env: &TestEnv) -> Runner {
         .spawn()
         .unwrap();
     // The query worker publishes readiness only after opening its request queue.
-    let deadline = Instant::now() + Duration::from_secs(15);
     let config: Value = serde_yaml_ng::from_str(
         &std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
     )
@@ -255,22 +250,24 @@ pub fn runner(env: &TestEnv) -> Runner {
         .unwrap()
         .get_connection()
         .unwrap();
-    while !redis::cmd("EXISTS")
-        .arg(format!(
-            "instrukt:history:ready:{}",
-            std::fs::read_to_string(env.instrukt_home().join("state/machine-id"))
-                .unwrap()
-                .trim()
-        ))
-        .query::<bool>(&mut conn)
-        .unwrap()
-    {
+    crate::common::wait_until("history responder startup", Duration::from_secs(15), || {
+        if redis::cmd("EXISTS")
+            .arg(format!(
+                "instrukt:history:ready:{}",
+                std::fs::read_to_string(env.instrukt_home().join("state/machine-id"))
+                    .unwrap()
+                    .trim()
+            ))
+            .query::<bool>(&mut conn)
+            .unwrap()
+        {
+            return true;
+        }
         assert!(
             child.try_wait().unwrap().is_none(),
             "history runner stopped before readiness"
         );
-        assert!(Instant::now() < deadline, "history responder did not start");
-        std::thread::yield_now();
-    }
+        false
+    });
     Runner(child)
 }

@@ -5,7 +5,7 @@ use crate::common;
 use crate::fixtures::history as fixture;
 use common::TestEnv;
 use serde_json::Value;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn stable_sources(mut result: Value) -> Value {
     for found in result["matches"].as_array_mut().unwrap() {
@@ -111,34 +111,29 @@ fn runner_database_notifications_keep_history_current_without_a_search_or_tick()
         false,
     );
     let _runner = fixture::runner(&env);
-    let startup_deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let out = env
-            .run(env.home(), ["history", "show", source_id, "child"])
-            .success();
-        let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-        if document["messages"].as_array().unwrap().len() == 2 {
-            break;
-        }
-        assert!(
-            Instant::now() < startup_deadline,
-            "startup marker was not retained"
-        );
-        std::thread::yield_now();
-    }
+    crate::common::wait_until(
+        "startup marker to be retained",
+        Duration::from_secs(10),
+        || {
+            let out = env
+                .run(env.home(), ["history", "show", source_id, "child"])
+                .success();
+            let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+            document["messages"].as_array().unwrap().len() == 2
+        },
+    );
     source.complete();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let out = env
-            .run(env.home(), ["history", "show", source_id, "child"])
-            .success();
-        let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-        if document["messages"].as_array().unwrap().len() == 3 {
-            break;
-        }
-        assert!(Instant::now() < deadline, "completion was not extracted");
-        std::thread::yield_now();
-    }
+    crate::common::wait_until(
+        "completion to be extracted",
+        Duration::from_secs(10),
+        || {
+            let out = env
+                .run(env.home(), ["history", "show", source_id, "child"])
+                .success();
+            let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+            document["messages"].as_array().unwrap().len() == 3
+        },
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/history UC-HI3

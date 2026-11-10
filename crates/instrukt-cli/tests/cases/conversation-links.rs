@@ -32,7 +32,7 @@ fn either_member_closes_the_whole_link_and_retains_progress() {
     let public: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
     assert_eq!(public["links"][0]["active"], false);
 }
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 struct Running(std::process::Child);
 impl Drop for Running {
@@ -43,15 +43,8 @@ impl Drop for Running {
         self.0.wait().unwrap();
     }
 }
-fn wait_for(mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while !condition() {
-        assert!(
-            Instant::now() < deadline,
-            "native relay did not make the expected progress"
-        );
-        std::thread::yield_now();
-    }
+fn wait_for(condition: impl FnMut() -> bool) {
+    common::wait_until("native relay progress", Duration::from_secs(15), condition);
 }
 
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1

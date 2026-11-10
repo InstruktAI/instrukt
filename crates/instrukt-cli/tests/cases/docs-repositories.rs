@@ -9,7 +9,7 @@
 
 use crate::common;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -119,21 +119,22 @@ fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
         .join("state/hooks")
         .join(project)
         .join(format!("{}.yaml", hook.name()));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
-            if record.sync != Some(SyncOutcome::Running) {
-                return record;
+    let mut finished = None;
+    crate::common::wait_until(
+        &format!("{hook} sync for {project}"),
+        Duration::from_secs(30),
+        || {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
+                if record.sync != Some(SyncOutcome::Running) {
+                    finished = Some(record);
+                    return true;
+                }
             }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no finished run of {hook} at {}",
-            path.display()
-        );
-        std::thread::yield_now();
-    }
+            false
+        },
+    );
+    finished.unwrap()
 }
 
 // spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1

@@ -452,7 +452,7 @@ fn the_remotes_current_head_is_judged_even_when_this_checkout_never_fetched_it()
 #[test]
 fn a_tick_publishes_contracts_integrated_on_another_computer() {
     use instrukt_core::{home::Home, ids::ProjectSlug, publication::PublishedRecord};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let p = Tracked::new(false); // todos on, events off: maintenance still runs.
     std::os::unix::fs::symlink(
         env!("CARGO_BIN_EXE_instrukt"),
@@ -481,17 +481,11 @@ fn a_tick_publishes_contracts_integrated_on_another_computer() {
     assert_eq!(p.repo.head(), delivered);
     let home = Home::at_user_home(p.env.home().to_path_buf());
     let slug = ProjectSlug::parse("demo").unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while PublishedRecord::load(&home, &slug)
-        .unwrap()
-        .is_none_or(|r| r.commit.as_str() != delivered)
-    {
-        assert!(
-            Instant::now() < deadline,
-            "post-merge publication did not finish"
-        );
-        std::thread::yield_now();
-    }
+    crate::common::wait_until("post-merge publication", Duration::from_secs(30), || {
+        !PublishedRecord::load(&home, &slug)
+            .unwrap()
+            .is_none_or(|r| r.commit.as_str() != delivered)
+    });
     let out = p
         .env
         .run(

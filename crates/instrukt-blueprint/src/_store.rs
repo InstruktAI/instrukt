@@ -550,14 +550,11 @@ mod tests {
         let publication = std::thread::spawn(move || publisher.publish(&sha('c'), &graph("c")));
 
         // The swap is not held up by readers: `c` becomes the latest graph.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while store.latest().unwrap().map(|latest| latest.sha) != Some(sha('c')) {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the publication never swapped"
-            );
-            std::thread::yield_now();
-        }
+        crate::test_support::wait_until(
+            "the publication to swap to c",
+            std::time::Duration::from_secs(10),
+            || store.latest().unwrap().map(|latest| latest.sha) == Some(sha('c')),
+        );
         // Pruning waits behind the reader: `a` is still a complete graph.
         assert!(store.has_graph(&sha('a')).unwrap());
         assert!(!publication.is_finished());

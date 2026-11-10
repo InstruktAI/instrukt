@@ -18,7 +18,7 @@
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use instrukt_blueprint::{GraphStore, LastGeneration};
 use instrukt_core::home::Home;
@@ -327,13 +327,9 @@ pub fn push(env: &TestEnv, repo: &Repo) {
         .success();
 }
 
-/// Waits for the observable condition, yielding between checks within a fixed bound.
-pub fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + WAIT;
-    while !condition() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::yield_now();
-    }
+/// Waits for the observable condition within the generation fixture's bound.
+pub fn wait_until(what: &str, condition: impl FnMut() -> bool) {
+    crate::common::wait_until(what, WAIT, condition);
 }
 
 fn home(env: &TestEnv) -> Home {
@@ -405,15 +401,12 @@ impl Drop for Gate {
 }
 
 fn wait_for_exit(pid: &str) {
-    let deadline = Instant::now() + WAIT;
-    while std::process::Command::new(crate::common::tool_executable("kill"))
-        .args(["-0", pid])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap()
-        .success()
-    {
-        assert!(Instant::now() < deadline, "process {pid} did not exit");
-        std::thread::yield_now();
-    }
+    crate::common::wait_until(&format!("process {pid} to exit"), WAIT, || {
+        !std::process::Command::new(crate::common::tool_executable("kill"))
+            .args(["-0", pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    });
 }

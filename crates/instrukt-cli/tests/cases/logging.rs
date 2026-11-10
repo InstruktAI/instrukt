@@ -4,7 +4,7 @@
 use crate::common;
 use crate::fixtures::documented;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::TestEnv;
 use instrukt_core::home::Home;
@@ -42,17 +42,19 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
     // The detached hook worker records completion after its sync exits.
     let home = Home::at_user_home(env.home().to_path_buf());
     let project = ProjectSlug::parse("demo").unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(record) = repository::last_run(&home, &project, Hook::PostCommit).unwrap()
-            && let Some(SyncOutcome::Finished { exit_code, .. }) = record.sync
-        {
-            assert_eq!(exit_code, Some(0));
-            break;
-        }
-        assert!(Instant::now() < deadline, "hook publication did not finish");
-        std::thread::yield_now();
-    }
+    crate::common::wait_until(
+        "hook publication to finish",
+        Duration::from_secs(30),
+        || {
+            if let Some(record) = repository::last_run(&home, &project, Hook::PostCommit).unwrap()
+                && let Some(SyncOutcome::Finished { exit_code, .. }) = record.sync
+            {
+                assert_eq!(exit_code, Some(0));
+                return true;
+            }
+            false
+        },
+    );
 
     // This is the public log location the InstruktAI reader discovers.
     let log = std::fs::read_to_string(

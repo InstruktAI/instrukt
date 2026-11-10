@@ -12,7 +12,7 @@
 use crate::common;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -72,21 +72,22 @@ fn finished_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
         .join("state/hooks")
         .join(project)
         .join(format!("{}.yaml", hook.name()));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
-            if record.sync != Some(SyncOutcome::Running) {
-                return record;
+    let mut finished = None;
+    crate::common::wait_until(
+        &format!("{hook} sync for {project}"),
+        Duration::from_secs(30),
+        || {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
+                if record.sync != Some(SyncOutcome::Running) {
+                    finished = Some(record);
+                    return true;
+                }
             }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no finished run of {hook} recorded at {}",
-            path.display()
-        );
-        std::thread::yield_now();
-    }
+            false
+        },
+    );
+    finished.unwrap()
 }
 
 /// The commit publication last recorded for `project`; `None` before the
@@ -100,15 +101,11 @@ fn published(env: &TestEnv, project: &str) -> Option<String> {
 
 /// Waits, within a bound, until publication has recorded `commit`.
 fn wait_published(env: &TestEnv, project: &str, commit: &str) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while published(env, project).as_deref() != Some(commit) {
-        assert!(
-            Instant::now() < deadline,
-            "{commit} was never published (last published: {:?})",
-            published(env, project)
-        );
-        std::thread::yield_now();
-    }
+    crate::common::wait_until(
+        &format!("publication of {commit}"),
+        Duration::from_secs(60),
+        || published(env, project).as_deref() == Some(commit),
+    );
 }
 
 /// Holds the home's docs lock, under which every sync publishes, so a sync

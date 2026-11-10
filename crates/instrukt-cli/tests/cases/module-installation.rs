@@ -453,17 +453,22 @@ fn owned_redis_fixture() -> OwnedRedisFixture {
         .set_password(&password);
     info = info.set_redis_settings(auth);
     let client = redis::Client::open(info).unwrap();
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let connection = loop {
-        if let Ok(mut c) = client.get_connection()
-            && redis::cmd("PING").query::<String>(&mut c).is_ok()
-        {
-            break c;
-        }
-        assert!(server.0.try_wait().unwrap().is_none());
-        assert!(std::time::Instant::now() < until);
-        std::thread::yield_now();
-    };
+    let mut connection = None;
+    crate::common::wait_until(
+        "owned Redis startup",
+        std::time::Duration::from_secs(5),
+        || {
+            if let Ok(mut c) = client.get_connection()
+                && redis::cmd("PING").query::<String>(&mut c).is_ok()
+            {
+                connection = Some(c);
+                return true;
+            }
+            assert!(server.0.try_wait().unwrap().is_none());
+            false
+        },
+    );
+    let connection = connection.unwrap();
     env.run(env.home(), ["install"]).success();
     env.run(env.home(), ["install", "--check"]).success();
     OwnedRedisFixture {
@@ -1114,11 +1119,11 @@ impl CachedLaunchd {
             _dir: dir,
             python: python.clone(),
         };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !fixture.socket.exists() {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
-        }
+        crate::common::wait_until(
+            "launchd fixture socket",
+            std::time::Duration::from_secs(5),
+            || fixture.socket.exists(),
+        );
         let launchctl = env.path("runtime-bin/launchctl");
         std::fs::write(
             &launchctl,

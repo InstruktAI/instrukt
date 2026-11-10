@@ -131,13 +131,10 @@ impl Drop for Running {
     }
 }
 
-pub fn until(mut observed: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !observed() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "expected boundary was never observed"
-        );
-        std::thread::yield_now();
-    }
+pub fn until(observed: impl FnMut() -> bool) {
+    crate::common::wait_until(
+        "the expected boundary",
+        std::time::Duration::from_secs(30),
+        observed,
+    );
 }
