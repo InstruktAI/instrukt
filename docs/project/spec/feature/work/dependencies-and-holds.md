@@ -1,7 +1,6 @@
 ---
 description: Project prerequisites, structural group holders, item-level execution claims and auditable dispatch holds.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Dependencies and Holds — Spec
 

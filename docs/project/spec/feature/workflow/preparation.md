@@ -1,6 +1,5 @@
 ---
 description: Preparation derives the required artifacts, independent reviews and configured approvals before releasing a todo for execution.
-delivered_by: [instrukt-first-build]
 ---
 # Preparation — Spec
 

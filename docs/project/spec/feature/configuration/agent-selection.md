@@ -1,6 +1,5 @@
 ---
 description: Role-keyed provider-instance profiles and ordered model tiers, with readiness checks, open model names and user-owned defaults.
-delivered_by: [instrukt-first-build]
 ---
 # Agent Selection — Spec
 

@@ -1,7 +1,6 @@
 ---
 description: Module-aware work dispatch, event activation, session capabilities, task timing and anomaly reporting without a consumer daemon, with opt-in signed ingress.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Runner — Spec
 

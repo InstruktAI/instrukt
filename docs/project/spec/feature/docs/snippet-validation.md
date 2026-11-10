@@ -1,6 +1,5 @@
 ---
 description: Structural validation of a project's documentation with `instrukt docs validate` — what is checked, the findings and notices it reports, and how the exit status reflects them.
-delivered_by: [instrukt-first-build]
 ---
 
 # Snippet Validation — Spec

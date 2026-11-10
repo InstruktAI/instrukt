@@ -1,6 +1,5 @@
 ---
 description: The docs bounded context — the snippet model across the three positions, position indexes and snippet schemas, structural validation, pending documentation, and retrieval through `instrukt docs index|get|schema`.
-delivered_by: [instrukt-first-build]
 ---
 
 # Docs — Spec

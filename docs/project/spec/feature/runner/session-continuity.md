@@ -1,7 +1,6 @@
 ---
 description: Unattended runtime adapter operations, native agent delegation and record bindings, keyed recovery and settled-thread inspection.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Session Continuity — Spec
 

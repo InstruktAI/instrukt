@@ -1,6 +1,5 @@
 ---
 description: "Independent retained reactions with attribute-only selection, occurrence protection, ordered retries and dead letters."
-delivered_by: [instrukt-first-build]
 ---
 # Event Consumers — Spec
 

@@ -1,7 +1,6 @@
 ---
 description: Evidence-bound human or peer approval and a position-based check of recorded intent.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Approvals — Spec
 

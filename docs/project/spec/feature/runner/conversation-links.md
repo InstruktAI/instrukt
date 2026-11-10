@@ -1,7 +1,6 @@
 ---
 description: Three-way conversations across two linked T3 threads, with attributed turn-end relay in the long-lived runner and durable restart positions.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Conversation Links — Spec
 

@@ -1,6 +1,5 @@
 ---
 description: Docs repositories — instrukt ships no doctrine; an adopted docs repository publishes it through its `docs/general/` and `docs/domain/<x>/` positions, one owner per position per computer, instrukt enforces its format and never depends on its wording, and anyone may fork the shipped one or bring their own.
-delivered_by: [instrukt-first-build]
 ---
 # Docs Repositories — Spec
 

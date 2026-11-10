@@ -1,6 +1,5 @@
 ---
 description: Configured workflow evaluation derives the current obligation from record facts without storing a phase or executing commands.
-delivered_by: [instrukt-first-build]
 ---
 # Workflow Definition — Spec
 

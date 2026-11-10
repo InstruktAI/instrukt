@@ -1,6 +1,5 @@
 ---
 description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`ing a command; checkout renders before return and other post-hooks start publication detached, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
-delivered_by: [instrukt-first-build]
 ---
 # Hook Sections — Spec
 

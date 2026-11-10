@@ -1,6 +1,5 @@
 ---
 description: "Scoped Redis publication and bounded replay, with retryable local publication and separate SQLite accounting."
-delivered_by: [instrukt-first-build]
 ---
 # Event Transport — Spec
 

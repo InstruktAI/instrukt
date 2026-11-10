@@ -1,6 +1,5 @@
 ---
 description: Navigating the latest graph — the path from one part to another over the contract's links under any engine, and free query and explain offered only where the configured engine supports them.
-delivered_by: [instrukt-first-build]
 ---
 # Graph Navigation — Spec
 

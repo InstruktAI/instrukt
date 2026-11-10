@@ -1,7 +1,6 @@
 ---
 description: Enabled adopted projects determine the shared wake-up, private local Redis and ingress receiver infrastructure installed, checked and repaired on each computer.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Module Installation — Spec
 

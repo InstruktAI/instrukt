@@ -1,6 +1,5 @@
 ---
 description: "Editor schemas — the binary generates JSON Schemas from its own types for each position's `index.yaml`, for `schema.yaml` and for `instrukt.yaml` into the repository's git-ignored `.instrukt/schemas/`, and `init` and sync keep a relative `yaml-language-server` modeline at the top of each of those files, so the editor and the validator read the same rules."
-delivered_by: [instrukt-first-build]
 ---
 # Editor Schemas — Spec
 

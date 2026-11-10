@@ -1,6 +1,6 @@
 ---
 description: "Distribution — how instrukt reaches a computer: the versioned GitHub release, the release installer, and the instrukt cockpit skill installed into every agent CLI. Release tooling outside the binary."
-delivered_by: [instrukt-first-build]
+delivered_by: [release-installer]
 ---
 # Distribution — Spec
 

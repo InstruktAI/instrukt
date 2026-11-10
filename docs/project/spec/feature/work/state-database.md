@@ -1,7 +1,6 @@
 ---
 description: The one SQLite database holding a computer's work record and runner state — its tables, its migrations, and instrukt as its single, transactional writer.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # State Database — Spec
 

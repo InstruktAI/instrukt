@@ -1,6 +1,5 @@
 ---
 description: "List and inspect producer-generated event declarations, optionally narrowed by vocabulary owner."
-delivered_by: [instrukt-first-build]
 ---
 # Event Discovery — Spec
 

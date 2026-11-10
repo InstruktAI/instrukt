@@ -1,6 +1,5 @@
 ---
 description: The configuration bounded context — `instrukt.yaml` in a global and a project layer, per-key layer rules, schema versions and migration, `instrukt config get|patch|init|validate`, interpolation and runtime selection.
-delivered_by: [instrukt-first-build]
 ---
 
 # Configuration — Spec

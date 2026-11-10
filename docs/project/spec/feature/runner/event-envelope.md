@@ -1,6 +1,5 @@
 ---
 description: "Typed event facts, explicit origin and subject, stable occurrence identity and producer-owned declarations."
-delivered_by: [instrukt-first-build]
 ---
 # Event Envelope — Spec
 

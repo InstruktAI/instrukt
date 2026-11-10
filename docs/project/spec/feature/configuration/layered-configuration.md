@@ -1,6 +1,5 @@
 ---
 description: "`instrukt.yaml` in a global and a project layer — which key lives where, how the layers combine, validation, schema versions and migration."
-delivered_by: [instrukt-first-build]
 ---
 
 # Layered Configuration — Spec
@@ -269,12 +268,12 @@ references are checked for unresolved keys and cycles without executing commands
 ### Schema versions and migration
 
 - Every document carries `schema_version`; `init` writes the current one.
-- Every configuration path runs migration before schema refusal or skip: a
-  document of an older schema version is rewritten in the current version
-  with its settings preserved, through the same atomic write as a patch.
-  This includes reads, patches, validation, installation, ticks and unchanged
-  publication. Other owned files gain versions when their shapes first change
-  (`project/instrukt/spec/feature/configuration/owned-files`).
+- Every configuration path converts older configuration before schema refusal
+  or skip, preserving its settings. Read-only commands inspect the converted
+  shape in memory and report migration due on the next writing command;
+  writing paths persist conversion atomically before proceeding, including
+  unchanged publication. The read/write boundary and other owned files follow
+  `project/instrukt/spec/feature/configuration/owned-files`.
 - A document already at the current version is left untouched.
 
 ### Environment

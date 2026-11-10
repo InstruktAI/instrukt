@@ -1,6 +1,5 @@
 ---
 description: Retrieval primitives — `instrukt docs index` lists ids, `instrukt docs get` reads snippets through the read pipeline with configured values, `--closure` reads any snippet with its transitive required reads, and `get --domain` reads a domain on demand.
-delivered_by: [instrukt-first-build]
 ---
 
 # Progressive Retrieval — Spec

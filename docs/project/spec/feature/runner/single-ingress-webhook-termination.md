@@ -1,6 +1,5 @@
 ---
 description: "One loopback receiver verifies and unconditionally relays authenticated external events to cluster Redis."
-delivered_by: [instrukt-first-build]
 ---
 # Single-Ingress Webhook Termination — Spec
 

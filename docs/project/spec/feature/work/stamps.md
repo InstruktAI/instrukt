@@ -1,7 +1,6 @@
 ---
 description: Evidence-bound workflow facts with accountable actors and model, version and evaluation provenance.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Stamps — Spec
 

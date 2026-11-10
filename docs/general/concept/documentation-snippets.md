@@ -14,16 +14,6 @@ that type, and it can declare hard dependencies on other snippets.
 
 Snippets live in repositories, in up to three positions:
 
-<!-- planned-change:instrukt-first-build -->
-- **General** (`docs/general/`) — published from committed main and rendered
-  into every agent CLI's user-scope instruction file: always on.
-- **Domain** (`docs/domain/<x>/`) — published from committed main; one line in
-  every global agent file, and the full rendering through
-  `instrukt docs get --domain <x>`: on demand.
-- **Project** (`docs/project/`) — the project's own knowledge, living alongside
-  what it describes, indexed from committed main and rendered into the project's
-  root `AGENTS.md`. Retrieval reads its files in the registered primary checkout.
-<!-- change:instrukt-first-build -->
 - **General** (`docs/general/`) — published from committed main and rendered
   into every agent CLI's user-scope instruction file: always on.
 - **Domain** (`docs/domain/<x>/`) — published from committed main; one line in
@@ -33,7 +23,6 @@ Snippets live in repositories, in up to three positions:
   what it describes, published from committed main to
   `~/.instrukt/docs/project/<slug>/…` and rendered into the project's root
   `AGENTS.md`. Retrieval reads the published copy.
-<!-- /planned-change:instrukt-first-build -->
 
 Each position's `index.yaml` selects what its rendering carries.
 

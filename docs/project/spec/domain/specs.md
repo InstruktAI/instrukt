@@ -1,6 +1,5 @@
 ---
 description: Use-case identity and test bindings — the use-case inventory of a project's feature specs, the bindings its tests declare, coverage with a ratchet, reservation of use cases for a todo.
-delivered_by: [instrukt-first-build]
 ---
 # Specs — Spec
 

@@ -1,6 +1,5 @@
 ---
 description: "Canonical GitHub delivery type and properties, preserving project source provenance and raw domain facts."
-delivered_by: [instrukt-first-build]
 ---
 # GitHub Webhook Normalization — Spec
 

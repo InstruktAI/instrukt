@@ -1,6 +1,5 @@
 ---
 description: "`instrukt status` reports in one read where this computer and this repository stand with instrukt: the machine's configuration, the selected runtime adapter and its capabilities, the features that makes available, the modules, this repository's adoption and whether its code is on GitHub, the published domains and their owners, and the other adopted projects. It changes nothing."
-delivered_by: [instrukt-first-build]
 ---
 # instrukt Status — Spec
 
@@ -10,10 +9,14 @@ delivered_by: [instrukt-first-build]
 asks before changing anything about instrukt on a computer: is it configured,
 which runtime does it call and what can that runtime carry, which modules are
 on, is this repository adopted, which domains are published and by whom, and
-which other projects publish here. The instrukt cockpit skill
+which other projects publish here. The command only reads: it writes no file,
+takes no lock, reaches no network and starts no session.
+
+<!-- planned:release-installer -->
+The instrukt cockpit skill
 (`project/instrukt/spec/feature/distribution/agent-skill`) opens
-every visit with it. The command only reads: it writes no file, takes no
-lock, reaches no network and starts no session.
+every visit with it.
+<!-- /planned:release-installer -->
 
 ## Canonical fields
 
@@ -120,6 +123,10 @@ And shows that this repository's publication of it would be refused
 ## See Also
 
 - [project/instrukt/spec/domain/publication](../../domain/publication.md)
+
+<!-- planned:release-installer -->
 - [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
+<!-- /planned:release-installer -->
+
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)

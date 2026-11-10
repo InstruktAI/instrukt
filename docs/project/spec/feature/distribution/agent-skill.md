@@ -1,6 +1,6 @@
 ---
 description: "The instrukt skill — one cockpit skill in instrukt's own repository, installed into every agent CLI on a computer with one skills command pinned to a release; it reads `instrukt status` and then adopts a repository, switches on a module or reconfigures through an interview the agent guides."
-delivered_by: [instrukt-first-build]
+delivered_by: [release-installer]
 ---
 # Agent Skill — Spec
 

@@ -1,7 +1,6 @@
 ---
 description: Runner reporting for anomalies outside waiting threads, with human decisions kept in agent conversations.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Anomaly Notification — Spec
 

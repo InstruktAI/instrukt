@@ -1,6 +1,5 @@
 ---
 description: Per-computer searchable history extracted from T3 local state, a one-time TeleClaude mirror import and merged search across computers.
-delivered_by: [instrukt-first-build]
 ---
 # History — Spec
 

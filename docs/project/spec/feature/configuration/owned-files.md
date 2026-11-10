@@ -1,6 +1,5 @@
 ---
 description: Machine-local secrets for every instrukt entry path, versioned owned shapes and migration before configuration refusal or skip.
-delivered_by: [instrukt-first-build]
 ---
 # Owned Files — Spec
 

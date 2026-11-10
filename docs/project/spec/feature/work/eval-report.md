@@ -1,7 +1,6 @@
 ---
 description: HTML evaluation reports derived from work evidence with model and process-change provenance.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Evaluation Report — Spec
 

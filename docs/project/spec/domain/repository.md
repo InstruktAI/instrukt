@@ -1,6 +1,5 @@
 ---
 description: "Repository — instrukt's git integration in a project: adopting a repository with `instrukt init` and reporting its claims, instrukt's marked sections in git hooks, and attributed commits through `instrukt repo commit`."
-delivered_by: [instrukt-first-build]
 ---
 # Repository — Spec
 

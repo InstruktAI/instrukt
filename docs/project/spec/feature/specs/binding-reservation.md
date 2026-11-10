@@ -1,6 +1,5 @@
 ---
 description: Reservation of use cases before the build — a todo's planned bindings are checked against the pending markers that already claim use cases for other todos, so two todos never bind the same use case.
-delivered_by: [instrukt-first-build]
 ---
 # Binding Reservation — Spec
 

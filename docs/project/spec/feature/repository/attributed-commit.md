@@ -1,6 +1,5 @@
 ---
 description: Attributed commits — `instrukt repo commit` authors an agent's commit as that agent, records its session and the caller's declaration of human involvement, names the work item when given, refuses caller-written trailers, and outside any session leaves the developer's own identity untouched.
-delivered_by: [instrukt-first-build]
 ---
 # Attributed Commit — Spec
 

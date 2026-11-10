@@ -1,6 +1,5 @@
 ---
 description: Workflow derives the current work obligation from configured definitions and record evidence, and owns admission of verified integration candidates.
-delivered_by: [instrukt-first-build]
 ---
 # Workflow — Spec
 

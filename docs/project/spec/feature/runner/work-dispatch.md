@@ -1,7 +1,6 @@
 ---
 description: Module-aware runner execution and automatic or manual todo dispatch without an instrukt daemon.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Work Dispatch — Spec
 

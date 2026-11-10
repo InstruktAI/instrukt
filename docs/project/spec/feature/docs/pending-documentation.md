@@ -1,6 +1,5 @@
 ---
 description: Pending documentation — intended changes written before the build, flagged in the index, withheld from the default read, and shown through a todo's lens with `--target`.
-delivered_by: [instrukt-first-build]
 ---
 
 # Pending Documentation — Spec

@@ -1,6 +1,5 @@
 ---
 description: A graph per push- or pull-obtained revision of main — started detached when the push is seen so the push never waits, one generation at a time per project with a newer revision superseding a queued one, stored under its SHA in the home, and never replaced by an interrupted run.
-delivered_by: [instrukt-first-build]
 ---
 # Graph Generation — Spec
 

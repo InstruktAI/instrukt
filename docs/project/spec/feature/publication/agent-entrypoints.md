@@ -1,6 +1,5 @@
 ---
 description: Rendered agent instructions — a project's root `AGENTS.md` is its master's purpose followed by the rendering of `docs/project/index.yaml`, nested masters render beside themselves, and the owner of `docs/general/` renders every supported agent CLI's global file from what is published on the computer, with per-CLI `agents` snippets, never over a file instrukt did not write, merging exactly the entrypoint-loading settings keys.
-delivered_by: [instrukt-first-build]
 ---
 # Agent Entrypoints — Spec
 

@@ -1,6 +1,5 @@
 ---
 description: The position index — one `index.yaml` per position choosing which snippets are rendered in full (`expanded`), which as one line (`listed`), a domain's description, and `general`'s per-agent snippets (`agents`), with the findings and notices validation reports on it.
-delivered_by: [instrukt-first-build]
 ---
 
 # Position Index — Spec

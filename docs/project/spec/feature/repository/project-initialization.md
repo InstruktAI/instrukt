@@ -1,6 +1,5 @@
 ---
 description: "Project initialization — `instrukt init` adopts a git repository in one idempotent step: project layer with its slug, `docs/project/` with its `index.yaml` and, when sdlc is published, a copy of sdlc's `schema.yaml`, a purpose-only root master, editor schemas with modelines, and instrukt's hook sections; it reports the claims a first sync will make and never overwrites what exists."
-delivered_by: [instrukt-first-build]
 ---
 # Project Initialization — Spec
 
@@ -26,11 +25,22 @@ purpose-only master as it does for any repository and keeps the file's
 content, byte for byte, at `.instrukt/adopted/AGENTS.md`, so nothing the
 developer wrote is lost while it finds its place. The master never takes that
 content: what a project's `AGENTS.md` includes comes only from
-`docs/project/index.yaml`. Placing it is migration the adopting agent guides
+`docs/project/index.yaml`.
+
+<!-- planned-change:release-installer -->
+Placing it is migration the adopting agent guides: the file's purpose
+into the master's `## Purpose`, each instruction into a project snippet of its
+type under `docs/project/` with its entry in the index, and the kept copy
+removed once nothing in it is left unplaced.
+<!-- change:release-installer -->
+Placing it is migration the adopting agent guides
 (`project/instrukt/spec/feature/distribution/agent-skill`): the file's purpose
 into the master's `## Purpose`, each instruction into a project snippet of its
 type under `docs/project/` with its entry in the index, and the kept copy
-removed once nothing in it is left unplaced. From the first sync the root
+removed once nothing in it is left unplaced.
+<!-- /planned-change:release-installer -->
+
+From the first sync the root
 `AGENTS.md` is rendered by instrukt. Init reports the kept copy, that the file
 is now generated, and that its tracked copy is to be removed from version
 control in the same commit as the master (`git rm --cached AGENTS.md`); it

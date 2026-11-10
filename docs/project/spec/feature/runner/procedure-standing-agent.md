@@ -1,7 +1,20 @@
 ---
 description: One continuing procedure responsibility per exact home and optional subject, resolved through the keyed runtime adapter on the emitting computer.
 visibility: public
-delivered_by: [instrukt-first-build]
+binding_reservations:
+  UC-PSA5: instrukt-first-build
+  UC-PSA6: instrukt-first-build
+  UC-PSA7: instrukt-first-build
+  UC-PSA9: instrukt-first-build
+  UC-PSA12: instrukt-first-build
+  UC-PSA14: instrukt-first-build
+  UC-PSA15: instrukt-first-build
+  UC-PSA18: instrukt-first-build
+  UC-PSA19: instrukt-first-build
+  UC-PSA20: instrukt-first-build
+  UC-PSA21: instrukt-first-build
+  UC-PSA25: instrukt-first-build
+  UC-PSA27: instrukt-first-build
 ---
 # Procedure Standing Agent — Spec
 

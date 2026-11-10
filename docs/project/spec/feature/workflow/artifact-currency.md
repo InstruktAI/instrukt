@@ -1,6 +1,5 @@
 ---
 description: Reviews, approvals and drift judgments bind the evidence they assessed and route changed work to its owning derivation layer.
-delivered_by: [instrukt-first-build]
 ---
 # Artifact Currency — Spec
 

@@ -1,6 +1,5 @@
 ---
 description: "The eval fingerprint — a digest of every published snippet that declares `eval: true`, recomputed by every sync into the home's state, so that every stamp can name the doctrine it was produced under."
-delivered_by: [instrukt-first-build]
 ---
 # Eval Fingerprint — Spec
 

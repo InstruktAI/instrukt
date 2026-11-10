@@ -1,6 +1,5 @@
 ---
 description: The engine behind the blueprint — the minimal node-link graph contract, the one shipped adapter, and a developer's own engine as a command configured in the global layer emitting the contract JSON; output that breaks the contract is never served.
-delivered_by: [instrukt-first-build]
 ---
 # Graph Engine — Spec
 

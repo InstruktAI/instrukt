@@ -1,6 +1,5 @@
 ---
 description: Blast radius from the latest graph — changed files to every dependent reachable backwards over dependency links, naming the graph's SHA, listing changed files the graph does not know, and saying so when there is no graph yet.
-delivered_by: [instrukt-first-build]
 ---
 # Blast Radius — Spec
 

@@ -1,6 +1,5 @@
 ---
 description: The configured work cycle builds, reviews, revises and finalizes a prepared todo, with explicit command ownership for every mechanical effect.
-delivered_by: [instrukt-first-build]
 ---
 # Delivery Cycle — Spec
 

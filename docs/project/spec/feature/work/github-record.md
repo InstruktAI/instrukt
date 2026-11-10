@@ -1,7 +1,6 @@
 ---
 description: Local-leading work records reflected to required GitHub issues with versioned native artifacts and revision checks; todos need the project's code on GitHub, and GitHub is read only for the todos this computer has an interest in.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # GitHub Record — Spec
 

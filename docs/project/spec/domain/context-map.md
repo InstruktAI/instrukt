@@ -1,16 +1,22 @@
 ---
-description: Instrukt's ten bounded contexts, their module placement and directed relationships.
-delivered_by: [instrukt-first-build]
+description: Instrukt's bounded contexts, their module placement and directed relationships.
 ---
 # Context Map — Spec
 
 ## What it is
 
+<!-- planned-change:release-installer -->
+The semantic map of instrukt's nine bounded contexts with separate
+ownership, assembled into modules with downward dependencies. Contexts own
+behavior; modules determine which capabilities are enabled. The map indexes
+their domain contracts and the designs governing their relationships.
+<!-- change:release-installer -->
 The semantic map of instrukt: ten bounded contexts with separate ownership,
 nine assembled into modules with downward dependencies and one, distribution,
 outside the binary. Contexts own behavior;
 modules determine which capabilities are enabled. The map indexes their domain
 contracts and the designs governing their relationships.
+<!-- /planned-change:release-installer -->
 
 ## Ownership boundary
 
@@ -21,6 +27,19 @@ domain spec owns its behavior. The map is not an additional bounded context.
 
 ### Bounded contexts
 
+<!-- planned-change:release-installer -->
+| Context | Owns | Domain spec |
+| --- | --- | --- |
+| docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
+| configuration | Layered settings, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
+| publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
+| repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
+| specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
+| blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
+| work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes and per-computer searchable history | `project/instrukt/spec/domain/runner` |
+<!-- change:release-installer -->
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
@@ -33,6 +52,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes and per-computer searchable history | `project/instrukt/spec/domain/runner` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+<!-- /planned-change:release-installer -->
 
 ### Modules
 
@@ -44,8 +64,10 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
 
+<!-- planned:release-installer -->
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
+<!-- /planned:release-installer -->
 
 Events are a module switch within the runner's semantic boundary, not a tenth
 bounded context. The runner's work follows the enabled modules; events do not
@@ -60,6 +82,39 @@ Customer / Supplier rows name the supplier first and the customer second.
 The labels follow `sdlc/spec/domain-spec`; direction describes contract use,
 not permission for an upstream module to depend on its consumer.
 
+<!-- planned-change:release-installer -->
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
+| configuration → publication | Customer / Supplier | Project slug, runtime choice and configuration migration operation |
+| configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
+| blueprint → runner | Customer / Supplier | Blueprint-owned release pin and tool lifecycle consumed by module installation |
+| configuration → blueprint | Customer / Supplier | Module switch and engine selection |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration and runner settings |
+| work, runner → CLI admission | Published language | Owner-supplied todo attempts and standing/scheduled assignment facts for the recognized caller; core-declared lookup wired by the CLI |
+| work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
+| docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
+| publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
+| publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
+| publication → repository | Customer / Supplier | Sync invoked by repository hook sections |
+| blueprint → repository | Customer / Supplier | Graph generation invoked by hooks for a push or pull advancing main; CLI wires the core-declared interface |
+| docs → specs | Customer / Supplier | Feature-spec use-case inventory and pending markers |
+| specs → blueprint | Customer / Supplier | Use-case inventory and test bindings joined to the graph for traces (trace is blueprint's) |
+| configuration → specs | Customer / Supplier | Project slug identifying the repository inventory |
+| workflow → docs | Customer / Supplier | Declared flavor roles validated through a core interface when todos is enabled |
+| work → docs | Customer / Supplier | Existence of todo slugs named by pending docs, only with todos enabled |
+| work → repository | Customer / Supplier | Todo existence through a core-declared interface wired by the CLI when todos is enabled |
+| work → workflow | Customer / Supplier | Artifacts, stamps and facts from which state is derived |
+| workflow → runner | Customer / Supplier; Published language | Computed state, transitions and finalize-ready event used for dispatch |
+| work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
+| runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
+| docs → runner | Customer / Supplier | Procedures and their event subscriptions |
+| publication → workflow | Customer / Supplier | Published flavor definitions, roles, actions and templates from the selected domain's `docs/domain/<x>/workflow/` |
+| publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
+| repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
+| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` and `runner.dependency_failing` supply their respective failed-check evidence |
+| repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
+<!-- change:release-installer -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
@@ -93,6 +148,7 @@ not permission for an upstream module to depend on its consumer.
 | repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
+<!-- /planned-change:release-installer -->
 
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
@@ -110,8 +166,12 @@ session operations, native thread streams and external notifications.
 Conversation-link relay and its identity-envelope vocabulary belong to runner
 under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
 shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
-additional contexts. Distribution is **Conformist** to the Agent Skills format,
+additional contexts.
+
+<!-- planned:release-installer -->
+Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
+<!-- /planned:release-installer -->
 
 ## Governing designs and decisions
 

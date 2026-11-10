@@ -1,6 +1,7 @@
 ---
 description: The standing integrator verifies an exact candidate before advancing the canonical branch and restores a failing canonical branch before repairing its cause.
-delivered_by: [instrukt-first-build]
+binding_reservations:
+  UC-IG6: instrukt-first-build
 ---
 # Integration Gate — Spec
 

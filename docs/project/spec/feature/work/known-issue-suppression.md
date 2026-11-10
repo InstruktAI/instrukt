@@ -1,6 +1,5 @@
 ---
 description: Retained known-issue dispositions keep the log bug hunter from refiling a triaged signal while preserving other eligibility and deduplication checks.
-delivered_by: [instrukt-first-build]
 ---
 # Known Issue Suppression — Spec
 

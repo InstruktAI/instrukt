@@ -1,6 +1,5 @@
 ---
 description: Use-case traceability through the tests — from a use case to the tests binding it and the code they reach in the latest graph, and from one or more files back to the use cases at stake, grouped by the folder of their spec; evidence, not proof, and no use-case ids in production code.
-delivered_by: [instrukt-first-build]
 ---
 # Use-Case Trace — Spec
 

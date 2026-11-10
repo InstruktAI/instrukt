@@ -1,6 +1,5 @@
 ---
 description: instrukt logs through the InstruktAI logging contract — one file per source under `$XDG_STATE_HOME/instrukt-ai/instrukt/`, readable with `instrukt-ai-logs instrukt` — so a developer or an agent can read what instrukt did after the fact.
-delivered_by: [instrukt-first-build]
 ---
 # Logging — Spec
 

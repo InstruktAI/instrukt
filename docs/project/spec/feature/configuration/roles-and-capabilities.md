@@ -1,6 +1,5 @@
 ---
 description: Configurable role classes and scoped capability bundles, resolved from recorded assignments, with focused command enforcement and role-aware help.
-delivered_by: [instrukt-first-build]
 ---
 # Roles and Capabilities — Spec
 

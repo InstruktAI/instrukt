@@ -1,7 +1,6 @@
 ---
 description: Durable project work, evidence, approvals, dependencies and evaluation within the todos module.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Work — Spec
 

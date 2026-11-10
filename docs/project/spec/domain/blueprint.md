@@ -1,6 +1,5 @@
 ---
 description: "The blueprint context — a structural node-link graph of a project per push- or pull-obtained revision of main, generated detached by a configured engine, and the questions answered from the latest graph: blast radius, path, and engine-offered query and explain."
-delivered_by: [instrukt-first-build]
 ---
 # Blueprint — Spec
 

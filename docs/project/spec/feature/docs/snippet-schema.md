@@ -1,6 +1,5 @@
 ---
 description: Snippet shapes — the root rules built into the binary, a position's `schema.yaml` adding sections per folder, the effective schema a snippet is held to, findings that name the file imposing a rule, and `instrukt docs schema <folder>`.
-delivered_by: [instrukt-first-build]
 ---
 
 # Snippet Schema — Spec

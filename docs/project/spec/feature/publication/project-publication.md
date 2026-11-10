@@ -1,6 +1,5 @@
 ---
 description: A project publishes only its own general, domain and project positions from committed canonical main, claimed by owner, index entries patched into the global index by owner, with duplicate-id, ownership and reserved-name refusals, retraction of what it no longer owns, and a no-op when main equals the published commit.
-delivered_by: [instrukt-first-build]
 ---
 # Project Publication — Spec
 

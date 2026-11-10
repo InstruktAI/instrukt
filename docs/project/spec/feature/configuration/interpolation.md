@@ -1,6 +1,5 @@
 ---
 description: Read-time expansion of cross-key references, environment variables and the selected adapter's caller identity; documentation reads configured values through @config.
-delivered_by: [instrukt-first-build]
 ---
 # Interpolation — Spec
 

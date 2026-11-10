@@ -1,7 +1,6 @@
 ---
 description: Authorized task due times, missed-run policy and OS-supplied runner wake-ups.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Task Timing — Spec
 

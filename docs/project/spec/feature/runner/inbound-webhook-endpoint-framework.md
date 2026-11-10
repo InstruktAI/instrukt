@@ -1,6 +1,5 @@
 ---
 description: "Domain-keyed signed project endpoints, scoped secret rotation and opaque event intake."
-delivered_by: [instrukt-first-build]
 ---
 # Inbound Webhook Endpoint Framework — Spec
 

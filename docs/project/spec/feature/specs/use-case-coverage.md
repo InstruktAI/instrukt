@@ -1,6 +1,5 @@
 ---
 description: Coverage measured against use cases, not source files — the inventory of a project's feature specs against the bindings in its tests, reporting orphans, unbound, anonymous and multi-bound, with a ratchet that lets orphans and anonymous scenarios shrink but never grow.
-delivered_by: [instrukt-first-build]
 ---
 # Use-Case Coverage — Spec
 

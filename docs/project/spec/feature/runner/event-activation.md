@@ -1,7 +1,6 @@
 ---
 description: Runtime-independent procedure subscriptions, external event sources and the fork-upstream response example.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Event Activation — Spec
 

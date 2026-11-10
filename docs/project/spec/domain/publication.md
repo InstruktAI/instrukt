@@ -1,6 +1,5 @@
 ---
 description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner, patches the global index by owner, renders its `AGENTS.md` files, and, as owner of `docs/general/`, renders the global agent files and their settings keys from what is published on the computer.
-delivered_by: [instrukt-first-build]
 ---
 # Publication — Spec
 
@@ -276,9 +275,12 @@ This context emits no events.
   `~/.instrukt/docs/<x>/workflow/`. The engine selects the domain with
   project key `workflow.domain` (default `sdlc`); these files have no snippet
   index entries.
+
+<!-- planned:release-installer -->
 - **distribution** — Published language. `instrukt status` is the state the
   instrukt cockpit skill reads on every visit
   (`project/instrukt/spec/domain/distribution`).
+<!-- /planned:release-installer -->
 
 ## Known caveats
 

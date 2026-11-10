@@ -1,6 +1,5 @@
 ---
 description: Instrukt opts into test authorship with isolated real-binary CLI tests and spec-bound behavior.
-delivered_by: [instrukt-first-build]
 ---
 # Testing — Policy
 

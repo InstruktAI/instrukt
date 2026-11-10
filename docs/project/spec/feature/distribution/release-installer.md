@@ -1,6 +1,6 @@
 ---
 description: "instrukt's release and its installer — every version tag publishes one archive per supported platform, a checksum file and `install.sh`; the installer picks the computer's platform, verifies the download, installs the binary into the user's bin directory without touching anything else, and upgrades or pins by running it again."
-delivered_by: [instrukt-first-build]
+delivered_by: [release-installer]
 ---
 # Release Installer — Spec
 

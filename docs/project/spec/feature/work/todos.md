@@ -1,7 +1,6 @@
 ---
 description: Project work items with explicit kinds, durable intent, retained artifacts and recoverable withdrawal.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Todos — Spec
 

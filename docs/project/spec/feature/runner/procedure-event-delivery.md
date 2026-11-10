@@ -1,7 +1,6 @@
 ---
 description: Durable activation data reaches a procedure-first assignment as soon as possible or only at entry, using the selected runtime's delivery capabilities.
 visibility: public
-delivered_by: [instrukt-first-build]
 ---
 # Procedure Event Delivery — Spec
 

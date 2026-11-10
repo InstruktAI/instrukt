@@ -9,17 +9,10 @@ visibility: 'public'
 
 - Every authored doc snippet must have its scope determined before creation.
 
-<!-- planned-change:instrukt-first-build -->
-- A snippet belongs to exactly one of three positions:
-  - **General** (`docs/general/`): every agent on every computer that adopts it needs it, in every project. Examples: collaboration principles, cross-project policies.
-  - **Domain** (`docs/domain/<x>/`): it belongs to one body of knowledge a single publisher is the authority on, read on demand when a task enters that domain. Examples: software-development policies and procedures in `sdlc`.
-  - **Project** (`docs/project/`): it belongs to this project; its index comes from committed main and retrieval reads the registered primary checkout. Examples: project architecture, repo-specific workflows.
-<!-- change:instrukt-first-build -->
 - A snippet belongs to exactly one of three positions:
   - **General** (`docs/general/`): every agent on every computer that adopts it needs it, in every project. Examples: collaboration principles, cross-project policies.
   - **Domain** (`docs/domain/<x>/`): it belongs to one body of knowledge a single publisher is the authority on, read on demand when a task enters that domain. Examples: software-development policies and procedures in `sdlc`.
   - **Project** (`docs/project/`): it belongs to this project; its committed main is published to `~/.instrukt/docs/project/<slug>/…` and served from there. Examples: project architecture, repo-specific workflows.
-<!-- /planned-change:instrukt-first-build -->
 
 - The position decides where a snippet is served from and how its identity reads: a project snippet's identity begins with `project/<slug>/`, a general one's with `general/`, a domain one's with the domain name. A project snippet stays reachable from any location by that identity.
 - The position never decides who may read a snippet, and neither does `visibility`: every reader reads every snippet.
