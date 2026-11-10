@@ -1,0 +1,39 @@
+name: T3 contract
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_sha:
+        description: Resolved nightly source revision, when known
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: t3-contract-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  t3-contract:
+    name: T3 dependency contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
+      - name: Check the real pinned release and its fake
+        env:
+          T3_CONTRACT_UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+          T3_CONTRACT_REPORT: ${{ runner.temp }}/t3-contract.json
+        run: cargo nextest run --locked -p instrukt-cli --features t3-contract --test integration -E 'test(=t3_contract::a_release_and_its_fake_are_checked_without_a_model_account)' --success-output immediate
+      - name: Retain the contract result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: t3-dependency-contract-result
+          path: ${{ runner.temp }}/t3-contract.json
+          if-no-files-found: error

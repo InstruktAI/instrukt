@@ -1,3 +1,7 @@
 # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
 schema_version: 3
 project: instrukt
+modules:
+  events: true
+ci:
+  dependency_branch_prefixes: [renovate/, upstream/]

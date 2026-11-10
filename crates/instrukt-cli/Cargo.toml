@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [features]
 graphify-contract = []
+t3-contract = []
 
 [dependencies]
 instrukt-core.workspace = true
@@ -35,6 +36,8 @@ serde_yaml_ng.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
+rustix.workspace = true
 jsonwebtoken.workspace = true
 tungstenite.workspace = true
 hmac.workspace = true

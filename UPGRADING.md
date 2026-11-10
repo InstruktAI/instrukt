@@ -2,6 +2,24 @@
 
 ## 0.1.0
 
+### T3 release contract and failure routing
+
+Instrukt's own project enables events with an empty watch list and selects
+both `renovate/` and `upstream/` dependency-branch prefixes. On a computer
+running its failure responses, converge the existing event prerequisites with
+`instrukt install --module events` and verify them with
+`instrukt install --check --module events`. Publish the integrator subscription
+and run the normal participant; CI detection alone cannot file assessed bug work.
+The observation App retains its existing check/status/content read permissions.
+
+Install the dispatch-enabled T3 contract workflow on the repository's default
+branch before enabling hourly discovery. Its scheduler needs repository-token
+contents and Actions write permissions to push `upstream/t3-nightly` and issue
+`workflow_dispatch`; token-generated pushes do not trigger the check themselves.
+A pin commit is not a successful check. Redispatch that branch's contract workflow
+if dispatch was interrupted. Only current dependency heads are observed, so a
+failure replaced before observation may be missed.
+
 ### Dependency-update CI observation
 
 Configuration schema 5 adds the project-only `ci.dependency_branch_prefixes`

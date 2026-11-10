@@ -114,3 +114,7 @@ mod use_case_trace;
 mod work_dispatch;
 #[path = "cases/workflow-definition.rs"]
 mod workflow_definition;
+
+#[cfg(feature = "t3-contract")]
+#[path = "cases/t3-contract.rs"]
+mod t3_contract;

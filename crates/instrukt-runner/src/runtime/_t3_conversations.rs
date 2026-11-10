@@ -121,6 +121,84 @@ impl Projection {
 fn source_error(detail: &'static str) -> SourceError {
     SourceError::Shape(detail)
 }
+
+pub(super) struct NativeInput {
+    pub text: String,
+    pub state: super::InputState,
+    pub reference: Option<String>,
+}
+
+/// Run allocation precedes entry: queued/preparing inputs already have run IDs.
+pub(super) fn inputs(
+    home: &Home,
+    env: &Env,
+    thread: &str,
+) -> Result<Vec<NativeInput>, SourceError> {
+    let db = open(&T3Home::discover(home, env).database())?;
+    let mut statement = db.prepare(
+        "SELECT m.message_id,m.payload_json,r.payload_json FROM orchestration_v2_projection_messages m \
+         LEFT JOIN orchestration_v2_projection_runs r ON r.thread_id=m.thread_id \
+         AND r.run_id=json_extract(m.payload_json,'$.runId') \
+         WHERE m.thread_id=?1 AND m.role='user' ORDER BY m.rowid DESC LIMIT 100",
+    )?;
+    let mut rows = statement.query(params![thread])?;
+    let mut inputs = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let message: Value = serde_json::from_str(&row.get::<_, String>(1)?)?;
+        if message["id"] != id || message["threadId"] != thread || message["role"] != "user" {
+            return Err(source_error("invalid input identity"));
+        }
+        let text = message["text"]
+            .as_str()
+            .ok_or_else(|| source_error("input text"))?
+            .to_owned();
+        let reference = match &message["runId"] {
+            Value::Null => None,
+            Value::String(id) if !id.is_empty() => Some(id.clone()),
+            _ => return Err(source_error("input run reference")),
+        };
+        let mut state = super::InputState::Accepted;
+        if let Some(payload) = row.get::<_, Option<String>>(2)? {
+            let run: Value = serde_json::from_str(&payload)?;
+            if run["id"].as_str() != reference.as_deref() || run["userMessageId"] != id {
+                return Err(source_error("input run relationship"));
+            }
+            let status = run["status"]
+                .as_str()
+                .ok_or_else(|| source_error("input run status"))?;
+            if !matches!(
+                status,
+                "preparing"
+                    | "queued"
+                    | "starting"
+                    | "running"
+                    | "waiting"
+                    | "completed"
+                    | "interrupted"
+                    | "failed"
+                    | "cancelled"
+                    | "rolled_back"
+            ) {
+                return Err(source_error("unsupported input run status"));
+            }
+            if !matches!(status, "queued" | "preparing") && !run["startedAt"].is_null() {
+                run["startedAt"]
+                    .as_str()
+                    .ok_or_else(|| source_error("run entry timestamp"))?
+                    .parse::<jiff::Timestamp>()
+                    .map_err(|_| source_error("run entry timestamp"))?;
+                state = super::InputState::Consumed;
+            }
+        }
+        inputs.push(NativeInput {
+            text,
+            state,
+            reference,
+        });
+    }
+    Ok(inputs)
+}
 fn open(path: &Path) -> Result<Connection, SourceError> {
     let mut uri = url::Url::from_file_path(path)
         .map_err(|_| source_error("database path must be absolute"))?;

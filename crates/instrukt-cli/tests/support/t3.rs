@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use crate::common::TestEnv;
 
 const SCRIPT: &str = r###"#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys
+import json, os, pathlib, sqlite3, subprocess, sys
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
@@ -37,6 +37,7 @@ if args[:3]==['auth','session','issue']:
     print(token); sys.exit(0)
 if args[:3]==['auth','session','revoke']:
     if (root/'revoke-failure').exists(): sys.exit(1)
+    (root.parent/'t3-readiness/token-digest').unlink(missing_ok=True)
     print('Revoked session.'); sys.exit(0)
 if len(args)<2 or args[0]!='thread': sys.exit(2)
 command=args[1]; args=args[2:]
@@ -52,9 +53,31 @@ if (root/'down').exists() or (command=='list' and (root/'list-failure').exists()
     print('connect ECONNREFUSED 127.0.0.1:3773',file=sys.stderr); sys.exit(1)
 def all_threads():
     return [json.loads(p.read_text()) for p in sorted(root.glob('*.json'))]
+def sync_inputs():
+    db=pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite'
+    db.parent.mkdir(parents=True,exist_ok=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute('CREATE TABLE IF NOT EXISTS orchestration_v2_projection_messages (message_id TEXT PRIMARY KEY,thread_id TEXT,role TEXT,payload_json TEXT)')
+        connection.execute('CREATE TABLE IF NOT EXISTS orchestration_v2_projection_runs (run_id TEXT,thread_id TEXT,payload_json TEXT,PRIMARY KEY(thread_id,run_id))')
+        def upsert(table, values):
+            columns=[row[1] for row in connection.execute('PRAGMA table_info('+table+')') if row[1] in values]
+            updates=','.join(column+'=excluded.'+column for column in columns)
+            connection.execute('INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+') ON CONFLICT DO UPDATE SET '+updates+' WHERE payload_json!=excluded.payload_json',[values[column] for column in columns])
+        for thread in all_threads():
+            for index,message in enumerate(thread['messages']):
+                if message['role']!='user': continue
+                identity='fake:'+thread['threadId']+':input:'+str(index)
+                run=message.get('runId')
+                at='2026-11-06T10:00:00Z'
+                payload=dict(message,id=identity,threadId=thread['threadId'],streaming=False,createdAt=at,updatedAt=at)
+                upsert('orchestration_v2_projection_messages',dict(message_id=identity,thread_id=thread['threadId'],role='user',run_id=run,node_id=None,streaming=0,created_at=at,updated_at=at,payload_json=json.dumps(payload)))
+                if run:
+                    entered=not message.get('queued',False) and thread['status'] not in ['preparing','queued']
+                    native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':'running' if entered else 'queued','startedAt':at if entered else None,'requestedAt':at,'completedAt':None}
+                    upsert('orchestration_v2_projection_runs',dict(run_id=run,thread_id=thread['threadId'],status=native['status'],requested_at=at,completed_at=None,payload_json=json.dumps(native)))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
-    temporary.write_text(json.dumps(t)); temporary.replace(root/(t['threadId']+'.json'))
+    temporary.write_text(json.dumps(t)); temporary.replace(root/(t['threadId']+'.json')); sync_inputs()
 def find(id):
     file=root/(id+'.json')
     if not file.exists(): print('Thread '+id+' is no longer available.',file=sys.stderr); sys.exit(1)
@@ -73,7 +96,7 @@ elif command=='start':
     id='s'+str(n)
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
-    t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run1','activeRunId':'run1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run1'}]}
+    t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
     if '--worktree' in flags:
         folder=root/'worktrees'/id
         folder.parent.mkdir(exist_ok=True)
@@ -90,19 +113,21 @@ elif command=='send':
         print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+sys.stdin.read(),file=sys.stderr); sys.exit(1)
     text=sys.stdin.read() if operands[1]=='-' else operands[1]
     t['settled']=False; t['settledAt']=None
-    run=None
+    queued=True
+    run='run:'+t['threadId']+':'+str(len(t['messages'])+2)
     if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
-        run='run'+str(len(t['messages'])+1); t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
-    t['messages'].append({'role':'user','text':text,'runId':run}); save(t)
+        queued=False; t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
+    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued}); save(t)
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
 elif command=='show':
+    sync_inputs()
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=3:
             t['status']='running'; save(t); (root/'busy-before-entry').unlink(); counter.unlink()
-    print(json.dumps({'thread':{k:v for k,v in t.items() if k not in ['messages','checkout'] and not (k=='projectId' and (root/'hide-project-id').exists())},'messages':t['messages'][-limit:] if limit else []}))
+    print(json.dumps({'thread':{k:v for k,v in t.items() if k not in ['messages','checkout'] and not (k=='projectId' and (root/'hide-project-id').exists())},'messages':[{k:v for k,v in m.items() if k!='queued'} for m in [m for m in t['messages'] if not m.get('queued',False)][-limit:]] if limit else []}))
     if limit==0 and (root/'busy-after-idle-read').exists():
         counter=root/'asap-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=2:
@@ -143,7 +168,7 @@ impl FakeT3 {
         Self { script, state }
     }
     pub fn seed(&self, id: &str, checkout: &std::path::Path, key: &str, brief: &str) {
-        let thread = serde_json::json!({"threadId":id,"projectId":checkout.to_string_lossy(),"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":"run1","activeRunId":"run1","updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":"run1"}]});
+        let thread = serde_json::json!({"threadId":id,"projectId":checkout.to_string_lossy(),"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":format!("run:{id}:1"),"activeRunId":format!("run:{id}:1"),"updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":format!("run:{id}:1")}]});
         std::fs::write(
             self.state.join(format!("{id}.fixture")),
             serde_json::to_vec(&thread).unwrap(),
@@ -213,15 +238,19 @@ impl FakeT3 {
             .as_array()
             .unwrap()
             .iter()
-            .any(|m| m["role"] == "user" && m["runId"].is_null());
+            .any(|m| m["role"] == "user" && m["queued"] == true);
         if pending {
-            let run = format!("run{}", t["messages"].as_array().unwrap().len());
-            for m in t["messages"].as_array_mut().unwrap() {
-                if m["role"] == "user" && m["runId"].is_null() {
-                    m["runId"] = run.clone().into();
+            let mut entered = None;
+            for message in t["messages"].as_array_mut().unwrap() {
+                if message["role"] == "user" && message["queued"] == true {
+                    message["queued"] = false.into();
+                    entered = Some(message["runId"].clone());
                 }
             }
-            t["latestRunId"] = run.into();
+            if let Some(run) = entered {
+                t["latestRunId"] = run.clone();
+                t["activeRunId"] = run;
+            }
         }
         std::fs::write(
             self.state.join(format!("{id}.fixture")),

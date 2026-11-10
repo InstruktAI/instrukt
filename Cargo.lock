@@ -857,6 +857,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "base64 0.23.1",
  "clap",
  "form_urlencoded",
  "hex",
@@ -871,6 +872,7 @@ dependencies = [
  "jsonwebtoken",
  "predicates",
  "redis",
+ "rustix",
  "serde",
  "serde_json",
  "serde_yaml_ng",

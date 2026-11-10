@@ -23,6 +23,20 @@ impl Default for T3 {
     }
 }
 impl T3 {
+    fn input_evidence(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Vec<super::_t3_conversations::NativeInput>, SessionsError> {
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| failure("input observation", "machine home is unavailable"))?;
+        let home = instrukt_core::home::Home::at_user_home(user_home.into());
+        super::_t3_conversations::inputs(&home, &self.env, session.id.as_str())
+            .map_err(|error| failure("input observation", error.to_string()))
+    }
+
     pub(crate) fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
         let checkout = request.checkout.to_string_lossy();
         let mut args = vec!["thread", "start", "--title", request.title.as_str()];
@@ -244,20 +258,15 @@ impl RuntimeAdapter for T3 {
         text: &str,
         now: jiff::Timestamp,
     ) -> Result<super::InputObservation, SessionsError> {
-        let conversation = self.read_conversation(session)?;
-        let message = conversation
-            .messages
-            .iter()
-            .rev()
-            .find(|m| m.role == "user" && m.text == text);
+        self.show(session, 0)?;
+        let inputs = self.input_evidence(session)?;
+        let message = inputs.into_iter().find(|input| input.text == text);
         Ok(super::InputObservation {
-            state: match message {
-                Some(message) if message.run_id.is_some() => super::InputState::Consumed,
-                Some(_) => super::InputState::Accepted,
-                None => super::InputState::Unknown,
-            },
-            reference: message.and_then(|m| m.run_id.clone()),
-            source: "t3 thread show: exact user input with native run assignment".into(),
+            state: message
+                .as_ref()
+                .map_or(super::InputState::Unknown, |m| m.state),
+            reference: message.and_then(|m| m.reference),
+            source: "T3 persisted user input and native run entry".into(),
             observed_at: now,
         })
     }
@@ -284,18 +293,16 @@ impl RuntimeAdapter for T3 {
             })?
             .text
             .clone();
-        let waiting = conversation
-            .messages
-            .iter()
-            .rev()
+        let waiting = self
+            .input_evidence(session)?
+            .into_iter()
             .find(|m| {
-                m.role == "user"
-                    && m.run_id.is_none()
+                m.state != super::InputState::Consumed
                     && (m.text.starts_with("instrukt delivery log\n")
                         || m.text
                             .starts_with("instrukt system-origin procedure assignment\n"))
             })
-            .map(|m| m.text.clone());
+            .map(|m| m.text);
         Ok(super::AssignmentEvidence {
             opening,
             waiting,
@@ -469,7 +476,7 @@ impl NativeThread {
             return Err(failure("decode", "incomplete thread identity"));
         }
         let status = match self.status.as_str() {
-            "running" | "starting" | "resuming" | "queued" => SessionState::Running,
+            "running" | "preparing" | "starting" | "resuming" | "queued" => SessionState::Running,
             "waiting" | "waiting_for_input" | "waiting_for_approval" => SessionState::NeedsInput,
             "idle" | "completed" | "stopped" => SessionState::InputReady,
             "failed" | "interrupted" | "cancelled" | "rolled_back" => SessionState::EndedFailed,

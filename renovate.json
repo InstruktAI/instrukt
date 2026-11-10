@@ -21,6 +21,18 @@
       ],
       "depNameTemplate": "graphifyy",
       "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^crates/instrukt-runner/t3\\.version$/"
+      ],
+      "matchStrings": [
+        "(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)"
+      ],
+      "depNameTemplate": "pingdotgg/t3code",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ],
   "packageRules": [
@@ -33,6 +45,12 @@
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
+    },
+    {
+      "matchPackageNames": [
+        "pingdotgg/t3code"
+      ],
+      "ignoreUnstable": true
     }
   ]
 }

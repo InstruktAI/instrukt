@@ -86,9 +86,11 @@ impl Server {
                             .and_then(|v| v.to_str().ok())
                             .and_then(|v| v.strip_prefix("Bearer "))
                             .is_some_and(|token| {
-                                hex::encode(Sha256::digest(token.as_bytes()))
-                                    == std::fs::read_to_string(header_dir.join("token-digest"))
-                                        .unwrap()
+                                std::fs::read_to_string(header_dir.join("token-digest")).is_ok_and(
+                                    |expected| {
+                                        hex::encode(Sha256::digest(token.as_bytes())) == expected
+                                    },
+                                )
                             });
                         if !auth {
                             return Err(tungstenite::http::Response::builder()
