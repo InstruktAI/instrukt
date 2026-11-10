@@ -25,6 +25,8 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
+      - name: Install shared CLI harness prerequisites
+        run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Check the real pinned release and its fake
         env:
           T3_CONTRACT_UPSTREAM_SHA: ${{ inputs.upstream_sha }}
