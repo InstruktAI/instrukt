@@ -72,8 +72,6 @@ fn finished_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
         .join("state/hooks")
         .join(project)
         .join(format!("{}.yaml", hook.name()));
-    let progress =
-        crate::common::progress::Progress::new(path.parent().unwrap(), Duration::from_secs(30));
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(text) = std::fs::read_to_string(&path) {
@@ -87,7 +85,7 @@ fn finished_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
             "no finished run of {hook} recorded at {}",
             path.display()
         );
-        progress.wait();
+        std::thread::yield_now();
     }
 }
 
@@ -102,10 +100,6 @@ fn published(env: &TestEnv, project: &str) -> Option<String> {
 
 /// Waits, within a bound, until publication has recorded `commit`.
 fn wait_published(env: &TestEnv, project: &str, commit: &str) {
-    let progress = crate::common::progress::Progress::new(
-        &env.instrukt_home().join("state/publication"),
-        Duration::from_secs(60),
-    );
     let deadline = Instant::now() + Duration::from_secs(60);
     while published(env, project).as_deref() != Some(commit) {
         assert!(
@@ -113,7 +107,7 @@ fn wait_published(env: &TestEnv, project: &str, commit: &str) {
             "{commit} was never published (last published: {:?})",
             published(env, project)
         );
-        progress.wait();
+        std::thread::yield_now();
     }
 }
 

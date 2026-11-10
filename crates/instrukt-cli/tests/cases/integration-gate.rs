@@ -481,10 +481,6 @@ fn a_tick_publishes_contracts_integrated_on_another_computer() {
     assert_eq!(p.repo.head(), delivered);
     let home = Home::at_user_home(p.env.home().to_path_buf());
     let slug = ProjectSlug::parse("demo").unwrap();
-    let progress = crate::common::progress::Progress::new(
-        &home.publication_state_dir(),
-        Duration::from_secs(30),
-    );
     let deadline = Instant::now() + Duration::from_secs(30);
     while PublishedRecord::load(&home, &slug)
         .unwrap()
@@ -494,7 +490,7 @@ fn a_tick_publishes_contracts_integrated_on_another_computer() {
             Instant::now() < deadline,
             "post-merge publication did not finish"
         );
-        progress.wait();
+        std::thread::yield_now();
     }
     let out = p
         .env

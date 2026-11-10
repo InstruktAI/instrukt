@@ -42,10 +42,6 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
     // The detached hook worker records completion after its sync exits.
     let home = Home::at_user_home(env.home().to_path_buf());
     let project = ProjectSlug::parse("demo").unwrap();
-    let progress = crate::common::progress::Progress::new(
-        &home.hooks_state_dir(&project),
-        Duration::from_secs(30),
-    );
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(record) = repository::last_run(&home, &project, Hook::PostCommit).unwrap()
@@ -55,7 +51,7 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
             break;
         }
         assert!(Instant::now() < deadline, "hook publication did not finish");
-        progress.wait();
+        std::thread::yield_now();
     }
 
     // This is the public log location the InstruktAI reader discovers.

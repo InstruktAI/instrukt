@@ -119,8 +119,6 @@ fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
         .join("state/hooks")
         .join(project)
         .join(format!("{}.yaml", hook.name()));
-    let progress =
-        crate::common::progress::Progress::new(path.parent().unwrap(), Duration::from_secs(30));
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(text) = std::fs::read_to_string(&path) {
@@ -134,7 +132,7 @@ fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
             "no finished run of {hook} at {}",
             path.display()
         );
-        progress.wait();
+        std::thread::yield_now();
     }
 }
 

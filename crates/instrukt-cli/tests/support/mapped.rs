@@ -200,7 +200,7 @@ impl Gate {
 
     /// Waits until the engine started for `rev`.
     pub fn wait_started(&self, rev: &str) {
-        wait_until(&self.dir, &format!("the engine to start for {rev}"), || {
+        wait_until(&format!("the engine to start for {rev}"), || {
             self.started(rev)
         });
     }
@@ -212,22 +212,18 @@ impl Gate {
 
     /// Waits until the engine run for `rev` printed its map.
     pub fn wait_finished(&self, rev: &str) {
-        wait_until(
-            &self.dir,
-            &format!("the engine to finish for {rev}"),
-            || self.dir.join(format!("finished-{rev}")).exists(),
-        );
+        wait_until(&format!("the engine to finish for {rev}"), || {
+            self.dir.join(format!("finished-{rev}")).exists()
+        });
     }
 
     /// Kills the instrukt worker that started the engine for `rev`, as an
     /// interruption would; its engine keeps running.
     pub fn kill_worker(&self, rev: &str) {
         let marker = self.dir.join(format!("worker-{rev}"));
-        wait_until(
-            &self.dir,
-            &format!("the worker of {rev} to be known"),
-            || std::fs::read_to_string(&marker).is_ok_and(|pid| !pid.trim().is_empty()),
-        );
+        wait_until(&format!("the worker of {rev} to be known"), || {
+            std::fs::read_to_string(&marker).is_ok_and(|pid| !pid.trim().is_empty())
+        });
         let pid = std::fs::read_to_string(&marker).unwrap();
         let killed = std::process::Command::new(crate::common::tool_executable("kill"))
             .args(["-s", "KILL", pid.trim()])
@@ -331,13 +327,12 @@ pub fn push(env: &TestEnv, repo: &Repo) {
         .success();
 }
 
-/// Rechecks the condition on filesystem progress, within a fixed bound.
-pub fn wait_until(root: &Path, what: &str, mut condition: impl FnMut() -> bool) {
-    let progress = crate::common::progress::Progress::new(root, WAIT);
+/// Waits for the observable condition, yielding between checks within a fixed bound.
+pub fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT;
     while !condition() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        progress.wait();
+        std::thread::yield_now();
     }
 }
 
@@ -366,21 +361,17 @@ pub fn last_generation(env: &TestEnv) -> Option<LastGeneration> {
 pub fn wait_generated(env: &TestEnv, of: &str) -> LastGeneration {
     let of = sha(of);
     let mut ended = None;
-    wait_until(
-        store(env).dir(),
-        &format!("the generation of {of} to end"),
-        || {
-            ended = last_generation(env).filter(|last| {
-                last.sha == of
-                    && !matches!(
-                        last.state,
-                        instrukt_blueprint::GenerationState::Running
-                            | instrukt_blueprint::GenerationState::Orphaned
-                    )
-            });
-            ended.is_some()
-        },
-    );
+    wait_until(&format!("the generation of {of} to end"), || {
+        ended = last_generation(env).filter(|last| {
+            last.sha == of
+                && !matches!(
+                    last.state,
+                    instrukt_blueprint::GenerationState::Running
+                        | instrukt_blueprint::GenerationState::Orphaned
+                )
+        });
+        ended.is_some()
+    });
     ended.unwrap()
 }
 

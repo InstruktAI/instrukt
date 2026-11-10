@@ -35,7 +35,6 @@ serde_yaml_ng.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-notify.workspace = true
 jsonwebtoken.workspace = true
 tungstenite.workspace = true
 hmac.workspace = true

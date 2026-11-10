@@ -26,7 +26,6 @@
 )]
 
 pub mod github;
-pub mod progress;
 pub mod redis;
 pub mod redis_proxy;
 pub mod t3_readiness;

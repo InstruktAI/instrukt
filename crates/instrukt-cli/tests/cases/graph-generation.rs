@@ -133,7 +133,7 @@ fn without_the_shipped_engine_installed_the_status_says_what_to_install() {
     let repo = project(&env, None);
     let one = revision(&repo, "one", Some(&first_map()));
     push(&env, &repo);
-    wait_until(store(&env).dir(), "the generation to end", || {
+    wait_until("the generation to end", || {
         last_generation(&env).is_some_and(|last| last.is_failure())
     });
 
@@ -173,7 +173,7 @@ fn a_mapping_that_finished_but_is_not_yet_recorded_reads_as_running_then_mapped(
     // interrupted one.
     drop(publication);
     let mut seen = Vec::new();
-    wait_until(store(&env).dir(), "the generation to be recorded", || {
+    wait_until("the generation to be recorded", || {
         let state = last_generation(&env).unwrap().state;
         let done = state != GenerationState::Running;
         seen.push(state);

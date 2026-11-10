@@ -869,7 +869,6 @@ dependencies = [
  "instrukt-todos",
  "jiff",
  "jsonwebtoken",
- "notify",
  "predicates",
  "redis",
  "serde",
