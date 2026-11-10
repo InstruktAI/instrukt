@@ -113,6 +113,16 @@ reports the capability gap. Structured transcript/run ids are one adapter's
 evidence, not shared prerequisites. Assignment recovery likewise uses an explicit
 capability; unreadable initialization evidence stays a visible gap.
 
+<!-- planned:t3-contract -->
+For T3, a persisted user message or assigned run can precede provider entry.
+Preparing and queued runs supply no consumption evidence. A queued CLI send can
+be accepted while its user message is absent from the recent CLI transcript.
+Observation preserves accepted or unknown state until native entry evidence is
+available; a run id alone never upgrades that state to consumed. The real-release
+check in `project/instrukt/spec/feature/runner/t3-contract` exercises these
+provider-free states alongside the fake.
+<!-- /planned:t3-contract -->
+
 ### Operational sessions surface
 
 `instrukt sessions list [--since <duration> | --all] [--json]` inspects the
@@ -451,6 +461,7 @@ GitHub command creates no second attention item.
 
 ### T3 observation translation and work completion
 
+<!-- planned-change:t3-contract -->
 | State | Runtime observation |
 | --- | --- |
 | `running` | `running`, `starting`, `resuming` or `queued`. |
@@ -458,6 +469,15 @@ GitHub command creates no second attention item.
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
 | `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. |
+<!-- change:t3-contract -->
+| State | Runtime observation |
+| --- | --- |
+| `running` | `running`, `preparing`, `starting`, `resuming` or `queued`; this operational state supplies no proof of input consumption. |
+| `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
+| `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
+| `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
+| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. |
+<!-- /planned-change:t3-contract -->
 
 An unrecognised status or response shape, command failure or unreachable runtime
 is an observation error, never `gone` or success. Status spellings and optional

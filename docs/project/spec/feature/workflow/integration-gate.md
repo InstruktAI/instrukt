@@ -122,6 +122,19 @@ response. The integrator reads the check evidence, judges whether it warrants
 a bug, deduplicates against existing work and files it once when warranted.
 Dependency-branch failure does not imply red main or trigger a revert of main.
 
+<!-- planned:t3-contract -->
+Scheduled dependency-check evidence follows the same assessment and deduplicated
+bug-filing obligation as failed dependency branches. The integrator reads the
+exact execution, upstream candidate and retained result, distinguishing
+incompatibility from acquisition or harness failure. The evaluated instrukt
+revision can be unchanged across executions or no longer be canonical head.
+Such an upstream warning alone supplies no offending instrukt delivery to
+revert; canonical-delivery recovery retains its separate red-main obligation.
+The runner's failure source and activation prerequisite remain owned by
+`project/instrukt/spec/feature/runner/event-activation`. UC-IG6 covers this
+assessment goal without an additional binding or a new agent watcher.
+<!-- /planned:t3-contract -->
+
 ### Mechanical canonical-checkout synchronization
 
 On each tick, before dispatch, the runner observes remote main with Git and

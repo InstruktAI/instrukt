@@ -34,6 +34,20 @@ This repository authors new tests under the opt-in doctrine in
 
 ### Checks and release
 
+<!-- planned:t3-contract -->
+The T3 release-contract suite is a bounded external-system check under
+`project/instrukt/spec/feature/runner/t3-contract`. Its dedicated CI jobs run
+the real headless release and verify the existing T3 fake on the exercised
+surfaces, with provider-dependent exclusions reported explicitly. CLI-facing
+checks use the real binaries; adapter-only checks use existing public interfaces
+without implementation visibility changes. The `t3-contract` feature selects
+this suite; missing prerequisites fail a selected run. Ordinary hook/test commands
+keep their current scope and gain no release download or provider dependency.
+Each newly authored feature use case has one named test checking its complete
+situation and outcomes. This ruling adds no other test-level, unit-test or
+repository-wide fake architecture decision.
+<!-- /planned:t3-contract -->
+
 - This repository's pre-commit checks run fmt, clippy and test, in seconds
   without services. These are project tooling, not quality hooks installed by
   instrukt in adopting repositories.
@@ -54,6 +68,14 @@ selection, direct-main integration and conflict refresh are exercised within
 the dispatch, integration and record-recovery goals.
 
 ## Rationale
+
+<!-- planned:t3-contract -->
+The live T3 boundary supplies independent evidence for the adapter and its fake;
+a fake agreeing with itself cannot detect upstream drift. Isolating the release
+suite keeps ordinary checks independent of release availability and credentials.
+One test per use-case situation keeps its acceptance evidence predictable and
+reviewable without splitting the required outcomes among several bindings.
+<!-- /planned:t3-contract -->
 
 The real CLI, filesystem and git boundaries are the behavior developers adopt.
 Isolating them in temporary homes protects the machine while preserving those
