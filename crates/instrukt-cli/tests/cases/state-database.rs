@@ -9,49 +9,21 @@
 use crate::common;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
-use std::process::Stdio;
-use std::time::{Duration, Instant};
-
-use instrukt_core::state_db::rusqlite::{Connection, ErrorCode};
+use instrukt_core::state_db::rusqlite::Connection;
 use workflow::Crew;
-
-/// How many unchanged snippets the documentation holds: enough that moving
-/// the planned documentation — the last step of the grouping, inside its
-/// transaction — takes long enough to be stopped part-way.
-const BULK_SNIPPETS: usize = 400;
-
-/// Whether another writer holds the database's write transaction open now:
-/// a write transaction of our own is refused at once. Ours is given back
-/// unused when it was granted.
-fn write_held(probe: &Connection) -> bool {
-    match probe.execute_batch("BEGIN IMMEDIATE") {
-        Ok(()) => {
-            probe.execute_batch("ROLLBACK").unwrap();
-            false
-        }
-        Err(err) => {
-            let busy = err.sqlite_error_code() == Some(ErrorCode::DatabaseBusy);
-            assert!(busy, "probing the state database failed: {err}");
-            true
-        }
-    }
-}
 
 // spec: project/instrukt/spec/feature/work/state-database UC-SD2
 #[test]
-fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_state() {
+fn a_documentation_transfer_failure_leaves_the_last_completed_state() {
     let crew = Crew::new();
     let project = &crew.project;
-    let filler = "Unchanged prose of the current contract.\n".repeat(2_000);
-    for n in 0..BULK_SNIPPETS {
-        project.repo.write(
-            &format!("docs/project/spec/feature/bulk/s{n:03}.md"),
-            &format!("---\ndescription: Bulk {n}.\n---\n\n# Bulk {n} — Spec\n\n{filler}"),
-        );
-    }
     project.repo.write(
         "docs/project/spec/feature/depth.md",
-        "---\ndescription: List depth.\ndelivered_by: [list-depth]\n---\n\n# Depth — Spec\n\nLists keep their depth.\n",
+        "---\ndescription: List depth.\n---\n\n# Depth — Spec\n\nLists have depth.\n",
+    );
+    project.repo.write(
+        "docs/project/spec/feature/depth.list-depth.md",
+        "---\ndescription: List depth.\n---\n\n# Depth — Spec\n\nLists keep their depth everywhere.\n",
     );
     project.repo.commit("plan list-depth's documentation");
     project.create(
@@ -62,14 +34,19 @@ fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_
     let before = project.ok(["show", "list-depth"]);
     let retained = retain_historical_starts(&project.env);
 
-    // Filing nested-lists under list-depth is one change across two
-    // records: list-depth becomes its group's holder and nested-lists is
-    // filed under it.
-    let mut filing = project
-        .env
-        .instrukt_process(project.repo.path())
-        .args([
-            "todo",
+    // Grouping saves the parent and child in one transaction, then transfers
+    // pending documentation before committing. An existing destination stops
+    // that transfer deterministically, after the record writes. A directory
+    // works even for a user who could overwrite a read-only file.
+    std::fs::create_dir_all(
+        project
+            .repo
+            .path()
+            .join("docs/project/spec/feature/depth.nested-lists.md"),
+    )
+    .unwrap();
+    let refused = project
+        .todo([
             "create",
             "nested-lists",
             "Keep the depth of nested lists when parsing Markdown.",
@@ -79,52 +56,19 @@ fn a_change_spanning_several_records_stopped_part_way_leaves_the_last_completed_
             "--group",
             "list-depth",
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let probe = Connection::open(project.env.instrukt_home().join("state/instrukt.db")).unwrap();
-    probe.busy_timeout(Duration::ZERO).unwrap();
-    // Stop it once its write transaction has stayed open across two looks
-    // well apart: the grouping's records are written and not yet committed.
-    // The transfer only reads regular files, so no FIFO can hold it open.
-    // If scheduling misses this window, report the coverage gap below.
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let mut held_since: Option<Instant> = None;
-    let stopped = loop {
-        if let Some(status) = filing.try_wait().unwrap() {
-            break Err(status);
-        }
-        match (write_held(&probe), held_since) {
-            (true, Some(since)) if since.elapsed() >= Duration::from_millis(40) => {
-                filing.kill().unwrap();
-                filing.wait().unwrap();
-                break Ok(());
-            }
-            (true, None) => held_since = Some(Instant::now()),
-            (true, Some(_)) => {}
-            (false, _) => held_since = None,
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the filing never held its write open"
-        );
-        std::thread::sleep(Duration::from_millis(2));
-    };
-    drop(probe);
+        .failure();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&refused.get_output().stderr),
+        @"instrukt: `list-depth` cannot become a group: its pending documentation cannot move to `nested-lists` (docs/project/spec/feature/depth.nested-lists.md: a companion of nested-lists is already there)"
+    );
+
     let after = project.ok(["show", "list-depth"]);
     assert_retained_starts(&project.env, &retained);
-    if let Err(status) = stopped {
-        assert!(status.success(), "the filing failed: {status}");
-        eprintln!(
-            "SKIP UC-SD2 crash check: the filing committed before an open transaction could be stopped"
-        );
-        return;
-    }
-
-    // Nothing of the interrupted filing is present: no nested-lists.
-    project.todo(["show", "nested-lists"]).failure();
-
+    let absent = project.todo(["show", "nested-lists"]).failure();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&absent.get_output().stderr),
+        @"instrukt: demo has no todo `nested-lists`; list the project's work with `instrukt todo list`"
+    );
     assert_eq!(
         after, before,
         "list-depth is as the last completed change left it"
