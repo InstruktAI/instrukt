@@ -605,8 +605,20 @@ fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigEr
 }
 
 /// The bytes [`write`] stores for `value` at `path` whose previous bytes
-/// were `before`.
+/// were `before`: `before` edited in place where only the changed top-level
+/// keys need new text, so comments and formatting elsewhere stay; otherwise
+/// the whole value rendered anew below the previous modeline.
 fn render(path: &Path, before: &[u8], value: &Value) -> Result<Vec<u8>, ConfigError> {
+    if let Some(bytes) = super::_edit::edit_in_place(before, value) {
+        return Ok(bytes);
+    }
+    if !before.is_empty() {
+        tracing::warn!(
+            event = "config_rendered_whole",
+            path = %path.display(),
+            "the document is not a block-style mapping of plain keys; it is rendered anew and its comments are not kept"
+        );
+    }
     let rendered = super::_render::render_yaml(value).map_err(|source| ConfigError::Render {
         path: path.to_path_buf(),
         source,

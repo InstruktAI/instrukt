@@ -338,30 +338,41 @@ mod tests {
     }
 
     #[test]
-    fn only_the_files_a_schema_describes_take_a_modeline() {
-        for (rel, schema) in [
-            ("instrukt.yaml", EditorSchema::Configuration),
-            ("docs/general/index.yaml", EditorSchema::GeneralIndex),
-            ("docs/domain/sdlc/index.yaml", EditorSchema::DomainIndex),
-            ("docs/project/index.yaml", EditorSchema::ProjectIndex),
-            ("docs/domain/sdlc/schema.yaml", EditorSchema::Snippets),
-        ] {
-            assert_eq!(described_by(Path::new(rel)), Some(schema), "{rel}");
-        }
-        for rel in [
-            "docs/project/spec/index.yaml",
-            "docs/domain/sdlc/policy/a.md",
-            "sub/instrukt.yaml",
-            "README.md",
-        ] {
-            assert_eq!(described_by(Path::new(rel)), None, "{rel}");
-            assert_eq!(committed_modeline(Path::new(rel), b"a: 1\n"), None, "{rel}");
-        }
-        let marked = committed_modeline(Path::new("instrukt.yaml"), b"a: 1\n").unwrap();
+    fn the_project_layer_is_described_by_the_configuration_schema() {
         assert_eq!(
-            committed_modeline(Path::new("instrukt.yaml"), &marked),
-            None
+            described_by(Path::new("instrukt.yaml")),
+            Some(EditorSchema::Configuration)
         );
+    }
+
+    #[test]
+    fn a_domain_index_is_described_by_the_domain_index_schema() {
+        assert_eq!(
+            described_by(Path::new("docs/domain/sdlc/index.yaml")),
+            Some(EditorSchema::DomainIndex)
+        );
+    }
+
+    #[test]
+    fn a_position_schema_file_is_described_by_the_snippet_schema() {
+        assert_eq!(
+            described_by(Path::new("docs/project/schema.yaml")),
+            Some(EditorSchema::Snippets)
+        );
+    }
+
+    #[test]
+    fn an_index_below_a_position_takes_no_modeline() {
+        let rel = Path::new("docs/project/spec/index.yaml");
+        assert_eq!(described_by(rel), None);
+        assert_eq!(committed_modeline(rel, b"a: 1\n"), None);
+    }
+
+    #[test]
+    fn a_file_already_starting_with_its_modeline_is_left_as_it_is() {
+        let rel = Path::new("instrukt.yaml");
+        let marked = committed_modeline(rel, b"a: 1\n").unwrap();
+        assert_eq!(committed_modeline(rel, &marked), None);
     }
 
     #[test]

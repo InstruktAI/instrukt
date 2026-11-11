@@ -891,6 +891,7 @@ dependencies = [
  "dotenvy",
  "hex",
  "indexmap",
+ "insta",
  "jiff",
  "proptest",
  "regex",

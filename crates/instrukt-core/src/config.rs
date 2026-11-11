@@ -10,6 +10,7 @@
 
 mod _agents;
 mod _agents_migrate;
+mod _edit;
 mod _effective;
 mod _error;
 mod _features;

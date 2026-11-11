@@ -105,7 +105,7 @@ fn schema_version(text: &str) -> Option<u64> {
 fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project_layer() {
     let env = machine();
     let repo = env.git_repo("migrating");
-    let project = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: migrating\nactions: {test: make test}\napprovals: {prd: peer}\n";
+    let project = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: migrating\nactions: {test: make test}\n# who approves\napprovals: {prd: peer}\n";
     repo.write("instrukt.yaml", project)
         .write("docs/project/index.yaml", "expanded: []\n")
         .write("notes.md", "notes\n")
@@ -156,21 +156,66 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     std::fs::write(&global, current_global).unwrap();
 
     // The developer's next commit, here a partial one, carries the project
-    // layer at the current schema and leaves checkout and index clean.
+    // layer at the current schema with its comments, and leaves checkout and
+    // index clean.
     env.run(repo.path(), ["hooks", "install"]).success();
     repo.write("notes.md", "a note\n");
     repo.git(["commit", "--quiet", "-m", "note", "--", "notes.md"]);
     wait_for_post_commit_sync(&env, repo.head());
-    let committed = repo.git(["show", "HEAD:instrukt.yaml"]);
-    assert_eq!(schema_version(&committed), current);
-    let committed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&committed).unwrap();
-    assert!(committed.get("actions").is_none());
-    insta::assert_snapshot!(committed["approvals"]["prd"].as_str().unwrap(), @"peer");
+    insta::assert_snapshot!(repo.git(["show", "HEAD:instrukt.yaml"]), @r"
+    # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
+    schema_version: 5
+    project: migrating
+    # who approves
+    approvals: {prd: peer}
+    ");
     assert_eq!(repo.git(["status", "--porcelain"]), "");
     insta::assert_snapshot!(pre_commit_status(&env, &repo), @r"
     pre-commit: current
       last run: staged in committed form: instrukt.yaml
     ");
+
+    // A commit that bypasses the hook keeps the older layer, and validation
+    // reports it.
+    repo.write("instrukt.yaml", project);
+    repo.git(["commit", "--quiet", "--no-verify", "-am", "bypass"]);
+    wait_for_post_commit_sync(&env, repo.head());
+    let validated = env.run(repo.path(), ["config", "validate"]).failure();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&validated.get_output().stdout)
+            .replace(&repo.path().display().to_string(), "[REPO]"),
+        @"[REPO]/instrukt.yaml: schema_version: this instrukt writes schema_version 5"
+    );
+
+    // An edit of the layer the developer staged stays staged through a
+    // partial commit that converts the committed layer, and their next
+    // commit carries it at the current schema.
+    let staged = project.replace(
+        "project: migrating\n",
+        "project: migrating\n# staged by the developer\n",
+    );
+    repo.write("instrukt.yaml", &staged);
+    repo.git(["add", "instrukt.yaml"]);
+    repo.write("notes.md", "another note\n");
+    repo.git(["commit", "--quiet", "-m", "another note", "--", "notes.md"]);
+    wait_for_post_commit_sync(&env, repo.head());
+    assert_eq!(
+        schema_version(&repo.git(["show", "HEAD:instrukt.yaml"])),
+        current
+    );
+    assert_eq!(repo.git(["show", ":instrukt.yaml"]), staged.trim_end());
+    assert_eq!(repo.read("instrukt.yaml"), staged);
+    repo.git(["commit", "--quiet", "-m", "staged layer"]);
+    wait_for_post_commit_sync(&env, repo.head());
+    insta::assert_snapshot!(repo.git(["show", "HEAD:instrukt.yaml"]), @r"
+    # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
+    schema_version: 5
+    project: migrating
+    # staged by the developer
+    # who approves
+    approvals: {prd: peer}
+    ");
+    assert_eq!(repo.git(["status", "--porcelain"]), "");
 
     // A project layer the hook cannot convert is committed as written, and
     // the hook's status reports why.
