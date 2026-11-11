@@ -77,8 +77,8 @@ pub enum StagingOutcome {
 }
 
 /// The current hook-record shape: version 2 adds a pre-commit run's
-/// `staging` outcome. Unversioned and version-1 records convert on read
-/// without an invented checkout or staging outcome, and the next recorded
+/// `staging` outcome. Unversioned and version-1 records convert on read,
+/// keeping the outcomes they hold and inventing none they lack, and the next recorded
 /// run persists this shape; a newer shape needs a newer instrukt.
 fn hook_record_version() -> u32 {
     2
@@ -106,8 +106,8 @@ fn read_record(path: &Path, text: &str) -> Result<HookRunRecord, RepositoryError
         if let Some(map) = value.as_mapping_mut()
             && version < u64::from(hook_record_version())
         {
-            // Earlier shapes never held a staging outcome; none is invented.
-            map.remove("staging");
+            // Outcomes an earlier record holds are kept as recorded, and
+            // one it lacks stays absent.
             map.insert(
                 "schema_version".into(),
                 serde_yaml_ng::Value::Number(hook_record_version().into()),
@@ -814,7 +814,12 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::Path;
+
+    use super::{
+        CommitSha, GenerationOutcome, Hook, HookRunRecord, RepositoryError, StagingOutcome,
+        SyncOutcome, hook_record_version, is_pull, pushed_to, read_record,
+    };
 
     const SHA: &str = "1111111111111111111111111111111111111111";
     const ZERO: &str = "0000000000000000000000000000000000000000";
@@ -852,6 +857,22 @@ mod tests {
                 }),
                 staging: None,
             }
+        );
+    }
+
+    /// A version-1 pre-commit record carrying a staging outcome, as an
+    /// earlier instrukt wrote it.
+    const VERSION_1_STAGED: &str = "schema_version: 1\nhook: pre-commit\nrun: 8-43\nstarted_at_ms: 8\nstaging:\n  state: failed\n  error: schema_version is missing\n";
+
+    #[test]
+    fn a_version_1_record_keeps_the_staging_outcome_it_recorded() {
+        let record = read_record(Path::new("pre-commit.yaml"), VERSION_1_STAGED).unwrap();
+        assert_eq!(record.schema_version, hook_record_version());
+        assert_eq!(
+            record.staging,
+            Some(StagingOutcome::Failed {
+                error: "schema_version is missing".into(),
+            })
         );
     }
 

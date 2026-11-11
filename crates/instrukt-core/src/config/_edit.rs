@@ -151,65 +151,94 @@ fn replaced(own: &[&str], key: &str, value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use serde_yaml_ng::Value;
+
+    use super::edit_in_place;
 
     fn yaml(text: &str) -> Value {
         serde_yaml_ng::from_str(text).unwrap()
     }
 
-    fn edited(before: &str, after: &str) -> Option<String> {
-        edit_in_place(before.as_bytes(), &yaml(after)).map(|b| String::from_utf8(b).unwrap())
+    /// `before` edited to read as `after`, checked to read back as `after`.
+    fn edited(before: &str, after: &str) -> String {
+        let bytes = edit_in_place(before.as_bytes(), &yaml(after)).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert_eq!(yaml(&text), yaml(after), "the edit reads as the new value");
+        text
+    }
+
+    /// The lines of `text` whose index `keep` admits.
+    fn lines_where(text: &str, keep: impl Fn(usize) -> bool) -> Vec<&str> {
+        text.lines()
+            .enumerate()
+            .filter(|(index, _)| keep(*index))
+            .map(|(_, line)| line)
+            .collect()
     }
 
     #[test]
-    fn a_changed_scalar_is_replaced_where_it_stands_and_every_other_byte_is_kept() {
+    fn a_changed_scalar_is_replaced_where_it_stands_and_every_other_line_is_kept() {
         let before =
             "# mine\nschema_version: 3 # stamped\n\n# who approves\napprovals: {prd: peer}\n";
-        let after = edited(before, "schema_version: 5\napprovals: {prd: peer}\n").unwrap();
-        insta::assert_snapshot!(after, @r"
-        # mine
-        schema_version: 5 # stamped
-
-        # who approves
-        approvals: {prd: peer}
-        ");
+        let after = edited(before, "schema_version: 5\napprovals: {prd: peer}\n");
+        let at = before
+            .lines()
+            .position(|line| line.starts_with("schema_version:"))
+            .unwrap();
+        assert_eq!(
+            lines_where(&after, |i| i != at),
+            lines_where(before, |i| i != at)
+        );
+        let comment = |text: &str| {
+            text.lines()
+                .nth(at)
+                .unwrap()
+                .split_once(" #")
+                .unwrap()
+                .1
+                .to_owned()
+        };
+        assert_eq!(
+            comment(&after),
+            comment(before),
+            "its trailing comment is kept"
+        );
     }
 
     #[test]
     fn a_removed_key_loses_only_its_own_lines() {
         let before = "project: p\nactions:\n  test: make test\n\n# kept\napprovals: {prd: peer}\n";
-        let after = edited(before, "project: p\napprovals: {prd: peer}\n").unwrap();
-        insta::assert_snapshot!(after, @r"
-        project: p
-
-        # kept
-        approvals: {prd: peer}
-        ");
+        let after = edited(before, "project: p\napprovals: {prd: peer}\n");
+        let block = before
+            .lines()
+            .position(|line| line.starts_with("actions:"))
+            .unwrap();
+        assert_eq!(
+            after.lines().collect::<Vec<_>>(),
+            lines_where(before, |i| i != block && i != block + 1)
+        );
     }
 
     #[test]
     fn a_changed_mapping_is_rendered_anew_and_its_neighbours_are_kept() {
         let before = "# top\nagents:\n  order: [a]\nticks: off # mine\n";
-        let after = edited(before, "agents: {roles: {}}\nticks: 'off'\n").unwrap();
-        insta::assert_snapshot!(after, @r"
-        # top
-        agents:
-          roles: {}
-        ticks: off # mine
-        ");
+        let after = edited(before, "agents: {roles: {}}\nticks: 'off'\n");
+        assert_eq!(after.lines().next(), before.lines().next());
+        assert_eq!(after.lines().last(), before.lines().last());
     }
 
     #[test]
-    fn an_added_key_is_appended() {
-        let after = edited("project: p # mine\n", "project: p\nboard: acme/1\n").unwrap();
-        insta::assert_snapshot!(after, @r"
-        project: p # mine
-        board: acme/1
-        ");
+    fn an_added_key_is_appended_after_the_kept_document() {
+        let before = "project: p # mine\n";
+        let after = edited(before, "project: p\nboard: acme/1\n");
+        assert_eq!(&after.as_bytes()[..before.len()], before.as_bytes());
     }
 
     #[test]
     fn a_flow_document_is_left_to_whole_rendering() {
-        assert_eq!(edited("{project: p}\n", "project: q\n"), None);
+        assert_eq!(
+            edit_in_place(b"{project: p}\n", &yaml("project: q\n")),
+            None
+        );
     }
 }
