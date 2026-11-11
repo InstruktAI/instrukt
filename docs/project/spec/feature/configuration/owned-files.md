@@ -39,9 +39,20 @@ resolves current and previous signing references at each request for rotation.
 Owned file shapes are versioned and migrated when they change. Configuration
 migration runs before refusal or skip on every path. Read-only inspection commands
 convert older configuration in memory, leave files and locks untouched, and report
-that the file migrates on the next writing command. Writing commands, publication,
+that the file migrates on the next writing command. For the files instrukt owns on
+the machine, the global layer among them, writing commands, publication,
 installation convergence and ticks persist the conversion before proceeding; a skip
-due to unchanged publication is considered only after migration. A conversion
+due to unchanged publication is considered only after migration.
+
+A project layer is committed to its repository, so it changes only in a commit.
+instrukt's pre-commit hook section converts an older project layer and stages it
+into the commit being made, and the `instrukt config` writing verbs a developer
+runs convert it in their checkout. Every other path, checkout rendering, the hooks
+that run after a commit, publication, installation convergence and ticks among
+them, converts it in memory and leaves the file as committed.
+`instrukt config validate` reports a committed project layer older than the
+binary's schema as a finding, so a commit that bypassed the hook is caught in CI.
+A conversion
 preserves supported user settings and writes atomically; a failed conversion leaves its source intact
 and reports the cause. Existing rejection of a configuration version newer
 than the binary remains the upgrade door. A revision read during inspection names
@@ -112,9 +123,12 @@ Given the machine and project configurations use an older owned schema
 And canonical main equals the last published commit
 When sync runs after an instrukt upgrade
 Then configuration migrates before the unchanged-publication decision
+And the machine configuration is written at the current schema while the project configuration stays as committed
 And ordinary reads inspect the converted configuration without writing it and report the pending migration
-And ticks persist migration before schema-based refusal or skip
+And ticks persist the machine migration before schema-based refusal or skip
 And a failed conversion preserves the source and reports the failure
+When the developer next commits in that repository
+Then the commit carries the project configuration at the current schema
 ```
 
 ### UC-OF3: Keep worktree homes separate

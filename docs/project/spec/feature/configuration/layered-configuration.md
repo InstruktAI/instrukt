@@ -269,11 +269,9 @@ references are checked for unresolved keys and cycles without executing commands
 
 - Every document carries `schema_version`; `init` writes the current one.
 - Every configuration path converts older configuration before schema refusal
-  or skip, preserving its settings. Read-only commands inspect the converted
-  shape in memory and report migration due on the next writing command;
-  writing paths persist conversion atomically before proceeding, including
-  unchanged publication. The read/write boundary and other owned files follow
-  `project/instrukt/spec/feature/configuration/owned-files`.
+  or skip, preserving its settings. Which path persists a conversion, the
+  machine's layer on writing paths and a committed project layer only in a
+  commit, follows `project/instrukt/spec/feature/configuration/owned-files`.
 - A document already at the current version is left untouched.
 
 ### Environment
