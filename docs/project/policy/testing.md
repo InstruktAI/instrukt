@@ -40,11 +40,10 @@ the real headless release and verify the existing T3 fake on the exercised
 surfaces, with provider-dependent exclusions reported explicitly. CLI-facing
 checks use the real binaries; adapter-only checks use existing public interfaces
 without implementation visibility changes. The `t3-contract` feature selects
-this suite; missing prerequisites fail a selected run. Ordinary hook/test commands
-keep their current scope and gain no release download or provider dependency.
+this suite; missing prerequisites fail a selected run. The pre-commit hook and the
+default test commands run without a T3 release or provider.
 Each feature use case is realized by exactly one named test checking its
-complete situation and outcomes (`sdlc/policy/testing`, rule 8). This ruling adds no other test-level, unit-test or
-repository-wide fake architecture decision.
+complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 
 - This repository's pre-commit checks run fmt, clippy and test, in seconds
   without services. These are project tooling, not quality hooks installed by
