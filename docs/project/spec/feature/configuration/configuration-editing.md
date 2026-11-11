@@ -91,7 +91,7 @@ success. Ordinary config reads, patch and publication install no resources.
 A disable patch removes any conflicting webhook declarations atomically. It stops
 new module admissions; the agent's subsequent installation convergence withdraws
 only unneeded instrukt-owned units. Other projects' dependencies, all durable
-state and foreign services remain. A13's configuration skill selects participating
+state and foreign services remain. The instrukt skill's configuration reference selects participating
 computers and local agents; these CLI commands act only on their own computer.
 
 ### Revision

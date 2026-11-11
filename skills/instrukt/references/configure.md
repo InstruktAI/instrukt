@@ -1,15 +1,17 @@
----
-name: instrukt-configure
-description: Configure or repair instrukt on one computer or a cluster, settle the facts shared across computers, and verify each machine's enabled module infrastructure. Routes coordination through the configured runtime when instructions are available.
-license: MIT
----
-
 # Configure instrukt
+
+The instrukt skill opens this reference when the human's request turns to
+configuration: model profiles and role orders, GitHub Apps, secrets, modules
+across computers, or repair. It is part of the one instrukt skill, not a skill
+of its own.
 
 Configure each participating computer for the developer's intended setup and
 report its verified state. Use the installed CLI as the authority for command
-availability and current settings. The complete skill directory can be read
-from a checkout or supplied directly to an agent on each computer.
+availability and current settings. Every run converges: a setting or resource
+that already matches the agreed setup is kept as it is, and only differences are
+changed, so running it again on a configured computer changes nothing. The
+complete skill directory can be read from a checkout or supplied directly to an
+agent on each computer.
 
 ## Establish the facts
 
@@ -21,7 +23,7 @@ computers, use the installed command help for their supported behavior:
 
 - project/instrukt/spec/feature/configuration/layered-configuration
 - project/instrukt/spec/feature/configuration/configuration-editing
-- project/instrukt/spec/feature/configuration/configuration-skill
+- project/instrukt/spec/feature/distribution/agent-skill
 - project/instrukt/spec/feature/configuration/agent-selection
 - project/instrukt/spec/feature/work/github-apps
 - project/instrukt/spec/feature/work/github-record
@@ -107,7 +109,7 @@ that runtime's configuration entry.
 
 When the runtime is unset, its configured route is unavailable, the procedure
 cannot be retrieved or a target cannot be reached, give the developer that
-computer's brief and this skill directory's location to run locally there.
+computer's brief and this skill to run locally there.
 Continue independent reachable work and leave that computer pending until its
 report arrives. Core configuration can be completed without choosing a runtime.
 

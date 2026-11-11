@@ -100,9 +100,9 @@ no-start resolution under `project/instrukt/spec/feature/runner/session-continui
 Native delegation uses the same resolved selection through configured runtime
 instructions where its native operation supports the options.
 
-### Configuration skill and ACP
+### The instrukt skill and ACP
 
-The configuration skill discovers ACP instances the user already has in T3,
+The instrukt skill's configuration reference discovers ACP instances the user already has in T3,
 shows the current order, asks where to place them, and writes the corresponding
 profiles and order changes. For a supported harness that is not ready, it guides
 login or key setup and waits for readiness. instrukt creates no provider
@@ -167,5 +167,5 @@ Retired: readiness and quota are parts of the prose contract above.
 - [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
 - [project/instrukt/spec/feature/configuration/roles-and-capabilities](roles-and-capabilities.md)
 - [project/instrukt/spec/feature/configuration/owned-files](owned-files.md)
-- [project/instrukt/spec/feature/configuration/configuration-skill](configuration-skill.md)
+- [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)

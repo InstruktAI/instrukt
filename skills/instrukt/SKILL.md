@@ -9,8 +9,13 @@ metadata:
 
 # Instrukt cockpit
 
-Use this skill's `metadata.version` above for `<version>` in commands and source
-URLs below. Start every visit with `instrukt status --json`. If the binary is
+This is instrukt's one skill. Every visit converges on what the human asks
+for: read the current state, change only what differs from the requested
+result, and leave everything that already matches as it is. Opening it again
+when the computer is already right changes nothing.
+
+Use this skill's `metadata.version` above for `<version>` in commands below.
+Start every visit with `instrukt status --json`. If the binary is
 absent, install this skill's release, then read the state:
 
 ```sh
@@ -39,10 +44,10 @@ Guide the human's request from the observed state:
   `instrukt install`, `instrukt install --check` and relevant `ticks status`
   or `events status` for runner modules.
 - **Reconfigure:** read current settings and revision, patch the owning layer,
-  and validate. For model profiles, role orders/classes/capabilities and GitHub
-  Apps, read the configuration skill of this release at
-  `https://raw.githubusercontent.com/InstruktAI/instrukt/v<version>/skills/instrukt-configure/SKILL.md`.
-  It discovers existing ACP instances and guides provider login. Keep provider
+  and validate. For model profiles, role orders/classes/capabilities, GitHub
+  Apps, secrets and configuration across computers, read
+  `references/configure.md` in this skill's directory and follow it. It
+  discovers existing ACP instances and guides provider login. Keep provider
   creation with T3 and provider keys with their harness. Reuse configured GitHub
   Apps or guide creation/installation of the distinct project, author and
   reviewer identities. Store instrukt secrets through `instrukt secrets
@@ -54,8 +59,9 @@ Ask for human-owned choices: runtime, which documentation repository to adopt
 when none publishes, agent preferences and git authors, modules, and required
 module values. Obtain discoverable machine facts through status and help.
 Configuration remains in its owning files and is changed through its CLI;
-model profiles and role orders follow the configuration skill's agents.yaml
-contract. Keep this skill stateless and unchanged during setup.
+model profiles and role orders follow the `agents.yaml` contract in
+`references/configure.md`. Keep this skill stateless and unchanged during
+setup.
 
 Finish by reading `instrukt status` and report the result and any unmet
 prerequisites. To install this cockpit for the computer's agent CLIs:

@@ -47,9 +47,9 @@ using a different session of the same App does not satisfy GitHub's native
 restriction. Review stamps retain their own independence and exact-evidence
 requirements; different bots alone do not prove review occurred.
 
-### Configuration skill and installation
+### Skill setup and installation
 
-The configuration skill reuses the three existing TeleClaude Apps on the
+The instrukt skill reuses the three existing TeleClaude Apps on the
 installation that already has them, verifying their configured identity and
 repository installation instead of creating duplicates. On other installations
 it guides creation and installation of the three Apps and records their actual
@@ -152,7 +152,7 @@ But a similarly named unconfigured actor gains no record trust
 
 - [project/instrukt/spec/domain/work](../../domain/work.md)
 - [project/instrukt/spec/feature/configuration/roles-and-capabilities](../configuration/roles-and-capabilities.md)
-- [project/instrukt/spec/feature/configuration/configuration-skill](../configuration/configuration-skill.md)
+- [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
 - [project/instrukt/spec/feature/configuration/owned-files](../configuration/owned-files.md)
 - [project/instrukt/spec/feature/work/github-record](github-record.md)
 - [project/instrukt/spec/feature/repository/attributed-commit](../repository/attributed-commit.md)

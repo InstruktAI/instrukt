@@ -352,7 +352,7 @@ one keyed thread does not imply exactly-once execution of its brief.
 selection in `agents.yaml`. The adapter translates a profile's kind, existing
 T3 provider-instance id and typed option names; it owns no model catalogue,
 role order or tier chains. Every T3 built-in harness has shipped defaults.
-ACP discovery and configuration remain with the configuration skill; instrukt
+ACP discovery and configuration remain with the instrukt skill; instrukt
 creates no T3 provider instance and implements no ACP protocol.
 
 Before each instrukt-owned start, the adapter acquires and translates readiness

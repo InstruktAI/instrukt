@@ -1,5 +1,5 @@
 ---
-description: "The instrukt skill — one cockpit skill in instrukt's own repository, installed into every agent CLI on a computer with one skills command pinned to a release; it reads `instrukt status` and then adopts a repository, switches on a module or reconfigures through an interview the agent guides."
+description: "The instrukt skill — instrukt's one skill, kept in its own repository and installed into every agent CLI on a computer with one skills command pinned to a release; every visit reads `instrukt status` and converges on what the human asks: adopt a repository, switch on a module, or configure one computer or several, changing only what differs."
 delivered_by: [release-installer]
 ---
 # Agent Skill — Spec
@@ -23,6 +23,12 @@ reads it.
 | Path in `InstruktAI/instrukt` | Content |
 | --- | --- |
 | `skills/instrukt/SKILL.md` | the cockpit skill |
+| `skills/instrukt/references/configure.md` | the skill's configuration reference, read when the request turns to configuration |
+
+- instrukt has exactly one skill. Configuration is part of it, as a
+  reference file inside the skill's directory that the cockpit opens on
+  demand (the Agent Skills specification's `references/` layout); there is no
+  second skill.
 
 - Its frontmatter carries only fields the Agent Skills specification
   defines: `name: instrukt`, `description`, `license: MIT`,
@@ -54,7 +60,10 @@ binary: the cockpit installs it on its first visit (below).
 
 ### The cockpit skill
 
-One hand-authored skill. Its `description`, within the specification's
+One hand-authored skill, and it is idempotent: every visit reads the current
+state and converges on the result the human asked for, changing only what
+differs and keeping everything that already matches, so a visit to a computer
+that is already right changes nothing. Its `description`, within the specification's
 1,024 characters, tells any agent to open it whenever the human wants
 instrukt installed, set up, extended or changed, or asks what instrukt is
 doing on this computer, including when instrukt is not installed or not set
@@ -89,14 +98,9 @@ way, whatever was done before:
      register the wake-up with `instrukt install` when the module runs
      through the runner.
    - **Reconfigure.** Change layered settings with `instrukt config patch`
-     in their owning layer and validate. Model selection uses the configuration
-     skill and user-owned `~/.instrukt/agents.yaml`, keyed by role; the skill
-     discovers existing ACP instances without creating provider instances.
-     The same role entries hold classes, scoped capability bundles and GitHub
-     App references. GitHub setup reuses configured Apps or creates/installs the
-     three identities through the configuration skill; author and reviewer bots
-     stay distinct. Protected instrukt secrets, including App keys, use only
-     `instrukt secrets set/generate`.
+     in their owning layer and validate. For model selection, roles, GitHub
+     Apps, secrets and configuration across computers, the cockpit reads its
+     configuration reference and follows it (Configuration, below).
    - Anything else about instrukt: `instrukt -h` and `instrukt docs`.
 3. **Show the result** by reading `instrukt status` again.
 
@@ -106,7 +110,7 @@ one), which docs repository to adopt when the computer publishes none, the
 agent preferences and git authors, which modules, and the values a module
 needs. Everything instrukt can answer comes from status and `-h`, never from
 the human. Layered settings and secrets use instrukt's CLI; model profiles and
-role orders use the configuration skill's `agents.yaml` contract
+role orders use the `agents.yaml` contract
 (`project/instrukt/spec/feature/configuration/agent-selection`). The skill never rewrites
 itself and keeps no state: the human's choices live in instrukt's
 configuration, so the same skill is opened again for any later change.
@@ -115,6 +119,125 @@ Once the computer is set up, the global agent files sync renders
 (`project/instrukt/spec/feature/publication/agent-entrypoints`) tell every
 session about instrukt's documentation; the skill stays the way in for
 changing instrukt.
+
+### Configuration
+
+The configuration reference configures one computer or several. It settles
+the desired outcome, reads existing state, assigns each computer its local
+configuration work and verifies the result. Runtime-specific instructions
+coordinate local agents; instrukt configuration and installation commands
+remain local. An absent instrukt binary or required command is a reported
+prerequisite for the affected work.
+
+#### Configuration facts and agreement
+
+Each computer owns its global layer, `~/.instrukt/instrukt.yaml`. Projects own
+their project layers. There is no shared instrukt layer, fleet state service
+or new project-owner-machine routing key. Configuration management outside
+instrukt distributes agreed facts, including any operator-managed dotfiles.
+
+| Fact | Agreement and scope |
+| --- | --- |
+| `ingress.computer` | All participants use the same existing stable instrukt machine ID for the one ingress. A runtime environment ID or hostname does not substitute for it. |
+| `redis.cluster.url` | All event participants reach the same logical Redis database and stream namespace. URL spellings may differ when they resolve to that same store. |
+| `redis.cluster.username`, `redis.cluster.password` | Machine-local credential references grant the required access to that common store; credentials and reference spellings need not match. |
+| Project identity and placement | The coordination brief records which computer holds each participating project and its local checkout. Project `project` identity and source declarations identify the same project wherever needed. This is a configuration-management fact, not a new YAML key or a replacement for todo claims. |
+| Ingress project homes | Every project declaring inbound sources has its adopted checkout on ingress; its signing references resolve in the ingress computer's owner-only `~/.instrukt/secrets.env`. External procedure activation remains on ingress under the intake contract. |
+| `ingress.port` | The receiver and its local edge agree on this port; other computers need not share it. |
+
+These are the cross-computer and edge-local agreements in
+`project/instrukt/spec/feature/configuration/layered-configuration` and
+`project/instrukt/spec/feature/runner/module-installation`. Local Redis sockets,
+local credentials, runtime selection, tick policy and project-specific module
+overrides remain local. Secret material stays at its declaring computer;
+coordination carries references and verification findings.
+
+#### Runtime-neutral configuration work
+
+The skill reads configuration before asking questions and asks the developer
+only for unresolved intent or facts instrukt cannot answer: participating
+computers, desired module enablement (blueprint, todos, events and default-on
+history), ingress choice, operator-supplied cluster endpoint, project placement
+and an unset runtime choice. Existing choices are kept unless the requested
+outcome changes them. An unset runtime means no runtime; the agent's host does
+not select one.
+
+The selected `runner.runtime` chooses the configured action values rendered
+by `general/procedure/ai-to-ai-operations`, retrieved on demand by the skill.
+Each target still retains its own runtime choice. Without an available route,
+the developer runs the same skill locally on each computer with the agreed
+facts. Local core configuration remains usable without a runtime;
+runtime-dependent enablement follows capability validation.
+
+On each computer the agent uses `instrukt -h` and command `-h` to discover the
+installed surface, `instrukt config get [--global] [--json]` and
+`instrukt config get --revision [--global]` to read settings and revisions,
+then `instrukt config patch --revision <rev> [--global] --from-file <file>`
+and `instrukt config validate [--global]` to record and check only the intended
+differences. Missing layers use `instrukt config init [--global]`. A stale
+revision requires a fresh read and recomputed difference.
+
+Offer history like the other modules, explaining its default-on setting and
+independent cluster Redis demand for merged search. A core-only setup explicitly
+disables history. Local history search needs no Redis.
+
+Only enabled modules authorize their infrastructure. After recording
+desired settings, the local agent uses `instrukt install` with the module scope
+supported by `project/instrukt/spec/feature/runner/module-installation`,
+including blueprint to converge demanded infrastructure, then
+`instrukt install --check` with the same scope and relevant
+`instrukt ticks status` / `instrukt events status`. Disabled-module withdrawal
+uses the installation contract's full demand read. Reruns preserve matching
+settings and working resources, and repair differences through the same
+commands. Installation findings remain distinct from valid configuration; they
+retain their named repair doors.
+
+#### Agent profiles and readiness
+
+Read `~/.instrukt/agents.yaml` and show the current role/profile order before
+changing model selection. Detect ACP instances already configured in T3, ask
+where the developer wants them in that order, and write their profiles and order
+changes. For a supported harness not ready, guide login or key setup and wait
+for readiness. Keep model-provider keys with T3. instrukt creates no T3 provider
+instance and implements no ACP. Selection and upgrade semantics belong to
+`project/instrukt/spec/feature/configuration/agent-selection`.
+
+Write instrukt-owned signing and Redis secrets only through `instrukt secrets
+set` or `instrukt secrets generate`, without echoing values. Every computer's
+interactive and scheduled paths read its one protected machine-local file
+(`project/instrukt/spec/feature/configuration/owned-files`).
+
+#### Roles and GitHub Apps
+
+Read the effective role map, classes and scoped bundles together with model
+selection. Preserve the shipped event-handler/default fallback and validate
+changed action and bundle references under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
+
+GitHub setup follows `project/instrukt/spec/feature/work/github-apps`: reuse the
+existing three TeleClaude Apps where installed, otherwise guide their creation
+and installation, verify the actual App/bot identities and repository/board
+permissions, and record machine-global public profiles plus per-role App
+references in the existing `roles` map. Write App keys only through
+`instrukt secrets set`. Verify installation-token issuance and distinct author/
+reviewer actors without exposing keys or tokens. A missing permission or failed
+identity/issuance check leaves setup visibly incomplete with its repair door.
+
+#### Runtime coordination
+
+The shared operation procedure renders `runtime.discover_environments`,
+`runtime.connect_environment` and `runtime.dispatch_remote` through `@config`.
+Their entries carry native or capability-gap route instructions; the skill and
+workflow contain no runtime-specific call or packaged runtime route. The names,
+required inputs and T3 values are owned by layered-configuration.
+
+The coordinating agent assigns one local brief per participating computer,
+including local work. Each agent receives agreed facts, intended settings,
+project paths, the skill and a report destination. Each performs its own
+computer's configuration and verification and returns completed changes and
+unmet prerequisites. The coordinator compares reports for agreement and retains
+partial success; inaccessible computers stay incomplete. Runtime environment
+addresses and instrukt machine IDs remain separate observed facts.
 
 ### Updates
 
@@ -177,6 +300,60 @@ When they ask their agent anything about instrukt
 Then the agent installs the binary of the skill's release and reports instrukt's state
 ```
 
+#### UC-CS1: Configure a two-computer cluster
+
+```gherkin
+Given a developer wants two linked computers to use instrukt events
+And has selected one ingress and supplied the cluster connection and project placement
+When the developer asks the instrukt skill to configure the cluster using T3's configured action values
+Then one local configuration task per computer records and verifies its intended settings
+And both computers agree on ingress identity, the logical cluster store and project placement
+And only ingress installs the demanded receiver with its declaring project homes
+And the developer receives each computer's configuration and infrastructure verification results
+```
+
+#### UC-CS2: Repair one computer that drifted
+
+```gherkin
+Given a developer's cluster has one computer whose configuration or owned infrastructure differs from the agreed setup
+When the developer opens the instrukt skill again to repair that computer
+Then the agent reads its current configuration and repairs only the intended differences
+And matching settings, working resources and retained consumer progress are preserved
+And verification reports any remaining unmet prerequisite separately from completed changes
+```
+
+#### UC-CS3: Configure a computer without a runtime route
+
+```gherkin
+Given a developer has a participating computer without an available runtime coordination route
+When the developer asks the instrukt skill to configure the cluster
+Then the skill supplies the agreed facts and local instructions for that computer
+And the developer can run the same skill there to configure and verify it locally
+And cluster completion remains pending until that computer's verification is available
+```
+
+#### UC-CS4: Keep module infrastructure tied to the developer's enablement
+
+```gherkin
+Given a developer wants only core configuration on a computer
+When the instrukt skill records and verifies that setup
+Then it keeps module enablement at the developer's chosen settings
+And it installs no module infrastructure for that core-only project
+But when the developer enables a module
+Then the local agent records that choice and installs and checks only the infrastructure demanded by enabled projects
+```
+
+#### UC-CS5: See incomplete cluster setup when a computer is unavailable
+
+```gherkin
+Given a developer requests configuration across participating linked environments
+And one environment is unreachable or lacks permission to run a local task
+When the instrukt skill collects the results
+Then it reports completed configuration and verification for reachable computers
+And it names the incomplete computer and the prerequisite for continuing there
+And it offers the skill for that computer without claiming cluster completion
+```
+
 ## Known caveats
 
 - The `skills` command needs Node.js (`npx`). It is a third-party tool
@@ -188,6 +365,13 @@ Then the agent installs the binary of the skill's release and reports instrukt's
   command is the one instrukt prints and documents.
 - Agent CLI cloud sessions do not load skills installed on the developer's
   computer.
+- Configuration agreements are checked from participating agents'
+  observations, not an atomic cluster transaction. Concurrent changes require
+  rereading revisions; partial completion is reported per computer.
+- There is no dedicated project-owner-machine configuration key. Project
+  placement follows existing adopted homes and intake/claim contracts.
+- Linking, authentication, edge TLS/provider registration and provision of
+  the cluster Redis endpoint remain operator prerequisites.
 
 ## See Also
 
@@ -197,3 +381,8 @@ Then the agent installs the binary of the skill's release and reports instrukt's
 - [project/instrukt/spec/feature/publication/agent-entrypoints](../publication/agent-entrypoints.md)
 - [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)
 - [project/instrukt/spec/feature/configuration/configuration-editing](../configuration/configuration-editing.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
+- [project/instrukt/spec/feature/configuration/agent-selection](../configuration/agent-selection.md)
+- [project/instrukt/spec/feature/work/github-apps](../work/github-apps.md)
+- [project/instrukt/spec/feature/runner/module-installation](../runner/module-installation.md)
+- [project/instrukt/spec/feature/runner/single-ingress-webhook-termination](../runner/single-ingress-webhook-termination.md)

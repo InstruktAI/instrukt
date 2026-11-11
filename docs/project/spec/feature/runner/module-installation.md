@@ -11,7 +11,7 @@ required infrastructure on the appropriate computer. `instrukt install`
 converges the infrastructure demanded by all adopted projects' effective module
 settings. Core adoption installs none. Configuration writes and publication
 record desired settings; installation is a separate explicit act followed by
-checks. The runtime-neutral configuration skill consumes these commands; its
+checks. The instrukt skill's runtime-neutral configuration reference consumes these commands; its
 remote routing and user interview are outside this contract.
 
 ## Canonical fields
@@ -377,7 +377,7 @@ Then Graphify is neither installed nor required and an existing tool is retained
 ## Known caveats
 
 - This contract supplies no always-on consumer daemon, runtime scheduling,
-  remote installer, configuration-sharing service or configuration skill.
+  remote installer, configuration-sharing service or skill.
   Scheduled-only readers react on their next wake within stream retention.
 - Native Redis provisioning, ACLs and socket activation need disposable macOS
   and Linux proof. A tick registrar or rendered template alone is not evidence
