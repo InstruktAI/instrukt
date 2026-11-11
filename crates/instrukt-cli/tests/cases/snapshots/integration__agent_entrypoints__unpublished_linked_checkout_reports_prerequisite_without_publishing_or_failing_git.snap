@@ -3,6 +3,8 @@ source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
 expression: "stdout(&env, &status)"
 ---
 hooks directory: [TMP]/checkout/.git/hooks
+pre-commit: current
+  last run: none
 post-commit: current
   last run: none
 post-merge: current

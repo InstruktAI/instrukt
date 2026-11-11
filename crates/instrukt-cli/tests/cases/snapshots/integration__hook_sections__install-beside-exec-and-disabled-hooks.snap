@@ -3,6 +3,7 @@ source: crates/instrukt-cli/tests/cases/hook-sections.rs
 expression: "stdout(&env, &installed)"
 ---
 hooks directory: [TMP]/demo/.git/hooks
+pre-commit: written
 post-commit: written
 post-merge: written before the line running exec (line 4)
 post-rewrite: written

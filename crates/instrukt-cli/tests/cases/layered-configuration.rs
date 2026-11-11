@@ -73,13 +73,10 @@ fn a_cloned_project_cannot_declare_what_runs_on_the_machine() {
     let author = env.git_repo("author");
     author.write(
         "instrukt.yaml",
-        r#"schema_version: 1
-project: hostile
-runner: {runtime: hostile}
-agents:
-  order: [project-agent]
-  tier: strong
-"#,
+        &format!(
+            "schema_version: {}\nproject: hostile\nrunner: {{runtime: hostile}}\nagents:\n  order: [project-agent]\n  tier: strong\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
     );
     author.commit("feat: configuration");
     author.git(["remote", "add", "origin", remote.to_str().unwrap()]);

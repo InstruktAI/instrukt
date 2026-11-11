@@ -164,6 +164,35 @@ impl Store {
     pub fn label_seen(&self, issue: u64, action: u64) -> Result<bool, WorkError> {
         self.db.conn().query_row("SELECT EXISTS(SELECT 1 FROM github_label_actions WHERE project=?1 AND issue_number=?2 AND action_id=?3)",params![self.project.as_str(),issue,action],|r|r.get(0)).map_err(StateDbError::sqlite(self.db.path())).map_err(Into::into)
     }
+    /// The board reflection last set up or found for the project, recorded
+    /// on this computer; `None` before the first.
+    pub fn recorded_board(&self) -> Result<Option<String>, WorkError> {
+        self.db
+            .conn()
+            .query_row(
+                "SELECT board FROM project_boards WHERE project=?1",
+                params![self.project.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(self.db.path()))
+            .map_err(Into::into)
+    }
+
+    /// Records `board` (`<owner>/<number>`) as the project's board.
+    pub fn record_board(&mut self, board: &str) -> Result<(), WorkError> {
+        let path = self.db.path().to_path_buf();
+        let project = &self.project;
+        self.db.write(|tx| {
+            tx.execute(
+                "INSERT INTO project_boards(project,board) VALUES (?1,?2) ON CONFLICT(project) DO UPDATE SET board=excluded.board",
+                params![project.as_str(), board],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            Ok(())
+        })
+    }
+
     /// Every local item of the project, in identity order.
     pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
         load_items(self.db.conn(), self.db.path(), &self.project)

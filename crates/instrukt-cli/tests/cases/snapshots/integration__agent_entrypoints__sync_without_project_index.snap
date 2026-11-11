@@ -9,4 +9,3 @@ notice: docs/project/index.yaml: project-without-index: the root AGENTS.md holds
 .instrukt/schemas/project-index.schema.json: schema written
 .instrukt/schemas/snippet-schema.schema.json: schema written
 .instrukt/schemas/instrukt.schema.json: schema written
-instrukt.yaml: modeline inserted

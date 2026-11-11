@@ -3,6 +3,7 @@ source: crates/instrukt-cli/tests/cases/hook-sections.rs
 expression: "stdout(&env, &removed)"
 ---
 hooks directory: [TMP]/demo/.git/hooks
+pre-commit: removed
 post-commit: removed
 post-merge: removed
 post-rewrite: removed

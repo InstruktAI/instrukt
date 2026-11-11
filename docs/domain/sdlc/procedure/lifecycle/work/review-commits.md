@@ -36,7 +36,7 @@ Independently review the exact committed preparation or one-off worktree head be
 
 Verify the recorded worktree, branch and head against Git. Record the merge base against canonical main and the complete candidate diff. Read the full changed-file context and its governing current and pending contracts. The target is the whole worktree head; no per-SHA subset or direct-main exemption substitutes for it.
 
-### 2. Apply independent full-depth review
+### 2. Execute the shared review contract
 
 Run the shared review procedure over that candidate, applying every triggered lane. For directive text carry the problem, reader role, intended behavior, faithful human direction, rejected alternatives and what remains unchanged into the review context. Author-supplied evidence directs attention and never substitutes for reviewer judgment. Keep unrelated work outside the candidate's declared scope.
 

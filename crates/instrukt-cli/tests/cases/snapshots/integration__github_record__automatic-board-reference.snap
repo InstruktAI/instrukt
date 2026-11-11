@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/github-record.rs
-expression: "told(&project.env,&board)"
----
-acme/2

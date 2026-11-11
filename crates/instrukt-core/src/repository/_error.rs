@@ -35,6 +35,11 @@ pub enum RepositoryError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("cannot remove {path}: {source}")]
+    Remove {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error(
         "{path} resolves to {target}, outside the repository; instrukt does not write there and changed nothing"
     )]

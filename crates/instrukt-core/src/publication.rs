@@ -36,7 +36,10 @@ pub use _adoption::{
     wrote_project_file,
 };
 pub(crate) use _checkout::{Checkout, checkout_entrypoints};
-pub use _editor::{EditorChange, EditorChangeKind, OnLink, SCHEMAS_DIR, refresh_editor_schemas};
+pub use _editor::{
+    EditorChange, EditorChangeKind, OnLink, SCHEMAS_DIR, committed_modeline,
+    editor_schema_describes, refresh_editor_schemas, write_editor_schemas,
+};
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
 pub use _sync::{Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest, sync};

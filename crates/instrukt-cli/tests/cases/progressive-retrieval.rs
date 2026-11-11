@@ -681,11 +681,23 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
         "demo",
         &[("docs/domain/acme/procedure/verify.md", procedure)],
     );
-    demo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
+    demo.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {}\nproject: demo\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    );
     demo.commit("chore: project configuration");
     sync(&env, &demo);
     let other = project(&env, "other", &[]);
-    other.write("instrukt.yaml", "schema_version: 1\nproject: other\n");
+    other.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {}\nproject: other\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    );
 
     let in_demo = env
         .run(demo.path(), ["docs", "get", "acme/procedure/verify"])

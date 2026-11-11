@@ -21,7 +21,7 @@ pub struct SyncArgs {
 /// of a publishing sync (a domain without `index.yaml`, a root master
 /// without `docs/project/index.yaml`), one line per global agent file a
 /// retraction left in place because its content is not what instrukt
-/// wrote, one line per editor schema or modeline a publishing sync changed
+/// wrote, one line per editor schema a publishing sync changed
 /// in the primary worktree, then one line per leftover copy of an earlier publication that could not be
 /// removed (a later sync removes it; it does not fail this one). A refusal or a failure exits non-zero:
 /// validation findings are printed one per line, the leftovers likewise,

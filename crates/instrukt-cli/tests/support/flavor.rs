@@ -161,9 +161,10 @@ impl Tracked {
         repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: 1\nproject: demo\nboard: acme/1\nmodules: {{{project_modules}}}\n\
+                "schema_version: {schema}\nproject: demo\nboard: acme/1\nmodules: {{{project_modules}}}\n\
                  runner: {{autostart: {autostart}}}\nworkflow: {{domain: acme}}\n\
-                 github: {{repository: {REPOSITORY}}}\n"
+                 github: {{repository: {REPOSITORY}}}\n",
+                schema = instrukt_core::config::CURRENT_SCHEMA_VERSION
             ),
         );
         repo.write("docs/domain/acme/workflow/actions.yaml", ACTIONS);

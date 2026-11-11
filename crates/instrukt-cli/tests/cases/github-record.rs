@@ -1541,13 +1541,13 @@ fn missing_board_is_set_up_automatically_and_reused() {
     let config = std::fs::read_to_string(&file)
         .unwrap()
         .replace("board: acme/1\n", "");
-    std::fs::write(file, config).unwrap();
+    std::fs::write(&file, &config).unwrap();
     project.create("cockpit", "bug", INTENT);
-    let board = project
-        .env
-        .run(project.repo.path(), ["config", "get", "board"])
-        .success();
-    insta::assert_snapshot!("automatic-board-reference", told(&project.env, &board));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        config,
+        "reflection leaves the committed project layer as it is"
+    );
     project
         .github
         .add_project_field("acme", 2, "User field", Some(&["theirs"]));

@@ -506,7 +506,13 @@ fn a_declared_previous_reference_cannot_be_null() {
 #[test]
 fn source_declarations_with_events_off_are_a_finding_and_create_no_endpoint() {
     let (computer, redis, receiver) = setup();
-    computer.project.write("instrukt.yaml", "schema_version: 1\nproject: fork\nmodules: {events: false}\nwebhooks: {erp: {secret: '${HOOK_KEY}'}}\n");
+    computer.project.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {}\nproject: fork\nmodules: {{events: false}}\nwebhooks: {{erp: {{secret: '${{HOOK_KEY}}'}}}}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    );
     let result = computer
         .env
         .run(computer.project.path(), ["config", "validate"])
@@ -1012,23 +1018,5 @@ fn external_state_configuration_requires_the_payload_subject_declaration() {
     insta::assert_snapshot!(
         "external-state-source-config",
         String::from_utf8_lossy(&shown.get_output().stdout)
-    );
-}
-
-// spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
-#[test]
-fn unsigned_health_inspection_keeps_old_config_until_a_verified_delivery_writes() {
-    let (computer, _redis, receiver) = setup();
-    let old = "schema_version: 1\nproject: fork\nwebhooks: {erp: {secret: '${HOOK_KEY}'}}\n";
-    computer.project.write("instrukt.yaml", old);
-    assert_eq!(receiver.request("POST", NATIVE, b"", &[]).0, 401);
-    assert_eq!(computer.project.read("instrukt.yaml"), old);
-    assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 202);
-    let value: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&computer.project.read("instrukt.yaml")).unwrap();
-    assert_eq!(
-        value["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
     );
 }

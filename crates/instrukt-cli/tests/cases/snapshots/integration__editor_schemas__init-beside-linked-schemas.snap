@@ -18,6 +18,7 @@ editor schemas (.instrukt/schemas/): completed
 ignores of AGENTS.md and .instrukt/ (.gitignore): created
 hook sections: created
   hooks directory: [TMP]/demo/.git/hooks
+  pre-commit: written
   post-commit: written
   post-merge: written
   post-rewrite: written

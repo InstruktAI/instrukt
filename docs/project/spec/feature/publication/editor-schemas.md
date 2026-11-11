@@ -1,5 +1,5 @@
 ---
-description: "Editor schemas — the binary generates JSON Schemas from its own types for each position's `index.yaml`, for `schema.yaml` and for `instrukt.yaml` into the repository's git-ignored `.instrukt/schemas/`, and `init` and sync keep a relative `yaml-language-server` modeline at the top of each of those files, so the editor and the validator read the same rules."
+description: "Editor schemas — the binary generates JSON Schemas from its own types for each position's `index.yaml`, for `schema.yaml` and for `instrukt.yaml` into the repository's git-ignored `.instrukt/schemas/`, and `init` and the pre-commit section keep a relative `yaml-language-server` modeline at the top of each of those files, so the editor and the validator read the same rules."
 ---
 # Editor Schemas — Spec
 
@@ -67,25 +67,27 @@ one of these generated repository schemas.
   validation reads the file the same with or without it.
 - Every write instrukt makes to one of these files keeps the modeline at the
   top.
-- The modeline is part of the file as committed: a modeline the refresh adds
-  appears as a working-tree change for the developer to commit, and the
-  refresh reports each file it changed.
+- The modeline is part of the file as committed, so it changes only in a
+  commit: `init` writes it during adoption, and instrukt's pre-commit section
+  inserts or corrects it in each of these files being committed and stages it
+  (`project/instrukt/spec/feature/repository/hook-sections`). Each reports the
+  files it changed.
 
 ### When they are refreshed
 
 - `instrukt init` writes the schemas and modelines as part of adoption,
   through the operation publication supplies to it
   (`project/instrukt/spec/feature/repository/project-initialization`).
-- Every `instrukt sync` that publishes regenerates the schemas and refreshes
-  the modelines in the project's primary worktree. After an upgrade of
-  instrukt, the next sync that publishes brings them to the installed
+- Every `instrukt sync` that publishes regenerates the schemas in the
+  project's primary worktree and writes no committed file. After an upgrade of
+  instrukt, the next sync that publishes brings the schemas to the installed
   version; `instrukt sync --force` does so at once.
 - A schema file already holding the generated content is left untouched.
 - A path the refresh writes that is a symbolic link is never written through:
   `init` reports it, and `sync` refuses as for any location publication writes
   (`project/instrukt/spec/feature/publication/project-publication`).
-- A refresh that cannot write a schema or a modeline for another reason fails
-  the operation, naming the file: `init` reports the failure and exits
+- A refresh that cannot write a schema, or `init` a modeline, for another
+  reason fails the operation, naming the file: `init` reports the failure and exits
   non-zero, and a sync fails as any failed sync does — it records no
   published commit, so the next sync tries again
   (`project/instrukt/spec/feature/publication/project-publication`).

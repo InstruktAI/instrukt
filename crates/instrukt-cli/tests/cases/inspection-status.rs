@@ -28,7 +28,6 @@ fn fresh_status_is_complete_and_writes_nothing() {
     let outside = status(&env, env.home());
     assert!(outside["repository"].is_null());
 }
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI1
 #[test]
 fn inspection_converts_old_config_in_memory_without_creating_locks_or_agents() {
@@ -177,7 +176,6 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 #[test]
 fn revision_from_old_inspection_is_accepted_by_the_next_atomic_writing_command() {
     let env = TestEnv::new();

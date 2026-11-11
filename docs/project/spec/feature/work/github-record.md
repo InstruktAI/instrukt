@@ -78,9 +78,14 @@ reopens it.
 
 The GitHub project board and its views are the developer's cockpit. With todos
 enabled, instrukt sets them up and repairs them automatically, without an opt-in.
-The project layer records the board reference (`<owner>/<number>`); an absent
-reference calls for setup, never silently disables the cockpit. Repeated setup
-reconciles existing resources instead of creating duplicate boards or views.
+The developer may name the board in the project layer (`board: <owner>/<number>`)
+through `instrukt config`. Otherwise instrukt sets up or finds the project's board
+and records its reference in the machine's work record; reflection never writes
+the committed project layer
+(`project/instrukt/spec/feature/configuration/owned-files`). An absent
+reference calls for setup, never silently disables the cockpit. Repeated setup,
+on any computer, reconciles existing resources instead of creating duplicate
+boards or views.
 
 instrukt adds every reflected issue and maintains its owned single-select
 `Record status` field and required options (active, iceboxed, held, delivered,

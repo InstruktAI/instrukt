@@ -3,7 +3,7 @@
 //! steps every operation composes — entering an item, pulling it through,
 //! committing a change and flushing pending reflection.
 
-use instrukt_core::config::Configuration;
+use instrukt_core::config::{BoardRef, Configuration};
 use instrukt_core::git;
 use instrukt_core::ids::{SessionRef, TodoSlug};
 use instrukt_core::machine::{self, MachineId};
@@ -917,7 +917,14 @@ impl<'w> Session<'w> {
     /// Flushes pending reflection of every local item under the lock.
     pub fn flush(&mut self) -> Result<(), WorkError> {
         let board_result = (|| {
+            // A board the developer names in the project layer leads; otherwise
+            // the one this computer recorded. Setup reconciles either with
+            // GitHub, finding an existing board before creating one.
             let configured = self.config.board()?;
+            let recorded = self.store.recorded_board()?;
+            let known = configured
+                .clone()
+                .or_else(|| recorded.as_deref().and_then(BoardRef::parse));
             let gh = match &self.remote {
                 Remote::Client { gh, down: None } => gh,
                 Remote::Client {
@@ -926,15 +933,13 @@ impl<'w> Session<'w> {
                 Remote::Unavailable(reason) => return Err(WorkError::refused(describe(reason))),
             };
             let account = gh.for_role(None, github::Operation::Board)?;
-            let board = super::_board::setup(&account, configured.as_ref())?;
-            if configured.as_ref() != Some(&board) {
-                let layer = instrukt_core::config::Layer::Project(self.project.root.clone());
-                let revision = instrukt_core::config::revision(self.home(), &layer)?;
-                let patch =
-                    serde_yaml_ng::from_str(&format!("board: {}/{}", board.owner, board.number))
-                        .map_err(|e| WorkError::refused(e.to_string()))?;
-                instrukt_core::config::patch(self.home(), &layer, &revision, &patch)?;
-                self.config = Configuration::load(self.home(), Some(&self.project.root))?;
+            let board = super::_board::setup(&account, known.as_ref())?;
+            // The reference is the machine's record: reflection never writes
+            // the committed project layer.
+            if configured.as_ref() != Some(&board)
+                && recorded.as_deref() != Some(&board.to_string())
+            {
+                self.store.record_board(&board.to_string())?;
             }
             super::_board::configure(&account, &board)?;
             Ok(board)

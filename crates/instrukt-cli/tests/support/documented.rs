@@ -65,7 +65,10 @@ pub fn snippet(
 
 /// A project layer declaring `slug`.
 fn layer(slug: &str) -> String {
-    format!("schema_version: 1\nproject: {slug}\n")
+    format!(
+        "schema_version: {}\nproject: {slug}\n",
+        instrukt_core::config::CURRENT_SCHEMA_VERSION
+    )
 }
 
 /// A repository `slug` declaring that project, with `files` committed on

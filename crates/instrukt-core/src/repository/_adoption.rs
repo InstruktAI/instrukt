@@ -134,10 +134,18 @@ pub fn init(
     let had_master = exists(&master_path)?;
 
     let mut parts = Vec::new();
-    let layer = match config::init(home, &Layer::Project(root.clone()), slug)? {
-        InitOutcome::Created => PartOutcome::Created,
-        InitOutcome::Migrated { .. } => PartOutcome::Completed,
-        InitOutcome::AlreadyCurrent => PartOutcome::AlreadyPresent,
+    // An existing project layer is committed to the repository: it is checked
+    // and converted in memory, and only a commit brings it current.
+    let project_layer = Layer::Project(root.clone());
+    let layer = if exists(&project_layer.path(home))? {
+        config::bring_current(home, &project_layer)?;
+        PartOutcome::AlreadyPresent
+    } else {
+        match config::init(home, &project_layer, slug)? {
+            InitOutcome::Created => PartOutcome::Created,
+            InitOutcome::Migrated { .. } => PartOutcome::Completed,
+            InitOutcome::AlreadyCurrent => PartOutcome::AlreadyPresent,
+        }
     };
     parts.push((InitPart::ProjectLayer, layer));
     let project = project_slug(&root)?;

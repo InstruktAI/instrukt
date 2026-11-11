@@ -22,7 +22,7 @@ audit:
 	cargo deny --locked check
 
 coverage:
-	scripts/check-coverage.sh
+	scripts/check-contracts.sh
 
 check: lint test coverage audit
 

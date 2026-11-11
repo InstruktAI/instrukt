@@ -13,8 +13,12 @@ use common::{Repo, TestEnv};
 use documented::{project, snippet, sync};
 use runtime::{FakeRuntime, global_layer};
 
-const FORK_LAYER: &str = "schema_version: 1\nproject: fork\n\
-events:\n  watch:\n    - {remote: upstream, ref: refs/heads/main}\n";
+fn fork_layer() -> String {
+    format!(
+        "schema_version: {}\nproject: fork\nevents:\n  watch:\n    - {{remote: upstream, ref: refs/heads/main}}\n",
+        instrukt_core::config::CURRENT_SCHEMA_VERSION
+    )
+}
 
 /// An upstream repository at `<test>/upstream.git` with one commit.
 fn upstream(env: &TestEnv) -> (std::path::PathBuf, Repo) {
@@ -53,7 +57,7 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
         &env,
         "fork",
         &[
-            ("instrukt.yaml", FORK_LAYER.to_owned()),
+            ("instrukt.yaml", fork_layer()),
             (
                 "docs/domain/fork/procedure/upstream-watch.md",
                 snippet(
@@ -124,7 +128,7 @@ fn a_runner_killed_after_creation_recovers_the_same_standing_agent() {
         &env,
         "fork",
         &[
-            ("instrukt.yaml", FORK_LAYER.to_owned()),
+            ("instrukt.yaml", fork_layer()),
             (
                 "docs/domain/fork/procedure/upstream-watch.md",
                 snippet(

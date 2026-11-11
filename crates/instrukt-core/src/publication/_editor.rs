@@ -3,10 +3,13 @@
 //! and the modeline at the top of each file they describe
 //! (`docs/project/spec/feature/publication/editor-schemas.md`).
 //!
-//! One operation, [`refresh_editor_schemas`], run by `instrukt init` and by
-//! every sync that publishes. The schemas are a pure function of the
-//! installed binary; the modelines are relative paths inside the
-//! repository, never a home path.
+//! `instrukt init` runs [`refresh_editor_schemas`], which writes the schemas
+//! and the modelines; every sync that publishes runs [`write_editor_schemas`],
+//! which writes the git-ignored schemas and no committed file. The pre-commit
+//! section brings the modeline of each file being committed to the top with
+//! [`committed_modeline`]. The schemas are a pure function of the installed
+//! binary; the modelines are relative paths inside the repository, never a
+//! home path.
 
 use std::path::{Path, PathBuf};
 
@@ -116,21 +119,7 @@ pub fn refresh_editor_schemas(
     root: &Path,
     on_link: OnLink,
 ) -> Result<Vec<EditorChange>, PublicationError> {
-    let mut changes = Vec::new();
-    for schema in EditorSchema::ALL {
-        let rel = Path::new(SCHEMAS_DIR).join(schema.file_name());
-        let Some(path) = writable(root, &rel, on_link, &mut changes)? else {
-            continue;
-        };
-        let bytes = schema.bytes();
-        if read(&path)?.as_deref() != Some(bytes.as_slice()) {
-            atomic_write(&path, &bytes)?;
-            changes.push(EditorChange {
-                path: rel,
-                kind: EditorChangeKind::SchemaWritten,
-            });
-        }
-    }
+    let mut changes = write_editor_schemas(root, on_link)?;
     for (rel, schema) in described(root)? {
         if !exists(&root.join(&rel))? {
             continue;
@@ -153,6 +142,76 @@ pub fn refresh_editor_schemas(
         changes.push(EditorChange { path: rel, kind });
     }
     Ok(changes)
+}
+
+/// Writes every editor schema below `root`'s git-ignored
+/// `.instrukt/schemas/`, leaving every committed file as it is. A schema
+/// already holding the generated content is left untouched; any other
+/// failure to write fails the refresh, naming the file.
+pub fn write_editor_schemas(
+    root: &Path,
+    on_link: OnLink,
+) -> Result<Vec<EditorChange>, PublicationError> {
+    let mut changes = Vec::new();
+    for schema in EditorSchema::ALL {
+        let rel = Path::new(SCHEMAS_DIR).join(schema.file_name());
+        let Some(path) = writable(root, &rel, on_link, &mut changes)? else {
+            continue;
+        };
+        let bytes = schema.bytes();
+        if read(&path)?.as_deref() != Some(bytes.as_slice()) {
+            atomic_write(&path, &bytes)?;
+            changes.push(EditorChange {
+                path: rel,
+                kind: EditorChangeKind::SchemaWritten,
+            });
+        }
+    }
+    Ok(changes)
+}
+
+/// `bytes`, the content of `rel` (relative to the repository root) as it is
+/// being committed, starting with the modeline naming its editor schema;
+/// `None` when `rel` is no file an editor schema describes or it already
+/// starts with that modeline.
+pub fn committed_modeline(rel: &Path, bytes: &[u8]) -> Option<Vec<u8>> {
+    let schema = described_by(rel)?;
+    with_modeline(bytes, &schema_path_from(rel, schema))
+}
+
+/// Whether an editor schema describes the file at `rel`, relative to the
+/// repository root.
+pub fn editor_schema_describes(rel: &Path) -> bool {
+    described_by(rel).is_some()
+}
+
+/// The editor schema describing the file at `rel`, relative to the
+/// repository root: the project layer, and each position's `index.yaml` and
+/// `schema.yaml`.
+fn described_by(rel: &Path) -> Option<EditorSchema> {
+    if rel == Path::new(CONFIG_FILE_NAME) {
+        return Some(EditorSchema::Configuration);
+    }
+    let file = rel.file_name()?.to_str()?;
+    let dir = rel.parent()?;
+    let position = if dir == Path::new(&Position::General.dir()) {
+        Position::General
+    } else if dir == Path::new(&Position::Project.dir()) {
+        Position::Project
+    } else {
+        let name = dir.strip_prefix("docs/domain").ok()?.to_str()?;
+        if is_reserved_domain_folder(name) {
+            return None;
+        }
+        Position::Domain(DomainName::parse(name).ok()?)
+    };
+    if file == INDEX_FILE {
+        Some(EditorSchema::index_of(&position))
+    } else if file == SCHEMA_FILE {
+        Some(EditorSchema::Snippets)
+    } else {
+        None
+    }
 }
 
 /// `root/rel` resolved for writing; `None`, with the path reported, when
@@ -276,6 +335,44 @@ mod tests {
             ),
             "../../.instrukt/schemas/snippet-schema.schema.json"
         );
+    }
+
+    #[test]
+    fn the_project_layer_is_described_by_the_configuration_schema() {
+        assert_eq!(
+            described_by(Path::new("instrukt.yaml")),
+            Some(EditorSchema::Configuration)
+        );
+    }
+
+    #[test]
+    fn a_domain_index_is_described_by_the_domain_index_schema() {
+        assert_eq!(
+            described_by(Path::new("docs/domain/sdlc/index.yaml")),
+            Some(EditorSchema::DomainIndex)
+        );
+    }
+
+    #[test]
+    fn a_position_schema_file_is_described_by_the_snippet_schema() {
+        assert_eq!(
+            described_by(Path::new("docs/project/schema.yaml")),
+            Some(EditorSchema::Snippets)
+        );
+    }
+
+    #[test]
+    fn an_index_below_a_position_takes_no_modeline() {
+        let rel = Path::new("docs/project/spec/index.yaml");
+        assert_eq!(described_by(rel), None);
+        assert_eq!(committed_modeline(rel, b"a: 1\n"), None);
+    }
+
+    #[test]
+    fn a_file_already_starting_with_its_modeline_is_left_as_it_is() {
+        let rel = Path::new("instrukt.yaml");
+        let marked = committed_modeline(rel, b"a: 1\n").unwrap();
+        assert_eq!(committed_modeline(rel, &marked), None);
     }
 
     #[test]

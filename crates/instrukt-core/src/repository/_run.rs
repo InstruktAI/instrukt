@@ -2,7 +2,8 @@
 //! that waits for the sync it started, and the per-hook record of the last
 //! run's outcome that `hooks status` shows.
 //!
-//! Checkout rendering completes before return. Other hook work is detached. For a post-hook it writes the
+//! Checkout rendering completes before return, and so does pre-commit's
+//! staging of committed forms. Other hook work is detached. For a post-hook it writes the
 //! run's record (sync `running`), starts the detached worker and returns;
 //! the worker starts `instrukt sync`, waits for it within a bound, and
 //! completes the record with sync's exit status — unless a later run of the
@@ -42,7 +43,6 @@ const MESSAGE_LIMIT: usize = 2000;
 /// `state/hooks/<project>/<hook>.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookRunRecord {
-    #[serde(default = "hook_record_version")]
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkout: Option<CheckoutOutcome>,
@@ -58,12 +58,63 @@ pub struct HookRunRecord {
     /// trigger for it or blueprint is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_generation: Option<GenerationOutcome>,
+    /// What a pre-commit run staged into the commit; `None` for other hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging: Option<StagingOutcome>,
 }
 
-/// The first versioned hook-record shape. Unversioned records convert on read
-/// with no checkout outcome, and the next recorded run persists this shape.
+/// What a pre-commit run did to the commit being made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum StagingOutcome {
+    /// These files, relative to the repository root, were staged in their
+    /// committed form: a current project layer, a corrected modeline.
+    Staged { files: Vec<String> },
+    /// Every file being committed was already in its committed form.
+    Unchanged,
+    /// The run could not stage; the commit went ahead without it.
+    Failed { error: String },
+}
+
+/// The current hook-record shape: version 2 adds a pre-commit run's
+/// `staging` outcome. Unversioned and version-1 records convert on read,
+/// keeping the outcomes they hold and inventing none they lack, and the next recorded
+/// run persists this shape; a newer shape needs a newer instrukt.
 fn hook_record_version() -> u32 {
-    1
+    2
+}
+
+/// The record `text` at `path`, in any shape this instrukt knows, brought
+/// to the current shape.
+fn read_record(path: &Path, text: &str) -> Result<HookRunRecord, RepositoryError> {
+    let malformed = |source| RepositoryError::Record {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).map_err(malformed)?;
+    let version = match value.get("schema_version") {
+        None => Some(0),
+        Some(found) => found.as_u64(),
+    };
+    if let Some(version) = version {
+        if version > u64::from(hook_record_version()) {
+            return Err(RepositoryError::HookRecordVersion {
+                path: path.to_path_buf(),
+                version: u32::try_from(version).unwrap_or(u32::MAX),
+            });
+        }
+        if let Some(map) = value.as_mapping_mut()
+            && version < u64::from(hook_record_version())
+        {
+            // Outcomes an earlier record holds are kept as recorded, and
+            // one it lacks stays absent.
+            map.insert(
+                "schema_version".into(),
+                serde_yaml_ng::Value::Number(hook_record_version().into()),
+            );
+        }
+    }
+    serde_yaml_ng::from_value(value).map_err(malformed)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,7 +170,10 @@ pub struct HookInvocation<'a> {
     pub exe: &'a Path,
 }
 
-/// Runs one hook point in the repository containing `cwd`: hands a push
+/// Runs one hook point in the repository containing `cwd`: pre-commit
+/// stages the committed form of the files being committed and records what
+/// it did; post-commit first settles the index those forms leave behind;
+/// otherwise hands a push
 /// to main or a pull advancing main to graph generation when it is wired,
 /// and for a post-hook starts the detached worker that runs `instrukt
 /// sync`. Checkout first renders published entrypoints synchronously; other
@@ -137,6 +191,50 @@ pub fn run_hook(
         tracing::debug!(event = "hook_run_outside_worktree", hook = %hook, cwd = %cwd.display());
         return Ok(());
     };
+    // Git names the index a commit is made from relative to the hook's
+    // working directory.
+    let index = invocation
+        .env
+        .get("GIT_INDEX_FILE")
+        .map(|file| cwd.join(file));
+    if hook == Hook::PreCommit {
+        let outcome = stage_committed_forms(&root, index.as_deref());
+        let staging = match &outcome {
+            Ok(files) if files.is_empty() => StagingOutcome::Unchanged,
+            Ok(files) => StagingOutcome::Staged {
+                files: files.clone(),
+            },
+            Err(error) => StagingOutcome::Failed {
+                error: error.to_string(),
+            },
+        };
+        match config::project_slug(&root) {
+            Ok(Some(project)) => save(
+                home,
+                &project,
+                &HookRunRecord {
+                    schema_version: hook_record_version(),
+                    checkout: None,
+                    hook,
+                    run: format!("{}-{}", now_ms(), std::process::id()),
+                    started_at_ms: now_ms(),
+                    sync: None,
+                    graph_generation: None,
+                    staging: Some(staging),
+                },
+            )?,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(event = "pre_commit_not_recorded", error = %error);
+            }
+        }
+        return outcome.map(drop);
+    }
+    if hook == Hook::PostCommit
+        && let Err(error) = settle_committed_index(&root, index.as_deref())
+    {
+        tracing::warn!(event = "committed_index_not_settled", error = %error);
+    }
     if hook == Hook::PostCheckout {
         let outcome = crate::publication::checkout_entrypoints(&crate::publication::SyncRequest {
             home,
@@ -164,6 +262,7 @@ pub fn run_hook(
                     started_at_ms: now_ms(),
                     sync: None,
                     graph_generation: None,
+                    staging: None,
                 },
             )?;
         }
@@ -211,6 +310,7 @@ pub fn run_hook(
         started_at_ms: now_ms(),
         sync: hook.starts_sync().then_some(SyncOutcome::Running),
         graph_generation,
+        staging: None,
     };
     if let Some(project) = &project {
         save(home, project, &record)?;
@@ -235,6 +335,200 @@ pub fn run_hook(
         duration_ms = started.elapsed().as_millis() as u64,
     );
     Ok(())
+}
+
+/// Brings each file the commit being made carries into its committed form
+/// and stages that form in the index `index` names: a project layer at an
+/// older schema version is converted, and a file an editor schema describes
+/// gets its modeline at the top. A file the checkout holds with the staged
+/// bytes is rewritten too, so the commit leaves no change behind; an
+/// unstaged edit is left as it is. Returns the files staged, relative to the
+/// repository root (`docs/project/spec/feature/configuration/owned-files.md`,
+/// `docs/project/spec/feature/publication/editor-schemas.md`).
+fn stage_committed_forms(
+    root: &Path,
+    index: Option<&Path>,
+) -> Result<Vec<String>, RepositoryError> {
+    let started = Instant::now();
+    let changed = git::run_on_index(
+        root,
+        index,
+        [
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--diff-filter=ACMR",
+        ],
+        b"",
+    )?;
+    let mut paths: std::collections::BTreeSet<String> = String::from_utf8_lossy(&changed)
+        .split('\0')
+        .filter(|rel| !rel.is_empty() && has_committed_form(rel))
+        .map(str::to_owned)
+        .collect();
+    paths.insert(config::CONFIG_FILE_NAME.to_owned());
+    let mut staged = Vec::new();
+    let mut replaced = String::new();
+    for rel in paths {
+        let Some((mode, object)) = index_entry(root, index, &rel)? else {
+            continue;
+        };
+        let bytes = git::run_bytes(root, ["cat-file", "blob", object.as_str()])?;
+        let Some(next) = committed_form(root, &rel, &bytes)? else {
+            continue;
+        };
+        let written = git::run_on_index(root, index, ["hash-object", "-w", "--stdin"], &next)?;
+        let written = String::from_utf8_lossy(&written).trim().to_owned();
+        let cacheinfo = format!("{mode},{written},{rel}");
+        git::run_on_index(
+            root,
+            index,
+            ["update-index", "--cacheinfo", cacheinfo.as_str()],
+            b"",
+        )?;
+        let path = root.join(&rel);
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() => {
+                let checkout = std::fs::read(&path).map_err(|source| RepositoryError::Read {
+                    path: path.clone(),
+                    source,
+                })?;
+                if checkout == bytes {
+                    crate::fsx::atomic_write_with_permissions(&path, &next, meta.permissions())?;
+                }
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(RepositoryError::Read { path, source }),
+        }
+        replaced.push_str(&format!("{object} {written} {rel}\n"));
+        staged.push(rel);
+    }
+    record_replaced(root, &replaced)?;
+    tracing::info!(
+        event = "committed_forms_staged",
+        repo_root = %root.display(),
+        staged = staged.len(),
+        duration_ms = started.elapsed().as_millis() as u64,
+    );
+    Ok(staged)
+}
+
+/// The file, in this worktree's git directory, in which pre-commit names
+/// each blob it replaced: `<replaced> <committed> <path>` per line.
+const REPLACED_FILE: &str = "instrukt-replaced";
+
+fn replaced_path(root: &Path) -> Result<PathBuf, RepositoryError> {
+    Ok(PathBuf::from(git::run(
+        root,
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            REPLACED_FILE,
+        ],
+    )?))
+}
+
+/// Records what this pre-commit run replaced, for the post-commit run of
+/// the same commit; a run that replaced nothing leaves no record.
+fn record_replaced(root: &Path, replaced: &str) -> Result<(), RepositoryError> {
+    let path = replaced_path(root)?;
+    if replaced.is_empty() {
+        return remove_replaced(&path);
+    }
+    atomic_write(&path, replaced.as_bytes())?;
+    Ok(())
+}
+
+fn remove_replaced(path: &Path) -> Result<(), RepositoryError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(RepositoryError::Remove {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// After a commit, returns each index entry still holding exactly the blob
+/// the pre-commit run replaced to the blob it committed. A partial commit
+/// (`git commit <paths>`) is made from an index of its own, and git installs
+/// the repository's index, prepared before the hook ran, after it; this
+/// keeps that index from staging the reverse of the conversion. An entry
+/// holding any other blob is a staging choice and is left as it is.
+fn settle_committed_index(root: &Path, index: Option<&Path>) -> Result<(), RepositoryError> {
+    let path = replaced_path(root)?;
+    let record = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(RepositoryError::Read { path, source }),
+    };
+    for line in record.lines() {
+        let mut fields = line.splitn(3, ' ');
+        let (Some(replaced), Some(committed), Some(rel)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let Some((mode, object)) = index_entry(root, index, rel)? else {
+            continue;
+        };
+        let head = git::run(root, ["rev-parse", &format!("HEAD:{rel}")])?;
+        if object == replaced && head == committed {
+            let cacheinfo = format!("{mode},{committed},{rel}");
+            git::run_on_index(
+                root,
+                index,
+                ["update-index", "--cacheinfo", cacheinfo.as_str()],
+                b"",
+            )?;
+        }
+    }
+    remove_replaced(&path)
+}
+
+/// Whether a file at `rel` (relative to the repository root) has a committed
+/// form the pre-commit section brings it to.
+fn has_committed_form(rel: &str) -> bool {
+    rel == config::CONFIG_FILE_NAME || crate::publication::editor_schema_describes(Path::new(rel))
+}
+
+/// `bytes`, the content of `rel` being committed, in its committed form;
+/// `None` when it already is.
+fn committed_form(
+    root: &Path,
+    rel: &str,
+    bytes: &[u8],
+) -> Result<Option<Vec<u8>>, RepositoryError> {
+    let converted = if rel == config::CONFIG_FILE_NAME {
+        config::converted_project_layer(root, bytes)?
+    } else {
+        None
+    };
+    let current = converted.as_deref().unwrap_or(bytes);
+    Ok(crate::publication::committed_modeline(Path::new(rel), current).or(converted))
+}
+
+/// The mode and object of `rel`'s regular-file entry in the index `index`
+/// names; `None` when it holds none.
+fn index_entry(
+    root: &Path,
+    index: Option<&Path>,
+    rel: &str,
+) -> Result<Option<(String, String)>, RepositoryError> {
+    let entry = git::run_on_index(root, index, ["ls-files", "--stage", "-z", "--", rel], b"")?;
+    // `<mode> <object> <stage>\t<path>`.
+    let entry = String::from_utf8_lossy(&entry);
+    let mut fields = entry.split_whitespace();
+    match (fields.next(), fields.next()) {
+        (Some(mode), Some(object)) if mode.starts_with("100") => {
+            Ok(Some((mode.to_owned(), object.to_owned())))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// The detached worker a post-hook run started (`job` is what the run
@@ -283,18 +577,7 @@ pub fn last_run(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(RepositoryError::Read { path, source }),
     };
-    let record: HookRunRecord =
-        serde_yaml_ng::from_str(&text).map_err(|source| RepositoryError::Record {
-            path: path.clone(),
-            source,
-        })?;
-    if record.schema_version != hook_record_version() {
-        return Err(RepositoryError::HookRecordVersion {
-            path,
-            version: record.schema_version,
-        });
-    }
-    Ok(Some(record))
+    read_record(&path, &text).map(Some)
 }
 
 fn start_worker(
@@ -403,7 +686,7 @@ fn main_advance(
             }
             Ok(Some((sha, MainAdvance::Pull)))
         }
-        Hook::PostCommit | Hook::PostCheckout => Ok(None),
+        Hook::PreCommit | Hook::PostCommit | Hook::PostCheckout => Ok(None),
     }
 }
 
@@ -531,7 +814,12 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::Path;
+
+    use super::{
+        CommitSha, GenerationOutcome, Hook, HookRunRecord, RepositoryError, StagingOutcome,
+        SyncOutcome, hook_record_version, is_pull, pushed_to, read_record,
+    };
 
     const SHA: &str = "1111111111111111111111111111111111111111";
     const ZERO: &str = "0000000000000000000000000000000000000000";
@@ -539,9 +827,65 @@ mod tests {
     #[test]
     fn unversioned_hook_records_read_as_current_without_inventing_a_checkout() {
         let legacy = "hook: post-checkout\nrun: old\nstarted_at_ms: 1\nsync: null\n";
-        let record: HookRunRecord = serde_yaml_ng::from_str(legacy).unwrap();
+        let record = read_record(Path::new("post-checkout.yaml"), legacy).unwrap();
         assert_eq!(record.schema_version, hook_record_version());
         assert_eq!(record.checkout, None);
+        assert_eq!(record.staging, None);
+    }
+
+    /// A version-1 record as the previous instrukt wrote it.
+    const VERSION_1: &str = "schema_version: 1\nhook: post-commit\nrun: 7-42\nstarted_at_ms: 7\nsync:\n  state: finished\n  finished_at_ms: 9\n  exit_code: 0\ngraph_generation:\n  state: started\n  sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n";
+
+    #[test]
+    fn a_version_1_record_reads_as_current_keeping_its_outcomes_and_inventing_no_staging() {
+        let record = read_record(Path::new("post-commit.yaml"), VERSION_1).unwrap();
+        assert_eq!(
+            record,
+            HookRunRecord {
+                schema_version: hook_record_version(),
+                checkout: None,
+                hook: Hook::PostCommit,
+                run: "7-42".into(),
+                started_at_ms: 7,
+                sync: Some(SyncOutcome::Finished {
+                    finished_at_ms: 9,
+                    exit_code: Some(0),
+                    message: None,
+                }),
+                graph_generation: Some(GenerationOutcome::Started {
+                    sha: CommitSha::parse("0a1b2c3d4e5f60718293a4b5c6d7e8f901234567").unwrap(),
+                }),
+                staging: None,
+            }
+        );
+    }
+
+    /// A version-1 pre-commit record carrying a staging outcome, as an
+    /// earlier instrukt wrote it.
+    const VERSION_1_STAGED: &str = "schema_version: 1\nhook: pre-commit\nrun: 8-43\nstarted_at_ms: 8\nstaging:\n  state: failed\n  error: schema_version is missing\n";
+
+    #[test]
+    fn a_version_1_record_keeps_the_staging_outcome_it_recorded() {
+        let record = read_record(Path::new("pre-commit.yaml"), VERSION_1_STAGED).unwrap();
+        assert_eq!(record.schema_version, hook_record_version());
+        let written: serde_yaml_ng::Value = serde_yaml_ng::from_str(VERSION_1_STAGED).unwrap();
+        let written_error = written["staging"]["error"].as_str().unwrap();
+        match record.staging {
+            Some(StagingOutcome::Failed { error }) => assert_eq!(error, written_error),
+            other => panic!("expected the recorded failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_record_of_a_newer_shape_is_refused() {
+        let newer = VERSION_1.replace(
+            "schema_version: 1",
+            &format!("schema_version: {}", hook_record_version() + 1),
+        );
+        assert!(matches!(
+            read_record(Path::new("post-commit.yaml"), &newer),
+            Err(RepositoryError::HookRecordVersion { .. })
+        ));
     }
 
     #[test]

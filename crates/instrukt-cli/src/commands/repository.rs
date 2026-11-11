@@ -187,9 +187,10 @@ enum HooksCommand {
     /// outdated or absent (with the line to give a hook manager), and the
     /// last run's outcome.
     Status,
-    /// What a section calls: checkout waits for entrypoint rendering and first
-    /// publication if needed; other publication triggers run detached.
-    /// Never fails the git operation.
+    /// What a section calls: pre-commit stages a project layer converted to
+    /// the current schema into the commit; checkout waits for entrypoint
+    /// rendering and first publication if needed; other publication triggers
+    /// run detached. Never fails the git operation.
     Run(RunArgs),
     /// The detached process a hook run starts.
     #[command(hide = true)]
@@ -198,8 +199,8 @@ enum HooksCommand {
 
 #[derive(Debug, clap::Args)]
 struct RunArgs {
-    /// The hook point: post-commit, post-merge, post-rewrite, post-checkout
-    /// or pre-push.
+    /// The hook point: pre-commit, post-commit, post-merge, post-rewrite,
+    /// post-checkout or pre-push.
     hook: String,
     /// The arguments git passed the hook.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -254,8 +255,8 @@ fn run_hook(args: &RunArgs, ctx: &Ctx) -> anyhow::Result<ExitCode> {
     })?;
     if let Err(err) = start_hook_run(hook, args, ctx) {
         tracing::warn!(event = "hook_run_failed", hook = %hook, error = %format!("{err:#}"));
-        if hook == Hook::PostCheckout {
-            eprintln!("instrukt post-checkout: {err:#}");
+        if matches!(hook, Hook::PreCommit | Hook::PostCheckout) {
+            eprintln!("instrukt {hook}: {err:#}");
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -347,6 +348,18 @@ fn last_run_text(record: &HookRunRecord) -> String {
         }) => parts.push("sync was ended by a signal".to_owned()),
         Some(SyncOutcome::TimedOut { after_secs, .. }) => {
             parts.push(format!("sync ended after running {after_secs}s"));
+        }
+    }
+    match &record.staging {
+        None => {}
+        Some(repository::StagingOutcome::Staged { files }) => {
+            parts.push(format!("staged in committed form: {}", files.join(", ")));
+        }
+        Some(repository::StagingOutcome::Unchanged) => {
+            parts.push("every file was already in committed form".to_owned());
+        }
+        Some(repository::StagingOutcome::Failed { error }) => {
+            parts.push(format!("staging failed: {error}"));
         }
     }
     match &record.graph_generation {

@@ -181,7 +181,10 @@ pub fn signature(body: &[u8], secret: &str) -> String {
 pub fn declare(computer: &Computer, declaration: &str) {
     computer.project.write(
         "instrukt.yaml",
-        &format!("schema_version: 1\nproject: fork\nwebhooks: {declaration}\n"),
+        &format!(
+            "schema_version: {}\nproject: fork\nwebhooks: {declaration}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
     );
     for (name, value) in [("HOOK_KEY", SECRET), ("OLD_KEY", OLD)] {
         computer
