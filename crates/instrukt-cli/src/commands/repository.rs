@@ -255,8 +255,8 @@ fn run_hook(args: &RunArgs, ctx: &Ctx) -> anyhow::Result<ExitCode> {
     })?;
     if let Err(err) = start_hook_run(hook, args, ctx) {
         tracing::warn!(event = "hook_run_failed", hook = %hook, error = %format!("{err:#}"));
-        if hook == Hook::PostCheckout {
-            eprintln!("instrukt post-checkout: {err:#}");
+        if matches!(hook, Hook::PreCommit | Hook::PostCheckout) {
+            eprintln!("instrukt {hook}: {err:#}");
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -348,6 +348,18 @@ fn last_run_text(record: &HookRunRecord) -> String {
         }) => parts.push("sync was ended by a signal".to_owned()),
         Some(SyncOutcome::TimedOut { after_secs, .. }) => {
             parts.push(format!("sync ended after running {after_secs}s"));
+        }
+    }
+    match &record.staging {
+        None => {}
+        Some(repository::StagingOutcome::Staged { files }) => {
+            parts.push(format!("staged in committed form: {}", files.join(", ")));
+        }
+        Some(repository::StagingOutcome::Unchanged) => {
+            parts.push("every file was already in committed form".to_owned());
+        }
+        Some(repository::StagingOutcome::Failed { error }) => {
+            parts.push(format!("staging failed: {error}"));
         }
     }
     match &record.graph_generation {

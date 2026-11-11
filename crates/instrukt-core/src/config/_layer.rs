@@ -672,9 +672,12 @@ mod tests {
         let converted = converted_project_layer(root, older.as_bytes())
             .unwrap()
             .unwrap();
-        let text = String::from_utf8(converted.clone()).unwrap();
-        assert_eq!(text.lines().next(), Some(modeline));
-        let value = yaml(&text);
+        assert_eq!(
+            crate::modeline::leading(&converted),
+            crate::modeline::leading(older.as_bytes()),
+            "the modeline is kept"
+        );
+        let value = yaml(&String::from_utf8(converted.clone()).unwrap());
         assert_eq!(
             value["schema_version"].as_u64(),
             Some(CURRENT_SCHEMA_VERSION)

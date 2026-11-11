@@ -38,6 +38,6 @@ pub use _hooks::{
 };
 pub use _run::{
     CheckoutOutcome, GenerationOutcome, HOOK_WORKER_COMMAND, HookInvocation, HookRunRecord,
-    SyncOutcome, last_run, run_hook, run_hook_worker,
+    StagingOutcome, SyncOutcome, last_run, run_hook, run_hook_worker,
 };
 pub use _section::{SECTION_END, SECTION_START, SectionError, hook_run_line};

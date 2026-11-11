@@ -23,6 +23,7 @@ audit:
 
 coverage:
 	scripts/check-coverage.sh
+	scripts/check-committed-config.sh
 
 check: lint test coverage audit
 

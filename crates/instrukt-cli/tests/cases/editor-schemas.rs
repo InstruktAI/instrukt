@@ -1,7 +1,7 @@
 //! `project/instrukt/spec/feature/publication/editor-schemas`: the binary
 //! writes JSON Schemas of its own document types into the repository's
-//! `.instrukt/schemas/`, and init and sync keep a relative modeline at the
-//! top of each file they describe.
+//! `.instrukt/schemas/`, and init and the pre-commit section keep a relative
+//! modeline at the top of each file they describe.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -205,7 +205,13 @@ fn schemas_behind_a_symbolic_link_are_reported_by_init_and_refuse_a_sync() {
 // spec: project/instrukt/spec/feature/publication/editor-schemas UC-ES2
 #[test]
 fn publication_brings_older_schemas_and_modelines_to_the_installed_instrukt() {
-    let env = TestEnv::new();
+    // The hook sections call the built `instrukt` by name.
+    let mut env = TestEnv::new();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
     let current = authored(&env, "current");
     env.run(current.path(), ["init"]).success();
     let repo = authored(&env, "demo");
@@ -231,13 +237,22 @@ fn publication_brings_older_schemas_and_modelines_to_the_installed_instrukt() {
         schemas(&current),
         "the schemas are the installed instrukt's"
     );
+    assert_eq!(
+        repo.read("instrukt.yaml"),
+        layer,
+        "sync writes no committed file"
+    );
+
+    // The next commit brings each described file's modeline back.
+    repo.commit("keep working");
     for file in DESCRIBED {
         assert_eq!(
-            repo.read(file).lines().next(),
+            repo.git(["show", &format!("HEAD:{file}")]).lines().next(),
             current.read(file).lines().next(),
             "{file} points at its schema"
         );
     }
+    assert_eq!(repo.git(["status", "--porcelain"]), "");
 }
 
 // spec: project/instrukt/spec/feature/publication/editor-schemas UC-ES2

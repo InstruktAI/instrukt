@@ -9,5 +9,3 @@ notice: docs/domain/ops/: domain-without-index: `ops` has no index.yaml: it is a
 .instrukt/schemas/project-index.schema.json: schema written
 .instrukt/schemas/snippet-schema.schema.json: schema written
 .instrukt/schemas/instrukt.schema.json: schema written
-instrukt.yaml: modeline inserted
-docs/general/index.yaml: modeline inserted

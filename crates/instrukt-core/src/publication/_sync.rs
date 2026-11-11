@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::_agents::{MergeRefusal, TARGETS, merge_key};
-use super::_editor::{EditorChange, OnLink, refresh_editor_schemas};
+use super::_editor::{EditorChange, OnLink, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_render::Renderer;
@@ -134,7 +134,7 @@ pub struct SyncReport {
     /// every sync removes those it can, and a later sync tries the rest
     /// again. They are not part of the published corpus.
     pub leftovers: Vec<PathBuf>,
-    /// What a publishing sync changed of the editor schemas and modelines
+    /// What a publishing sync changed of the editor schemas
     /// in the primary worktree.
     pub editor: Vec<EditorChange>,
     /// What a publishing sync reports without refusing: a domain without
@@ -411,7 +411,7 @@ fn publish(
     // Before anything is published: a refresh that cannot write fails the
     // sync, and no commit is recorded.
     if !home.is_development() {
-        *report.editor = refresh_editor_schemas(&project.primary, OnLink::Refuse)?;
+        *report.editor = write_editor_schemas(&project.primary, OnLink::Refuse)?;
     }
     // Coordinate only publication application with checkout rendering. Validation
     // and preparation retain the separate docs lock, so a checkout inside a

@@ -258,6 +258,10 @@ snapshot alone supplies no new action identity or attribution.
 **`provider_deferrals`** — per project, the time until which GitHub deferred
 requests (rate limiting). Key: `project`.
 
+**`project_boards`** — per project, the GitHub project board
+(`<owner>/<number>`) reflection set up or found when the project layer names
+none (`project/instrukt/spec/feature/work/github-record`). Key: `project`.
+
 **`listing_copies`** — the last known copy of each todo of a project that is
 not a local item here, as the latest pickup listing read it. Key:
 `(project, issue_number)`.

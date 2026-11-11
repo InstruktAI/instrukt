@@ -107,7 +107,9 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     let repo = env.git_repo("migrating");
     let project = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: migrating\nactions: {test: make test}\napprovals: {prd: peer}\n";
     repo.write("instrukt.yaml", project)
-        .write("docs/project/index.yaml", "expanded: []\n");
+        .write("docs/project/index.yaml", "expanded: []\n")
+        .write("notes.md", "notes\n")
+        .write(".gitignore", "/.instrukt/\n");
     repo.commit("adopt");
     env.run(repo.path(), ["sync"]).success();
     let global = env.instrukt_home().join("instrukt.yaml");
@@ -153,25 +155,47 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     assert_eq!(std::fs::read_to_string(&global).unwrap(), unconvertible);
     std::fs::write(&global, current_global).unwrap();
 
-    // The developer's next commit carries the project layer at the current
-    // schema and leaves the checkout clean.
+    // The developer's next commit, here a partial one, carries the project
+    // layer at the current schema and leaves checkout and index clean.
     env.run(repo.path(), ["hooks", "install"]).success();
     repo.write("notes.md", "a note\n");
-    repo.commit("note");
+    repo.git(["commit", "--quiet", "-m", "note", "--", "notes.md"]);
+    wait_for_post_commit_sync(&env, repo.head());
     let committed = repo.git(["show", "HEAD:instrukt.yaml"]);
     assert_eq!(schema_version(&committed), current);
     let committed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&committed).unwrap();
     assert!(committed.get("actions").is_none());
     insta::assert_snapshot!(committed["approvals"]["prd"].as_str().unwrap(), @"peer");
+    assert_eq!(repo.git(["status", "--porcelain"]), "");
+    insta::assert_snapshot!(pre_commit_status(&env, &repo), @r"
+    pre-commit: current
+      last run: staged in committed form: instrukt.yaml
+    ");
+
+    // A project layer the hook cannot convert is committed as written, and
+    // the hook's status reports why.
+    let unconvertible = "project: migrating\n";
+    repo.write("instrukt.yaml", unconvertible);
+    repo.git(["commit", "--quiet", "-am", "unversioned"]);
+    wait_for_post_commit_sync(&env, repo.head());
     assert_eq!(
-        repo.git(["status", "--porcelain", "--", "instrukt.yaml"]),
-        ""
+        repo.git(["show", "HEAD:instrukt.yaml"]),
+        unconvertible.trim_end()
     );
+    insta::assert_snapshot!(pre_commit_status(&env, &repo), @r"
+    pre-commit: current
+      last run: staging failed: [REPO]/instrukt.yaml: schema_version is missing or not a positive integer
+    ");
+}
+
+/// Waits, within a bound, until the post-commit run for `commit` has seen
+/// its detached sync end.
+fn wait_for_post_commit_sync(env: &TestEnv, commit: String) {
     let record = env
         .instrukt_home()
         .join("state/hooks/migrating/post-commit.yaml");
     common::wait_until(
-        "the post-commit sync",
+        &format!("the post-commit sync of {commit}"),
         std::time::Duration::from_secs(60),
         || {
             std::fs::read_to_string(&record).is_ok_and(|text| {
@@ -181,6 +205,19 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
             })
         },
     );
+}
+
+/// The pre-commit section's lines of `instrukt hooks status`, with the
+/// repository shown as `[REPO]`.
+fn pre_commit_status(env: &TestEnv, repo: &common::Repo) -> String {
+    let status = env.run(repo.path(), ["hooks", "status"]).success();
+    String::from_utf8_lossy(&status.get_output().stdout)
+        .replace(&repo.path().display().to_string(), "[REPO]")
+        .lines()
+        .skip_while(|line| !line.starts_with("pre-commit:"))
+        .take_while(|line| line.starts_with("pre-commit:") || line.starts_with("  "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF3

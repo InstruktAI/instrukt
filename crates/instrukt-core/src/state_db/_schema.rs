@@ -4,7 +4,7 @@
 
 /// Every migration this build ships; the schema version is their count.
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
 ];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
@@ -702,4 +702,14 @@ INSERT INTO native_title_recovery_guard SELECT json_extract(evidence,'$.native_p
 INSERT INTO native_title_recovery_guard SELECT json_extract(value,'$.native_placement.title') FROM listing_copies,json_each(listing_copies.record,'$.bindings') WHERE json_type(value,'$.native_placement')='object';
 DROP TABLE native_title_recovery_guard;
 UPDATE session_bindings SET display_title=json_extract(evidence,'$.native_placement.title') WHERE json_type(evidence,'$.native_placement')='object';
+"#;
+
+/// Version 16: the board a project's reflection set up or found, recorded on
+/// the machine rather than in the committed project layer. Applying it again
+/// over a database that already holds the table changes nothing.
+const V16: &str = r#"
+CREATE TABLE IF NOT EXISTS project_boards (
+    project TEXT PRIMARY KEY NOT NULL,
+    board   TEXT NOT NULL
+);
 "#;

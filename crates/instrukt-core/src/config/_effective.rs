@@ -561,6 +561,19 @@ pub struct BoardRef {
     pub number: u64,
 }
 
+impl BoardRef {
+    /// `<owner>/<number>` read as a project reference.
+    pub fn parse(text: &str) -> Option<Self> {
+        board_ref(text)
+    }
+}
+
+impl std::fmt::Display for BoardRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.owner, self.number)
+    }
+}
+
 /// `<owner>/<number>` read as a project reference.
 pub(crate) fn board_ref(text: &str) -> Option<BoardRef> {
     let (owner, number) = text.split_once('/')?;
