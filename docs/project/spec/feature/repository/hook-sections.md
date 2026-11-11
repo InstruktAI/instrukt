@@ -20,7 +20,7 @@ projects keep their own tooling.
 
 | Hook | When instrukt installs it | What the hook run does |
 | --- | --- | --- |
-| `pre-commit` | always | converts an older project layer to the current schema and stages it into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`) |
+| `pre-commit` | always | converts an older project layer to the current schema and inserts or corrects the editor modelines of the files being committed, staging both into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`) |
 | `post-commit` | always | starts `instrukt sync` detached |
 | `post-merge` | always | starts `instrukt sync` detached; when a pull or runner fast-forward advances main to its fetched upstream head and blueprint is enabled, hands the revision to blueprint |
 | `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
