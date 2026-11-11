@@ -36,9 +36,10 @@ violation whatever verb the task uses. Reading doc snippets as input is untouche
 and required: the work phase binds in-scope feature-spec scenarios and implements
 against published contracts. The slug's doc reflection was authored during preparation and folded by the
 integrator at preparation integration, before build.
-A doc need discovered mid-build (a missing scenario, a wrong planned contract)
-is a plan defect: surface it and route through the kickback path (Step 9) so
-prepare re-derives in its preparation worktree — never edit `docs/**` in the work-phase worktree.
+A doc need established against the prepared intent or its approved contract is a plan defect:
+surface it and route through the kickback path (Step 9) so prepare re-derives in its preparation
+worktree. A test that seems missing follows `sdlc/policy/testing`, rule 2; absence of a bindable
+scenario alone establishes no doc need. The work-phase worktree keeps `docs/**` frozen.
 
 ### Work ends in delivery or kickback
 

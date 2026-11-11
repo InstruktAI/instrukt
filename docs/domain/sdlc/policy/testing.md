@@ -118,7 +118,8 @@ never blesses a diff its own change produced.
 8. **Coverage is measured against the scenario inventory** — scenarios bound ÷ total — not by
    source-to-test file mapping. Bind `@critical`-tagged scenarios first; the remainder is a measured
    backlog. Two tests are a duplicate when they exercise the same behavior — the same failure mode
-   or branch — whether or not they name the same scenario; a duplicate fails the coverage check.
+   or branch — whether or not they name the same scenario; duplicates are rejected at review;
+   automated failure conditions are owned by the coverage tool's spec.
    One scenario is realized by exactly one test, which drives the scenario's situation and checks
    all of its required outcomes; a second test bound to the same scenario is a duplicate, whatever
    behavior it claims to add. A binding to a non-existent scenario is an orphan; it too

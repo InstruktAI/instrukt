@@ -43,8 +43,7 @@ without implementation visibility changes. The `t3-contract` feature selects
 this suite; missing prerequisites fail a selected run. Ordinary hook/test commands
 keep their current scope and gain no release download or provider dependency.
 Each feature use case is realized by exactly one named test checking its
-complete situation and outcomes (`sdlc/policy/testing`, rule 8); tests written
-before that rule are brought in line by the suite audit. This ruling adds no other test-level, unit-test or
+complete situation and outcomes (`sdlc/policy/testing`, rule 8). This ruling adds no other test-level, unit-test or
 repository-wide fake architecture decision.
 
 - This repository's pre-commit checks run fmt, clippy and test, in seconds

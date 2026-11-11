@@ -71,8 +71,9 @@ the structural graph, or the decision of who may author a use case.
 :  A use case no binding names. The binding backlog.
 
 **Multi-bound use case**
-:  A use case named by more than one binding. A review lead, never a fault by
-   itself.
+:  A use case named by more than one binding. Coverage reports it without
+   failing `--check`; its admissibility is governed by the project's applicable
+   testing policy.
 
 **Ratchet baseline**
 :  The committed counts of orphans and anonymous scenarios that a coverage
