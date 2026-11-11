@@ -148,9 +148,10 @@ And both resolve required secrets from the one machine-local protected file
 
 - A write that changes a key's nested value renders that key anew, so comments
   and formatting inside it are lost; the rest of the document keeps its text.
-- A layer that is not a plain block-style mapping, such as flow style, quoted
-  keys or several documents, is rendered whole and loses its comments and
-  formatting; the write logs `config_rendered_whole`.
+- A layer written in flow style or with quoted keys is rendered whole and
+  loses its comments and formatting; the write logs `config_rendered_whole`.
+  A file holding several YAML documents is refused when it is read, as any
+  unreadable layer is, and is never rewritten.
 
 ## See Also
 

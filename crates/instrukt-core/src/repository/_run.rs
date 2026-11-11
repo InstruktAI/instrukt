@@ -868,12 +868,12 @@ mod tests {
     fn a_version_1_record_keeps_the_staging_outcome_it_recorded() {
         let record = read_record(Path::new("pre-commit.yaml"), VERSION_1_STAGED).unwrap();
         assert_eq!(record.schema_version, hook_record_version());
-        assert_eq!(
-            record.staging,
-            Some(StagingOutcome::Failed {
-                error: "schema_version is missing".into(),
-            })
-        );
+        let written: serde_yaml_ng::Value = serde_yaml_ng::from_str(VERSION_1_STAGED).unwrap();
+        let written_error = written["staging"]["error"].as_str().unwrap();
+        match record.staging {
+            Some(StagingOutcome::Failed { error }) => assert_eq!(error, written_error),
+            other => panic!("expected the recorded failure, got {other:?}"),
+        }
     }
 
     #[test]
