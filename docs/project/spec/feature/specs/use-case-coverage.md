@@ -71,9 +71,9 @@ is the scenario inventory bound, never source lines or a file mapping
 | ambiguous claim | a whole spec file pending for several delivering slugs with no in-body markers | yes, always (not ratcheted) |
 
 Unbound is not gated: under documentation first, use cases are written before
-their tests and the backlog rises and falls with every delivery. Whether a
-multi-bound use case's tests exercise distinct behavior is a reviewer's
-judgment (`sdlc/policy/testing`), so it is reported, never failed.
+their tests and the backlog rises and falls with every delivery. A multi-bound
+use case breaks the one-test-per-use-case rule (`sdlc/policy/testing`, rule 8);
+the report lists it for review and does not fail on it.
 
 ### The report
 
