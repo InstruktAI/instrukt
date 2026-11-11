@@ -73,8 +73,9 @@ silently replacing it. `agents.yaml` default replacement and preservation of
 user edits follow `project/instrukt/spec/feature/configuration/agent-selection`;
 a mandatory shape conversion is distinct from replacing default choices.
 
-Hook-run records carry a shape version and an optional checkout outcome.
-Unversioned records convert in memory with no invented checkout result, and the
+Hook-run records carry a shape version and an optional checkout or staging
+outcome. Older records convert in memory with no invented checkout or staging
+result, a record newer than the binary is refused, and the
 next recorded hook run persists the versioned shape. Inspection never rewrites
 these records and a newer shape requires a newer binary.
 
