@@ -52,7 +52,9 @@ that run after a commit, publication, installation convergence and ticks among
 them, converts it in memory and leaves the file as committed.
 `instrukt config validate` reports a committed project layer older than the
 binary's schema as a finding, so a commit that bypassed the hook is caught in CI.
-A conversion
+Every write to a configuration layer, a conversion or an
+`instrukt config` writing verb, keeps the document's text outside the top-level
+keys it changes, comments and formatting included. A conversion
 preserves supported user settings and writes atomically; a failed conversion leaves its source intact
 and reports the cause. Existing rejection of a configuration version newer
 than the binary remains the upgrade door. A revision read during inspection names
@@ -141,6 +143,14 @@ When one changes its owned publication or operational state
 Then the other's home and the normal machine home are unchanged
 And both resolve required secrets from the one machine-local protected file
 ```
+
+## Known caveats
+
+- A write that changes a key's nested value renders that key anew, so comments
+  and formatting inside it are lost; the rest of the document keeps its text.
+- A layer that is not a plain block-style mapping, such as flow style, quoted
+  keys or several documents, is rendered whole and loses its comments and
+  formatting; the write logs `config_rendered_whole`.
 
 ## See Also
 
