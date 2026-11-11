@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Hook {
+    PreCommit,
     PostCommit,
     PostMerge,
     PostRewrite,
@@ -17,7 +18,8 @@ pub enum Hook {
 
 impl Hook {
     /// Every hook instrukt may hold a section in, in reporting order.
-    pub const ALL: [Hook; 5] = [
+    pub const ALL: [Hook; 6] = [
+        Hook::PreCommit,
         Hook::PostCommit,
         Hook::PostMerge,
         Hook::PostRewrite,
@@ -28,6 +30,7 @@ impl Hook {
     /// The hook file's name.
     pub fn name(self) -> &'static str {
         match self {
+            Hook::PreCommit => "pre-commit",
             Hook::PostCommit => "post-commit",
             Hook::PostMerge => "post-merge",
             Hook::PostRewrite => "post-rewrite",
@@ -43,7 +46,7 @@ impl Hook {
 
     /// Whether a run of this hook starts `instrukt sync`: every post-hook.
     pub(crate) fn starts_sync(self) -> bool {
-        !matches!(self, Hook::PrePush)
+        !matches!(self, Hook::PreCommit | Hook::PrePush)
     }
 
     /// Whether the hook is installed only while the blueprint module is on.
@@ -67,6 +70,6 @@ mod tests {
         for hook in Hook::ALL {
             assert_eq!(Hook::parse(hook.name()), Some(hook));
         }
-        assert_eq!(Hook::parse("pre-commit"), None);
+        assert_eq!(Hook::parse("pre-rebase"), None);
     }
 }

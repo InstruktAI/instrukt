@@ -138,7 +138,13 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
     let rt = FakeRuntime::new(&env, "rt", false);
     global_layer(&env, "todos: false, events: false, history: false", &[&rt]);
     let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", "schema_version: 1\nproject: demo\n");
+    repo.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {}\nproject: demo\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    );
     repo.commit("the developer's project");
     for args in [vec!["tick"], vec!["run"], vec!["sessions", "list"]] {
         let refused = env.run(repo.path(), &args).failure();

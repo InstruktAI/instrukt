@@ -14,8 +14,12 @@ use crate::fixtures::documented::{project, snippet, sync};
 /// The standing agent, as `resolve-start` and its anomaly name it.
 pub const STANDING_AGENT: &str = "fork/procedure/upstream-watch@fork";
 
-const FORK_LAYER: &str = "schema_version: 1\nproject: fork\n\
-events:\n  watch:\n    - {remote: upstream, ref: refs/heads/main}\n";
+fn fork_layer() -> String {
+    format!(
+        "schema_version: {}\nproject: fork\nevents:\n  watch:\n    - {{remote: upstream, ref: refs/heads/main}}\n",
+        instrukt_core::config::CURRENT_SCHEMA_VERSION
+    )
+}
 
 /// A published fork whose watched upstream has one commit; returns the
 /// upstream's working clone, to push changes from.
@@ -29,7 +33,7 @@ pub fn watched_fork(env: &TestEnv) -> Repo {
         env,
         "fork",
         &[
-            ("instrukt.yaml", FORK_LAYER.to_owned()),
+            ("instrukt.yaml", fork_layer()),
             (
                 "docs/domain/fork/procedure/upstream-watch.md",
                 snippet(

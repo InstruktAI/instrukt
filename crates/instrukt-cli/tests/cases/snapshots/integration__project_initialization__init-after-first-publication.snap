@@ -13,6 +13,7 @@ editor schemas (.instrukt/schemas/): already present
 ignores of AGENTS.md and .instrukt/ (.gitignore): already present
 hook sections: already present
   hooks directory: [TMP]/demo/.git/hooks
+  pre-commit: already current
   post-commit: already current
   post-merge: already current
   post-rewrite: already current

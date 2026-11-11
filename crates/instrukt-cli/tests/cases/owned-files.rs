@@ -84,70 +84,103 @@ fn protected_secrets_are_shared_by_commands_and_noninteractive_reads() {
     computer.env.run(computer.env.home(), ["tick"]).failure();
 }
 
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
-#[test]
-fn ordinary_reads_convert_in_memory_and_writing_commands_preserve_supported_values() {
-    let env = TestEnv::new();
-    let home = Home::at_user_home(env.home().into());
-    std::fs::create_dir_all(home.root()).unwrap();
-    std::fs::write(home.global_config(), "schema_version: 1\nticks: off\n").unwrap();
-    env.run(env.home(), ["config", "get", "ticks", "--global"])
-        .success();
-    assert_eq!(
-        std::fs::read_to_string(home.global_config()).unwrap(),
-        "schema_version: 1\nticks: off\n"
-    );
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    let stored: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&std::fs::read_to_string(home.global_config()).unwrap()).unwrap();
-    assert_eq!(
-        stored["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
-    );
-    assert_eq!(stored["ticks"].as_str(), Some("off"));
+/// A test machine whose `PATH` holds the built `instrukt`, as an installed
+/// one would: the hook sections call it by name.
+fn machine() -> TestEnv {
+    let mut env = TestEnv::new();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
+    env
+}
+
+fn schema_version(text: &str) -> Option<u64> {
+    serde_yaml_ng::from_str::<serde_yaml_ng::Value>(text).unwrap()["schema_version"].as_u64()
 }
 
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 #[test]
-fn sync_migrates_both_layers_even_when_its_published_commit_is_unchanged() {
-    let env = TestEnv::new();
+fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project_layer() {
+    let env = machine();
     let repo = env.git_repo("migrating");
-    let old = "schema_version: 1\nproject: migrating\n";
-    repo.write("instrukt.yaml", old)
+    let project = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: migrating\nactions: {test: make test}\napprovals: {prd: peer}\n";
+    repo.write("instrukt.yaml", project)
         .write("docs/project/index.yaml", "expanded: []\n");
     repo.commit("adopt");
     env.run(repo.path(), ["sync"]).success();
-    repo.write("instrukt.yaml", old);
     let global = env.instrukt_home().join("instrukt.yaml");
-    std::fs::write(&global, "schema_version: 1\nticks: off\n").unwrap();
-    env.run(repo.path(), ["sync"]).success();
-    let project: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
-    let global: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&std::fs::read_to_string(global).unwrap()).unwrap();
-    assert_eq!(
-        project["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
-    );
-    assert_eq!(
-        global["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
-    );
-}
+    let old_global = "schema_version: 1\nticks: off\n";
+    std::fs::write(&global, old_global).unwrap();
+    let current = Some(instrukt_core::config::CURRENT_SCHEMA_VERSION);
 
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
-#[test]
-fn failed_selection_conversion_preserves_the_old_configuration() {
-    let env = TestEnv::new();
-    let file = env.instrukt_home().join("instrukt.yaml");
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    let original = "schema_version: 1\nagents: {order: [missing], tier: strong}\n";
-    std::fs::write(&file, original).unwrap();
-    env.run(env.home(), ["config", "get", "ticks", "--global"])
+    // Sync on an unchanged main: the machine layer is written current, the
+    // committed project layer stays as committed.
+    env.run(repo.path(), ["sync"]).success();
+    let machine = std::fs::read_to_string(&global).unwrap();
+    assert_eq!(schema_version(&machine), current);
+    let kept: serde_yaml_ng::Value = serde_yaml_ng::from_str(&machine).unwrap();
+    insta::assert_snapshot!(kept["ticks"].as_str().unwrap(), @"off");
+    assert_eq!(repo.read("instrukt.yaml"), project);
+
+    // An ordinary read inspects the converted project layer, writes nothing
+    // and reports the pending migration.
+    let read = env
+        .run(repo.path(), ["config", "get", "approvals.prd"])
+        .success();
+    insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stdout), @"peer");
+    let notice = String::from_utf8_lossy(&read.get_output().stderr)
+        .replace(&repo.path().display().to_string(), "[REPO]");
+    insta::assert_snapshot!(notice, @"instrukt: [REPO]/instrukt.yaml: schema_version 2 inspected as 5; file migrates on the next writing command");
+    assert_eq!(repo.read("instrukt.yaml"), project);
+
+    // A tick persists the machine migration before its refusal.
+    std::fs::write(&global, old_global).unwrap();
+    env.run(repo.path(), ["tick"]).failure();
+    assert_eq!(
+        schema_version(&std::fs::read_to_string(&global).unwrap()),
+        current
+    );
+    assert_eq!(repo.read("instrukt.yaml"), project);
+
+    // A conversion that fails keeps its source.
+    let current_global = std::fs::read_to_string(&global).unwrap();
+    let unconvertible = "schema_version: 1\nagents: {order: [missing], tier: strong}\n";
+    std::fs::write(&global, unconvertible).unwrap();
+    env.run(repo.path(), ["config", "get", "ticks", "--global"])
         .failure();
-    assert_eq!(std::fs::read_to_string(file).unwrap(), original);
-    assert!(!env.instrukt_home().join("agents.yaml").exists());
+    assert_eq!(std::fs::read_to_string(&global).unwrap(), unconvertible);
+    std::fs::write(&global, current_global).unwrap();
+
+    // The developer's next commit carries the project layer at the current
+    // schema and leaves the checkout clean.
+    env.run(repo.path(), ["hooks", "install"]).success();
+    repo.write("notes.md", "a note\n");
+    repo.commit("note");
+    let committed = repo.git(["show", "HEAD:instrukt.yaml"]);
+    assert_eq!(schema_version(&committed), current);
+    let committed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&committed).unwrap();
+    assert!(committed.get("actions").is_none());
+    insta::assert_snapshot!(committed["approvals"]["prd"].as_str().unwrap(), @"peer");
+    assert_eq!(
+        repo.git(["status", "--porcelain", "--", "instrukt.yaml"]),
+        ""
+    );
+    let record = env
+        .instrukt_home()
+        .join("state/hooks/migrating/post-commit.yaml");
+    common::wait_until(
+        "the post-commit sync",
+        std::time::Duration::from_secs(60),
+        || {
+            std::fs::read_to_string(&record).is_ok_and(|text| {
+                let record: instrukt_core::repository::HookRunRecord =
+                    serde_yaml_ng::from_str(&text).unwrap();
+                record.sync != Some(instrukt_core::repository::SyncOutcome::Running)
+            })
+        },
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF3
@@ -310,32 +343,6 @@ fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_mac
     assert!(normal.join("secrets.env").exists());
 }
 
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
-#[test]
-fn retired_project_actions_convert_for_inspection_and_persist_before_an_unchanged_sync() {
-    let env = TestEnv::new();
-    let repo = env.git_repo("retired-actions");
-    let old = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json\nschema_version: 2\nproject: retired-actions\nactions: {test: make test}\napprovals: {prd: peer}\n";
-    repo.write("instrukt.yaml", old);
-    repo.commit("old project configuration");
-    let read = env
-        .run(repo.path(), ["config", "get", "approvals.prd"])
-        .success();
-    assert_eq!(repo.read("instrukt.yaml"), old);
-    insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stdout), @"peer");
-    env.run(repo.path(), ["sync"]).success();
-    repo.write("instrukt.yaml", old);
-    env.run(repo.path(), ["sync"]).success();
-    let stored: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
-    assert!(stored.get("actions").is_none());
-    let after_sync = env
-        .run(repo.path(), ["config", "get", "approvals.prd"])
-        .success();
-    insta::assert_snapshot!(String::from_utf8_lossy(&after_sync.get_output().stdout), @"peer");
-}
-
 fn history_migration_setup(global: &str, project: &str) -> (TestEnv, common::Repo) {
     let env = TestEnv::new();
     let repo = env.git_repo("history-migration");
@@ -350,7 +357,6 @@ fn effective_history(env: &TestEnv, repo: &common::Repo) -> serde_json::Value {
         .success();
     serde_json::from_slice(&result.get_output().stdout).unwrap()
 }
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
 #[test]
 fn history_migration_preserves_inherited_global_false_without_a_project_override() {
@@ -369,7 +375,6 @@ fn history_migration_preserves_inherited_global_false_without_a_project_override
     );
     assert!(migrated.get("modules").is_none());
 }
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
 #[test]
 fn history_migration_preserves_an_explicit_project_override() {
@@ -380,7 +385,6 @@ fn history_migration_preserves_an_explicit_project_override() {
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(effective_history(&env, &repo), true);
 }
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF2
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL1
 #[test]
 fn history_migration_keeps_the_default_when_neither_layer_sets_a_value() {

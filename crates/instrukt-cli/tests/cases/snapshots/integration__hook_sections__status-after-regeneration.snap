@@ -1,9 +1,11 @@
 ---
 source: crates/instrukt-cli/tests/cases/hook-sections.rs
-assertion_line: 250
+assertion_line: 493
 expression: "stdout(&env, &status)"
 ---
 hooks directory: [TMP]/demo/.manager-hooks (set by core.hooksPath)
+pre-commit: current
+  last run: none
 post-commit: absent
   add this line to the tool that manages [TMP]/demo/.manager-hooks/post-commit: instrukt hooks run post-commit "$@" || true
   last run: sync succeeded

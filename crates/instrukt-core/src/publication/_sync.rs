@@ -178,7 +178,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     if request.home.is_development() {
         project.primary = project.worktree.clone();
     }
-    config::migrate(request.home, &Layer::Project(project.worktree.clone()))
+    config::bring_current(request.home, &Layer::Project(project.worktree.clone()))
         .map_err(PublicationError::from)?;
     let _lock = LockGuard::acquire(&request.home.locks_dir().join(DOCS_LOCK), DOCS_LOCK_TIMEOUT)
         .map_err(PublicationError::from)?;
@@ -287,7 +287,7 @@ fn publish(
 ) -> Result<SyncOutcome, PublicationError> {
     let home = request.home;
     config::migrate(home, &Layer::Global)?;
-    config::migrate(home, &Layer::Project(project.worktree.clone()))?;
+    config::bring_current(home, &Layer::Project(project.worktree.clone()))?;
     let committed = Committed::read(&project.primary, commit)?;
     let checkout = tempfile::Builder::new()
         .prefix("instrukt-sync-")

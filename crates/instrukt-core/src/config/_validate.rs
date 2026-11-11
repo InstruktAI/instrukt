@@ -179,17 +179,31 @@ fn code_on_github(
 }
 
 /// `instrukt config validate`: the findings of `layer`. A missing layer,
-/// or one of another schema version, is refused rather than judged.
+/// or one of a newer schema version, is refused rather than judged. A
+/// project layer is judged as converted in memory, and one committed at an
+/// older schema version is itself a finding: only a commit brings it
+/// current (`docs/project/spec/feature/configuration/owned-files.md`).
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
     let path = layer.path(home);
-    let Some(value) = super::_layer::inspect_layer(home, layer)?.value else {
+    let view = super::_layer::inspect_layer(home, layer)?;
+    let Some(value) = view.value else {
         return Err(ConfigError::NoLayer {
             path,
             door: layer.init_door(),
         });
     };
     let mut findings = findings_for(home, layer, &path, &value)?;
+    if layer.kind() == LayerKind::Project
+        && let Some(stale) = view.schema_version.and_then(schema_version_finding)
+    {
+        findings.push(Finding {
+            document: path.clone(),
+            key: stale.key,
+            kind: stale.kind,
+            message: stale.message,
+        });
+    }
     if layer.kind() == LayerKind::Global
         && let Err(error) = super::Agents::load(home)
     {
@@ -226,19 +240,28 @@ pub fn validate_local(home: &Home, layer: &Layer) -> Result<Vec<Finding>, Config
     Ok(found)
 }
 
+/// The finding for a document stored at schema version `found` when that is
+/// not the one this instrukt writes.
+fn schema_version_finding(found: u64) -> Option<KeyFinding> {
+    (found != CURRENT_SCHEMA_VERSION).then(|| {
+        KeyFinding::new(
+            "schema_version",
+            FindingKind::SchemaVersionNotCurrent,
+            format!("this instrukt writes schema_version {CURRENT_SCHEMA_VERSION}"),
+        )
+    })
+}
+
 /// The findings of a layer document of kind `kind`; a project layer is
 /// judged together with the machine's `global` layer.
 pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> Vec<KeyFinding> {
     let mut found = _schema::check(value, kind);
-    if let Some(v) = value.get("schema_version").and_then(Value::as_u64)
-        && v != CURRENT_SCHEMA_VERSION
-    {
-        found.push(KeyFinding::new(
-            "schema_version",
-            FindingKind::SchemaVersionNotCurrent,
-            format!("this instrukt writes schema_version {CURRENT_SCHEMA_VERSION}"),
-        ));
-    }
+    found.extend(
+        value
+            .get("schema_version")
+            .and_then(Value::as_u64)
+            .and_then(schema_version_finding),
+    );
     let effective = match kind {
         LayerKind::Global => effective_value(Some(value), None),
         LayerKind::Project => effective_value(global, Some(value)),

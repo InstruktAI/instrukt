@@ -2,7 +2,8 @@
 //! that waits for the sync it started, and the per-hook record of the last
 //! run's outcome that `hooks status` shows.
 //!
-//! Checkout rendering completes before return. Other hook work is detached. For a post-hook it writes the
+//! Checkout rendering completes before return, and so does pre-commit's
+//! staging of a current project layer. Other hook work is detached. For a post-hook it writes the
 //! run's record (sync `running`), starts the detached worker and returns;
 //! the worker starts `instrukt sync`, waits for it within a bound, and
 //! completes the record with sync's exit status — unless a later run of the
@@ -119,7 +120,8 @@ pub struct HookInvocation<'a> {
     pub exe: &'a Path,
 }
 
-/// Runs one hook point in the repository containing `cwd`: hands a push
+/// Runs one hook point in the repository containing `cwd`: pre-commit
+/// stages a current project layer into the commit being made; otherwise hands a push
 /// to main or a pull advancing main to graph generation when it is wired,
 /// and for a post-hook starts the detached worker that runs `instrukt
 /// sync`. Checkout first renders published entrypoints synchronously; other
@@ -137,6 +139,15 @@ pub fn run_hook(
         tracing::debug!(event = "hook_run_outside_worktree", hook = %hook, cwd = %cwd.display());
         return Ok(());
     };
+    if hook == Hook::PreCommit {
+        // Git names the index the commit is made from relative to the hook's
+        // working directory.
+        let index = invocation
+            .env
+            .get("GIT_INDEX_FILE")
+            .map(|file| cwd.join(file));
+        return stage_current_project_layer(home, &root, index.as_deref());
+    }
     if hook == Hook::PostCheckout {
         let outcome = crate::publication::checkout_entrypoints(&crate::publication::SyncRequest {
             home,
@@ -232,6 +243,61 @@ pub fn run_hook(
         run = %run,
         repo_root = %root.display(),
         recorded = project.is_some(),
+        duration_ms = started.elapsed().as_millis() as u64,
+    );
+    Ok(())
+}
+
+/// Converts a project layer the commit being made carries at an older
+/// schema version and stages the conversion into that commit, in the index
+/// `index` names. The checkout's file is converted too when it holds the
+/// staged bytes, so the commit leaves no change behind; an unstaged edit of
+/// it is left as it is. A layer the commit does not carry is left alone
+/// (`docs/project/spec/feature/configuration/owned-files.md`).
+fn stage_current_project_layer(
+    home: &Home,
+    root: &Path,
+    index: Option<&Path>,
+) -> Result<(), RepositoryError> {
+    let started = Instant::now();
+    let entry = git::run_on_index(
+        root,
+        index,
+        ["ls-files", "--stage", "--", config::CONFIG_FILE_NAME],
+        b"",
+    )?;
+    // `<mode> <object> <stage>\t<path>`.
+    let entry = String::from_utf8_lossy(&entry);
+    let mut fields = entry.split_whitespace();
+    let (Some(mode), Some(object)) = (fields.next(), fields.next()) else {
+        return Ok(());
+    };
+    let staged = git::run_bytes(root, ["cat-file", "blob", object])?;
+    let Some(converted) = config::converted_project_layer(root, &staged)? else {
+        return Ok(());
+    };
+    let written = git::run_on_index(root, index, ["hash-object", "-w", "--stdin"], &converted)?;
+    let written = String::from_utf8_lossy(&written);
+    let cacheinfo = format!("{mode},{},{}", written.trim(), config::CONFIG_FILE_NAME);
+    git::run_on_index(
+        root,
+        index,
+        ["update-index", "--cacheinfo", cacheinfo.as_str()],
+        b"",
+    )?;
+    let path = root.join(config::CONFIG_FILE_NAME);
+    let checkout_matches = match std::fs::read(&path) {
+        Ok(bytes) => bytes == staged,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(source) => return Err(RepositoryError::Read { path, source }),
+    };
+    if checkout_matches {
+        config::migrate(home, &config::Layer::Project(root.to_path_buf()))?;
+    }
+    tracing::info!(
+        event = "project_layer_staged_current",
+        repo_root = %root.display(),
+        checkout_converted = checkout_matches,
         duration_ms = started.elapsed().as_millis() as u64,
     );
     Ok(())
@@ -403,7 +469,7 @@ fn main_advance(
             }
             Ok(Some((sha, MainAdvance::Pull)))
         }
-        Hook::PostCommit | Hook::PostCheckout => Ok(None),
+        Hook::PreCommit | Hook::PostCommit | Hook::PostCheckout => Ok(None),
     }
 }
 

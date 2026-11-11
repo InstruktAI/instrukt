@@ -287,7 +287,10 @@ pub fn project_with_layer(env: &TestEnv, extra: &str) -> Repo {
     let repo = env.git_repo("demo");
     repo.write(
         "instrukt.yaml",
-        &format!("schema_version: 1\nproject: demo\nmodules:\n  blueprint: true\n{extra}"),
+        &format!(
+            "schema_version: {}\nproject: demo\nmodules:\n  blueprint: true\n{extra}",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
     );
     repo.git([
         std::ffi::OsStr::new("remote"),

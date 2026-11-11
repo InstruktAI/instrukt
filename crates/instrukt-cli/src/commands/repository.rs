@@ -187,9 +187,10 @@ enum HooksCommand {
     /// outdated or absent (with the line to give a hook manager), and the
     /// last run's outcome.
     Status,
-    /// What a section calls: checkout waits for entrypoint rendering and first
-    /// publication if needed; other publication triggers run detached.
-    /// Never fails the git operation.
+    /// What a section calls: pre-commit stages a project layer converted to
+    /// the current schema into the commit; checkout waits for entrypoint
+    /// rendering and first publication if needed; other publication triggers
+    /// run detached. Never fails the git operation.
     Run(RunArgs),
     /// The detached process a hook run starts.
     #[command(hide = true)]
@@ -198,8 +199,8 @@ enum HooksCommand {
 
 #[derive(Debug, clap::Args)]
 struct RunArgs {
-    /// The hook point: post-commit, post-merge, post-rewrite, post-checkout
-    /// or pre-push.
+    /// The hook point: pre-commit, post-commit, post-merge, post-rewrite,
+    /// post-checkout or pre-push.
     hook: String,
     /// The arguments git passed the hook.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

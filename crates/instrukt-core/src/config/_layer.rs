@@ -167,10 +167,20 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
     }
 }
 
+/// Whether reading `layer` through `home` persists its conversion: only the
+/// machine's layer outside inspection. A project layer is committed to its
+/// repository, so ordinary paths convert it in memory and leave the file as
+/// committed; [`migrate`] (the `config` writing verbs and the pre-commit
+/// hook) and [`patch`] are the paths that write it
+/// (`docs/project/spec/feature/configuration/owned-files.md`).
+fn persists_conversion(home: &Home, layer: &Layer) -> bool {
+    !home.is_inspection() && matches!(layer, Layer::Global)
+}
+
 /// Reads a layer for a read command: absent is `None`; an unusable schema
 /// version is refused.
 pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, ConfigError> {
-    if home.is_inspection() {
+    if !persists_conversion(home, layer) {
         return Ok(inspect_layer(home, layer)?.value);
     }
     migrate_if_needed(home, layer)?;
@@ -185,7 +195,7 @@ pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, C
 }
 
 pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
-    if home.is_inspection() {
+    if !persists_conversion(home, layer) {
         return Ok(());
     }
     if read(&layer.path(home))?.is_some_and(|doc| matches!(version(&doc.value), Version::Older(_)))
@@ -277,14 +287,16 @@ pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, Conf
 
 /// The current revision of `layer`.
 pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
-    if home.is_inspection() {
+    let persists = persists_conversion(home, layer);
+    if persists {
+        migrate_if_needed(home, layer)?;
+    } else {
         inspect_layer(home, layer)?;
     }
-    migrate_if_needed(home, layer)?;
     let path = layer.path(home);
     match read(&path)? {
         Some(doc) => {
-            if !home.is_inspection() {
+            if persists {
                 require_usable(layer, &path, &doc.value)?;
             }
             Ok(Revision::of(&doc.bytes))
@@ -335,11 +347,16 @@ pub fn patch(
     if let Version::Older(from) = version(&doc.value) {
         super::_migrate::selection(home, layer, &mut doc.value, true)?;
         doc.value = migrate_value(doc.value, from, layer.kind());
-        write(&path, &doc.bytes, &doc.value)?;
-        doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
-            path: path.clone(),
-            door: layer.init_door(),
-        })?;
+        // The machine's layer keeps its conversion even when the patch is
+        // refused; a project layer is converted only by the write that
+        // applies the patch.
+        if matches!(layer, Layer::Global) {
+            write(&path, &doc.bytes, &doc.value)?;
+            doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
+                path: path.clone(),
+                door: layer.init_door(),
+            })?;
+        }
     }
     require_usable(layer, &path, &doc.value)?;
     let current = Revision::of(&doc.bytes);
@@ -398,10 +415,60 @@ pub enum MigrationOutcome {
     Migrated { from: u64 },
 }
 
+/// Brings `layer` to the current schema version for a path that is not an
+/// `instrukt config` writing verb — publication, installation, ticks: the
+/// machine's layer is migrated on disk ([`migrate`]); a project layer is
+/// checked and converted in memory only, its file left as committed. Either
+/// way a newer or unknown version is refused.
+pub fn bring_current(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
+    if persists_conversion(home, layer) {
+        migrate(home, layer)?;
+        return Ok(());
+    }
+    let path = layer.path(home);
+    let Some(doc) = read(&path)? else {
+        return Ok(());
+    };
+    match version(&doc.value) {
+        Version::Current => Ok(()),
+        Version::Older(_) => current_view(home, layer, &path, doc.value).map(drop),
+        Version::Newer(found) => Err(ConfigError::NewerSchema {
+            path,
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+        }),
+        Version::Unknown => Err(ConfigError::UnknownSchema { path }),
+    }
+}
+
+/// The project layer document `bytes` of the repository rooted at `root`,
+/// converted to the current schema version and rendered as [`migrate`]
+/// writes it; `None` when it is already
+/// current. A newer or unknown version is refused. The pre-commit hook
+/// converts the version a commit is being made from with this.
+pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u8>>, ConfigError> {
+    let path = root.join(CONFIG_FILE_NAME);
+    let value = parse(&path, bytes)?;
+    match version(&value) {
+        Version::Current => Ok(None),
+        Version::Newer(found) => Err(ConfigError::NewerSchema {
+            path,
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+        }),
+        Version::Unknown => Err(ConfigError::UnknownSchema { path }),
+        Version::Older(from) => {
+            let value = migrate_value(value, from, LayerKind::Project);
+            render(&path, bytes, &value).map(Some)
+        }
+    }
+}
+
 /// Brings `layer` to the current schema version with its settings kept:
 /// an older document is rewritten through the same atomic write as a
 /// patch; a current one is left untouched; a newer one is refused.
-/// Publication and `init` run this.
+/// `init`, the `config` writing verbs, the pre-commit hook and, for the
+/// machine's layer, [`bring_current`] run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
     let started = Instant::now();
     let path = layer.path(home);
@@ -532,6 +599,14 @@ pub(crate) fn normalize_slug(text: &str) -> String {
 /// previous bytes `before` open with, if any
 /// (`docs/project/spec/feature/publication/editor-schemas.md`).
 fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigError> {
+    let bytes = render(path, before, value)?;
+    atomic_write(path, &bytes)?;
+    Ok(Revision::of(&bytes))
+}
+
+/// The bytes [`write`] stores for `value` at `path` whose previous bytes
+/// were `before`.
+fn render(path: &Path, before: &[u8], value: &Value) -> Result<Vec<u8>, ConfigError> {
     let rendered = super::_render::render_yaml(value).map_err(|source| ConfigError::Render {
         path: path.to_path_buf(),
         source,
@@ -541,8 +616,7 @@ fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigEr
         None => Vec::new(),
     };
     bytes.extend_from_slice(rendered.as_bytes());
-    atomic_write(path, &bytes)?;
-    Ok(Revision::of(&bytes))
+    Ok(bytes)
 }
 
 /// The lock serializing writers of the document at `path`. It lives in the
@@ -588,6 +662,30 @@ mod tests {
         let current = format!("schema_version: {CURRENT_SCHEMA_VERSION}\n");
         assert!(require_usable(&layer, path, &yaml(&current)).is_ok());
         assert!(require_usable(&layer, path, &yaml("project: p\n")).is_ok());
+    }
+
+    #[test]
+    fn an_older_committed_project_layer_converts_with_its_modeline_and_a_current_one_does_not() {
+        let root = Path::new("repo");
+        let modeline = "# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json";
+        let older = format!("{modeline}\nschema_version: 2\nproject: p\nactions: {{test: t}}\n");
+        let converted = converted_project_layer(root, older.as_bytes())
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8(converted.clone()).unwrap();
+        assert_eq!(text.lines().next(), Some(modeline));
+        let value = yaml(&text);
+        assert_eq!(
+            value["schema_version"].as_u64(),
+            Some(CURRENT_SCHEMA_VERSION)
+        );
+        assert!(value.get("actions").is_none());
+        assert_eq!(converted_project_layer(root, &converted).unwrap(), None);
+        let newer = format!("schema_version: {}\n", CURRENT_SCHEMA_VERSION + 1);
+        assert!(matches!(
+            converted_project_layer(root, newer.as_bytes()),
+            Err(ConfigError::NewerSchema { .. })
+        ));
     }
 
     #[test]

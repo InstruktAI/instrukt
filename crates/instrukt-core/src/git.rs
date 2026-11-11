@@ -110,7 +110,28 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    run_on_index(dir, None, args, input)
+}
+
+/// Runs `git <args>` in `dir` with `input` on its standard input against
+/// the index file `index` rather than the repository's own: the index a
+/// commit is being made from, which git names to its hooks in
+/// `GIT_INDEX_FILE`. `None` uses the repository's own index. Returns stdout
+/// as bytes; a non-zero exit is an error carrying stderr.
+pub fn run_on_index<I, S>(
+    dir: &Path,
+    index: Option<&Path>,
+    args: I,
+    input: &[u8],
+) -> Result<Vec<u8>, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let (args_text, mut command) = command(dir, args);
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
     let output =
         crate::process::output(&mut command, Some(input), COMMAND_TIMEOUT).map_err(|error| {
             GitError::Spawn {

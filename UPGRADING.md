@@ -20,6 +20,17 @@ A pin commit is not a successful check. Redispatch that branch's contract workfl
 if dispatch was interrupted. Only current dependency heads are observed, so a
 failure replaced before observation may be missed.
 
+### Committed project layers change only in a commit
+
+instrukt no longer rewrites a repository's committed `instrukt.yaml` from sync,
+hooks after a commit or checkout, installation or ticks; it converts an older
+one in memory, and its new `pre-commit` hook section stages the conversion into
+the developer's next commit. In each adopted repository run `instrukt hooks
+install` (or add the line `instrukt hooks status` prints to the hook manager)
+so the `pre-commit` section exists. `instrukt config validate` now reports a
+committed project layer older than the binary's schema, so CI fails until such a
+commit lands.
+
 ### Dependency-update CI observation
 
 Configuration schema 5 adds the project-only `ci.dependency_branch_prefixes`

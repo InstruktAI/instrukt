@@ -20,7 +20,17 @@ impl Computer {
         upstream.write("README.md", "first\n");
         upstream.commit("feat: first release");
         upstream.git(["push", "--quiet", "origin", "main"]);
-        let project = project(&env, "fork", &[("instrukt.yaml", "schema_version: 1\nproject: fork\nevents:\n  watch:\n    - {remote: upstream, ref: refs/heads/main}\n".into())]);
+        let project = project(
+            &env,
+            "fork",
+            &[(
+                "instrukt.yaml",
+                format!(
+                    "schema_version: {}\nproject: fork\nevents:\n  watch:\n    - {{remote: upstream, ref: refs/heads/main}}\n",
+                    instrukt_core::config::CURRENT_SCHEMA_VERSION
+                ),
+            )],
+        );
         project.git(["remote", "add", "upstream", bare.to_str().unwrap()]);
         sync(&env, &project);
         Self {

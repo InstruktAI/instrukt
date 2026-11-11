@@ -3,6 +3,7 @@ source: crates/instrukt-cli/tests/cases/hook-sections.rs
 expression: "stdout(&env, &reinstalled)"
 ---
 hooks directory: [TMP]/demo/.git/hooks
+pre-commit: already current
 post-commit: already current
 post-merge: already current
 post-rewrite: already current
