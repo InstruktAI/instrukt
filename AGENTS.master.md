@@ -3,6 +3,6 @@
 ## Purpose
 
 Instrukt is a modular Rust CLI for context engineering: documentation instructs
-agents through progressive retrieval and publication.
+agents through progressive retrieval and publication. It replaces TeleClaude.
 
 <!-- LOCKED_FILE: edit only when the human explicitly requests this master change. -->
