@@ -1,6 +1,11 @@
 ---
-description: "The instrukt skill — one cockpit skill in instrukt's own repository, installed into every agent CLI on a computer with one skills command pinned to a release; it reads `instrukt status` and then adopts a repository, switches on a module or reconfigures through an interview the agent guides."
-delivered_by: [release-installer]
+description: The instrukt skill — one cockpit skill in instrukt's own repository, installed into every agent CLI on a computer with one skills command pinned to a release; it reads `instrukt status` and then adopts a repository, switches on a module or reconfigures through an interview the agent guides.
+binding_reservations:
+  UC-CP1: release-installer
+  UC-CP3: release-installer
+  UC-CP4: release-installer
+  UC-CP5: release-installer
+  UC-CP6: release-installer
 ---
 # Agent Skill — Spec
 

@@ -27,18 +27,11 @@ developer wrote is lost while it finds its place. The master never takes that
 content: what a project's `AGENTS.md` includes comes only from
 `docs/project/index.yaml`.
 
-<!-- planned-change:release-installer -->
-Placing it is migration the adopting agent guides: the file's purpose
-into the master's `## Purpose`, each instruction into a project snippet of its
-type under `docs/project/` with its entry in the index, and the kept copy
-removed once nothing in it is left unplaced.
-<!-- change:release-installer -->
 Placing it is migration the adopting agent guides
 (`project/instrukt/spec/feature/distribution/agent-skill`): the file's purpose
 into the master's `## Purpose`, each instruction into a project snippet of its
 type under `docs/project/` with its entry in the index, and the kept copy
 removed once nothing in it is left unplaced.
-<!-- /planned-change:release-installer -->
 
 From the first sync the root
 `AGENTS.md` is rendered by instrukt. Init reports the kept copy, that the file

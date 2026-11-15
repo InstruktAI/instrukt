@@ -276,11 +276,9 @@ This context emits no events.
   project key `workflow.domain` (default `sdlc`); these files have no snippet
   index entries.
 
-<!-- planned:release-installer -->
 - **distribution** — Published language. `instrukt status` is the state the
   instrukt cockpit skill reads on every visit
   (`project/instrukt/spec/domain/distribution`).
-<!-- /planned:release-installer -->
 
 ## Known caveats
 

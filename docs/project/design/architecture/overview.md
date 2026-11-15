@@ -142,17 +142,6 @@ commands. Docs name `-h`.
 
 ### External surfaces
 
-<!-- planned-change:release-installer -->
-| Surface | Used by | How |
-| --- | --- | --- |
-| git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
-| GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
-| Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
-| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
-| Configured graph engine | blueprint | an adapter emitting the node-link contract |
-| OS scheduler | runner | `instrukt tick` each minute |
-| GitHub Releases | release publication | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
-<!-- change:release-installer -->
 | Surface | Used by | How |
 | --- | --- | --- |
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
@@ -163,7 +152,6 @@ commands. Docs name `-h`.
 | OS scheduler | runner | `instrukt tick` each minute |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
-<!-- /planned-change:release-installer -->
 
 ## Invariants
 
@@ -199,7 +187,6 @@ commands. Docs name `-h`.
 
 ## Primary flows
 
-<!-- planned:release-installer -->
 ### Install
 
 ```mermaid
@@ -219,7 +206,6 @@ upgrades none on its own; a skill and a binary of the same release share one
 version. Everything set up afterwards goes through the CLI into the
 configuration layers, never into the skill
 (`project/instrukt/spec/domain/distribution`).
-<!-- /planned:release-installer -->
 
 ### Publish
 

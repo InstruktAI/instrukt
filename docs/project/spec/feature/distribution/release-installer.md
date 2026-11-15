@@ -9,14 +9,12 @@ A version tag publishes instrukt binaries and their verification assets as one
 GitHub release. The release workflow validates version agreement, builds and
 packages every supported target, then publishes the complete asset set.
 
-<!-- planned:release-installer -->
 A developer, or an agent acting for one, gets the `instrukt` binary onto a
 computer with one command, and gets a newer one the same way. The installer
 is a POSIX shell script published with every release. It installs the release
 built for the computer it runs on, refuses a download that does not match the
 release's checksums, and writes only the binary. It is the one way instrukt is installed, by a developer and by the instrukt
 skill (`project/instrukt/spec/feature/distribution/agent-skill`).
-<!-- /planned:release-installer -->
 
 ## Canonical fields
 
@@ -39,7 +37,6 @@ GitHub release of that tag (`.github/workflows/release.yml`). Its assets:
 - A published release is never changed; a fix is a new version. There is one
   release channel: every release is the latest when it is published.
 
-<!-- planned:release-installer -->
 ### Where it gets binaries
 
 - Without a version, the installer resolves the latest release from
@@ -104,11 +101,9 @@ latest release; with `--version` it installs exactly that one, older or
 newer. When the binary in the install directory already reports the target
 version, the installer says so and changes nothing. A failed upgrade leaves
 the previous binary in place.
-<!-- /planned:release-installer -->
 
 ## Use cases
 
-<!-- planned:release-installer -->
 ### UC-RI1: A developer installs instrukt with one command
 
 ```gherkin
@@ -150,30 +145,21 @@ When they run the installer
 Then it refuses, naming what their computer reported and the supported platforms
 And nothing is downloaded or written
 ```
-<!-- /planned:release-installer -->
 
 ## Known caveats
 
-<!-- planned-change:release-installer -->
-- Intel macOS, Windows and musl-only Linux have no release target.
-<!-- change:release-installer -->
 - Intel macOS, Windows and musl-only Linux have no release target; the
   installer refuses them.
-<!-- /planned-change:release-installer -->
 
 - Checksums prove integrity against the release, not authorship: trust rests
   on the GitHub release served over HTTPS.
 
-<!-- planned:release-installer -->
 - The installer does not remove instrukt; deleting the binary does.
-<!-- /planned:release-installer -->
 
 ## See Also
 
 - [project/instrukt/spec/domain/distribution](../../domain/distribution.md)
 
-<!-- planned:release-installer -->
 - [project/instrukt/spec/feature/distribution/agent-skill](agent-skill.md)
-<!-- /planned:release-installer -->
 
 - [project/instrukt/design/architecture/overview](../../../design/architecture/overview.md)

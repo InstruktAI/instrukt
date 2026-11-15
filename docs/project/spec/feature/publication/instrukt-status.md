@@ -12,11 +12,9 @@ on, is this repository adopted, which domains are published and by whom, and
 which other projects publish here. The command only reads: it writes no file,
 takes no lock, reaches no network and starts no session.
 
-<!-- planned:release-installer -->
 The instrukt cockpit skill
 (`project/instrukt/spec/feature/distribution/agent-skill`) opens
 every visit with it.
-<!-- /planned:release-installer -->
 
 ## Canonical fields
 
@@ -124,9 +122,7 @@ And shows that this repository's publication of it would be refused
 
 - [project/instrukt/spec/domain/publication](../../domain/publication.md)
 
-<!-- planned:release-installer -->
 - [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
-<!-- /planned:release-installer -->
 
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/repository/project-initialization](../repository/project-initialization.md)
