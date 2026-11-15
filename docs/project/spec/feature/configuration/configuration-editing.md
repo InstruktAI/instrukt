@@ -1,7 +1,5 @@
 ---
 description: Creating, reading and changing `instrukt.yaml` through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes.
-binding_reservations:
-  UC-CE3: instrukt-first-build
 ---
 
 # Configuration Editing — Spec
