@@ -24,8 +24,9 @@ description: This repository's documentation is the authority for everything ins
 
 - The human directs the work on this repository in conversation and iterates
   on it until it is complete. It is not delivered through todos.
-- Documentation leads the code: a change in behavior is written into the
-  owning snippet first, and the code follows in the same line of work.
+- Documentation leads the code
+  (`sdlc/principle/documentation-first-development`); here the code follows
+  in the same line of work.
 - A snippet states the agreed contract as it reads once the work is complete.
   It carries no pending carrier: no planned marker, no companion file and no
   `delivered_by`, which belong to delivery through todos. While work is under

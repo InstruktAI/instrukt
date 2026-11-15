@@ -139,7 +139,7 @@ And the instrukt skill of the same release is installed for every agent CLI on t
 And in their next session, in any of those agent CLIs, opening the skill reports instrukt's state
 ```
 
-UC-CP2 is retired: no startup hook announces instrukt.
+### UC-CP2
 
 ### UC-CP3: A developer adopts a repository through an interview the agent guides
 
