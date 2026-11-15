@@ -1,7 +1,5 @@
 ---
 description: Published subscriptions deterministically accept one activation per event, procedure and exact home on the emitting computer.
-binding_reservations:
-  UC-PSR13: instrukt-first-build
 ---
 # Procedure Subscription Routing — Spec
 

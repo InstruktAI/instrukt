@@ -1,11 +1,5 @@
 ---
 description: One runtime-neutral agent skill configures participating computers through local instrukt commands, with runtime-specific coordination and verification.
-binding_reservations:
-  UC-CS1: instrukt-first-build
-  UC-CS2: instrukt-first-build
-  UC-CS3: instrukt-first-build
-  UC-CS4: instrukt-first-build
-  UC-CS5: instrukt-first-build
 ---
 
 # Configuration Skill — Spec
