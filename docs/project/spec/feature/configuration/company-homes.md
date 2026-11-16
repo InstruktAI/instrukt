@@ -1,5 +1,5 @@
 ---
-description: Company homes — a company exists on a computer as the folder `~/.instrukt/companies/<name>/` with its own settings document and its own protected secrets, addressed with `--company <name>`; no registry, no project ownership and no roles.
+description: Company homes — a company exists on a computer as the folder `~/.instrukt/companies/<name>/` with its own settings document, its members and its own protected secrets, addressed with `--company <name>`; no registry, no project ownership and no roles.
 ---
 # Company Homes — Spec
 
@@ -48,6 +48,37 @@ home's `secrets.env`. The machine's secrets file, another company's file, the
 process environment and any `.env` supply no fallback, so two companies use
 the same reference name for different values.
 
+### Members
+
+```yaml
+members:
+  steven:
+    name: Steven Sonneveld
+    slack: U04ABC123
+    credentials:
+      erpnext: ${STEVEN_ERPNEXT_LOGIN}
+```
+
+A person exists for instrukt only as a member of a company. `members` in the
+company home's settings lists them; a person working for two companies is a
+member entry in each, and nothing links the two.
+
+| Field | Contract |
+| --- | --- |
+| `members.<member>` | The member's key, unique within the company, following the grammar of a project slug. |
+| `name` | The person's display name; the key when omitted. |
+| `<connector>` | The person's identity on a supported connector, such as `slack: <member id>`. A value is listed by at most one member of the company. |
+| `credentials.<tool>` | A `${NAME}` reference into the home's secrets file: the person's own login for that tool. Never a literal value. |
+
+- A connector identity resolves to the one member that lists it, by lookup in
+  that company's list alone. An identity no member lists is unknown; resolution
+  never consults another company or invents a member.
+- An identity listed by two members, a literal credential and an unknown field
+  in a member entry, an unsupported connector's key among them, are validation
+  findings naming the member and the field.
+- A member entry carries no role and grants nothing: it says who a person is on
+  a connector and which logins are theirs.
+
 ## Use cases
 
 ### UC-CH1: Add a company to a computer
@@ -68,6 +99,16 @@ When each company's settings are resolved
 Then each resolves the value recorded in its own home
 And neither the machine's secrets nor the other company's supply it
 And no output discloses a value
+```
+
+### UC-CH3: List a company's people once for every channel and tool
+
+```gherkin
+Given a developer lists a company's members with their channel identities and their own tool logins
+When the company's settings are validated and read
+Then each channel identity belongs to exactly one member
+And each member's logins appear as references, never as values
+But an identity listed by two members is refused naming both
 ```
 
 ## Known caveats

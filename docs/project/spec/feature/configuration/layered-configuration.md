@@ -53,6 +53,7 @@ enable events. Installation and withdrawal are owned by
 | `events.watch: [{remote, ref}]` | project only | runner |
 | `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `company` | company home only; equals the home folder's name | configuration |
+| `members.<member>` (`name`, an identity per connector, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves senders and tool logins |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
