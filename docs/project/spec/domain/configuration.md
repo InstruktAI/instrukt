@@ -1,5 +1,5 @@
 ---
-description: The configuration bounded context — `instrukt.yaml` in a global and a project layer, per-key layer rules, schema versions and migration, `instrukt config get|patch|init|validate`, interpolation and runtime selection.
+description: The configuration bounded context — `instrukt.yaml` in a global and a project layer, company homes with their own document and secrets, per-key layer rules, schema versions and migration, `instrukt config get|patch|init|validate`, interpolation and runtime selection.
 ---
 
 # Configuration — Spec
@@ -11,7 +11,9 @@ The configuration context owns the layered `instrukt.yaml`, role-keyed
 schema, read in two layers on git's model of a user file and a repository file. The global layer
 (`~/.instrukt/instrukt.yaml`) holds a machine's defaults and the settings only a
 machine may decide; the project layer (`instrukt.yaml` at a repository's root)
-holds what a project declares and its overrides. The context decides which key
+holds what a project declares and its overrides. A company home
+(`~/.instrukt/companies/<name>/`) holds a company's own settings document and
+secrets. The context decides which key
 may live in which layer, validates documents, migrates older schema versions,
 edits documents safely under concurrent change, and answers values with
 interpolation — including the caller identity recognised by the explicitly
@@ -23,6 +25,16 @@ meaning belongs to the context or module that reads it.
 **Layer**
 : One `instrukt.yaml` document: the **global layer** of the machine or the
 **project layer** of a repository.
+
+**Company home**
+: The folder `~/.instrukt/companies/<name>/` whose settings document and
+secrets file make a company exist on the machine. Its document is read on its
+own and is no layer.
+
+**Member**
+: A person as a company home lists them: a key, a display name, their identity
+on each connector and references to their own tool logins. A person exists only
+as a member of a company.
 
 **Effective configuration**
 : The global layer with the project layer applied over it, for a caller
@@ -69,6 +81,7 @@ be absent outside that runtime and does not change runtime selection.
 - **Owns** — the `instrukt.yaml` schema, `agents.yaml` role/class/scoped-grant,
   bundle and model-selection shapes and validation; GitHub App public profile
   and role-reference configuration; machine-local protected secrets and owned-file migration;
+  company homes, their settings documents and their own protected secrets;
   layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
   revisions and safe patching; interpolation; validation of the explicit runtime
@@ -86,7 +99,8 @@ be absent outside that runtime and does not change runtime selection.
   precedes refusal or skip on every path; configuration owns its ordering and conversion.
 - **Published contracts** — `instrukt config get [<path>] [--global]`,
   `instrukt config patch --revision <rev> [--global]`,
-  `instrukt config init [--global]`, `instrukt config validate [--global]`;
+  `instrukt config init [--global]`, `instrukt config validate [--global]`,
+  each also addressing a company home with `--company <name>`;
   the migration operation every entry path invokes before refusal or skip; the
   configuration schema type the editor schema of `instrukt.yaml` is generated
   from (`project/instrukt/spec/feature/publication/editor-schemas`); the explicit runtime selection and adapter caller-identity lookup used by
@@ -108,6 +122,21 @@ JSON.
 
 ### Aggregates
 
+#### Company home (aggregate)
+
+- **Root:** The company home folder.
+- **Contains:** Its settings document (`schema_version`, `company`, the keys
+  permitted in a company home, its members among them) and its secrets file.
+- **Invariants:**
+  - `company` equals the folder's name.
+  - References in its settings resolve only from its own secrets file.
+  - A connector identity is listed by at most one of its members.
+  - It combines with no layer and names no project.
+- **Identifier:** the company name, unique among the machine's company homes.
+- **Lifecycle:** created by `instrukt config init --company <name>`; changed by
+  `patch` and the secrets commands; migrated like a layer document; never
+  deleted by instrukt.
+
 #### Layer document (aggregate)
 
 - **Root:** Layer document (global or project).
@@ -128,7 +157,7 @@ JSON.
 
 ### Domain events emitted
 
-None. instrukt runs no daemon and emits no events from this context.
+None. This context emits no events.
 
 ### Domain events consumed
 
@@ -141,6 +170,7 @@ This context emits no events.
 ## Use cases
 
 - **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
+- **company-homes** — [project/instrukt/spec/feature/configuration/company-homes](../feature/configuration/company-homes.md) — a company is added to a computer as its own home, each company's secrets stay in its own home, and its people are listed once for every channel and tool.
 - **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
 - **roles-and-capabilities** — [project/instrukt/spec/feature/configuration/roles-and-capabilities](../feature/configuration/roles-and-capabilities.md) — class, scoped action grants, bundles, assignment-based object resolution, focused enforcement and awareness help.
 - **agent-selection** — [project/instrukt/spec/feature/configuration/agent-selection](../feature/configuration/agent-selection.md) — role mappings, provider-instance profiles, tier chains, readiness and selection diagnostics.
@@ -170,7 +200,8 @@ This context emits no events.
 - **Blueprint** — customer / supplier: configuration supplies its module
   switch and engine selection.
 - **Work, workflow, runner** — customer / supplier: configuration supplies
-  board, approval gates, runtime choice and runner settings.
+  board, approval gates, runtime choice and runner settings, and to runner the
+  company homes with their settings and resolved secrets.
 
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship.

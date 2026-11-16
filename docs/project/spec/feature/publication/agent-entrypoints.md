@@ -161,8 +161,10 @@ publishes.
   in the settings file, and its other values, stay as they were. A missing
   settings file is created holding only that key. A settings file that cannot
   be parsed is refused and left untouched, and the sync fails naming it.
-- **No other agent configuration.** Skills, MCP servers, hooks and every other
-  agent setting are outside instrukt and never written.
+- **No other agent configuration.** instrukt writes no skill, MCP server, hook
+  or other agent setting. Agents reach declared MCP servers through
+  `instrukt mcp` (`project/instrukt/spec/feature/runner/mcp-access`), which
+  writes none either.
 
 ## Use cases
 

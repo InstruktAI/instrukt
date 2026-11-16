@@ -123,7 +123,9 @@ composition is:
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
 | `all` | Every catalog action at `any`. |
 
-These entries cover every role declared by instrukt's shipped procedures.
+These entries cover every role declared by instrukt's shipped procedures and
+the `conversation` role the runner gives a conversation session, which has no
+procedure (`project/instrukt/spec/feature/runner/conversations`).
 They share the model `order`/`tier` defaults of agent-selection; the table's App
 column names the identity reference, not another model/provider choice.
 
@@ -138,6 +140,7 @@ column names the identity reference, not another model/provider choice.
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
+| `conversation` | `standing` | `read` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
@@ -169,7 +172,8 @@ publication ownership and single-writer-on-main checks.
 Configuration validation rejects unknown classes, action names, bundle names,
 scopes and malformed grants; it reports configured role entries that no
 installed procedure declares. `default` and the implicit `event-handler` are
-reserved fallback entries, not undeclared-procedure findings. Configuration
+reserved fallback entries and `conversation` is the runner-supplied role of
+conversation sessions; none of the three is an undeclared-procedure finding. Configuration
 inspection shows the effective class, expanded grants, selection and App
 reference without secrets. Procedure names remain open: an unconfigured
 declared role uses `default` rather than being rejected as an unknown role.

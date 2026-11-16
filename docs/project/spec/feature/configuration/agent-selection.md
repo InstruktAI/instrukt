@@ -28,15 +28,21 @@ changing a procedure or recompiling instrukt.
 
 Several profiles can share a kind, including separate accounts of one harness.
 Profile names, provider-instance ids and kinds are distinct identities. The
-file, rather than `instrukt.yaml`, `t3.yaml` or procedure frontmatter, owns
-orders, role mappings and chains. Role class and grants share that same map under
+file, rather than a project's `instrukt.yaml`, `t3.yaml` or procedure
+frontmatter, owns profiles, role mappings, the machine-wide orders and chains; a
+company home's order for its own sessions is the one order set elsewhere, as
+stated below. Role class and grants share that same map under
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`; App references
 select the bot identity under `project/instrukt/spec/feature/work/github-apps`.
 Non-bot agent git-author settings remain separate in `instrukt.yaml`. The
 selected runtime's adapter translates kinds, instance ids and native option names; it supplies no compiled model catalogue.
 
 A task override wins over its role's selection; omitted inputs inherit the role
-mapping, then `default`. Selection walks the effective profile order
+mapping, then `default`. A session that runs in a company home whose settings
+name `profiles` (`project/instrukt/spec/feature/configuration/company-homes`)
+uses that list in place of the `order` its role mapping or `default` gives; the
+tier still comes from the role mapping, and a task override still wins. A home
+that names none uses the mapping's order. Selection walks the effective profile order
 sequentially. In the first ready profile it walks the selected tier's chain;
 only after that chain is exhausted does it try the next profile. Capacity
 restrictions and reported unavailable models are skipped with their reasons.
@@ -75,7 +81,7 @@ This is separate from the generated repository YAML schemas.
 
 Validation rejects unknown action/bundle names and malformed role entries under
 roles-and-capabilities, and reports configured roles no installed procedure
-declares, apart from reserved fallback entries. `instrukt config show agents`
+declares, apart from the reserved entries that contract names. `instrukt config show agents`
 prints effective role classes, expanded scoped grants, App references, model
 mappings and profiles.
 It exposes configuration, never provider credentials. Changing selection does

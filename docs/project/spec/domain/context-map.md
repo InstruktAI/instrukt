@@ -23,14 +23,14 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
-| configuration | Layered settings, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
+| configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
 | publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes and per-computer searchable history | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, connectors and conversations, scheduled ticks, conversation links/identity envelopes, agents' MCP access and per-computer searchable history | `project/instrukt/spec/domain/runner` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
 ### Modules
@@ -42,6 +42,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
+| conversations | runner's connectors and conversation sessions | Global switch, off by default; runtime adapter required; served by the long-lived `instrukt run` |
 
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
@@ -66,7 +67,7 @@ not permission for an upstream module to depend on its consumer.
 | configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
 | blueprint → runner | Customer / Supplier | Blueprint-owned release pin and tool lifecycle consumed by module installation |
 | configuration → blueprint | Customer / Supplier | Module switch and engine selection |
-| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration and runner settings |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration, runner settings and company homes |
 | work, runner → CLI admission | Published language | Owner-supplied todo attempts and standing/scheduled assignment facts for the recognized caller; core-declared lookup wired by the CLI |
 | work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
@@ -105,7 +106,9 @@ External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
-session operations, native thread streams and external notifications.
+session operations, native thread streams and external notifications, and its
+connectors translate a channel provider's messages into conversation turns and
+answers.
 Conversation-link relay and its identity-envelope vocabulary belong to runner
 under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
 shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
@@ -116,7 +119,7 @@ the `skills` command and GitHub's release assets.
 
 ## Governing designs and decisions
 
-- `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no daemon.
+- `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no consumer daemon beside the runner.
 - `project/instrukt/policy/testing` — repository test authorship and validation ruling.
 
 ## Ubiquitous language

@@ -37,8 +37,8 @@ Source declarations themselves refresh per request.
 
 Every verified, well-formed domain-source delivery is published to cluster Redis
 regardless of matching subscribers or local reaction readiness. Its source is
-the ingress computer; origin is the declaring project; subject is its typed
-inbound source including domain. It references no session, regardless of
+the ingress computer; origin is the declaring project or company; subject is
+its typed inbound source including domain. It references no session, regardless of
 request identity headers. Data is the producer document/native payload.
 Relayed names require no per-name registration.
 
@@ -64,8 +64,8 @@ second generic handler registry or postponed conversation adapters.
 
 Each computer may read the cluster stream. The procedure-activation consumer
 acts only where source equals its own computer, so these external procedures
-activate on ingress. A missing declared project home there fails visibly; another
-computer holding that checkout is not an implicit fallback. Other explicitly
+activate on ingress. A missing project checkout or company home there fails
+visibly; another computer holding that home is not an implicit fallback. Other explicitly
 admitted consumers retain their own source-selection contracts.
 
 ## Use cases

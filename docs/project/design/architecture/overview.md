@@ -8,7 +8,7 @@ description: How instrukt is built — one CLI in modules with one-way dependenc
 
 instrukt is a context-engineering module: a single
 CLI that makes documentation the way agents are instructed and, when switched
-on, runs the work those docs describe. It has no consumer daemon. Core operations are commands; enabled events also
+on, runs the work those docs describe. It has no consumer daemon beside its runner; with conversations on, an owned service keeps the runner running. Core operations are commands; enabled events also
 have a narrow standalone loopback webhook receiver on the designated ingress.
 Commands, independent event readers and the conversation-link stream reader
 work against files, git, GitHub, scoped
@@ -32,10 +32,11 @@ home, and the flows.
 | `todos` | work, workflow; the runner dispatching todos | on/off; `runner.autostart` | GitHub, a runtime adapter |
 | `history` | runner history extraction, retained search and merged queries | on by default | runtime conversation source for extraction; cluster Redis for merged search only, independently of events |
 | `events` | runner sources, scoped transport, independent consumers and procedure activation | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
+| `conversations` | runner connectors, conversation sessions and the answer back | on/off, global only | selected runtime adapter; the long-lived runner, kept running by an owned service |
 
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
-shared by `todos` and `events`), `instrukt-todos`. Dependencies point one way:
+shared by `todos`, `events`, `history` and `conversations`), `instrukt-todos`. Dependencies point one way:
 `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
 `instrukt-core` and `instrukt-blueprint`; `instrukt-blueprint` → `instrukt-core`; `instrukt-core` →
 nothing of instrukt. Where core needs an answer only an optional module has
@@ -98,6 +99,7 @@ deleting the home is not a lossless reset.
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
 | `agents.yaml` | one role map with class, scoped `can` bundles, model order/tier and App references; typed provider-instance tier chains | shipped once, then user-owned; upgrade handling under `project/instrukt/spec/feature/configuration/agent-selection` |
 | `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
+| `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
 | `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
 | `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
@@ -149,7 +151,10 @@ commands. Docs name `-h`.
 | Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
+| Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
+| OS service manager | runner | the ingress receiver's socket and service, and with conversations on the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
+| Slack | runner | a Socket Mode connection `instrukt run` opens outward per company home that declares the connector; its history and posting calls with the bot token (`project/instrukt/spec/feature/runner/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 
@@ -349,13 +354,14 @@ flowchart LR
   D --> T[A3 runtime handoff: bounded queued input]
 ```
 
-Ingress addresses `/hooks/inbound/project/<slug>/<domain>`. The project
+Ingress addresses `/hooks/inbound/project/<slug>/<domain>` and
+`/hooks/inbound/company/<name>/<domain>`. The declaring home's
 `webhooks.<domain>` declaration selects secret references, verification
 (native, GitHub or generic HMAC-SHA256) and exactly one event-name source:
 native `{name, payload}`, `name_from`, fixed `name` or GitHub normalization.
 The event type is `<domain>.<name>` and its subject identifies that domain and
-project; `inbound_verify` retains protocol provenance. Undeclared domains have
-no endpoint. Company/person intake remains unavailable.
+home; `inbound_verify` retains protocol provenance. Undeclared domains have
+no endpoint. Person intake remains unavailable.
 
 Local commit and stream acceptance are separate. Existing event rows supply a
 retryable publication handover; ingress accepts only after cluster append or a

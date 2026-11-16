@@ -1,12 +1,12 @@
 ---
-description: "Domain-keyed signed project endpoints, scoped secret rotation and opaque event intake."
+description: "Domain-keyed signed project and company endpoints, scoped secret rotation and opaque event intake."
 ---
 # Inbound Webhook Endpoint Framework — Spec
 
 ## What it is
 
-A project opens an inbound source by declaring `webhooks:` directly in its
-`instrukt.yaml`. The designated ingress reads that declaration for each request,
+A project or a company home opens an inbound source by declaring `webhooks:`
+in its own `instrukt.yaml`. The designated ingress reads that declaration for each request,
 verifies the original bytes and publishes ordinary cluster events. Producers
 of ours map their own domain vocabulary; GitHub uses the built-in normalizer.
 
@@ -16,7 +16,7 @@ of ours map their own domain vocabulary; GitHub uses the built-in normalizer.
 
 ```yaml
 webhooks:
-  erp: {secret: ${ERP_HOOK_SECRET}, previous_secret: ${ERP_HOOK_PREVIOUS_SECRET}}
+  erpnext: {secret: ${ERPNEXT_HOOK_SECRET}, previous_secret: ${ERPNEXT_HOOK_PREVIOUS_SECRET}}
   github: {verify: github, secret: ${GITHUB_HOOK_SECRET}}
   billing: {verify: hmac-sha256, header: Billing-Signature, secret: ${BILLING_SECRET}, name_from: type}
   sentry: {verify: hmac-sha256, header: Sentry-Hook-Signature, secret: ${SENTRY_SECRET}, name: issue_alert}
@@ -24,21 +24,25 @@ webhooks:
 
 Sources sit directly under `webhooks`, keyed by the event domain, with no
 direction or `sources` subkey. Domain matches `[a-z][a-z0-9_]*`. Each registered
-project can declare several domains, each selecting its own verification scheme,
-secret references and event-name source. Project configuration and machine-local secrets must
+project and each company home
+(`project/instrukt/spec/feature/configuration/company-homes`) can declare
+several domains, each selecting its own verification scheme, secret references
+and event-name source. The declaring home's configuration and its secrets must
 exist on ingress.
 
 | Source | Derived POST path | Origin and subject |
 | --- | --- | --- |
-| Any declared domain | `/hooks/inbound/project/<slug>/<domain>` | Project origin; `inbound_source:<domain>:project:<slug>` subject |
+| A project's declared domain | `/hooks/inbound/project/<slug>/<domain>` | Project origin; `inbound_source:<domain>:project:<slug>` subject |
+| A company home's declared domain | `/hooks/inbound/company/<name>/<domain>` | Company origin; `inbound_source:<domain>:company:<name>` subject |
 | GitHub example | `/hooks/inbound/project/<slug>/github` | Project origin; `inbound_source:github:project:<slug>` subject |
 
 The general path is `/hooks/inbound/<kind>/<slug>/<domain>`: kind and slug
 identify the origin home; domain selects its declared source and event domain.
-Only project homes execute. Company/person homes are a stated capability limit
-and have no endpoint. No other path segment or query parameter is accepted;
-secrets never occur in URLs. An undeclared domain or unregistered project has
-no endpoint, even with valid signing material. An empty map creates none.
+Projects and company homes have endpoints. A person home is vocabulary only and
+has no endpoint. No other path segment or query parameter is accepted;
+secrets never occur in URLs. An undeclared domain, an unregistered project or
+a company without a home has no endpoint, even with valid signing material. An
+empty map creates none.
 Effective events-off sources are a plain finding and are not served; source
 configuration never overrides module enablement.
 
@@ -54,14 +58,15 @@ validation findings. Optional fields cannot be null.
 
 `secret` is required; `previous_secret` is optional. Both are raw `${NAME}`
 references, never literal signing material. Raw-reference validation precedes
-interpolation. On ingress each resolves solely from the owner-only machine-local
-`~/.instrukt/secrets.env`, with permission checks on read under
-`project/instrukt/spec/feature/configuration/owned-files`. Project `.env`,
-process environment and receiver cwd supply no fallback. A missing,
+interpolation. On ingress a project source's references resolve solely from
+the owner-only machine-local `~/.instrukt/secrets.env`, and a company source's
+solely from its home's `secrets.env`, with permission checks on read under
+`project/instrukt/spec/feature/configuration/owned-files`. No `.env`,
+process environment or receiver cwd supplies a fallback. A missing,
 blank or unreadable required value (including a declared previous value) prevents
 that declaration from validating on ingress. Other computers validate reference
 shape without needing the values. Responses, configuration reads and logs expose
-reference names and declaring project, never expanded values.
+reference names and the declaring home, never expanded values.
 
 Added, changed, removed and rotated declarations take effect on the next request,
 without restarting ingress. HMAC-SHA256 verification uses constant-time comparison
@@ -113,7 +118,7 @@ extraction. Neither native nor GitHub implements a subscription handshake.
 | Missing/invalid signature | 401, no parse or relay |
 | Malformed verified body | 400, no relay |
 | Unsupported handshake method | Method refusal, no handshake or relay |
-| Declaring configuration/secret unreadable | 500, no relay; diagnostic names project/reference safely |
+| Declaring configuration/secret unreadable | 500, no relay; diagnostic names home/reference safely |
 | Cluster claim/publication fails | Transient 502; sender must retry, no local acceptance buffer |
 | Appended or recognized duplicate claim | Successful accepted response |
 
@@ -124,13 +129,13 @@ untrusted data, not authorization to mutate work.
 
 ### External state declarations
 
-External names default to occurrence. A project `webhooks.<domain>` source may
+External names default to occurrence. A `webhooks.<domain>` source may
 set `state: [<name>, …]` and `subject_from: <dotted-payload-field>`. Names omit
 the domain prefix and follow the ordinary event-name grammar. State names
 require a nonempty subject field declaration. After signature verification,
 the field is read from the normalized payload and must be a nonempty string
 or number. Its UTF-8 percent-encoded value qualifies the source's ordinary
-`inbound_source:<domain>:project:<slug>` subject. Missing or invalid values
+`inbound_source:<domain>:<kind>:<slug>` subject. Missing or invalid values
 produce a client error with no relay. Other names remain occurrences. Ingress
 records `inbound_delivery: state` as producer metadata independently of payload
 text. Pending-state replacement is owned by procedure-event-delivery.
@@ -153,10 +158,19 @@ When ingress receives it
 Then it returns a client error and relays nothing
 ```
 
+### UC-IF16: Expose a company's event source
+
+```gherkin
+Given a developer has declared a source in a company's home
+When that company's producer sends a valid signed request to the source's derived path
+Then ingress accepts it and relays an event whose origin is that company
+And whose subject is that company's source
+```
+
 ### UC-IF17: Expose only declared endpoints
 
 ```gherkin
-Given a developer has not registered a project or has not declared the requested source
+Given a developer has not registered a project, has no home for the named company or has not declared the requested source
 When a request reaches its derived path
 Then ingress returns not found and relays nothing
 ```
@@ -310,9 +324,9 @@ But a missing subject value is refused without relay
 
 ## Known caveats
 
-- Project sources are executable; company/person source management is unsupported, so TeleClaude UC-IF16 is not imported as a company-registration feature.
+- A person home declares no source and has no endpoint.
 - WhatsApp handshakes and multi-message delivery (UC-IF3, UC-IF4, UC-IF12) are outside this port and their IDs are not repurposed.
-- Ingress needs the project's declaration and secret values locally. Producer registration, TLS and edge abuse protection are operator prerequisites.
+- Ingress needs the declaring home's declaration and secret values locally. Producer registration, TLS and edge abuse protection are operator prerequisites.
 - Retransmission is protected only within the three-day ingress claim window; consumers own business idempotency.
 
 ## See Also

@@ -1,5 +1,5 @@
 ---
-description: Module-aware runner execution and automatic or manual todo dispatch without an instrukt daemon.
+description: Module-aware runner execution and automatic or manual todo dispatch without a separate consumer daemon.
 visibility: public
 ---
 # Work Dispatch — Spec
@@ -15,8 +15,10 @@ reactivity. The runner executes the work of enabled modules in one process.
 ### Execution contract
 
 `instrukt run` and `instrukt tick` are entry points to the runner. The OS
-scheduler supplies wake-ups. The runner has no consumer daemon or separate state
-service. Enabled project webhook sources use the independent loopback ingress
+scheduler supplies wake-ups. The runner has no consumer daemon beside it and no
+separate state service; with conversations on, an owned service keeps
+`instrukt run` running
+(`project/instrukt/spec/feature/runner/module-installation`). Enabled project webhook sources use the independent loopback ingress
 receiver under `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`;
 that narrow intake outlives runner invocations and exposes no session-control API.
 The runner's local state is the state database
@@ -70,13 +72,9 @@ flush acquires the reflection lock. Local readers take neither lock.
 
 ### Enablement and infrastructure
 
-Infrastructure follows
-`project/instrukt/spec/feature/runner/module-installation`. Core installs none.
-Enabling todos demands only its shared wake-up and existing work/runtime
-prerequisites; local finalize-ready recording needs no Redis. Enabling events
-adds scoped Redis setup/checks and prepared retained readers. Only enabled
-nonempty project sources on the designated ingress demand the independent
-socket-held receiver. No consumer daemon is installed.
+What each enabled module, declared source and declared connector installs is
+owned by `project/instrukt/spec/feature/runner/module-installation`. Core
+installs none, and local finalize-ready recording needs no Redis.
 
 The configuration agent changes desired settings through revision-checked config
 commands, invokes `instrukt install`, and verifies `instrukt install --check`
@@ -176,9 +174,13 @@ record command from an unrelated checkout does not place a workspace. A due task
 keeps its own task execution placement.
 
 A command of a switched-off module refuses and names the door: `todo` names
-`modules.todos`; `sessions`, `run` and `tick` refuse only
+`modules.todos`; `sessions` and `tick` refuse only
 when both `modules.todos` and `modules.events` are off, and then name both;
-with either on, they serve that module's work. `install` and `ticks status` always
+with either on, they serve that module's work. `run` serves those two modules
+and conversations: it refuses only when todos and events are off and there is
+no conversation demand, `modules.conversations` on with a declared connector
+(`project/instrukt/spec/feature/runner/conversations`), and then names the
+three switches. `install` and `ticks status` always
 work; `eval report` needs no switch and reports only the record it can access.
 
 ## Use cases
@@ -201,9 +203,11 @@ Scenario Outline: Choose how development work is picked up
 ### UC-RD2: A developer is told how to enable the runner
 
 ```gherkin
-Given a developer's project has work tracking and event responses both switched off
+Given a developer has work tracking, event responses and conversations all switched off
 When they ask the runner to run, to wake up, or to start a session
-Then the command refuses and names both switches that would enable it
+Then the command refuses and names the switches that would enable it
+But when conversations are switched on and a company declares a connector
+Then the runner runs with work tracking and event responses off
 ```
 
 ## Known caveats

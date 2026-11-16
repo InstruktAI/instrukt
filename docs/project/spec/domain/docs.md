@@ -278,7 +278,7 @@ the session when a procedure is read as supporting knowledge.
 
 ### Domain events emitted
 
-None. instrukt runs no daemon and emits no events from this context.
+None. This context emits no events.
 
 ### Domain events consumed
 

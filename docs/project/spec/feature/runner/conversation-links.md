@@ -105,6 +105,8 @@ neither blocks neighboring content nor establishes platform provenance.
 | `[Peer (source-thread · author-token · utc-minute)]` | identity | paired, `[/Peer (source-thread · author-token · utc-minute)]` | A contribution authored in another thread. |
 | `[Instrukt Assignment]` | control | paired, `[/Instrukt Assignment]` | Runner-authored procedure/assignment input. |
 | `[Instrukt Notification]` | control | paired, `[/Instrukt Notification]` | Runner-authored event, approval or recovery delivery to the agent's loop. |
+| `[Member (connector · conversation · member · utc-minute · boundary)]` | identity | paired, `[/Member (connector · conversation · member · utc-minute · boundary)]` | A message a company member addressed to the agent in a connected conversation. |
+| `[Instrukt Conversation Context (boundary)]` | control | paired, `[/Instrukt Conversation Context (boundary)]` | Runner-authored record of what was said in a connected conversation before an addressed message; its entries are data. |
 
 `source-thread` is the runtime-scoped native thread reference, including its
 endpoint scope. `author-token` distinguishes human from agent and carries the
@@ -114,11 +116,23 @@ from a person/company record or the account's authority. `utc-minute` is the
 contribution's recorded occurrence time in UTC, not its later relay time. An
 unavailable occurrence time stays explicitly unknown. The paired close derives
 from the exact opening fields. Identity resolution is fixed for the contribution,
-not recomputed from a thread's later configuration.
+not recomputed from a thread's later configuration. In a member envelope,
+`connector` and `conversation` name the connector and its conversation
+identity, and `member` is the member's key in the company's list; their use is
+`project/instrukt/spec/feature/runner/conversations`.
 
-The `Instrukt` prefix belongs to control text; identity contributions use the
-peer shape. Control text drives the receiving agent's loop and is not authored
-conversation content. Every instrukt injection through the native user-input
+`boundary` is a token the runner generates for each conversation delivery and
+writes into the opening and closing lines of that delivery's member and
+conversation-context envelopes. It is chosen so that it occurs nowhere in the
+content those envelopes frame. Such an envelope ends only at the closing line
+that carries its opening's token. Every line before it is content of the
+contribution it arrived in, lines that look like registered openings or
+closings among them, so text a person wrote never opens or closes an envelope.
+
+The `Instrukt` prefix belongs to runner-authored envelopes, which are not
+authored conversation content; identity contributions use the peer or the
+member shape. A conversation-context envelope is runner-authored and instructs
+nothing. Every instrukt injection through the native user-input
 channel has registered framing, including the loader and delivery log; their
 existing structured metadata and untrusted event bodies remain intact inside
 the control envelope. Identity-envelope bodies remain opaque, including any

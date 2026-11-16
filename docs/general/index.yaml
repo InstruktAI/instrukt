@@ -37,6 +37,7 @@ listed:
   - general/procedure/event-handling/interruptible
   - general/procedure/git-repo-ingestion
   - general/procedure/knowledge-authoring
+  - general/procedure/mcp-server-tools
   - general/procedure/upstream-watch
 agents:
   claude:

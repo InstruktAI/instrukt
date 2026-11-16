@@ -40,9 +40,11 @@ General and domain positions answer every origin of their declared kind.
 Project-position procedures must declare project home and answer only that
 project's origin. This is instrukt's existing project-local reach, an explicit
 adaptation of TeleClaude's global/company/person tiers. A domain's owner project
-never silently restricts or broadens domain publication reach. Company/person
-vocabulary is retained at general/domain positions; resolving those homes remains
-an unsupported execution capability with a visible activation failure.
+never silently restricts or broadens domain publication reach. A general or
+domain procedure declaring company home answers the origin of every company
+home (`project/instrukt/spec/feature/configuration/company-homes`). Person
+vocabulary is retained at general/domain positions; resolving a person home
+remains an unsupported execution capability with a visible activation failure.
 
 ### Published set and matching
 
@@ -68,7 +70,7 @@ to its owner and a company event never fans out to projects. Matching reads no
 data. No match is a normal outcome with no activation.
 
 External facts have ingress source, so only ingress activates procedures for
-them. A project missing there or an unsupported company/person home fails visibly
+them. A project or company home missing there, or a person home, fails visibly
 at the accepted activation's execution boundary; it is never rerouted. Patterns
 are membership only: overlapping patterns select one procedure once, while two
 procedures remain two responsibilities. Pattern edits never create a new standing
@@ -175,7 +177,7 @@ Then ownership never converts the project into another kind and home keys keep t
 ### UC-PSR13: See an unavailable execution home as a failure
 
 ```gherkin
-Given a developer has an accepted activation for a missing ingress project checkout or unsupported company or person home
+Given a developer has an accepted activation for a missing ingress project checkout or company home, or an unsupported person home
 When the execution boundary resolves that home
 Then it records a visible failure and never substitutes another home or computer
 ```
@@ -245,7 +247,7 @@ And events for another project or none origin cannot activate it
 ## Known caveats
 
 - Runtime acceptance is not entry consumption or domain completion. Delivery uses the adapter's supported input boundary under procedure-event-delivery, including queue-only T3; standing T3 threads stay reachable after human settling.
-- Company/person homes are representable but not executable in this release; resolution fails visibly.
+- A person home is representable but not executable; its resolution fails visibly.
 - Scheduled-only readers react at their next wake within stream retention. No other computer substitutes after missed retention.
 - Replay protection is bounded by consumer marks and retained activation/delivery records, not exactly-once business effects.
 - Source headings PSR1–PSR5, PSR7 and PSR11–PSR19 survive; absent PSR6 and PSR8–PSR10 are not recreated.

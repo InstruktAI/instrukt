@@ -161,8 +161,8 @@ But unrelated branches and successful or unfinished checks do not produce this f
 
 ## Known caveats
 
-- Company/person origins and references travel intact, but resolving those homes
-  is unsupported in this release and fails visibly. Unknown never means none.
+- Person origins and references travel intact, but resolving a person home is
+  unsupported and fails visibly. Unknown never means none.
 - Runtime delivery equivalence remains subject to the S6/A3 feasibility gate. Adapter key-title discovery and ambiguous-start limits remain; a lost acknowledgment can repeat a send and requires owner idempotency.
 
 ## See Also
