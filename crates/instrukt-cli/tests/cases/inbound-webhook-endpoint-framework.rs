@@ -60,6 +60,54 @@ fn native_wrapper_fields_cannot_be_duplicated() {
     rejects_native(br#"{"name":"paid","name":"other","payload":{}}"#);
 }
 
+/// A company home `name` holding `document` after its `company` line, its
+/// `ACME_HOOK` reference recorded in its own secrets file.
+fn company_home(computer: &Computer, name: &str, document: &str) {
+    let dir = computer.env.instrukt_home().join("companies").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("instrukt.yaml"),
+        format!(
+            "schema_version: {}\n{document}",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    computer
+        .env
+        .instrukt(&computer.env.path(""))
+        .args(["secrets", "set", "ACME_HOOK", "--company", name])
+        .write_stdin(SECRET)
+        .assert()
+        .success();
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF16
+#[test]
+fn a_company_source_relays_its_event_with_the_company_origin_and_subject() {
+    let (computer, redis, receiver) = setup();
+    company_home(
+        &computer,
+        "acme",
+        "company: acme\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    assert_eq!(
+        receiver
+            .signed("/hooks/inbound/company/acme/erp", BODY, SECRET, &[])
+            .0,
+        202
+    );
+    let relayed = events(&redis);
+    assert_eq!(relayed.len(), 1);
+    let event: serde_json::Value = serde_json::from_str(&relayed[0].encode().unwrap()).unwrap();
+    assert_eq!(event["type"], "erp.invoice.paid");
+    assert_eq!(event["home"], "company:acme");
+    assert_eq!(event["home_owner"], "none");
+    assert_eq!(event["subject"], "inbound_source:erp:company:acme");
+    assert_eq!(event["source"], computer.computer().as_str());
+    assert_eq!(event["data"], serde_json::json!({"invoice": 42}));
+}
+
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF17
 #[test]
 fn registration_and_the_source_are_both_required_for_a_route() {
@@ -70,6 +118,25 @@ fn registration_and_the_source_are_both_required_for_a_route() {
             .0,
         404
     );
+    // No home for the named company, a folder whose settings name another
+    // company, and a company home that declares no such source.
+    company_home(
+        &computer,
+        "misnamed",
+        "company: acme\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    company_home(
+        &computer,
+        "acme",
+        "company: acme\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    for route in [
+        "/hooks/inbound/company/absent/erp",
+        "/hooks/inbound/company/misnamed/erp",
+        "/hooks/inbound/company/acme/billing",
+    ] {
+        assert_eq!(receiver.signed(route, BODY, SECRET, &[]).0, 404, "{route}");
+    }
     declare(&computer, "{}");
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 404);
     assert_eq!(
@@ -696,12 +763,6 @@ fn a_missing_domain_has_no_endpoint() {
 #[test]
 fn the_old_github_path_has_no_endpoint() {
     absent_route("/hooks/inbound/github/project/fork");
-}
-
-// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
-#[test]
-fn company_intake_is_unavailable() {
-    absent_route("/hooks/inbound/company/fork/erp");
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31

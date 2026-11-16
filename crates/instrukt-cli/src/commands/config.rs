@@ -1,4 +1,6 @@
-//! Configuration commands: `instrukt config get|patch|init|validate`.
+//! Configuration commands: `instrukt config get|patch|init|validate`, each
+//! addressing the project layer, the global layer (`--global`) or a company
+//! home's document (`--company <name>`).
 
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -6,6 +8,7 @@ use std::process::ExitCode;
 
 use anyhow::Context as _;
 use instrukt_core::config::{self, Configuration, InitOutcome, Layer, Revision, parse_patch};
+use instrukt_core::ids::ProjectSlug;
 use serde_yaml_ng::Value;
 
 use crate::context::Ctx;
@@ -40,8 +43,11 @@ enum ConfigCommand {
 #[derive(Debug, clap::Args)]
 struct LayerArgs {
     /// Address the global layer (~/.instrukt/instrukt.yaml).
-    #[arg(long)]
+    #[arg(long, conflicts_with = "company")]
     global: bool,
+    /// Address this company home's document (~/.instrukt/companies/<name>/instrukt.yaml).
+    #[arg(long)]
+    company: Option<ProjectSlug>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -49,8 +55,11 @@ struct GetArgs {
     /// Dotted path, e.g. `modules.todos` or `runtime.session_id`.
     path: Option<String>,
     /// Read the global layer alone.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "company")]
     global: bool,
+    /// Read this company home's document alone.
+    #[arg(long)]
+    company: Option<ProjectSlug>,
     /// Render as JSON.
     #[arg(long)]
     json: bool,
@@ -65,8 +74,11 @@ struct PatchArgs {
     #[arg(long)]
     revision: String,
     /// Patch the global layer.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "company")]
     global: bool,
+    /// Patch this company home's document.
+    #[arg(long)]
+    company: Option<ProjectSlug>,
     /// The patch, inline. Without --yaml or --from-file it is read from
     /// standard input.
     #[arg(long, conflicts_with = "from_file", allow_hyphen_values = true)]
@@ -101,8 +113,10 @@ pub fn run(args: ConfigArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn layer(global: bool, ctx: &Ctx) -> anyhow::Result<Layer> {
-    if global {
+fn layer(global: bool, company: Option<&ProjectSlug>, ctx: &Ctx) -> anyhow::Result<Layer> {
+    if let Some(name) = company {
+        Ok(Layer::Company(name.clone()))
+    } else if global {
         Ok(Layer::Global)
     } else {
         Ok(Layer::project_containing(&ctx.cwd)?)
@@ -111,12 +125,14 @@ fn layer(global: bool, ctx: &Ctx) -> anyhow::Result<Layer> {
 
 fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     if args.revision {
-        let layer = layer(args.global, ctx)?;
+        let layer = layer(args.global, args.company.as_ref(), ctx)?;
         let revision = config::revision(&ctx.home, &layer)?;
         ctx.out.line(revision.as_str())?;
         return Ok(ExitCode::SUCCESS);
     }
-    let configuration = if args.global {
+    let configuration = if let Some(name) = &args.company {
+        Configuration::load_company(&ctx.home, name)?
+    } else if args.global {
         Configuration::load_global(&ctx.home)?
     } else {
         Configuration::load_at(&ctx.home, &ctx.cwd)?
@@ -142,7 +158,7 @@ fn patch(args: PatchArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     {
         config::migrate(&ctx.home, &Layer::Project(root))?;
     }
-    let layer = layer(args.global, ctx)?;
+    let layer = layer(args.global, args.company.as_ref(), ctx)?;
     let text = match (&args.yaml, &args.from_file) {
         (Some(text), _) => text.clone(),
         (None, Some(file)) => std::fs::read_to_string(file)
@@ -166,7 +182,7 @@ fn patch(args: PatchArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let layer = layer(args.global, ctx)?;
+    let layer = layer(args.global, args.company.as_ref(), ctx)?;
     let path = layer.path(&ctx.home);
     let outcome = config::init(&ctx.home, &layer, None)?;
     if args.global
@@ -187,7 +203,7 @@ fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 fn validate(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let layer = layer(args.global, ctx)?;
+    let layer = layer(args.global, args.company.as_ref(), ctx)?;
     let findings = config::validate(&ctx.home, &layer)?;
     for finding in &findings {
         ctx.out.line(&finding.to_string())?;

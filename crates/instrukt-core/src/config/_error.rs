@@ -110,12 +110,19 @@ pub enum ConfigError {
         path: PathBuf,
         found: u64,
         current: u64,
-        door: &'static str,
+        door: String,
     },
     #[error("{path}: schema_version is missing or not a positive integer")]
     UnknownSchema { path: PathBuf },
     #[error("{path} does not exist; create it with `{door}`")]
-    NoLayer { path: PathBuf, door: &'static str },
+    NoLayer { path: PathBuf, door: String },
+    #[error("cannot create the company home {path}: {source}")]
+    CreateHome {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{dir} is not a company: {finding}")]
+    NotACompany { dir: PathBuf, finding: String },
     #[error("{dir} is not inside a git repository; there is no project layer (use --global)")]
     NotInProject { dir: PathBuf },
     #[error("`{path}` does not exist: no `{segment}` in {parent}")]

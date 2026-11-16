@@ -803,3 +803,64 @@ fn unknown_origin_needs_no_subscription_index_to_be_ignored() {
     computer.tick();
     assert_eq!((computer.accepted(), pending(&redis, &computer)), (0, 0));
 }
+
+// spec: project/instrukt/spec/feature/runner/procedure-subscription-routing UC-PSR13
+#[test]
+fn an_unavailable_execution_home_is_a_visible_failure_and_nothing_substitutes() {
+    let (computer, redis) = setup();
+    for (name, home) in [
+        ("projects", "project"),
+        ("companies", "company"),
+        ("people", "person"),
+    ] {
+        publish(
+            &computer,
+            "domain/reactions",
+            name,
+            &format!("subscriptions: ['*']\nsubscription_home: {home}\n"),
+        );
+    }
+    // A folder whose settings name another company is no company home.
+    let misnamed = computer.env.instrukt_home().join("companies/misnamed");
+    std::fs::create_dir_all(&misnamed).unwrap();
+    std::fs::write(
+        misnamed.join("instrukt.yaml"),
+        format!(
+            "schema_version: {}\ncompany: acme\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    for (id, home) in [
+        ("unregistered", "project:absent"),
+        ("homeless", "company:absent"),
+        ("misnamed", "company:misnamed"),
+        ("person", "person:fork"),
+    ] {
+        append(&redis, &event(&computer, id, home, "example.fact"));
+    }
+    computer.tick();
+    computer.tick();
+    let status = computer
+        .env
+        .run(&computer.env.path(""), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    let mut failures: Vec<String> = status["activation_failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| format!("{} [{}]: {}", f["id"], f["state"], f["failure"]))
+        .collect();
+    failures.sort();
+    insta::assert_snapshot!("unavailable-execution-homes", failures.join("\n"));
+    let started: u64 = computer
+        .db()
+        .query_row(
+            "SELECT count(*) FROM procedure_responsibilities",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(started, 0, "no other home or computer substitutes");
+}

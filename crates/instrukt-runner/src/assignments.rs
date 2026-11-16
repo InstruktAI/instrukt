@@ -33,7 +33,14 @@ fn standing_assignment(
             .map_err(|e| StateDbError::invalid(db.path(), format!("standing key {key}: {e}")))?;
         let role=declaration["role"].as_str().filter(|s|!s.is_empty()).ok_or_else(||StateDbError::invalid(db.path(),format!("standing key {key} lost its initialized role; recover its assignment evidence")))?;
         let project = exact_home.strip_prefix("project:").map(str::to_owned);
-        if exact_home != "platform" && project.is_none() {
+        let company = exact_home
+            .strip_prefix("company:")
+            .map(|name| {
+                ProjectSlug::parse(name)
+                    .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))
+            })
+            .transpose()?;
+        if exact_home != "platform" && project.is_none() && company.is_none() {
             return Err(StateDbError::invalid(
                 db.path(),
                 format!("standing key {key} has an unresolved home"),
@@ -57,6 +64,7 @@ fn standing_assignment(
             workspace: Some(checkout.into()),
             key,
             platform: exact_home == "platform",
+            company,
             dispatcher: None,
         };
         if found.as_ref().is_some_and(|a| a != &assignment) {

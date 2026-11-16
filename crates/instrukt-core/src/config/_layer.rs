@@ -31,6 +31,9 @@ pub enum Layer {
     Global,
     /// The `instrukt.yaml` at the root of the repository at this path.
     Project(PathBuf),
+    /// The `instrukt.yaml` of the company home of this name
+    /// (`~/.instrukt/companies/<name>/`); a document of its own, no layer.
+    Company(ProjectSlug),
 }
 
 impl Layer {
@@ -48,6 +51,7 @@ impl Layer {
         match self {
             Layer::Global => LayerKind::Global,
             Layer::Project(_) => LayerKind::Project,
+            Layer::Company(_) => LayerKind::Company,
         }
     }
 
@@ -56,13 +60,15 @@ impl Layer {
         match self {
             Layer::Global => home.global_config(),
             Layer::Project(root) => root.join(CONFIG_FILE_NAME),
+            Layer::Company(name) => home.company_dir(name).join(CONFIG_FILE_NAME),
         }
     }
 
-    pub(crate) fn init_door(&self) -> &'static str {
+    pub(crate) fn init_door(&self) -> String {
         match self {
-            Layer::Global => "instrukt config init --global",
-            Layer::Project(_) => "instrukt config init",
+            Layer::Global => "instrukt config init --global".into(),
+            Layer::Project(_) => "instrukt config init".into(),
+            Layer::Company(name) => format!("instrukt config init --company {name}"),
         }
     }
 }
@@ -168,13 +174,14 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
 }
 
 /// Whether reading `layer` through `home` persists its conversion: only the
-/// machine's layer outside inspection. A project layer is committed to its
+/// documents the machine owns (its layer and its company homes) outside
+/// inspection. A project layer is committed to its
 /// repository, so ordinary paths convert it in memory and leave the file as
 /// committed; [`migrate`] (the `config` writing verbs and the pre-commit
 /// hook) and [`patch`] are the paths that write it
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
 fn persists_conversion(home: &Home, layer: &Layer) -> bool {
-    !home.is_inspection() && matches!(layer, Layer::Global)
+    !home.is_inspection() && matches!(layer, Layer::Global | Layer::Company(_))
 }
 
 /// Reads a layer for a read command: absent is `None`; an unusable schema
@@ -347,10 +354,10 @@ pub fn patch(
     if let Version::Older(from) = version(&doc.value) {
         super::_migrate::selection(home, layer, &mut doc.value, true)?;
         doc.value = migrate_value(doc.value, from, layer.kind());
-        // The machine's layer keeps its conversion even when the patch is
-        // refused; a project layer is converted only by the write that
+        // The machine's documents keep their conversion even when the patch
+        // is refused; a project layer is converted only by the write that
         // applies the patch.
-        if matches!(layer, Layer::Global) {
+        if matches!(layer, Layer::Global | Layer::Company(_)) {
             write(&path, &doc.bytes, &doc.value)?;
             doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
                 path: path.clone(),
@@ -549,6 +556,15 @@ pub fn init(
             Value::String("project".to_owned()),
             Value::String(slug.to_string()),
         );
+    }
+    if let Layer::Company(name) = layer {
+        doc.insert(
+            Value::String("company".to_owned()),
+            Value::String(name.to_string()),
+        );
+        let dir = home.company_dir(name);
+        std::fs::create_dir_all(&dir)
+            .map_err(|source| ConfigError::CreateHome { path: dir, source })?;
     }
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     if path.exists() {

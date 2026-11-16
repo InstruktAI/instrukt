@@ -16,6 +16,8 @@ mod attributed_commit;
 mod binding_reservation;
 #[path = "cases/blast-radius.rs"]
 mod blast_radius;
+#[path = "cases/company-homes.rs"]
+mod company_homes;
 #[path = "cases/configuration-editing.rs"]
 mod configuration_editing;
 #[path = "cases/conversation-links.rs"]

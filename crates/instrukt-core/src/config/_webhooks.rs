@@ -1,4 +1,5 @@
-//! Raw project declarations and project-only signing material. No environment fallback.
+//! Raw project and company source declarations and their homes' signing
+//! material. No environment fallback.
 
 use crate::home::Home;
 use std::collections::BTreeMap;
@@ -255,13 +256,20 @@ impl WebhookSource {
         self.name.as_deref()
     }
 
-    pub fn resolve(&self, home: &Home) -> Result<SigningSecrets, ConfigError> {
+    /// The signing values, resolved from the declaring home's protected
+    /// file alone: the machine's for a project source, the company home's
+    /// own for a company source.
+    pub fn resolve(
+        &self,
+        home: &Home,
+        secrets: &super::SecretSource,
+    ) -> Result<SigningSecrets, ConfigError> {
         Ok(SigningSecrets {
-            current: super::resolve_secret(home, &self.secret)?,
+            current: super::resolve_secret_from(home, secrets, &self.secret)?,
             previous: self
                 .previous_secret
                 .as_deref()
-                .map(|r| super::resolve_secret(home, r))
+                .map(|r| super::resolve_secret_from(home, secrets, r))
                 .transpose()?,
         })
     }

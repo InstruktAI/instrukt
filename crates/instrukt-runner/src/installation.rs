@@ -350,7 +350,7 @@ fn receiver(
                 record.project
             ));
             source
-                .resolve(request.home)
+                .resolve(request.home, &instrukt_core::config::SecretSource::Machine)
                 .map_err(|e| anyhow::anyhow!("project {} source {domain}: {e}", record.project))?;
         }
         projects.push(record.project.to_string());

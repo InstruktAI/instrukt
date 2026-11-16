@@ -121,6 +121,31 @@ impl Configuration {
         Self::load(home, None)
     }
 
+    /// A company home's document alone (`--company <name>`): it combines
+    /// with no layer and answers no defaults. A home whose document is
+    /// absent, or names another company, is not a company and is refused.
+    pub fn load_company(home: &Home, name: &ProjectSlug) -> Result<Self, ConfigError> {
+        let layer = Layer::Company(name.clone());
+        let path = layer.path(home);
+        let Some(value) = read_usable(home, &layer)? else {
+            return Err(ConfigError::NoLayer {
+                path,
+                door: layer.init_door(),
+            });
+        };
+        if let Some(finding) = super::_validate::company_identity(name, &value) {
+            return Err(ConfigError::NotACompany {
+                dir: home.company_dir(name),
+                finding: format!("{}: {}", finding.key, finding.message),
+            });
+        }
+        Ok(Self::from_value(
+            _schema::permitted(&value, LayerKind::Company),
+            None,
+            home.clone(),
+        ))
+    }
+
     fn from_value(value: Value, project_root: Option<PathBuf>, home: Home) -> Self {
         Self {
             value,

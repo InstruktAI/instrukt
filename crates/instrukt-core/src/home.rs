@@ -133,6 +133,23 @@ impl Home {
         self.root.join("instrukt.yaml")
     }
 
+    /// `~/.instrukt/companies/` — one folder per company home on this
+    /// computer (`company-homes`).
+    pub fn companies_dir(&self) -> PathBuf {
+        self.root.join("companies")
+    }
+
+    /// `~/.instrukt/companies/<name>/` — one company's home.
+    pub fn company_dir(&self, company: &ProjectSlug) -> PathBuf {
+        self.companies_dir().join(company.as_str())
+    }
+
+    /// `~/.instrukt/companies/<name>/secrets.env` — the company's own
+    /// protected secrets.
+    pub fn company_secrets_file(&self, company: &ProjectSlug) -> PathBuf {
+        self.company_dir(company).join("secrets.env")
+    }
+
     /// `~/.instrukt/docs/` — the published tree: `general/` and one
     /// directory per published domain, beside `project/<slug>/` and third-party docs.
     pub fn docs_dir(&self) -> PathBuf {
@@ -252,6 +269,8 @@ mod tests {
         let domain = DomainName::parse("sdlc").unwrap();
         for path in [
             home.global_config(),
+            home.company_dir(&project),
+            home.company_secrets_file(&project),
             home.domain_dir(&domain),
             home.index_file(),
             home.third_party_dir(),

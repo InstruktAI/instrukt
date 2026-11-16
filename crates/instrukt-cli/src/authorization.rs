@@ -231,11 +231,18 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
                     &config,
                     procedure,
                     raw("reservation"),
+                    raw("company")
+                        .map(instrukt_core::ids::ProjectSlug::parse)
+                        .transpose()?
+                        .as_ref(),
                 )? {
                     instrukt_runner::standing::BindingHome::Project(project) => {
                         assignment.project.as_ref() == Some(&project)
                     }
                     instrukt_runner::standing::BindingHome::Platform => assignment.platform,
+                    instrukt_runner::standing::BindingHome::Company(company) => {
+                        assignment.company.as_ref() == Some(&company)
+                    }
                 }
             } else {
                 false

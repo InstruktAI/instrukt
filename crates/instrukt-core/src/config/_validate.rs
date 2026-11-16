@@ -34,32 +34,30 @@ fn findings_in_scope(
 ) -> Result<Vec<Finding>, ConfigError> {
     let global = match layer.kind() {
         LayerKind::Global => None,
-        LayerKind::Project => read_usable(home, &Layer::Global)?,
+        LayerKind::Project | LayerKind::Company => read_usable(home, &Layer::Global)?,
     };
     let mut found = judge(value, layer.kind(), global.as_ref());
+    if let Layer::Company(name) = layer {
+        found.extend(company_identity(name, value));
+        let effective = effective_value(global.as_ref(), None)?;
+        found.extend(ingress_signing(
+            home,
+            &effective,
+            value,
+            &super::SecretSource::Company(name.clone()),
+        ));
+    }
     if let Layer::Project(root) = layer {
         found.extend(code_on_github(root, value, global.as_ref())?);
     }
     if let Layer::Project(_) = layer {
         let effective = effective_value(global.as_ref(), Some(value))?;
-        if let Ok(ingress) = super::_webhooks::ingress(effective.get("ingress"))
-            && std::fs::read_to_string(home.machine_id_file())
-                .ok()
-                .as_deref()
-                .map(str::trim)
-                == Some(ingress.computer.as_str())
-            && let Ok(sources) = super::_webhooks::parse(value.get("webhooks"))
-        {
-            for source in sources.values() {
-                if let Err(error) = source.resolve(home) {
-                    found.push(KeyFinding::new(
-                        "webhooks",
-                        FindingKind::UnresolvedReference,
-                        error.to_string(),
-                    ));
-                }
-            }
-        }
+        found.extend(ingress_signing(
+            home,
+            &effective,
+            value,
+            &super::SecretSource::Machine,
+        ));
     }
     if layer.kind() == LayerKind::Global
         && let Some(value) = value.get("github")
@@ -95,8 +93,11 @@ fn findings_in_scope(
     let effective = match layer.kind() {
         LayerKind::Global => effective_value(Some(value), None),
         LayerKind::Project => effective_value(global.as_ref(), Some(value)),
+        LayerKind::Company => effective_value(global.as_ref(), None),
     }?;
-    workflow_capabilities(home, &effective, &mut found);
+    if layer.kind() != LayerKind::Company {
+        workflow_capabilities(home, &effective, &mut found);
+    }
     if other_projects
         && layer.kind() == LayerKind::Global
         && effective
@@ -134,6 +135,58 @@ fn findings_in_scope(
             message: finding.message,
         })
         .collect())
+}
+
+/// On the ingress computer, every declared source's signing references
+/// resolve from the protected secrets file of the declaring home.
+fn ingress_signing(
+    home: &Home,
+    effective: &Value,
+    value: &Value,
+    secrets: &super::SecretSource,
+) -> Vec<KeyFinding> {
+    let mut found = Vec::new();
+    if let Ok(ingress) = super::_webhooks::ingress(effective.get("ingress"))
+        && std::fs::read_to_string(home.machine_id_file())
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            == Some(ingress.computer.as_str())
+        && let Ok(sources) = super::_webhooks::parse(value.get("webhooks"))
+    {
+        for source in sources.values() {
+            if let Err(error) = source.resolve(home, secrets) {
+                found.push(KeyFinding::new(
+                    "webhooks",
+                    FindingKind::UnresolvedReference,
+                    error.to_string(),
+                ));
+            }
+        }
+    }
+    found
+}
+
+/// A company home's document names the company its folder is named for.
+pub(crate) fn company_identity(
+    name: &crate::ids::ProjectSlug,
+    value: &Value,
+) -> Option<KeyFinding> {
+    match value.get("company") {
+        None => Some(KeyFinding::new(
+            "company",
+            FindingKind::Missing,
+            format!("missing; a company home names its company (`company: {name}`)"),
+        )),
+        Some(Value::String(text)) if text == name.as_str() => None,
+        Some(Value::String(text)) => Some(KeyFinding::new(
+            "company",
+            FindingKind::InvalidValue,
+            format!("names company `{text}`, but the home folder is `{name}`"),
+        )),
+        // A value of the wrong shape is the schema's own finding.
+        Some(_) => None,
+    }
 }
 
 /// Whether `modules.todos` is on in the configuration project layer
@@ -265,6 +318,9 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
     let effective = match kind {
         LayerKind::Global => effective_value(Some(value), None),
         LayerKind::Project => effective_value(global, Some(value)),
+        // A company home combines with no layer; its event switch is the
+        // machine's.
+        LayerKind::Company => effective_value(global, None),
     };
     let effective = match effective {
         Ok(value) => value,
@@ -282,6 +338,7 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
         }
+        LayerKind::Company => {}
     }
     feature_capabilities(value, &effective, &mut found);
     references(value, kind, &effective, &mut found);

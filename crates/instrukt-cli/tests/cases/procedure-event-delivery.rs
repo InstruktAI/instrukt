@@ -720,27 +720,53 @@ fn home_identity_supplies_different_subjects_to_one_agent() {
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA13
 #[test]
-fn platform_work_executes_in_its_registered_home_and_project_work_stays_in_the_project() {
+fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_company_context() {
     let r = Responsibility::new("");
     let platform = documented::project(&r.computer.env, "instrukt", &[]);
     documented::sync(&r.computer.env, &platform);
     r.computer.project.write("docs/domain/reactions/procedure/platform.md",&documented::snippet("procedure","Platform response","Handle platform facts.","role: platform-responder\nsubscription_home: platform\nsubscriptions: [example.changed]\n",&[],"Reconcile platform facts.\n"));
+    r.computer.project.write("docs/domain/reactions/procedure/company.md",&documented::snippet("procedure","Company response","Handle company facts.","role: company-responder\nsubscription_home: company\nsubscriptions: [example.changed]\n",&[],"Reconcile company facts.\n"));
     r.computer
         .project
-        .commit("docs: declare platform responsibility");
+        .commit("docs: declare platform and company responsibilities");
     documented::sync(&r.computer.env, &r.computer.project);
+    r.computer
+        .env
+        .run(
+            &r.computer.env.path(""),
+            ["config", "init", "--company", "acme"],
+        )
+        .success();
+    let company = r
+        .computer
+        .env
+        .instrukt_home()
+        .join("companies/acme")
+        .canonicalize()
+        .unwrap();
     r.scoped("platform", "configuration:global", "none");
+    r.scoped("company", "inbound_source:erp:company:acme", "company:acme");
     r.append("project");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
-    for root in [platform.path(), r.computer.project.path()] {
-        let listed = r
-            .computer
-            .env
-            .run(root, ["sessions", "list", "--all", "--json"])
-            .success();
-        let rows: serde_json::Value = serde_json::from_slice(&listed.get_output().stdout).unwrap();
-        assert_eq!(rows.as_array().unwrap().len(), 1);
+    let threads = r.runtime.threads();
+    assert_eq!(threads.len(), 3);
+    let mut folders: Vec<_> = threads
+        .iter()
+        .map(|id| r.runtime.folder(id).canonicalize().unwrap())
+        .collect();
+    folders.sort();
+    let mut expected: Vec<_> = [platform.path(), r.computer.project.path()]
+        .iter()
+        .map(|path| path.canonicalize().unwrap())
+        .chain([company.clone()])
+        .collect();
+    expected.sort();
+    assert_eq!(folders, expected);
+    for id in &threads {
+        let brief = r.runtime.input_log(id);
+        let in_company = r.runtime.folder(id).canonicalize().unwrap() == company;
+        assert_eq!(brief.contains("Home: company:acme"), in_company, "{brief}");
+        assert_eq!(brief.contains("company:"), in_company, "{brief}");
     }
 }
 
@@ -924,4 +950,60 @@ fn bound_standing_delivery_keeps_a_relabelled_threads_event_pending() {
     r.runtime.change("s1", "title", title.into());
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA25
+#[test]
+fn an_open_unattended_agent_receives_a_later_event_like_an_attended_one() {
+    let r = Responsibility::new("subscription_attendance: unattended\n");
+    r.append("initial");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert!(r.runtime.input_log("s1").contains("Attendance: Unattended"));
+    r.append("second");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    r.append("third");
+    r.tick();
+    assert_eq!(
+        r.runtime.message_count("s1"),
+        2,
+        "a busy agent takes one message"
+    );
+    r.runtime.consume("s1");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 3);
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA27
+#[test]
+fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human_settle_still_wakes()
+ {
+    let r = Responsibility::new("subscription_attendance: unattended\n");
+    r.append("initial");
+    r.tick();
+    r.runtime.finish("s1", "completed", "Reconciled.");
+    r.tick();
+    r.tick();
+    let shown = r.runtime.state_dir().join("s1.json");
+    let thread: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&shown).unwrap()).unwrap();
+    assert_eq!(thread["settled"], false);
+    assert_eq!(thread["archived"], false);
+    assert!(
+        r.runtime
+            .calls()
+            .iter()
+            .all(|call| !call.contains("settle") && !call.contains("archive")),
+        "{:?}",
+        r.runtime.calls()
+    );
+    r.runtime.change("s1", "settled", true.into());
+    let before = r.runtime.message_count("s1");
+    r.append("later");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), before + 1);
+    assert!(r.runtime.input_log("s1").contains("\"later\""));
 }

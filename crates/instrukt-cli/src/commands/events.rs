@@ -44,6 +44,9 @@ enum EventsCommand {
 #[derive(Debug, clap::Args)]
 struct BindArgs {
     procedure: instrukt_core::ids::SnippetId,
+    /// Enter a company-home procedure in this company's home.
+    #[arg(long)]
+    company: Option<instrukt_core::ids::ProjectSlug>,
     #[arg(long)]
     reserve: bool,
     #[arg(long)]
@@ -104,7 +107,13 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             }
         }
         EventsCommand::Bind(args) => {
-            let config = instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
+            // A company home combines with no project layer: its standing
+            // entry reads the machine's configuration.
+            let config = if args.company.is_some() {
+                instrukt_core::config::Configuration::load_global(&ctx.home)?
+            } else {
+                instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?
+            };
             let env = crate::wiring::environment(ctx)?;
             let invocation = instrukt_runner::keyed::RuntimeInvocation::acquire(
                 &ctx.home,
@@ -127,6 +136,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                         config: &config,
                         env: &env,
                         entry: &entry,
+                        company: args.company.as_ref(),
                         args: args.args.as_deref(),
                         brief: brief.as_deref(),
                     },
