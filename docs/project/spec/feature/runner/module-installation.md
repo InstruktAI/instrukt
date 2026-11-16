@@ -1,5 +1,5 @@
 ---
-description: Enabled adopted projects determine the shared wake-up, private local Redis and ingress receiver infrastructure installed, checked and repaired on each computer.
+description: Enabled adopted projects and company homes determine the shared wake-up, private local Redis, ingress receiver and runner service infrastructure installed, checked and repaired on each computer.
 visibility: public
 ---
 # Module Installation — Spec
@@ -37,7 +37,7 @@ unused; withdrawal waits for a complete demand read.
 | Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
 | Blueprint enabled | Release-pinned Graphify in the instrukt home via `uv tool install graphifyy==<pin>`; uv is an unmet prerequisite when installation is needed and uv is absent. No wake-up, Redis or receiver solely for blueprint. |
 | History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
-| Conversations enabled with a declared connector | A selected capable runtime. The connector is served by the long-lived `instrukt run`; no wake-up, Redis or receiver solely for conversations, and nothing is installed that keeps `instrukt run` running. |
+| Conversations enabled with a declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no project sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
 | Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
@@ -60,10 +60,10 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt config get [<path>] [--global] [--json]` and `instrukt config get --revision [--global]` | Read settings and revision with credentials redacted or references preserved. |
 | `instrukt config patch --revision <rev> [--global] --from-file <file>` | Validate and atomically record desired configuration; standard input and `--yaml` retain their existing alternatives. Installs nothing. |
 | `instrukt config validate [--global]` | Validate layer, effective module/runtime prerequisites and source references; names findings without exposing secret values. |
-| `instrukt install [--module todos\|events\|history\|blueprint]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
-| `instrukt install --check [--module todos\|events\|history\|blueprint]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
+| `instrukt install [--module todos\|events\|history\|blueprint\|conversations]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
+| `instrukt install --check [--module todos\|events\|history\|blueprint\|conversations]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
-| `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures and receiver placement/health; masks credentials. |
+| `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state and each connector's connection; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
 | `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress or with no enabled valid source. |
 
@@ -127,6 +127,32 @@ off. It reports last invocation independently, including none ever recorded.
 An enabled scheduled computer with no wake for five minutes is stale; no-demand
 mode reports inactivity without treating it as broken required infrastructure.
 One wake proves neither delivered activation nor completed task.
+
+### Runner service
+
+A connector is served only by a running `instrukt run`
+(`project/instrukt/spec/feature/runner/conversations`). While
+`modules.conversations` is on and a company home on the computer declares a
+valid connector, installation keeps one owned service that runs
+`instrukt run`: a launchd job on macOS, a systemd user service on Linux. The
+service manager starts it at login or boot and restarts it when it exits. The
+unit executes the installed instrukt binary with its configuration scope. Cron
+cannot keep a process running; a computer with no supported service manager
+has an unmet prerequisite naming it.
+
+The service's run is an ordinary `instrukt run`: it performs every enabled
+module's work, and the runner lock still admits one runner per machine. While
+it runs, the minute tick exits at once and a second `instrukt run` is refused
+naming the service. While a run started by hand holds the lock, the service's
+process waits for the lock. Installation reuses a working service, repairs a
+missing or stale definition and restarts it so the desired installed
+executable and configuration are the ones running. `install --check` reports
+a missing, stale or stopped service as unmet demand without changing it.
+
+Switching conversations off, or removing the last declared connector, ends the
+demand; the next `instrukt install` withdraws the owned service under the
+withdrawal and ownership rules below. A run started by hand is never the
+service and is never stopped by withdrawal.
 
 ### Local and cluster Redis
 
@@ -379,11 +405,22 @@ But with blueprint disabled
 Then Graphify is neither installed nor required and an existing tool is retained
 ```
 
+### UC-MI13: Keep the runner running for a company's conversations
+
+```gherkin
+Given a developer has switched conversations on and a company home declares a connector
+When they install the demanded infrastructure and the computer later restarts
+Then an owned service has the runner running again without anyone starting it
+But when the computer has no service manager that can keep a process running
+Then installation reports that prerequisite and claims no success
+```
+
 ## Known caveats
 
-- This contract supplies no always-on consumer daemon, runtime scheduling,
-  remote installer, configuration-sharing service or configuration skill.
-  Scheduled-only readers react on their next wake within stream retention.
+- Outside conversation demand this contract keeps no process running:
+  scheduled-only readers react on their next wake within stream retention. It
+  supplies no runtime scheduling, remote installer, configuration-sharing
+  service or configuration skill.
 - Native Redis provisioning, ACLs and socket activation need disposable macOS
   and Linux proof. A tick registrar or rendered template alone is not evidence
   that required infrastructure is installed and working.

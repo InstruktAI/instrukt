@@ -119,7 +119,7 @@ the `skills` command and GitHub's release assets.
 
 ## Governing designs and decisions
 
-- `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no daemon.
+- `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no consumer daemon beside the runner.
 - `project/instrukt/policy/testing` — repository test authorship and validation ruling.
 
 ## Ubiquitous language

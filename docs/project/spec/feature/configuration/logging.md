@@ -7,9 +7,9 @@ description: instrukt logs through the InstruktAI logging contract — one file 
 
 Every instrukt command records its diagnostics where the InstruktAI logging
 contract puts every InstruktAI tool's logs, so they can be read afterwards,
-with the same reader, without knowing which command produced them. instrukt
-has no daemon: hook runs, runner ticks and blueprint workers start and end
-like any command, and their diagnostics would otherwise be gone with them.
+with the same reader, without knowing which command produced them. Hook runs,
+runner ticks and blueprint workers start and end like any command, and their
+diagnostics would otherwise be gone with them.
 
 ## Canonical fields
 

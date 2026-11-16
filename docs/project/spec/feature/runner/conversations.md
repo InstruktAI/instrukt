@@ -22,7 +22,10 @@ declares its connectors under `connectors:`
 (`project/instrukt/spec/feature/configuration/layered-configuration`); a
 declared connector with the switch off is a validation finding naming the
 switch. The long-lived `instrukt run` hosts every declared connector of every
-company home on the computer; a scheduled tick hosts none. Conversations need a
+company home on the computer; a scheduled tick hosts none. While a connector
+is declared and the switch is on, `instrukt install` keeps that run running
+through an owned service
+(`project/instrukt/spec/feature/runner/module-installation`). Conversations need a
 selected runtime with the capabilities
 `project/instrukt/spec/feature/runner/session-continuity` lists for them.
 
@@ -147,9 +150,8 @@ And no subscribed procedure is activated by that message
 
 ## Known caveats
 
-- Connectors are served only while `instrukt run` is running. instrukt installs
-  nothing that keeps it running, and a message written while it is stopped is
-  received only when the provider still offers it on reconnection.
+- A message written while a connector's connection is down is received only
+  when the provider still offers it on reconnection.
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message.
 - A post whose acceptance was lost can be sent twice.

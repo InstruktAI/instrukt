@@ -1,5 +1,5 @@
 ---
-description: Module-aware runner execution and automatic or manual todo dispatch without an instrukt daemon.
+description: Module-aware runner execution and automatic or manual todo dispatch without a separate consumer daemon.
 visibility: public
 ---
 # Work Dispatch — Spec
@@ -15,8 +15,10 @@ reactivity. The runner executes the work of enabled modules in one process.
 ### Execution contract
 
 `instrukt run` and `instrukt tick` are entry points to the runner. The OS
-scheduler supplies wake-ups. The runner has no consumer daemon or separate state
-service. Enabled project webhook sources use the independent loopback ingress
+scheduler supplies wake-ups. The runner has no consumer daemon beside it and no
+separate state service; with conversations on, an owned service keeps
+`instrukt run` running
+(`project/instrukt/spec/feature/runner/module-installation`). Enabled project webhook sources use the independent loopback ingress
 receiver under `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`;
 that narrow intake outlives runner invocations and exposes no session-control API.
 The runner's local state is the state database
@@ -76,7 +78,8 @@ Enabling todos demands only its shared wake-up and existing work/runtime
 prerequisites; local finalize-ready recording needs no Redis. Enabling events
 adds scoped Redis setup/checks and prepared retained readers. Only enabled
 nonempty project sources on the designated ingress demand the independent
-socket-held receiver. No consumer daemon is installed.
+socket-held receiver. No consumer daemon is installed; conversation demand
+installs the owned service that keeps the runner itself running.
 
 The configuration agent changes desired settings through revision-checked config
 commands, invokes `instrukt install`, and verifies `instrukt install --check`
