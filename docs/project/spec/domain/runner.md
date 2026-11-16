@@ -86,7 +86,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
   runtime capability translation, conversation-link membership, identity-envelope
   vocabulary and deterministic turn-end relay;
   unattended event/approval delivery and runner-owned execution observation; time
-  eligibility and missed-run decisions; anomaly-notification routing; the
+  eligibility and missed-run decisions; anomaly-notification routing; agents'
+  access to declared MCP servers (which declarations a caller sees and the
+  login a call carries); the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
@@ -105,7 +107,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list|resolve-start` surface,
   `instrukt history extract|import-teleclaude|search|show`,
-  `instrukt ticks status`, and wake-up registration by `instrukt install`;
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call`, and wake-up
+  registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
   streams and optional notification; instrukt-owned start semantic-key discovery
@@ -353,6 +356,8 @@ has no origin, as declared in Canonical fields.
   — arrange future work and recover missed recurring occurrences.
 - **Anomaly notification** — `project/instrukt/spec/feature/runner/anomaly-notification`
   — notice unattended failures while keeping questions in their threads.
+- **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
+  — use a declared server's tools under the right login and load them only when needed.
 
 - **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.

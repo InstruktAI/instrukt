@@ -54,6 +54,7 @@ enable events. Installation and withdrawal are owned by
 | `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `company` | company home only; equals the home folder's name | configuration |
 | `members.<member>` (`name`, an identity per connector, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves senders and tool logins |
+| `mcp.<name>` (`url`, `description`, `login` reference; `credential` in a company home only) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
