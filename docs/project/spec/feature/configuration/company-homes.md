@@ -79,6 +79,21 @@ member entry in each, and nothing links the two.
 - A member entry carries no role and grants nothing: it says who a person is on
   a connector and which logins are theirs.
 
+### Agent profiles
+
+```yaml
+profiles: [sunfield-claude, sunfield-codex]
+```
+
+`profiles` is an ordered list of profile names the machine's `agents.yaml`
+declares. Every session that runs in the company's home is started on that
+order in place of the machine-wide one, under the selection rule of
+`project/instrukt/spec/feature/configuration/agent-selection`. A company home
+declares no profile, provider instance or credential of its own. A name the
+machine's `agents.yaml` does not declare is a validation finding naming the
+company and the profile; an empty list is a finding naming the company. A home
+without `profiles` uses the machine-wide mapping.
+
 ## Use cases
 
 ### UC-CH1: Add a company to a computer

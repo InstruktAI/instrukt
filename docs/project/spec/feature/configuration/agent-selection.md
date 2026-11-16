@@ -36,7 +36,11 @@ Non-bot agent git-author settings remain separate in `instrukt.yaml`. The
 selected runtime's adapter translates kinds, instance ids and native option names; it supplies no compiled model catalogue.
 
 A task override wins over its role's selection; omitted inputs inherit the role
-mapping, then `default`. Selection walks the effective profile order
+mapping, then `default`. A session that runs in a company home whose settings
+name `profiles` (`project/instrukt/spec/feature/configuration/company-homes`)
+uses that list in place of the `order` its role mapping or `default` gives; the
+tier still comes from the role mapping, and a task override still wins. A home
+that names none uses the mapping's order. Selection walks the effective profile order
 sequentially. In the first ready profile it walks the selected tier's chain;
 only after that chain is exhausted does it try the next profile. Capacity
 restrictions and reported unavailable models are skipped with their reasons.

@@ -55,6 +55,7 @@ enable events. Installation and withdrawal are owned by
 | `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `company` | company home only; equals the home folder's name | configuration |
 | `members.<member>` (`name`, an identity per connector, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves senders and tool logins |
+| `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
 | `connectors.slack` (`app_token` and `bot_token` references, optional `context_messages`) | company home only; a declared connector with `modules.conversations` off is a finding naming that switch | runner conversations |
 | `mcp.<name>` (`url`, `description`; in a company home `credential` and, with it, a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
