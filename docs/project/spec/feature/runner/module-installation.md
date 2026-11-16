@@ -20,7 +20,10 @@ remote routing and user interview are outside this contract.
 
 Publication's adopted-project identities and registered checkout paths supply
 the project set. Evaluate project-over-global module settings for each. A global
-default without an adopted enabled project creates no infrastructure demand.
+default without an adopted enabled project creates no infrastructure demand,
+except through a company home: a company home with a nonempty valid source map
+demands events infrastructure and the receiver while the machine's global
+events switch is on (`project/instrukt/spec/feature/configuration/company-homes`).
 Writing installation reads the registered checkouts and retains their validated
 project settings and resolved repository identities in this computer's own
 installation state. Inspection reads the current repository and those retained
@@ -36,7 +39,7 @@ unused; withdrawal waits for a complete demand read.
 | History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no project sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
-| Events enabled with nonempty valid project `webhooks:` | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
+| Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
 
 The local database is created/migrated on commands that need it under its own
 contract. Todos may record finalize-ready events locally while events are off;
@@ -174,10 +177,11 @@ discards a group to make a check pass. Scope handover follows event-transport.
 
 Receiver demand exists only on the configured `ingress.computer`, identified
 by instrukt's stable machine ID, and only while an adopted enabled project's
-nonempty valid source map exists there. Missing declaring checkouts or signing
-values fail with the project/reference named. Signing material resolves only
-from the ingress computer's owner-only `~/.instrukt/secrets.env`; other
-computers need no signing values. Ticks and interactive paths use that same
+or an enabled company home's nonempty valid source map exists there. Missing
+declaring homes or signing values fail with the home/reference named. Signing
+material resolves only on the ingress computer, from its owner-only
+`~/.instrukt/secrets.env` for a project source and from the company home's own
+secrets file for a company source; other computers need no signing values. Ticks and interactive paths use that same
 file for their required signing, Redis and other instrukt secrets.
 All participants agree on ingress ID and cluster Redis endpoint plus database;
 local sockets, runtime and tick policy remain local. Configuration management

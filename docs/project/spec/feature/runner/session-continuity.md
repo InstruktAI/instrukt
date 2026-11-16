@@ -201,8 +201,8 @@ selected runtime and execution checkout. Todo/task/run keys retain registered pr
 | Task occurrence | `instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 
-For standing keys, the canonical home token is `project:<slug>` or `platform`;
-company/person tokens retain their kind but cannot execute in this release.
+For standing keys, the canonical home token is `project:<slug>`,
+`company:<name>` or `platform`; a person token retains its kind but cannot execute.
 A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
 subject identity requires it. The first generation omits the generation suffix;

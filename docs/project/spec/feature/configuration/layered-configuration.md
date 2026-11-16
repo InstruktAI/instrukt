@@ -1,5 +1,5 @@
 ---
-description: "`instrukt.yaml` in a global and a project layer — which key lives where, how the layers combine, validation, schema versions and migration."
+description: "`instrukt.yaml` in a global and a project layer, and a company home's own document — which key lives where, how the layers combine, validation, schema versions and migration."
 ---
 
 # Layered Configuration — Spec
@@ -35,9 +35,10 @@ is owned by `project/instrukt/spec/feature/runner/module-installation`.
 
 The effective `modules.events` switch is authoritative. Subscriptions remain in
 published documentation while off and produce no activation. A nonempty valid
-project `webhooks:` map adds receiver demand only while events are enabled; a
-declaration with events off produces a plain validation finding naming that
-switch. An empty map adds no receiver demand. Source declarations never silently
+`webhooks:` map in a project layer or a company home adds receiver demand only
+while events are enabled for it (the effective switch for a project, the
+machine's global switch for a company home); a declaration with events off
+produces a plain validation finding naming that switch. An empty map adds no receiver demand. Source declarations never silently
 enable events. Installation and withdrawal are owned by
 `project/instrukt/spec/feature/runner/module-installation`; these schema rules install nothing.
 
@@ -50,7 +51,8 @@ enable events. Installation and withdrawal are owned by
 | `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
 | `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
 | `events.watch: [{remote, ref}]` | project only | runner |
-| `webhooks.<domain>` | project only; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `company` | company home only; equals the home folder's name | configuration |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
@@ -90,16 +92,18 @@ by the ingress receiver and local edge. The bind host is fixed loopback. Local
 Redis socket paths, local credentials, runtime and ticks settings stay local.
 No shared configuration layer or new project-owner-machine routing key exists.
 
-Project identities and checkouts needed for activation must exist on the emitting
-computer, including ingress. Signing values needed on ingress resolve from the
-one owner-only machine-local `~/.instrukt/secrets.env`. Source secret fields
+Project identities and checkouts and company homes needed for activation must
+exist on the emitting computer, including ingress. A project source's signing
+values needed on ingress resolve from the one owner-only machine-local
+`~/.instrukt/secrets.env`; a company source's resolve from its home's own
+secrets file (`project/instrukt/spec/feature/configuration/company-homes`). Source secret fields
 are exact raw `${NAME}` references; the same file also supplies Redis and all
 other instrukt secrets on every entry path. Project `.env` and process
 environment supply no fallback. The protected read/write contract is
 `project/instrukt/spec/feature/configuration/owned-files`. A declared previous secret follows the same
 rules as current. Configuration reads preserve references and never expand
 source signing material. Source edits apply at the next request. The domain key selects
-`/hooks/inbound/project/<slug>/<domain>` and the emitted type prefix; it is
+the declaring home's `/hooks/inbound/<kind>/<slug>/<domain>` and the emitted type prefix; it is
 never taken from a body field. Sources use native `{name, payload}`, a payload
 field through `name_from`, fixed `name`, or GitHub normalization through
 `verify: github`, as defined by the inbound framework.
@@ -233,6 +237,19 @@ selects a bot actor.
 - The project layer is the `instrukt.yaml` at the root of the repository
   containing the working directory. Outside a repository, or in one without
   that file, there is no project layer.
+- A company home's document is the `instrukt.yaml` in
+  `~/.instrukt/companies/<name>/`, addressed with `--company <name>`.
+
+### Company home documents
+
+A company home's `instrukt.yaml` is a document of its own beside the two
+layers (`project/instrukt/spec/feature/configuration/company-homes`). It
+carries `schema_version`, `company` and the keys the layer rules permit in a
+company home; any other key there is a finding naming the key. It combines with
+no layer: a read with `--company <name>` answers from that document alone. It
+is validated, patched, revision-checked and migrated like a layer document, and
+as a machine-owned file its conversion is persisted by writing paths
+(`project/instrukt/spec/feature/configuration/owned-files`).
 
 ### Effective configuration
 
@@ -286,13 +303,13 @@ refuses the command; it never falls back to the system clock.
 
 ### External state declarations
 
-External names default to occurrence. A project `webhooks.<domain>` source may
+External names default to occurrence. A `webhooks.<domain>` source may
 set `state: [<name>, …]` and `subject_from: <dotted-payload-field>`. Names omit
 the domain prefix and follow the ordinary event-name grammar. State names
 require a nonempty subject field declaration. After signature verification,
 the field is read from the normalized payload and must be a nonempty string
 or number. Its UTF-8 percent-encoded value qualifies the source's ordinary
-`inbound_source:<domain>:project:<slug>` subject. Missing or invalid values
+`inbound_source:<domain>:<kind>:<slug>` subject. Missing or invalid values
 produce a client error with no relay. Other names remain occurrences. Ingress
 records `inbound_delivery: state` as producer metadata independently of payload
 text. Pending-state replacement is owned by procedure-event-delivery.

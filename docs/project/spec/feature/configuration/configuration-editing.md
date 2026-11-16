@@ -11,7 +11,8 @@ another writer may be changing. A patch is made against the revision the
 caller read; a patch against a changed document is refused instead of
 overwriting it. The whole resulting document is validated before anything is
 written, and the write is atomic. Every verb addresses the project layer by
-default and the global layer with `--global`.
+default, the global layer with `--global` and a company home's document with
+`--company <name>`.
 
 ## Canonical fields
 
@@ -19,8 +20,8 @@ default and the global layer with `--global`.
 
 | Verb | Does |
 | --- | --- |
-| `init` | creates the layer document with the current `schema_version` and defaults when it is absent; the project layer's `project` is the primary worktree's folder name normalized to a slug, including when invoked in a linked worktree. An empty normalized slug is refused, directing the caller to `instrukt init --slug <slug>`. An existing document is not overwritten; it is migrated when older (`project/instrukt/spec/feature/configuration/layered-configuration`). |
-| `get [<path>]` | answers the value at a dotted path, or the whole document without a path, from the effective configuration (the global layer with `--global`), interpolated (`project/instrukt/spec/feature/configuration/interpolation`). A scalar value prints bare. A path that does not exist fails non-zero, naming the missing segment. |
+| `init` | creates the layer document with the current `schema_version` and defaults when it is absent; `--company <name>` creates that company's home folder and its document (`project/instrukt/spec/feature/configuration/company-homes`); the project layer's `project` is the primary worktree's folder name normalized to a slug, including when invoked in a linked worktree. An empty normalized slug is refused, directing the caller to `instrukt init --slug <slug>`. An existing document is not overwritten; it is migrated when older (`project/instrukt/spec/feature/configuration/layered-configuration`). |
+| `get [<path>]` | answers the value at a dotted path, or the whole document without a path, from the effective configuration (the global layer with `--global`, a company home's document with `--company <name>`), interpolated (`project/instrukt/spec/feature/configuration/interpolation`). A scalar value prints bare. A path that does not exist fails non-zero, naming the missing segment. |
 | `patch --revision <rev>` | applies a merge patch to the addressed layer (below). |
 | `validate` | reports the addressed layer's findings (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 
@@ -56,17 +57,19 @@ Owned-file evolution and protected secret commands are
 The same revision-checked patch validates raw source references before
 interpolation and checks the full effective event switch. Invalid source shapes,
 domain keys, verification schemes, conflicting name sources, layer placement or a source with events off refuse atomically.
-Ingress requires its signing references to have nonblank values in the machine's
-owner-only `~/.instrukt/secrets.env`; non-ingress source validation may carry
-those reference names without needing their signing values. Every path reads
-its required instrukt secrets through that same protected machine-local file. Secret
-resolution errors name project and reference, never value. `get`, `get --json`,
+Ingress requires its signing references to have nonblank values in the protected
+secrets file of the declaring home: the machine's owner-only
+`~/.instrukt/secrets.env` for a project source, the company home's own file for
+a company source. Non-ingress source validation may carry those reference names
+without needing their signing values. Every path reads a home's required
+secrets through that same protected file. Secret
+resolution errors name the home and reference, never value. `get`, `get --json`,
 revision reports and patch diagnostics retain or mask secret references;
 expanded signing/Redis credentials never enter their output. Reference text is
 stored unexpanded. No config read or patch installs services. The next received
 request observes a valid source change without receiver restart. Patches address
-`webhooks.<domain>`; that domain selects `/hooks/inbound/project/<slug>/<domain>`
-and the event type prefix. Source fields are `secret`, `previous_secret`, `verify`,
+`webhooks.<domain>`; that domain selects the declaring home's
+`/hooks/inbound/<kind>/<slug>/<domain>` and the event type prefix. Source fields are `secret`, `previous_secret`, `verify`,
 `header`, `name_from` and `name` under the inbound framework contract.
 
 ### Module infrastructure workflow

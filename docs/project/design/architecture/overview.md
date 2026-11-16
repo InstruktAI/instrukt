@@ -98,6 +98,7 @@ deleting the home is not a lossless reset.
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
 | `agents.yaml` | one role map with class, scoped `can` bundles, model order/tier and App references; typed provider-instance tier chains | shipped once, then user-owned; upgrade handling under `project/instrukt/spec/feature/configuration/agent-selection` |
 | `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
+| `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
 | `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
 | `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
@@ -349,13 +350,14 @@ flowchart LR
   D --> T[A3 runtime handoff: bounded queued input]
 ```
 
-Ingress addresses `/hooks/inbound/project/<slug>/<domain>`. The project
+Ingress addresses `/hooks/inbound/project/<slug>/<domain>` and
+`/hooks/inbound/company/<name>/<domain>`. The declaring home's
 `webhooks.<domain>` declaration selects secret references, verification
 (native, GitHub or generic HMAC-SHA256) and exactly one event-name source:
 native `{name, payload}`, `name_from`, fixed `name` or GitHub normalization.
 The event type is `<domain>.<name>` and its subject identifies that domain and
-project; `inbound_verify` retains protocol provenance. Undeclared domains have
-no endpoint. Company/person intake remains unavailable.
+home; `inbound_verify` retains protocol provenance. Undeclared domains have
+no endpoint. Person intake remains unavailable.
 
 Local commit and stream acceptance are separate. Existing event rows supply a
 retryable publication handover; ingress accepts only after cluster append or a

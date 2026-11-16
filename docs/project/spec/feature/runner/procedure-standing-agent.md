@@ -25,19 +25,23 @@ agent. A change of identity mode selects a different responsibility, without
 moving already accepted work out of its original responsibility.
 
 Only the emitting computer resolves the activation. A project home uses that
-computer's registered project checkout; platform uses its registered instrukt
-checkout. Platform enablement uses the machine's global events setting; the execution
-checkout's project override governs that project's events, rather than platform
-responsibilities. Neither the invoking working directory nor a domain publisher's
-checkout substitutes for that home. An absent home is a visible activation
-failure, never a request to forward work. Company and person references remain
-representable; executing those homes is unsupported in this release. Unknown
-origin never means platform.
+computer's registered project checkout; a company home uses that computer's
+`~/.instrukt/companies/<name>/`
+(`project/instrukt/spec/feature/configuration/company-homes`); platform uses its
+registered instrukt checkout. Platform and company-home enablement use the
+machine's global events setting; the execution checkout's project override
+governs that project's events, rather than platform or company responsibilities.
+A general or domain procedure declaring company home has one responsibility per
+company home that receives its events. Neither the invoking working directory
+nor a domain publisher's checkout substitutes for that home. An absent home is a
+visible activation failure, never a request to forward work. A person reference
+remains representable; executing a person home is unsupported and fails visibly.
+Unknown origin never means platform.
 
 The assignment is system-origin: no initiating session becomes its dispatcher,
 and no starter's human lineage is inherited. Event origin remains the producer's
-fact. Project and platform assignments acquire no company context from location
-or ownership. Standing confers no integrator, coordinator or job-runner authority;
+fact. A company-home assignment names its company as its home. Project and
+platform assignments acquire no company context from location or ownership. Standing confers no integrator, coordinator or job-runner authority;
 the declared procedure role, or `event-handler` when omitted, supplies the
 assignment. The role's class and grants follow
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`; standing
@@ -108,13 +112,15 @@ attendance and delivery settings. Required reads are retrieved from current
 publication; settings persistence creates no historical documentation snapshot.
 
 `attended` is the default. `unattended` declares an audience, never reach,
-authorization or event trust. Standing T3 threads stay visible and unsettled
+authorization or event trust: it changes neither whether an agent is started nor
+which events it receives. Standing T3 threads stay visible and unsettled
 under automation regardless of attendance. Work an unattended agent dispatches
 has its own attendance; it does not inherit unattended status.
 
 Manual agent entry first records `instrukt events bind <procedure> --reserve`.
 This record-only command takes the responsibility guard, resolves the procedure's
-declared project/platform home, and reserves an attended home-identity generation
+declared home (the caller's project, the platform, or the company named with
+`--company <name>`), and reserves an attended home-identity generation
 only when no standing generation or unresolved reservation exists. It returns a
 reservation token, exact title/key and initialized assignment brief. An existing
 generation refuses naming its session, before any native call. A repeated caller
@@ -245,13 +251,13 @@ When an event needs the procedure's standing agent
 Then that human conversation is not adopted as the standing assignment
 ```
 
-### UC-PSA13: Work in the stated project or platform home
+### UC-PSA13: Work in the home the event names
 
 ```gherkin
-Given a developer enables project and platform responsibilities
-When events with project and none origins activate them
-Then each agent works in its corresponding registered home on the emitting computer
-And neither gains company context from its location
+Given a developer enables responsibilities answering project, company and platform homes
+When events with project, company and none origins activate them
+Then each agent works in the home its event names on the emitting computer
+And a project or platform agent gains no company context from its location
 ```
 
 ### UC-PSA14: Report a missing home without moving the work
@@ -363,8 +369,8 @@ Then entry refuses before creating a session and identifies the unusable effecti
 
 ## Known caveats
 
-- Company/person management and execution are unavailable. Source UC-PSA8's
-  company continuation is not imported; UC-PSA13 retains project/platform scope.
+- Person homes and their execution are unavailable. Source UC-PSA8's company
+  continuation is not imported.
 - A standing T3 thread is never closed by settling. Observation
   errors and duplicate key titles never authorize a replacement.
 - Steering is optional: ASAP uses queue-only or idle-entry delivery when that

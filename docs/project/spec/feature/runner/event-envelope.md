@@ -31,8 +31,9 @@ emission boundary adds the source, time, actual caller-session reference and
 resolved project owner, and generates an ID only if the producer has supplied
 none. Missing optional attributes state nothing; they do not mean unknown.
 An origin of none claims no registered home; unknown makes no origin claim.
-Unknown ownership is recorded unresolved even where company/person management
-is unavailable. No lookup failure fabricates ownerlessness or an origin.
+Unknown ownership is recorded unresolved. instrukt has no project-ownership
+declaration, so its own emissions record a project's owner as unresolved. No
+lookup failure fabricates ownerlessness or an origin.
 
 All attributes travel unchanged to every receiving computer, including references
 it cannot resolve. An event carries no action, audience, notification rule,
@@ -57,7 +58,7 @@ readers retain unfamiliar kinds and identities unchanged.
 | `configuration` | Machine/global configuration or project slug |
 | `stream_entry` | Stream and entry identity; diagnostic reference, not occurrence ID |
 | `captured_item` | Inbox entry or content identity |
-| `inbound_source` | Domain and declaring home, e.g. `erp:project:demo` |
+| `inbound_source` | Domain and declaring home, e.g. `erpnext:company:acme` |
 | `signal_item`, `signal_cluster`, `signal_synthesis` | Opaque item, cluster or synthesis identity |
 | `deployment` | Deployed project across its deployments |
 | `schema_proposal` | Proposal identity |
@@ -251,7 +252,7 @@ And a declaration without a recognized classification is invalid
 
 ## Known caveats
 
-- Company/person homes are vocabulary only for execution in this release; resolution fails visibly. Unavailable project-owner metadata is unresolved and supplies no new owner registry.
+- A person home is vocabulary only; its resolution fails visibly. A company origin names the company home of that name. Project-owner metadata stays unresolved and supplies no owner registry.
 - Reference vocabulary does not install the subsystems it names. Signal emitters and correlation are outside this port.
 - Cross-version compatibility is between compatible instrukt codecs; no TeleClaude fleet negotiation or pre-release legacy-wire compatibility is claimed.
 

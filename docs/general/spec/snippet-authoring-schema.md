@@ -158,7 +158,8 @@ A subscribed procedure declares `subscription_home`: `project`, `platform`,
 These are procedure-only and require subscriptions; malformed or unknown values
 are findings. A project-position procedure declares project home and answers only
 its own project; general/domain publication reaches all homes of its declared
-kind. Company/person vocabulary does not supply executable home management.
+kind, so a procedure declaring `company` runs in each company home that
+receives its events. `person` is vocabulary without an executable home.
 Validation/publication own interpretation; routing forwards the resolved facts
 unchanged. Reading a procedure as supporting knowledge reconfigures no session.
 

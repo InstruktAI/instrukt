@@ -82,8 +82,8 @@ Missing steering is a supported degradation, not a declaration finding.
 These fields without subscriptions, unknown values and malformed patterns are
 findings naming file and field. A project-position subscription answers only its
 own project and must declare project home; general/domain positions reach all
-homes of the declared kind. Unsupported company/person resolution remains an
-execution capability limit rather than conversion to project/platform.
+homes of the declared kind. Unsupported person resolution remains an
+execution capability limit rather than conversion to another home.
 
 Publication carries the resolved facts, owning project and position unchanged
 for routing. Pending declarations are validated structurally but never become

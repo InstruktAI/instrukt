@@ -25,6 +25,12 @@ including noninteractive ticks; a process environment or project `.env` cannot
 supply or override them. Names are machine-wide, so projects requiring distinct
 values use distinct reference names.
 
+A company home has its own secrets file, `~/.instrukt/companies/<name>/secrets.env`,
+under the same protection, write and disclosure rules. References in that
+home's settings resolve only from it
+(`project/instrukt/spec/feature/configuration/company-homes`), and
+`instrukt secrets set|generate --company <name>` write it.
+
 The file is owner-only and permissions are checked on read. Missing, blank,
 unreadable or insufficiently protected required material refuses the dependent
 operation with the reference and cause, never its value. An operation needing
@@ -40,7 +46,7 @@ Owned file shapes are versioned and migrated when they change. Configuration
 migration runs before refusal or skip on every path. Read-only inspection commands
 convert older configuration in memory, leave files and locks untouched, and report
 that the file migrates on the next writing command. For the files instrukt owns on
-the machine, the global layer among them, writing commands, publication,
+the machine, the global layer and company home documents among them, writing commands, publication,
 installation convergence and ticks persist the conversion before proceeding; a skip
 due to unchanged publication is considered only after migration.
 

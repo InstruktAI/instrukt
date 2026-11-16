@@ -120,7 +120,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `runner.ci_completed`, `runner.dependency_failing`, `workflow.preparation_reviewed`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
-  project settings; publication supplies project checkout paths; docs supplies subscribed procedures; work
+  project settings and company homes; publication supplies project checkout paths; docs supplies subscribed procedures; work
   supplies records and session identity, and the state database's file,
   writer lock and migrations; workflow supplies assignments; the runtime and
   GitHub supply execution and external observations. These
@@ -225,14 +225,17 @@ responsibility is distinct from its configured role class.
 ### Event-platform boundary
 
 Event facts retain the complete project, company, person, none and unknown origin
-vocabulary. Executable homes in this release are registered projects and the
-platform; company/person resolution is an explicit unsupported capability, never
-a conversion to another home. Unknown origin activates nothing. None selects a
-platform responsibility. Only the emitting computer activates a matching
-procedure: external events therefore activate on ingress, and a missing project
-checkout there fails visibly without forwarding.
+vocabulary. Executable homes are registered projects, company homes
+(`project/instrukt/spec/feature/configuration/company-homes`) and the platform;
+person resolution is an explicit unsupported capability, never a conversion to
+another home. Unknown origin activates nothing. None selects a platform
+responsibility. Only the emitting computer activates a matching procedure:
+external events therefore activate on ingress, and a missing project checkout
+or company home there fails visibly without forwarding.
 
-Published general/domain procedures reach every home of their declared kind.
+Published general/domain procedures reach every home of their declared kind:
+one published procedure runs in each company's own home, wherever its publishing
+project is checked out.
 A project-local subscribed procedure reaches only that project's origin; this
 preserves instrukt's project-local reach as an adaptation of TeleClaude's tiers.
 
@@ -355,7 +358,7 @@ has no origin, as declared in Canonical fields.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
 - **Scoped transport and publication recovery** — `project/instrukt/spec/feature/runner/event-transport`.
 - **Independent retained reactions** — `project/instrukt/spec/feature/runner/event-consumers`.
-- **Signed project sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
+- **Signed project and company sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
 - **Single cluster intake** — `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`.
 - **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
 - **Enablement-driven infrastructure** — `project/instrukt/spec/feature/runner/module-installation`.
@@ -372,7 +375,7 @@ has no origin, as declared in Canonical fields.
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| configuration → runner | Customer / Supplier | Runtime mapping, module switches and runner settings |
+| configuration → runner | Customer / Supplier | Runtime mapping, module switches, runner settings, and company homes with their settings and secrets |
 | workflow → runner | Customer / Supplier; Published language | Computed state, transitions and finalize-ready event used for dispatch |
 | work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
 | runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
@@ -411,7 +414,7 @@ per-role session bindings. Work owns validation and persistence of those writes.
   steering degrades ASAP attention to queued input or idle entry without a
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
-- People, company/person homes, channels, voice, messaging, memory and help desks
+- People, person homes, channels, voice, messaging, memory and help desks
   stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
   harness, one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside

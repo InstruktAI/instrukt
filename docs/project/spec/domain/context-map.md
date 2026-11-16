@@ -23,7 +23,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
-| configuration | Layered settings, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
+| configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
 | publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
@@ -66,7 +66,7 @@ not permission for an upstream module to depend on its consumer.
 | configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
 | blueprint → runner | Customer / Supplier | Blueprint-owned release pin and tool lifecycle consumed by module installation |
 | configuration → blueprint | Customer / Supplier | Module switch and engine selection |
-| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration and runner settings |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration, runner settings and company homes |
 | work, runner → CLI admission | Published language | Owner-supplied todo attempts and standing/scheduled assignment facts for the recognized caller; core-declared lookup wired by the CLI |
 | work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
