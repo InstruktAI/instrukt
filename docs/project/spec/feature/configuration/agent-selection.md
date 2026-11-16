@@ -75,7 +75,7 @@ This is separate from the generated repository YAML schemas.
 
 Validation rejects unknown action/bundle names and malformed role entries under
 roles-and-capabilities, and reports configured roles no installed procedure
-declares, apart from reserved fallback entries. `instrukt config show agents`
+declares, apart from the reserved entries that contract names. `instrukt config show agents`
 prints effective role classes, expanded scoped grants, App references, model
 mappings and profiles.
 It exposes configuration, never provider credentials. Changing selection does

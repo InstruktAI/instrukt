@@ -121,14 +121,10 @@ no receiver, Redis or scheduler; infrastructure convergence belongs to
 
 ### Enablement and installation demand
 
-Installation evaluates effective settings for every adopted project on the
-computer. Project overrides apply independently; global module defaults without
-an adopted enabled project install nothing. `ticks: on` permits the shared minute
-wake-up only while todos or events needs it. Todos alone installs no Redis or
-receiver. Events with no sources still needs scoped transport but no receiver.
-A nonempty valid source map adds receiver demand only on `ingress.computer`.
-An unreadable project's configuration never counts as proof its shared resources
-are unused.
+What the enabled settings of adopted projects and company homes install on a
+computer is owned by
+`project/instrukt/spec/feature/runner/module-installation`. `ticks: on` permits
+the shared minute wake-up only while that demand needs it.
 
 A revision-checked patch records desired enablement, never successful setup.
 The configuration agent follows it with `instrukt install` to converge dependencies

@@ -217,6 +217,12 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     is the only procedure declaring that role. When no role carries it, the new
     entry procedure declares a role of its own.
 
+    Before a procedure declares `subscriptions`, read the published
+    responsibilities, which are listed with the events they answer, and ask:
+    does another procedure answer this event in the same kind of home, and is
+    that intended? Every procedure that answers an event starts its own agent
+    for it.
+
     Handling too large to stay a step in the entry procedure becomes a
     sub-procedure: a procedure in the group folder the entry procedure heads,
     carrying none of the root frontmatter. The entry procedure's route instructs

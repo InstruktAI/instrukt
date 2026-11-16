@@ -146,7 +146,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   GitHub supply execution and external observations. These
   relationships are specified in the context map position below.
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
-  `todos` and `events`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
+  `todos`, `events`, `history` and `conversations`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both

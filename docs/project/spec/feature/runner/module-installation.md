@@ -16,14 +16,16 @@ remote routing and user interview are outside this contract.
 
 ## Canonical fields
 
-### Demand across adopted projects
+### Demand across adopted projects and company homes
 
 Publication's adopted-project identities and registered checkout paths supply
 the project set. Evaluate project-over-global module settings for each. A global
 default without an adopted enabled project creates no infrastructure demand,
-except through a company home: a company home with a nonempty valid source map
-demands events infrastructure and the receiver while the machine's global
-events switch is on (`project/instrukt/spec/feature/configuration/company-homes`).
+except through a company home, which follows the machine's global switches
+(`project/instrukt/spec/feature/configuration/company-homes`): a nonempty valid
+source map there demands events infrastructure and the receiver while events is
+on, and a declared connector demands the runner service while conversations is
+on.
 Writing installation reads the registered checkouts and retains their validated
 project settings and resolved repository identities in this computer's own
 installation state. Inspection reads the current repository and those retained
@@ -39,7 +41,7 @@ unused; withdrawal waits for a complete demand read.
 | History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
 | Conversations enabled with a declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
-| Events enabled, no project sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
+| Events enabled, no sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
 | Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
 
 The local database is created/migrated on commands that need it under its own

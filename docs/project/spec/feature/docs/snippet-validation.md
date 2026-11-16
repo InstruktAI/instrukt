@@ -77,7 +77,8 @@ where it uses `default`. Workflow membership constrains only workflow-dispatched
 procedures. The role-entry validation contract is
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`: unknown
 action/bundle names and malformed class/scope/grants are shape errors; roles no
-installed procedure declares are reported, except the two reserved fallbacks.
+installed procedure declares are reported, except the reserved entries that
+contract names.
 Missing steering is a supported degradation, not a declaration finding.
 These fields without subscriptions, unknown values and malformed patterns are
 findings naming file and field. A project-position subscription answers only its
