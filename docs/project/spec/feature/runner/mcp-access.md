@@ -1,5 +1,5 @@
 ---
-description: MCP access — agents reach declared MCP servers through `instrukt mcp list|list-tools|call`; a server is declared machine-wide or in a company home, its tools load only when listed, and a call carries the speaker's or the company's login without the agent handling it.
+description: MCP access — agents reach declared MCP servers through `instrukt mcp list|list-tools|call`; a server is declared machine-wide or in a company home, its tools load only when listed, and a call carries the speaker's login, or the company's own when nobody is asking.
 ---
 # MCP Access — Spec
 
@@ -26,61 +26,81 @@ mcp:
 
 | Field | Contract |
 | --- | --- |
-| `mcp.<name>` | The server's name, following the grammar of a project slug. Declared in the global layer for every session on the computer, or in a company home for work done for that company. |
+| `mcp.<name>` | The server's name, following the grammar of a project slug. Declared in the global layer for the computer, or in a company home for work done for that company. |
 | `url` | The server's network address. Required. |
 | `description` | One line saying what the server is for; `list` shows it. Required. |
 | `credential` | Company home only: the name under `members.<member>.credentials` whose value a speaker's call carries (`project/instrukt/spec/feature/configuration/company-homes`). |
-| `login` | A `${NAME}` reference into the secrets file of where the server is declared, the company home's or the machine's: that company's or machine's own login for the server. Never a literal value. |
+| `login` | A `${NAME}` reference, never a literal value. In a company home it is the company's own login, references that home's secrets file, requires `credential`, and is carried only by a call with no speaker. In the global layer it is the machine's own login and references the machine's secrets file. |
 
-A company home's declaration takes the place of a machine-wide declaration of
-the same name for that company's work. An unknown field, a literal `login`, a
-`credential` in the global layer and a missing `url` or `description` are
+A declaration that carries neither `credential` nor `login` is an open server:
+its calls carry no login. A company home's declaration takes the place of a
+machine-wide declaration of the same name for that company's work. An unknown
+field, a literal `login`, a `credential` in the global layer, a `login` without
+`credential` in a company home and a missing `url` or `description` are
 validation findings naming the server and the field.
 
 ### Whose declarations a call sees
 
-The command recognises its caller through the selected runtime's caller
-identity, as `instrukt discuss` does
+The command takes its caller from the selected runtime's caller identity, as
+`instrukt discuss` does
 (`project/instrukt/spec/feature/runner/conversation-links`), and reads the
 runner's recorded assignment for that session.
 
 | Caller | Declarations |
 | --- | --- |
-| A session whose recorded assignment names a company home | That company's, and the machine-wide ones it does not replace. `--company` naming another company is refused. |
-| Any other caller, with `--company <name>` | That company's, and the machine-wide ones it does not replace. |
-| Any other caller | The machine-wide ones. |
+| A session whose recorded assignment names a company home | That company's, and the machine-wide open servers it does not replace. A machine-wide server that carries a login is offered there only when the company home declares that server itself. `--company` naming another company is refused. |
+| The local operator, outside any session, with `--company <name>` | The same as that company's sessions see. |
+| Any other caller | Every machine-wide declaration. |
 
 ### The login a call carries
 
 The speaker is the company member the runner recorded as the sender of the
 addressed message that started the calling session's current turn
 (`project/instrukt/spec/feature/runner/conversations`). A session with no such
-record has no speaker.
+record has no speaker. No argument and no value the agent passes selects a
+member.
 
-| Call | Login |
-| --- | --- |
-| Company declaration with `credential`, and a speaker | The speaker's credential of that name. A speaker without it is refused naming the member and the missing credential; no other login takes its place. |
-| Company declaration, and no speaker | The declaration's `login`. Without one the call is refused naming the server and the missing login. |
-| Machine-wide declaration | Its `login` when declared, otherwise none. |
+| Declaration | Speaker | Login |
+| --- | --- | --- |
+| Open, machine-wide or a company's | Any, or none | None. |
+| A company's, with `credential` | A member holding that credential | That member's credential. |
+| A company's, with `credential` | A member without it | The call is refused naming the member and the missing credential. |
+| A company's, with `credential` and `login` | None | The company's `login`. |
+| A company's, with `credential` and no `login` | None | The call is refused naming the server and the missing company login. |
+| Machine-wide, with `login` | None: it is offered to no session that has a speaker | The machine's `login`. |
 
-The resolved value is sent as the request's `Authorization` header. The agent
-passes no credential, and none appears in the command's output, in logs or in
-diagnostics, which name references only.
+A call that has a speaker never carries a company's or the machine's login.
+The resolved value is sent as the request's `Authorization` header.
+
+### What the caller identity establishes
+
+The caller identity is the runtime's statement of which session a process
+belongs to, and instrukt does not authenticate a caller beyond it. Every
+process of the same operating-system user is trusted: a caller presenting
+another session's identity is served as that session, and that user can read a
+company home's files, its secrets file among them. Closing that takes
+confining the agent, which this contract does not provide
+(`project/instrukt/spec/feature/runner/conversations`). The `--company` path
+is the local operator's.
 
 ### Commands
 
 | Command | Does |
 | --- | --- |
-| `instrukt mcp list` | Names each server the caller sees with its description and declaring home. Contacts no server and reads no secret. |
+| `instrukt mcp list` | Names each server the caller sees with its description and where it is declared. Contacts no server and reads no secret. |
 | `instrukt mcp list-tools <name>` | Returns that server's tool catalog: each tool's name, description and input shape. |
 | `instrukt mcp call <name> <tool> --json '<arguments>'` | Calls the tool with the given JSON object and prints the tool's result as JSON. |
 
 - `list` and `list-tools` accept `--json`.
 - `list-tools` and `call` each open their own connection, perform the request
   and close it. No connection and no server state outlives the command.
-- An unknown server name is refused naming the servers the caller sees. A
-  failure the server reports is printed as the server gave it, with a non-zero
-  exit. An unreachable server fails naming the server and its address.
+- An unknown server name is refused naming the servers the caller sees. An
+  unreachable server fails naming the server and its address. A failure the
+  server reports reaches the caller with the server's cause and a non-zero
+  exit.
+- Before anything a server returned is printed or logged, a result, a catalog
+  or a failure, every resolved credential value is removed from it. The
+  command's own output, logs and diagnostics name references, never values.
 - The command writes no agent program's settings.
 
 ## Use cases
@@ -91,18 +111,20 @@ diagnostics, which name references only.
 Given a company member asks the company's agent for work that needs a server the company declares
 When the agent calls a tool of that server
 Then the call reaches the server under that member's own login
-And the agent supplied no credential and sees none
+And the agent supplied no credential
 But when that member has no login for the server
 Then the call is refused naming the member and the missing login
 And no other login is used
 ```
 
-### UC-MA2: An agent working with nobody asking uses the company's own login
+### UC-MA2: Run a company's unattended work under the company's own login
 
 ```gherkin
-Given an agent started by an event works in a company's home
-When it calls a tool of a server that company declares
-Then the call reaches the server under the company's own login
+Given a developer has a company's work started by events, with nobody asking
+When that work needs a server the company declares
+Then the server is reached under the company's own login
+But when the company has declared no login of its own for that server
+Then the call is refused naming the server and the missing login
 ```
 
 ### UC-MA3: An agent learns a server's tools only when it needs them

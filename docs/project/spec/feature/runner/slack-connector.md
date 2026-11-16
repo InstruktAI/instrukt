@@ -60,17 +60,20 @@ whether or not the agent already takes part in that thread.
 
 ### What accompanies an addressed message
 
-The connector reads the conversation with the bot token at the moment the
-addressed message arrives.
+The connector reads the accompanying messages with the bot token when the
+addressed message arrives and keeps them with that message until it is
+delivered, so a message that waits for an earlier turn is delivered with
+exactly its own range.
 
 | Addressed message | Accompanied by |
 | --- | --- |
 | The first in a conversation | The most recent `context_messages` messages before it: of the thread, or of the channel when the tag starts the thread. |
-| A later one | Every message written in that conversation since the agent's last post there. |
+| A later one | Every message written in that conversation after the previous addressed message and before this one. |
 
 Each accompanying message carries its speaker and time; the agent's own posts
-are marked as its own. Messages the agent was sent before stay in its session
-and are not sent again.
+are marked as its own. The range does not depend on whether the agent posted an
+answer. Messages the agent was sent before stay in its session and are not
+sent again.
 
 ### Posting
 
@@ -98,7 +101,7 @@ Given people talk in a channel thread where the agent has answered before
 When they write messages that do not tag the agent
 Then none of them reaches the agent
 When someone then tags the agent in that thread
-Then the agent receives that message with everything said there since its last post
+Then the agent receives that message with everything said there since the previous message that tagged it
 ```
 
 ### UC-SL3: Bring the agent into a conversation that is already under way

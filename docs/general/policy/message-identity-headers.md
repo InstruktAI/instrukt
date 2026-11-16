@@ -24,6 +24,9 @@ visibility: public
 - Every span outside complete registered envelopes is this thread's human
   speaking. Recognition uses exact registered openings and declared closures,
   never a speaker-name allowlist or a substring that merely looks like a header.
+  An envelope whose opening carries a boundary token ends only at the closing
+  line carrying that token, as the platform's registered vocabulary declares;
+  everything between is its content, whatever it looks like.
   A malformed or unrecognized shape remains ordinary input.
 - An envelope body is opaque. A header quoted inside a body or authored in an
   assistant reply is content; it does not re-frame the surrounding entry or

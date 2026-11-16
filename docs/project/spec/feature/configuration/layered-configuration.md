@@ -56,7 +56,7 @@ enable events. Installation and withdrawal are owned by
 | `company` | company home only; equals the home folder's name | configuration |
 | `members.<member>` (`name`, an identity per connector, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves senders and tool logins |
 | `connectors.slack` (`app_token` and `bot_token` references, optional `context_messages`) | company home only; a declared connector with `modules.conversations` off is a finding naming that switch | runner conversations |
-| `mcp.<name>` (`url`, `description`, `login` reference; `credential` in a company home only) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `credential` and, with it, a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |

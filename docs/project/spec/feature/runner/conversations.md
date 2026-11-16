@@ -72,6 +72,8 @@ connector's own contract
   with its speaker and time and with the agent's own earlier posts marked as
   its own, followed by a member envelope carrying the addressed message's text
   unchanged, with connector, conversation, member and time in its opening.
+  Both carry the delivery's boundary token, so a line inside them that looks
+  like an opening or a closing stays content.
 - The speaker of a turn is the member named by its member envelope. The runner
   records it for the turn; `project/instrukt/spec/feature/runner/mcp-access`
   reads it.
@@ -112,14 +114,7 @@ Then the agent's answer appears in that same conversation
 And the answer appears nowhere else
 ```
 
-### UC-CV2: Continue a conversation with the agent that already knows it
-
-```gherkin
-Given a conversation already has its agent session
-When a member addresses the agent there again
-Then the same session answers with what it already knows of the conversation
-And no second session exists for that conversation
-```
+### UC-CV2
 
 ### UC-CV3: Know who is asking in a shared conversation
 
@@ -158,9 +153,9 @@ And no subscribed procedure is activated by that message
 - Everyone the connector lets address the agent and whom the company lists as
   a member is served alike; a member entry grants nothing and restricts
   nothing.
-- A conversation session reads what its home and the computer let it read. A
-  connector open to people outside the company needs an agent that is confined;
-  no such confinement exists here.
+- A conversation session reads what its home and the computer let it read,
+  the home's secrets file among it. A connector open to people outside the
+  company needs an agent that is confined; no such confinement exists here.
 
 ## See Also
 
