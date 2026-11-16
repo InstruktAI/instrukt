@@ -49,11 +49,13 @@ enable events. Installation and withdrawal are owned by
 | `schema_version` | each document | configuration |
 | `agents.<name>.git_author` | global only | commit composition |
 | `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `modules.conversations` (boolean, off by default) | global only | runner conversations |
 | `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
 | `events.watch: [{remote, ref}]` | project only | runner |
 | `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
 | `company` | company home only; equals the home folder's name | configuration |
 | `members.<member>` (`name`, an identity per connector, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves senders and tool logins |
+| `connectors.slack` (`app_token` and `bot_token` references, optional `context_messages`) | company home only; a declared connector with `modules.conversations` off is a finding naming that switch | runner conversations |
 | `mcp.<name>` (`url`, `description`, `login` reference; `credential` in a company home only) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
 | `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |

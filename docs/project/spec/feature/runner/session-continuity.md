@@ -31,7 +31,7 @@ creates no replacement session identity.
 | Primitive | Input and result | Released consumer |
 | --- | --- | --- |
 | `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event input consumption. | Event activation of a standing procedure. |
-| `start` | Project, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator and scheduled task occurrences. |
+| `start` | Project or company home, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator, scheduled task occurrences and conversation sessions. |
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
@@ -170,6 +170,7 @@ adapter verb templates.
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
 | History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unset or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
+| Conversations (`modules.conversations`) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/runner/conversations`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Enabling a module without a selected runtime, or with its native/adapter path
@@ -191,7 +192,7 @@ title. The selected adapter establishes exact discoverable key evidence; T3
 encodes the key as the final component of its `--title`, while another adapter may use a native label.
 Renaming display text never changes semantic identity or proves absence. Missing
 or conflicting key evidence stays unresolved. Keys are scoped to the
-selected runtime and execution checkout. Todo/task/run keys retain registered project scope:
+selected runtime and execution checkout. Todo/task/run keys retain registered project scope; a conversation key carries its company:
 
 | Assignment | Semantic key |
 | --- | --- |
@@ -200,6 +201,7 @@ selected runtime and execution checkout. Todo/task/run keys retain registered pr
 | Native child assignment | The same role-attempt semantic key is supplied to native delegation and retained by work; it is not an adapter-discovery key. |
 | Task occurrence | `instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
+| Conversation session | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
 
 For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
@@ -253,6 +255,7 @@ Every instrukt-owned start supplies `<label> · <semantic key>`. Labels use:
 | Standing procedure | procedure name (last id component), followed by ` · <typed-subject>` when present |
 | Task occurrence | `task · <task-slug>` |
 | Other unattended run | `run · <procedure-name>` |
+| Conversation session | `conversation · <connector>` |
 
 The complete title is captured with the start request and survives retries and
 renames. T3 retains supplied titles. Discovery reads the complete native title

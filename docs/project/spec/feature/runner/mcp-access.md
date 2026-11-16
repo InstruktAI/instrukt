@@ -53,7 +53,8 @@ runner's recorded assignment for that session.
 ### The login a call carries
 
 The speaker is the company member the runner recorded as the sender of the
-input that started the calling session's current turn. A session with no such
+addressed message that started the calling session's current turn
+(`project/instrukt/spec/feature/runner/conversations`). A session with no such
 record has no speaker.
 
 | Call | Login |
@@ -137,3 +138,4 @@ Then each call reaches its own company's address
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+- [project/instrukt/spec/feature/runner/conversations](conversations.md)

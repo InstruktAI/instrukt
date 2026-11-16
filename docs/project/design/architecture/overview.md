@@ -152,6 +152,7 @@ commands. Docs name `-h`.
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the speaker's or the declaring home's login (`project/instrukt/spec/feature/runner/mcp-access`) |
 | OS scheduler | runner | `instrukt tick` each minute |
+| Slack | runner | a Socket Mode connection `instrukt run` opens outward per company home that declares the connector; its history and posting calls with the bot token (`project/instrukt/spec/feature/runner/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 

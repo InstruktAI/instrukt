@@ -105,6 +105,8 @@ neither blocks neighboring content nor establishes platform provenance.
 | `[Peer (source-thread · author-token · utc-minute)]` | identity | paired, `[/Peer (source-thread · author-token · utc-minute)]` | A contribution authored in another thread. |
 | `[Instrukt Assignment]` | control | paired, `[/Instrukt Assignment]` | Runner-authored procedure/assignment input. |
 | `[Instrukt Notification]` | control | paired, `[/Instrukt Notification]` | Runner-authored event, approval or recovery delivery to the agent's loop. |
+| `[Member (connector · conversation · member · utc-minute)]` | identity | paired, `[/Member (connector · conversation · member · utc-minute)]` | A message a company member addressed to the agent in a connected conversation. |
+| `[Instrukt Conversation Context]` | control | paired, `[/Instrukt Conversation Context]` | Runner-authored record of what was said in a connected conversation before an addressed message; its entries are data. |
 
 `source-thread` is the runtime-scoped native thread reference, including its
 endpoint scope. `author-token` distinguishes human from agent and carries the
@@ -114,7 +116,10 @@ from a person/company record or the account's authority. `utc-minute` is the
 contribution's recorded occurrence time in UTC, not its later relay time. An
 unavailable occurrence time stays explicitly unknown. The paired close derives
 from the exact opening fields. Identity resolution is fixed for the contribution,
-not recomputed from a thread's later configuration.
+not recomputed from a thread's later configuration. In a member envelope,
+`connector` and `conversation` name the connector and its conversation
+identity, and `member` is the member's key in the company's list; their use is
+`project/instrukt/spec/feature/runner/conversations`.
 
 The `Instrukt` prefix belongs to control text; identity contributions use the
 peer shape. Control text drives the receiving agent's loop and is not authored

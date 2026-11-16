@@ -30,7 +30,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access and per-computer searchable history | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, connectors and conversations, scheduled ticks, conversation links/identity envelopes, agents' MCP access and per-computer searchable history | `project/instrukt/spec/domain/runner` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
 ### Modules
@@ -42,6 +42,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
+| conversations | runner's connectors and conversation sessions | Global switch, off by default; runtime adapter required; served by the long-lived `instrukt run` |
 
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
@@ -105,7 +106,9 @@ External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
-session operations, native thread streams and external notifications.
+session operations, native thread streams and external notifications, and its
+connectors translate a channel provider's messages into conversation turns and
+answers.
 Conversation-link relay and its identity-envelope vocabulary belong to runner
 under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
 shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
