@@ -108,7 +108,7 @@ is the local operator's.
 ### UC-MA1: An agent uses a tool as the person who asked
 
 ```gherkin
-Given a company member asks the company's agent for work that needs a server the company declares
+Given a company member asks the company's agent for work that needs a server the company declares as needing a login
 When the agent calls a tool of that server
 Then the call reaches the server under that member's own login
 And the agent supplied no credential
@@ -121,7 +121,7 @@ And no other login is used
 
 ```gherkin
 Given a developer has a company's work started by events, with nobody asking
-When that work needs a server the company declares
+When that work needs a server the company declares as needing a login
 Then the server is reached under the company's own login
 But when the company has declared no login of its own for that server
 Then the call is refused naming the server and the missing login

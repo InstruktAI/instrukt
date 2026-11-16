@@ -28,8 +28,10 @@ changing a procedure or recompiling instrukt.
 
 Several profiles can share a kind, including separate accounts of one harness.
 Profile names, provider-instance ids and kinds are distinct identities. The
-file, rather than `instrukt.yaml`, `t3.yaml` or procedure frontmatter, owns
-orders, role mappings and chains. Role class and grants share that same map under
+file, rather than a project's `instrukt.yaml`, `t3.yaml` or procedure
+frontmatter, owns profiles, role mappings, the machine-wide orders and chains; a
+company home's order for its own sessions is the one order set elsewhere, as
+stated below. Role class and grants share that same map under
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`; App references
 select the bot identity under `project/instrukt/spec/feature/work/github-apps`.
 Non-bot agent git-author settings remain separate in `instrukt.yaml`. The
