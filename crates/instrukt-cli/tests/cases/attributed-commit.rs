@@ -7,10 +7,12 @@
 
 use crate::common;
 use std::io::{Read, Write as _};
-use std::os::fd::AsFd as _;
+use std::os::fd::AsFd;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::process::{Child, ExitStatus, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -80,34 +82,86 @@ const STEP_BOUND: Duration = Duration::from_secs(30);
 const LOOK: Duration = Duration::from_millis(20);
 
 /// One of instrukt's output pipes, read to its end on a thread of its own.
-/// The thread is joined only once it has finished, so looking at it never
-/// waits.
+/// The thread waits for its pipe at most one look at a time and stops when
+/// asked, so it can always be stopped and joined. It is joined only once it
+/// has finished, so looking at it never waits.
 struct Reader {
     thread: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    stop: Arc<AtomicBool>,
     read: Option<Result<Vec<u8>, String>>,
 }
 
 impl Reader {
-    fn start(mut pipe: impl Read + Send + 'static) -> Self {
+    fn start(mut pipe: impl Read + AsFd + Send + 'static) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let asked = Arc::clone(&stop);
         let thread = std::thread::spawn(move || {
             let mut bytes = Vec::new();
-            pipe.read_to_end(&mut bytes).map(|_| bytes)
+            let mut chunk = [0_u8; 4096];
+            while !asked.load(Ordering::Acquire) {
+                let mut look = [PollFd::new(pipe.as_fd(), PollFlags::POLLIN)];
+                let timeout = PollTimeout::try_from(LOOK).map_err(std::io::Error::other)?;
+                match poll(&mut look, timeout) {
+                    Ok(0) | Err(nix::errno::Errno::EINTR) => continue,
+                    Ok(_) => {}
+                    Err(errno) => return Err(errno.into()),
+                }
+                // The pipe is ready: the read returns what it holds, or its end.
+                match pipe.read(&mut chunk) {
+                    Ok(0) => return Ok(bytes),
+                    Ok(read) => bytes.extend_from_slice(&chunk[..read]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(std::io::Error::other(
+                "stopped before the end of instrukt's output",
+            ))
         });
         Self {
             thread: Some(thread),
+            stop,
             read: None,
+        }
+    }
+
+    /// A reader that never started: finished, with nothing read.
+    fn absent() -> Self {
+        Self {
+            thread: None,
+            stop: Arc::new(AtomicBool::new(true)),
+            read: Some(Err("instrukt's output was not read".to_owned())),
         }
     }
 
     /// Whether the reader has finished, joining it when it has.
     fn finished(&mut self) -> bool {
         if let Some(thread) = self.thread.take_if(|thread| thread.is_finished()) {
-            self.read = Some(match thread.join() {
-                Ok(read) => read.map_err(|error| format!("cannot read instrukt's output: {error}")),
-                Err(_) => Err("the reader of instrukt's output panicked".to_owned()),
-            });
+            self.read = Some(Self::joined(thread));
         }
         self.read.is_some()
+    }
+
+    /// Stops the reader if it still runs and joins it; its pipe closes as
+    /// its thread ends. The thread sees the request within one look.
+    fn retire(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            self.stop.store(true, Ordering::Release);
+            self.read = Some(Self::joined(thread));
+        }
+    }
+
+    fn joined(thread: JoinHandle<std::io::Result<Vec<u8>>>) -> Result<Vec<u8>, String> {
+        match thread.join() {
+            Ok(read) => read.map_err(|error| format!("cannot read instrukt's output: {error}")),
+            Err(_) => Err("the reader of instrukt's output panicked".to_owned()),
+        }
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        self.retire();
     }
 }
 
@@ -131,14 +185,18 @@ impl Running {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let stdout = Reader::start(child.stdout.take().unwrap());
-        let stderr = Reader::start(child.stderr.take().unwrap());
-        Self {
+        let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+        // Owned before any reader starts, so a failure from here on still
+        // interrupts and reaps instrukt.
+        let mut running = Self {
             child,
             status: None,
-            stdout,
-            stderr,
-        }
+            stdout: Reader::absent(),
+            stderr: Reader::absent(),
+        };
+        running.stdout = Reader::start(stdout.unwrap());
+        running.stderr = Reader::start(stderr.unwrap());
+        running
     }
 
     /// instrukt's status, once it has ended.
@@ -188,7 +246,8 @@ impl Running {
 impl Drop for Running {
     fn drop(&mut self) {
         let deadline = Instant::now() + STEP_BOUND;
-        if matches!(self.exited(), Ok(None)) {
+        // Unless it is known to have ended.
+        if !matches!(self.exited(), Ok(Some(_))) {
             let pid = rustix::process::Pid::from_child(&self.child);
             if let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
                 eprintln!("cannot interrupt the held commit's instrukt: {error}");
@@ -197,7 +256,8 @@ impl Drop for Running {
         if let Err(missing) = self.output_by(deadline) {
             eprintln!("cleanup of the held commit: {missing}");
         }
-        if matches!(self.exited(), Ok(None)) {
+        // Unless it is known to have ended.
+        if !matches!(self.exited(), Ok(Some(_))) {
             if let Err(error) = self.child.kill() {
                 eprintln!("cannot kill the held commit's instrukt: {error}");
             }
@@ -205,6 +265,9 @@ impl Drop for Running {
                 eprintln!("cleanup of the held commit after killing it: {missing}");
             }
         }
+        // Whatever was collected, no reader outlives the cleanup.
+        self.stdout.retire();
+        self.stderr.retire();
     }
 }
 
