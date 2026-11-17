@@ -1,5 +1,5 @@
 ---
-description: Conversations — a person addresses a company's agent in a connected channel; each conversation is bound to one plain agent session in the company's home, every addressed message is its own turn naming its sender, and the session's answer is posted back, never through event subscriptions.
+description: Conversations — a person addresses a company's agent in a connected channel; each conversation is bound to one agent session in the company's home, started from the conversation procedure, every addressed message is its own turn naming its sender, and the session's answer is posted back, never through event subscriptions.
 ---
 # Conversations — Spec
 
@@ -52,11 +52,28 @@ each connector's own contract
   leaves the message pending for that same conversation and never creates a
   second session.
 - The session works in the company's home
-  (`project/instrukt/spec/feature/configuration/company-homes`). It is a plain
-  agent: it has no procedure assignment and answers no event subscription. Its
-  opening input is a runner-authored assignment envelope naming the company,
-  the connector and the conversation, and saying that its answers are posted
-  back.
+  (`project/instrukt/spec/feature/configuration/company-homes`), where it
+  starts with the company's own knowledge
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`). It answers
+  no event subscription.
+- It starts from the conversation procedure: the published procedure that
+  declares the role `conversation`. One procedure on a computer declares a
+  role, so every company's conversations start from the same one. It comes
+  from the docs repository that publishes it
+  (`project/instrukt/spec/feature/publication/docs-repositories`); instrukt's
+  own publishes it as `general/procedure/conversation`. The procedure is
+  instrukt's and the knowledge is the company's; neither repeats the other.
+- The session's opening input is the runner-authored assignment envelope,
+  followed by the first addressed message's input. The assignment is the
+  loader of `project/instrukt/spec/feature/runner/procedure-event-delivery`:
+  it names the procedure, the role with its resolved grants, the company, the
+  connector and the conversation, and directs
+  `instrukt docs get <procedure-id> --closure` before the message is handled.
+  The procedure is read from current publication when the session starts; a
+  woken session keeps the assignment it started with.
+- While no published procedure declares the role `conversation`, a
+  conversation's first message waits: no session is started, nothing is
+  delivered or replied, and the cause shows in `instrukt events status`.
 - Its role is `conversation`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
@@ -166,6 +183,18 @@ Then the conversation's own session answers
 And no subscribed procedure is activated by that message
 ```
 
+### UC-CV6: Be answered by an agent that knows its job in the conversation
+
+```gherkin
+Given the computer publishes the procedure that declares the conversation role
+When a member first addresses the company's agent in a conversation
+Then the conversation's session starts in the company's home with the role conversation
+And its opening input names that procedure and directs loading it in full before the member's message
+And the member's message follows as its own envelopes
+But when no published procedure declares the conversation role
+Then the message waits, no session starts and the cause is shown
+```
+
 ## Known caveats
 
 - A message written while a connector's connection is down is received only
@@ -173,6 +202,12 @@ And no subscribed procedure is activated by that message
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message.
 - A post whose acceptance was lost can be sent twice.
+- A conversation session keeps the procedure and the company knowledge it
+  loaded when it started. A later change to either reaches only conversations
+  whose session starts after it.
+- That the agent acts on the addressed message for its writer, and reads the
+  context as context, is what its procedure tells it. The agent is a language
+  model and nothing beyond the procedure enforces that reading.
 - Everyone the connector's provider knows as one of the company's own is
   served alike.
 - A conversation session reads what its home and the computer let it read,

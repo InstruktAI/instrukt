@@ -89,9 +89,11 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 :  Removal of what a project published before and no longer owns.
 
 **Master**
-:  An `AGENTS.master.md` file in a project. The root master holds only the
+:  An `AGENTS.master.md` file in a project or a company home. A project's root master holds only the
    project's `## Purpose`; a nested master is the source of the `AGENTS.md`
-   beside it.
+   beside it. A company home's master is the company's own knowledge, rendered
+   into the home's `AGENTS.md`
+   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 **Rendering**
 :  Producing one self-contained instruction file from published or project

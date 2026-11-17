@@ -21,6 +21,7 @@ no authorization.
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
 | Settings document | `instrukt.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
+| Company knowledge | `AGENTS.master.md` in the home folder | Optional. What every agent working for the company starts with, rendered into the home's `AGENTS.md` (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
 
 - A folder under `companies/` without a valid settings document is not a
   company: nothing is served or run for it, and validation names the folder
@@ -129,9 +130,14 @@ But an address listed by two members is refused naming both
 
 ## Known caveats
 
-- A company home publishes no documentation of its own and has no rendered
-  `AGENTS.md`. An agent working there starts with the global agent files and
-  the assignment it is given.
+- A company home publishes no documentation of its own. An agent working
+  there starts with the global agent files, the home's rendered `AGENTS.md`
+  and the assignment it is given.
+- instrukt neither obtains nor updates a company home's files. A home folder
+  may be a checkout of the company's own repository; instrukt reads its files
+  as they stand and keeps no repository state for it. Such a repository keeps
+  the home's `secrets.env` and rendered `AGENTS.md` out of its history by its
+  own ignore rules.
 - Company homes on one computer are separate folders of one operating-system
   user. A session working in one home is not prevented from reading another.
 - There are no person homes.

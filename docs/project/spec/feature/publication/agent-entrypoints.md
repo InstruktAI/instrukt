@@ -1,5 +1,5 @@
 ---
-description: Rendered agent instructions — a project's root `AGENTS.md` is its master's purpose followed by the rendering of `docs/project/index.yaml`, nested masters render beside themselves, and the owner of `docs/general/` renders every supported agent CLI's global file from what is published on the computer, with per-CLI `agents` snippets, never over a file instrukt did not write, merging exactly the entrypoint-loading settings keys.
+description: Rendered agent instructions — a project's root `AGENTS.md` is its master's purpose followed by the rendering of `docs/project/index.yaml`, nested masters render beside themselves, a company home's master renders into its `AGENTS.md` before each session instrukt starts there, and the owner of `docs/general/` renders every supported agent CLI's global file from what is published on the computer, with per-CLI `agents` snippets, never over a file instrukt did not write, merging exactly the entrypoint-loading settings keys.
 ---
 # Agent Entrypoints — Spec
 
@@ -87,6 +87,36 @@ unresolved.
   finds it gone.
 - An `AGENTS.md` is a generated file; an edit to it is overwritten by the next
   sync that publishes.
+
+### Company home entrypoint
+
+A company home (`project/instrukt/spec/feature/configuration/company-homes`)
+holds the company's own knowledge in `AGENTS.master.md` at the home's root.
+It renders into the `AGENTS.md` beside it as a nested master does: its own
+content with its required reads inlined, no project selection and no
+procedure lines. Every agent program loads it as it loads any `AGENTS.md` in
+the directory it starts in, so every session in the home starts with it:
+conversation sessions and event-started work alike.
+
+- **When.** The runner renders it immediately before it starts a session in
+  the home, and `instrukt events bind <procedure> --reserve --company <name>`
+  renders it before it returns a reservation. The master is read as it stands
+  in the home folder.
+- **What it reads.** Required reads resolve from the documentation published
+  on the computer, and a pending snippet is never inlined. A `@config`
+  directive in a company home's master is a finding, as are `@exec`, `@include` and a required read that resolves
+  to nothing.
+- **Never over a file instrukt did not write.** The rendering is written when
+  `AGENTS.md` is absent or holds what instrukt last rendered there, as the
+  written record in publication state shows. Otherwise the start waits and
+  the cause names the file and the door: move its content into the master, or
+  the file out of the way.
+- **Without a master**, the home has no rendering; an `AGENTS.md` instrukt
+  rendered there earlier is removed by the next start, and one it did not
+  write is left as it is.
+- **A finding** in the master stops the start: the work it was for stays
+  pending, and the cause shows in `instrukt events status`.
+  `instrukt config validate --company <name>` reports the same findings.
 
 ### Checkout rendering
 
@@ -253,6 +283,18 @@ Then existing published state supplies the entrypoints and no publication runs a
 But a linked worktree with no publication reports the missing prerequisite without publishing
 ```
 
+### UC-AE8: Every agent working for a company starts with the company's own knowledge
+
+```gherkin
+Given a company's home holds the company's knowledge in its master, with a required read into published documentation
+When a member's conversation and an event for that company each start an agent in the home
+Then each agent starts with one instruction file holding the master's content and the snippet it requires
+When the company changes its master
+Then the next agent started in the home starts with the changed knowledge
+But when the master names a required read that resolves to nothing
+Then no agent starts there, the work waits and the cause names the master and the read
+```
+
 ## Known caveats
 
 - When the project stops publishing `docs/general/`, its next sync retracts
@@ -261,6 +303,11 @@ But a linked worktree with no publication reports the missing prerequisite witho
 - A global file the developer edits after instrukt wrote it stops the next
   rendering sync until the edit is moved into documentation or the file is
   moved away.
+- A company home's rendering changes only when a session starts there. A
+  session already running, or woken later, keeps what it loaded when it
+  started.
+- A company home's knowledge is its master alone. Nested masters and
+  documentation positions inside the home are not rendered or published.
 
 ## See Also
 
