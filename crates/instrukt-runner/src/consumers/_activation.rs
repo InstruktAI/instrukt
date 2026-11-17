@@ -108,6 +108,7 @@ pub(crate) fn consumer(
         interest: Interest {
             patterns: vec![TypePattern::parse("*")?],
             own_computer_only: true,
+            external_on_reacting: true,
             subject_kinds: Vec::new(),
             home_kinds: Vec::new(),
         },

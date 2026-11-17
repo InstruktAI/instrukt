@@ -3,6 +3,7 @@
 use crate::common;
 use crate::fixtures::documented;
 use crate::fixtures::event_transport as support;
+use crate::fixtures::t3::FakeT3;
 use crate::fixtures::webhooks as hooks;
 use common::redis::RedisServer;
 use hooks::{BODY, GITHUB, NATIVE, Receiver, SECRET, declare, events};
@@ -260,4 +261,73 @@ fn verification_schemes_keep_identical_facts_and_their_claims_distinct() {
     assert_eq!(events[0].subject, events[1].subject);
     assert_ne!(events[0].extensions, events[1].extensions);
     assert_ne!(events[0].id, events[1].id);
+}
+
+/// The machine ID and the two ingress settings `computer`'s
+/// `instrukt events status` reports.
+fn identity(computer: &Computer) -> serde_json::Value {
+    let status = computer
+        .env
+        .run(&computer.env.path(""), ["events", "status", "--json"])
+        .success();
+    serde_json::from_slice(&status.get_output().stdout).unwrap()
+}
+
+// spec: project/instrukt/spec/feature/runner/single-ingress-webhook-termination UC-SIT-12
+#[test]
+fn another_computer_reacts_to_external_facts_and_the_server_runs_nothing() {
+    let (server, redis, receiver) = setup();
+    // The other computer holds the project, its published procedure and a
+    // chosen runtime; its consumer is prepared before the server receives.
+    let other = Computer::new();
+    other.config(&redis, None);
+    let runtime = FakeT3::create(&other.env);
+    other.subscribe("erp.invoice.*");
+    other.tick();
+    let server_id = identity(&server)["computer"].as_str().unwrap().to_owned();
+    let other_id = identity(&other)["computer"].as_str().unwrap().to_owned();
+    // Both name the server as the ingress and the other computer as the one
+    // that reacts; the server chooses no runtime.
+    let global = server.env.instrukt_home().join("instrukt.yaml");
+    let settings = std::fs::read_to_string(&global)
+        .unwrap()
+        .replace("runner: {runtime: t3}\n", "")
+        .replace(
+            &format!("computer: '{server_id}',"),
+            &format!("computer: '{server_id}', reactions: '{other_id}',"),
+        );
+    std::fs::write(&global, settings).unwrap();
+    let ingress = std::fs::read_to_string(&global)
+        .unwrap()
+        .lines()
+        .find(|line| line.starts_with("ingress:"))
+        .unwrap()
+        .to_owned();
+    let other_global = other.env.instrukt_home().join("instrukt.yaml");
+    let mut settings = std::fs::read_to_string(&other_global).unwrap();
+    settings.push_str(&format!("{ingress}\n"));
+    std::fs::write(&other_global, settings).unwrap();
+    assert_eq!(
+        identity(&other)["ingress"]["reactions"].as_str(),
+        Some(other_id.as_str())
+    );
+    // The server is valid as it is: receiving and publishing need no runtime.
+    server
+        .env
+        .run(&server.env.path(""), ["config", "validate", "--global"])
+        .success();
+    assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 202);
+    server.tick();
+    other.tick();
+    // The server published the fact and runs no procedure for it; the other
+    // computer runs the procedure in its own checkout of the project.
+    assert_eq!(events(&redis).len(), 1);
+    assert_eq!(server.accepted(), 0);
+    assert_eq!(other.accepted(), 1);
+    let threads = runtime.threads();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(
+        runtime.folder(&threads[0]).canonicalize().unwrap(),
+        other.project.path().canonicalize().unwrap()
+    );
 }

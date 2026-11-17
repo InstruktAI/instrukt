@@ -79,7 +79,7 @@ impl Event {
                 r#ref,
                 ..
             } => EventRef::new(
-                ReferenceKind::InboundSource,
+                ReferenceKind::RepositoryRef,
                 &format!("{project}/{remote}/{ref}"),
             )?,
 
@@ -90,7 +90,7 @@ impl Event {
                 EventRef::new(ReferenceKind::Commit, &format!("{project}/{head}"))?
             }
             Self::MainFailing { project, .. } => {
-                EventRef::new(ReferenceKind::InboundSource, &format!("{project}/main"))?
+                EventRef::new(ReferenceKind::RepositoryRef, &format!("{project}/main"))?
             }
             Self::PreparationReviewed { todo, .. } | Self::WorkflowFinalized { todo, .. } => {
                 EventRef::new(ReferenceKind::Todo, todo.as_str())?

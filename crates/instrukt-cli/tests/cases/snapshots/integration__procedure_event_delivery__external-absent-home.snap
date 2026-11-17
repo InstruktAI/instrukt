@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-event-delivery.rs
+expression: "failures.join(\"\\n\")"
+---
+"external" ["pending"]: "execution home `project:absent` has no registered checkout"

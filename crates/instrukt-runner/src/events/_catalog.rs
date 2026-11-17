@@ -167,6 +167,13 @@ impl EventDeclaration {
         {
             return Err(invalid("subject kind differs"));
         }
+        // Only the ingress receiver publishes inbound sources; a declaration
+        // that admits any kind does not admit this one.
+        if event.subject.kind() == ReferenceKind::InboundSource.as_str() {
+            return Err(invalid(
+                "the inbound_source kind is reserved to facts the ingress receiver verified",
+            ));
+        }
         match event.home.kind() {
             Some(kind) if !self.home_kinds.contains(&kind) => {
                 return Err(invalid("origin kind is not allowed"));
@@ -246,6 +253,11 @@ impl EventCatalog {
             }
             if registry.contains_key(name) {
                 return Err(invalid("declared more than once"));
+            }
+            if declaration.subject_kind == Some(ReferenceKind::InboundSource) {
+                return Err(invalid(
+                    "the inbound_source kind is reserved to facts the ingress receiver verified",
+                ));
             }
             let platform = name.split('.').next() == Some("instrukt");
             if let Some(state) = &declaration.state {

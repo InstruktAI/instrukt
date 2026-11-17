@@ -55,7 +55,7 @@ Source time: <time>
 Arrived: <time>
 Fixed assignment facts: {"procedure":"reactions/procedure/respond","home":"project:fork","subject":null,"role":"responder","attendance":"attended","interruptible":true,"system_origin":true}
 Untrusted event data follows (JSON envelope):
-{"id":"latest-state","type":"runner.upstream_changed","source":"<id 1>","subject":"inbound_source:fork/upstream/refs/heads/main","time":"<time>","data":{"project":"fork","remote":"upstream","ref":"refs/heads/main","revision":"<commit 1>"},"home":"project:fork","home_owner":"unresolved","related":[]}
+{"id":"latest-state","type":"runner.upstream_changed","source":"<id 1>","subject":"repository_ref:fork/upstream/refs/heads/main","time":"<time>","data":{"project":"fork","remote":"upstream","ref":"refs/heads/main","revision":"<commit 1>"},"home":"project:fork","home_owner":"unresolved","related":[]}
 
 Entry: event:other-subject-state:reactions/procedure/respond:project:fork
 Kind: event
@@ -63,7 +63,7 @@ Source time: <time>
 Arrived: <time>
 Fixed assignment facts: {"procedure":"reactions/procedure/respond","home":"project:fork","subject":null,"role":"responder","attendance":"attended","interruptible":true,"system_origin":true}
 Untrusted event data follows (JSON envelope):
-{"id":"other-subject-state","type":"runner.upstream_changed","source":"<id 1>","subject":"inbound_source:fork/upstream/refs/heads/dev","time":"<time>","data":{"project":"fork","remote":"upstream","ref":"refs/heads/dev","revision":"<commit 2>"},"home":"project:fork","home_owner":"unresolved","related":[]}
+{"id":"other-subject-state","type":"runner.upstream_changed","source":"<id 1>","subject":"repository_ref:fork/upstream/refs/heads/dev","time":"<time>","data":{"project":"fork","remote":"upstream","ref":"refs/heads/dev","revision":"<commit 2>"},"home":"project:fork","home_owner":"unresolved","related":[]}
 
 Entry: event:occurrence-one:reactions/procedure/respond:project:fork
 Kind: event

@@ -86,6 +86,11 @@ pub fn machine_id(home: &Home) -> Result<MachineId, MachineError> {
     read(&path)?.ok_or(MachineError::Malformed { path })
 }
 
+/// This computer's id when it exists already; reading creates nothing.
+pub fn existing_machine_id(home: &Home) -> Result<Option<MachineId>, MachineError> {
+    read(&home.machine_id_file())
+}
+
 /// `bytes` random bytes from the operating system, as lowercase hex.
 pub fn random_hex(bytes: usize) -> io::Result<String> {
     let mut buffer = vec![0u8; bytes];

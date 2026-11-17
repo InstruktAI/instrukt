@@ -8,9 +8,9 @@ runner.ci_completed v1 — The integrate candidate CI completed, including a no-
   instrukt events schema runner.ci_completed
 runner.dependency_failing v1 — A check run on a current dependency-update head failed. (subject: commit, delivery: Occurrence)
   instrukt events schema runner.dependency_failing
-runner.main_failing v1 — Remote canonical main head completed CI red. (subject: inbound_source, delivery: State)
+runner.main_failing v1 — Remote canonical main head completed CI red. (subject: repository_ref, delivery: State)
   instrukt events schema runner.main_failing
-runner.upstream_changed v1 — A watched upstream ref changed. (subject: inbound_source, delivery: State)
+runner.upstream_changed v1 — A watched upstream ref changed. (subject: repository_ref, delivery: State)
   instrukt events schema runner.upstream_changed
 workflow.finalized v1 — A finalize-ready todo was handed off to integration. (subject: todo, delivery: Occurrence)
   instrukt events schema workflow.finalized

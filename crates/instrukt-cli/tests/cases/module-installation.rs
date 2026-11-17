@@ -41,6 +41,17 @@ esac
         std::fs::write(&file, text).unwrap();
         std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // The user's linger state: on unless a test switches it off.
+    let loginctl = dir.join("loginctl");
+    std::fs::write(
+        &loginctl,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = show-user ]; then if [ -f '{dir}/linger-off' ]; then echo no; else echo yes; fi; fi\n",
+            dir = dir.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(loginctl, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 fn project(env: &TestEnv, slug: &str, modules: &str) -> Repo {
     let modules = if modules.contains("history:") {
@@ -297,6 +308,23 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     env.run(env.home(), ["install"]).success();
     assert!(receiver.is_file());
     env.run(env.home(), ["install", "--check"]).success();
+    if cfg!(target_os = "linux") {
+        // The user's manager does not start at boot without a login: one
+        // finding names every owned unit that needs it, and installation
+        // leaves it as it is.
+        let off = env.path("runtime-bin").join("linger-off");
+        std::fs::write(&off, "").unwrap();
+        let check = env
+            .run(env.home(), ["install", "--check", "--json"])
+            .failure();
+        let report: serde_json::Value = serde_json::from_slice(&check.get_output().stdout).unwrap();
+        insta::assert_json_snapshot!(report["findings"], @r#"
+        [
+          "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the receiver's socket and service, the minute timer"
+        ]
+        "#);
+        std::fs::remove_file(off).unwrap();
+    }
 
     // A company home's source alone keeps the events dependencies and the
     // receiver while the machine's events switch is on, its signing value
@@ -2361,14 +2389,14 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         let report: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
         insta::assert_json_snapshot!(report["findings"], @r#"
 [
-  "runner service: the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`"
+  "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the runner service"
 ]
 "#);
         assert!(!instrukt(&c, &["install", "--check"]).status.success());
         // Status shows the running service with that cause.
         let service = status(&c);
         assert_eq!(service.state, ServiceState::Running);
-        insta::assert_json_snapshot!(service.cause, @r#""the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`""#);
+        insta::assert_json_snapshot!(service.cause, @r#""the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`""#);
         manager.linger(true);
         // Installing again finds the right process running and keeps it.
         let pid = manager.pid();

@@ -341,6 +341,15 @@ impl Configuration {
         super::_webhooks::ingress(self.value.get("ingress"))
     }
 
+    /// The computer that reacts to external facts: the one
+    /// `ingress.reactions` names, else the ingress; `None` when no ingress is
+    /// named.
+    pub fn reacting_computer(&self) -> Option<crate::machine::MachineId> {
+        let ingress = self.value.get("ingress")?;
+        ingress.get("computer")?;
+        super::_webhooks::reacting(Some(ingress))
+    }
+
     pub(super) fn redis_raw(&self) -> Option<&Value> {
         self.value.get("redis")
     }

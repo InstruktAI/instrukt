@@ -237,7 +237,7 @@ fn a_burst_replaces_only_undelivered_state_and_keeps_distinct_occurrences() {
         ("latest-state", "main", "c"),
         ("other-subject-state", "dev", "d"),
     ] {
-        let event = serde_json::json!({"id":id,"type":"runner.upstream_changed","source":r.computer.computer(),"subject":format!("inbound_source:fork/upstream/refs/heads/{git_ref}"),"home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{"project":"fork","remote":"upstream","ref":format!("refs/heads/{git_ref}"),"revision":revision.repeat(40)}});
+        let event = serde_json::json!({"id":id,"type":"runner.upstream_changed","source":r.computer.computer(),"subject":format!("repository_ref:fork/upstream/refs/heads/{git_ref}"),"home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{"project":"fork","remote":"upstream","ref":format!("refs/heads/{git_ref}"),"revision":revision.repeat(40)}});
         redis::cmd("XADD")
             .arg(EVENT_STREAM)
             .arg("*")
@@ -778,6 +778,15 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         ),
     )
     .unwrap();
+    // The company's fact is external: this computer is the ingress, so it
+    // reacts to it.
+    let global = r.computer.env.instrukt_home().join("instrukt.yaml");
+    let mut settings = std::fs::read_to_string(&global).unwrap();
+    settings.push_str(&format!(
+        "ingress: {{computer: '{}', port: 8787}}\n",
+        r.computer.computer()
+    ));
+    std::fs::write(&global, settings).unwrap();
     r.scoped("platform", "configuration:global", "none");
     r.scoped("company", "inbound_source:erp:company:acme", "company:acme");
     r.append("project");
@@ -1113,4 +1122,42 @@ fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human
     assert_eq!(r.runtime.message_count("s1"), before + 1);
     // The later event reached the same, human-settled thread.
     assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA14
+#[test]
+fn an_external_facts_absent_project_fails_on_the_reacting_computer_and_nothing_substitutes() {
+    let r = Responsibility::new("");
+    // The published procedure answers every project's facts.
+    // This computer is the ingress and reacts to external facts.
+    let global = r.computer.env.instrukt_home().join("instrukt.yaml");
+    let mut settings = std::fs::read_to_string(&global).unwrap();
+    settings.push_str(&format!(
+        "ingress: {{computer: '{}', port: 8787}}\n",
+        r.computer.computer()
+    ));
+    std::fs::write(&global, settings).unwrap();
+    // An external fact for a project this computer has no checkout of.
+    r.scoped(
+        "external",
+        "inbound_source:erp:project:absent",
+        "project:absent",
+    );
+    r.tick();
+    r.tick();
+    let status = r
+        .computer
+        .env
+        .run(&r.computer.env.path(""), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    let failures: Vec<String> = status["activation_failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| format!("{} [{}]: {}", f["id"], f["state"], f["failure"]))
+        .collect();
+    insta::assert_snapshot!("external-absent-home", failures.join("\n"));
+    // No other checkout or computer takes the work: no agent starts.
+    assert!(r.runtime.threads().is_empty());
 }

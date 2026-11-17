@@ -2,6 +2,34 @@
 
 ## 0.1.0
 
+### One computer reacts to external facts; watched refs are repository refs
+
+`runner.upstream_changed` and `runner.main_failing` now name their ref with a
+`repository_ref` subject; an older instrukt named it with the `inbound_source`
+kind, which now marks an external fact and is selected only on the computer
+that reacts to external facts. An older entry of either event that is still
+unread when a computer is upgraded is therefore treated as an external fact:
+on a computer that is not the reacting computer, or where no ingress is named,
+it is settled without activating anything, and since the ref's observation is
+already recorded, the same revision is not reported again; only the ref's next
+change wakes the agent. On the reacting computer it can activate for a project
+another computer emitted it for, and fails there when that project is absent.
+An activation already accepted before the upgrade is delivered as before.
+
+Before upgrading each computer, let its pending events drain: keep
+`instrukt run` running, or run `instrukt tick`, until
+`instrukt events status` shows no pending or lagging entries for the
+procedure-activation consumer, then upgrade it at once. Upgrade every
+participating computer the same way.
+
+On Linux every owned unit that has to run without a login (the runner service,
+the receiver's socket and service, the private local Redis service and the
+minute timer) needs the user's service manager to start at boot.
+`instrukt install --check` now reports one finding naming
+`loginctl enable-linger` when it does not; instrukt never changes it. Run
+`loginctl enable-linger` once for the user that runs instrukt, then
+`instrukt install --check` again.
+
 ### T3 release contract and failure routing
 
 Instrukt's own project enables events with an empty watch list and selects

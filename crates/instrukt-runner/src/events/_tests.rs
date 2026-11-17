@@ -196,6 +196,7 @@ fn context_attaches_the_actual_session_and_preserves_causation() {
 fn emission_needs_no_consumer_or_home_resolver() {
     let mut input = received();
     input["home"] = json!("company:remote-company");
+    input["subject"] = json!("captured_item:invoice-7");
     let event = read(input);
     let mut declaration = finalized().declaration();
     declaration.name.clone_from(&event.event_type);
@@ -422,6 +423,19 @@ fn a_producer_cannot_emit_data_with_the_wrong_json_kind() {
 }
 
 #[test]
+fn only_the_receiver_publishes_inbound_sources() {
+    let event = finalized();
+    let mut envelope = event.envelope(&context()).unwrap();
+    envelope.subject = EventRef::new(ReferenceKind::InboundSource, "native:project:demo").unwrap();
+    // A declaration that admits any reference kind does not admit this one.
+    let mut declaration = event.declaration();
+    declaration.subject_kind = None;
+    assert!(declaration.validate(&envelope).is_err());
+    declaration.subject_kind = Some(ReferenceKind::InboundSource);
+    assert!(EventCatalog::new(vec![declaration]).is_err());
+}
+
+#[test]
 fn an_optional_field_can_be_absent() {
     let event = finalized();
     let envelope = event.envelope(&context()).unwrap();
@@ -514,7 +528,7 @@ fn upstream_state_subjects_name_the_watched_ref() {
     assert_eq!(
         envelope.subject,
         EventRef::new(
-            ReferenceKind::InboundSource,
+            ReferenceKind::RepositoryRef,
             &format!("{project}/upstream/refs/heads/main")
         )
         .unwrap()
@@ -532,7 +546,7 @@ fn main_failing_state_subjects_name_the_canonical_ref() {
     };
     assert_eq!(
         event.envelope(&context()).unwrap().subject,
-        EventRef::new(ReferenceKind::InboundSource, &format!("{project}/main")).unwrap()
+        EventRef::new(ReferenceKind::RepositoryRef, &format!("{project}/main")).unwrap()
     );
 }
 
