@@ -66,6 +66,7 @@ readers retain unfamiliar kinds and identities unchanged.
 | `memory_scope` | Identity key, optionally desk-qualified |
 | `ci_run` | Repository/run/attempt identity |
 | `commit` | Repository and commit SHA |
+| `repository_ref` | Project and a ref it watches or owns, e.g. `acme/origin/main` |
 | `install` | Computer and installation number |
 | `release` | Repository and release version |
 

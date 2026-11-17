@@ -341,9 +341,11 @@ No compatibility alias or second occurrence is emitted.
 
 The canonical received boundary is the open event envelope, not a closed enum
 of these facts. Runner declarations use project origin;
-upstream changes name the observed repository revision as a commit reference,
-main-failing names a repository-qualified commit, and CI completion names the
-candidate commit (including the `no_ci` observation). Finalize-ready and reviewed
+upstream changes name the watched ref of the project's remote and main-failing
+names the project's main, each as a repository ref with the observed revision
+in its data, so a newer observation of the same ref takes the place of an
+undelivered older one; CI completion names the candidate commit (including the
+`no_ci` observation). Finalize-ready and reviewed
 preparation use project origin and a todo subject. The existing occurrence-key columns
 below determine stable IDs, including producer type, independently of payload
 serialization. Producer declarations expose the existing payloads as typed data.
