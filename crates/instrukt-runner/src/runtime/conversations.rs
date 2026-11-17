@@ -88,6 +88,19 @@ pub struct ConversationChanges {
     pub turn_failures: Vec<TurnEvidenceFailure>,
     /// Previously observed native conversations absent from this source pass.
     pub missing: Vec<SessionId>,
+    /// Native conversations that changed while being read: none of their
+    /// records are in this batch, and a later read takes them up again.
+    pub unsettled: Vec<SessionId>,
+}
+
+/// The native conversations one read covers.
+#[derive(Debug, Clone, Copy)]
+pub enum Scope<'a> {
+    /// Every conversation the source holds.
+    All,
+    /// Only these conversations: no other conversation is read, waited for
+    /// or reported missing.
+    Only(&'a [SessionId]),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,10 +125,12 @@ pub trait ConversationNotifications: Send {
 }
 pub trait ConversationSource: Send {
     fn identity(&self) -> &str;
-    /// Returns the next bounded change batch; the position commits with its records.
+    /// Returns the next bounded change batch within `scope`; the position
+    /// commits with its records.
     fn changed_since(
         &self,
         position: Option<&SourcePosition>,
+        scope: Scope<'_>,
     ) -> Result<ConversationChanges, SourceError>;
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError>;
 }

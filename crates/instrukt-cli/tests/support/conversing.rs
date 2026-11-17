@@ -209,6 +209,11 @@ impl Company {
         });
     }
 
+    /// The runner process dies where it stands.
+    pub fn runner_dies(&mut self) {
+        self.runner = None;
+    }
+
     /// Waits until the runner process has ended on its own.
     pub fn runner_ended(&mut self) {
         let runner = self.runner.as_mut().unwrap();

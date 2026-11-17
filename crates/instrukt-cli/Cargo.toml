@@ -38,6 +38,7 @@ tracing.workspace = true
 [dev-dependencies]
 base64.workspace = true
 rustix.workspace = true
+nix.workspace = true
 jsonwebtoken.workspace = true
 tungstenite.workspace = true
 hmac.workspace = true

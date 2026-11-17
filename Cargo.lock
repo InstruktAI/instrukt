@@ -890,6 +890,7 @@ dependencies = [
  "instrukt-todos",
  "jiff",
  "jsonwebtoken",
+ "nix",
  "predicates",
  "redis",
  "rustix",
@@ -1161,6 +1162,18 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]

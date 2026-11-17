@@ -2,6 +2,7 @@
 use crate::common::TestEnv;
 use instrukt_core::state_db::rusqlite::{Connection, params};
 use serde_json::{Value, json};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::{path::PathBuf, process::Child, time::Duration};
 
 pub struct T3Store {
@@ -146,6 +147,48 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         .unwrap();
         tx.commit().unwrap();
     }
+    /// Other work on the computer: `count` finished threads beside the
+    /// scenario's own, each saying `said`, and one more whose answer is
+    /// still streaming; [`Elsewhere::stream`] keeps rewriting it until
+    /// [`Elsewhere::settle`], after which it says `said` too.
+    #[allow(dead_code, reason = "shared by the source-reading scenarios")]
+    pub fn elsewhere(&self, count: usize, said: &str) -> Elsewhere {
+        let tx = self.db.unchecked_transaction().unwrap();
+        let threads = (0..count)
+            .map(|n| (format!("elsewhere-{n:04}"), false))
+            .chain([(STREAMING.to_owned(), true)]);
+        for (thread, streaming) in threads {
+            let payload = json!({"id":thread,"projectId":"project","title":"Elsewhere","lineage":{"parentThreadId":null,"relationshipToParent":null},"createdAt":ELSEWHERE_AT,"updatedAt":ELSEWHERE_AT,"archivedAt":null,"deletedAt":null});
+            tx.execute("INSERT INTO orchestration_v2_projection_threads VALUES(?1,'project','Elsewhere',?2,?2,NULL,NULL,?3)",params![thread,ELSEWHERE_AT,payload.to_string()]).unwrap();
+            let message = if streaming {
+                STREAMING_ANSWER.to_owned()
+            } else {
+                format!("{thread}-message")
+            };
+            let payload = json!({"id":message,"threadId":thread,"role":"assistant","text":said,"createdAt":ELSEWHERE_AT,"updatedAt":ELSEWHERE_AT,"streaming":streaming,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
+            tx.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',?3,?4,?4,?5)",params![message,thread,streaming,ELSEWHERE_AT,payload.to_string()]).unwrap();
+        }
+        tx.commit().unwrap();
+        Elsewhere {
+            file: self.file.clone(),
+            said: said.to_owned(),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            writer: None,
+            deltas: 0,
+        }
+    }
+    /// T3's server descriptor as a named pipe this test serves, with the
+    /// content the descriptor had. Every read of T3's durable source opens
+    /// the descriptor first, so each source read becomes a point the test
+    /// sees, and can hold.
+    #[allow(dead_code, reason = "shared by the source-reading scenarios")]
+    pub fn gate(&self) -> Gate {
+        let state = self.file.parent().unwrap();
+        Gate::serve(
+            state.join("server-runtime.json"),
+            state.parent().unwrap().join("descriptor-gate"),
+        )
+    }
     pub fn remove_threads(&self) {
         self.db.execute_batch("DELETE FROM orchestration_v2_projection_messages;DELETE FROM orchestration_v2_projection_threads;").unwrap();
     }
@@ -199,6 +242,265 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             json!({"serverVersion":"future-compatible-release"}).to_string(),
         )
         .unwrap();
+    }
+}
+
+const ELSEWHERE_AT: &str = "2026-11-08T09:00:00.000Z";
+const STREAMING: &str = "elsewhere-streaming";
+const STREAMING_ANSWER: &str = "elsewhere-answer";
+
+/// The other work of [`T3Store::elsewhere`]; dropping it settles its stream.
+pub struct Elsewhere {
+    file: PathBuf,
+    said: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    writer: Option<std::thread::JoinHandle<()>>,
+    deltas: u64,
+}
+#[allow(dead_code, reason = "shared by the source-reading scenarios")]
+impl Elsewhere {
+    /// The streaming answer keeps changing, as a provider's deltas do,
+    /// until [`Self::settle`].
+    pub fn stream(&mut self) {
+        if self.writer.is_some() {
+            return;
+        }
+        self.stop.store(false, std::sync::atomic::Ordering::Relaxed);
+        let stopping = self.stop.clone();
+        let file = self.file.clone();
+        let said = self.said.clone();
+        self.writer = Some(std::thread::spawn(move || {
+            let db = Connection::open(&file).unwrap();
+            let mut n = 0_u64;
+            while !stopping.load(std::sync::atomic::Ordering::Relaxed) {
+                n += 1;
+                delta(&db, &format!("{said} {n}"), true);
+                // Paces the stream like a provider's deltas.
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }));
+    }
+    /// One more delta of the streaming answer, now.
+    pub fn nudge(&mut self) {
+        self.deltas += 1;
+        let db = Connection::open(&self.file).unwrap();
+        delta(&db, &format!("{} nudged {}", self.said, self.deltas), true);
+    }
+    /// Stops the stream; its answer is finished and says what the others say.
+    pub fn settle(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(writer) = self.writer.take() {
+            writer.join().unwrap();
+        }
+        let db = Connection::open(&self.file).unwrap();
+        delta(&db, &self.said, false);
+    }
+}
+impl Drop for Elsewhere {
+    /// The stream always stops and its writer is reaped; a failing test
+    /// only skips the finished answer, and nothing here panics again while
+    /// it unwinds.
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(writer) = self.writer.take() {
+                let _ = writer.join();
+            }
+        } else {
+            self.settle();
+        }
+    }
+}
+fn delta(db: &Connection, text: &str, streaming: bool) {
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    let payload = json!({"id":STREAMING_ANSWER,"threadId":STREAMING,"role":"assistant","text":text,"createdAt":ELSEWHERE_AT,"updatedAt":ELSEWHERE_AT,"streaming":streaming,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
+    db.execute(
+        "UPDATE orchestration_v2_projection_messages SET streaming=?1,payload_json=?2 WHERE message_id=?3",
+        params![streaming, payload.to_string(), STREAMING_ANSWER],
+    )
+    .unwrap();
+}
+
+#[derive(Default)]
+struct Gating {
+    /// Source reads served so far.
+    served: usize,
+    /// Whether a source read is waiting at the gate.
+    waiting: bool,
+    /// Whether reads wait at the gate until admitted.
+    held: bool,
+    /// Reads admitted while the gate is held.
+    admitted: usize,
+    stop: bool,
+}
+
+/// See [`T3Store::gate`]. Open, it serves every read at once; held, each
+/// read waits until admitted, so the process reading stands still at the
+/// start of a source read with everything before it done. Each read is
+/// served through a named pipe of its own, which the descriptor points to
+/// until that read arrives, so a reader still closing the previous pipe is
+/// never taken for the next read. The pipes and the link that points to the
+/// current one live in a directory of their own, so T3's state directory,
+/// which the source watches, sees no change per read. Dropping it restores
+/// the descriptor as it was.
+pub struct Gate {
+    descriptor: PathBuf,
+    pipes: PathBuf,
+    content: Option<Vec<u8>>,
+    shared: std::sync::Arc<(std::sync::Mutex<Gating>, std::sync::Condvar)>,
+    server: Option<std::thread::JoinHandle<()>>,
+}
+/// The `n`th read's named pipe.
+fn make_pipe(pipes: &std::path::Path, n: usize) -> PathBuf {
+    let pipe = pipes.join(format!("pipe-{n}"));
+    nix::unistd::mkfifo(
+        &pipe,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+    pipe
+}
+/// The descriptor, through the current link, points to `pipe` from now on.
+fn point(pipes: &std::path::Path, pipe: &std::path::Path) {
+    let link = pipes.join("next");
+    std::os::unix::fs::symlink(pipe, &link).unwrap();
+    std::fs::rename(&link, pipes.join("current")).unwrap();
+}
+#[allow(dead_code, reason = "shared by the source-reading scenarios")]
+impl Gate {
+    fn serve(descriptor: PathBuf, pipes: PathBuf) -> Self {
+        let content = std::fs::read(&descriptor).ok();
+        if content.is_some() {
+            std::fs::remove_file(&descriptor).unwrap();
+        }
+        let served = content.clone().unwrap_or_else(|| b"{}".to_vec());
+        let shared = std::sync::Arc::new((
+            std::sync::Mutex::new(Gating::default()),
+            std::sync::Condvar::new(),
+        ));
+        let serving = shared.clone();
+        std::fs::create_dir_all(&pipes).unwrap();
+        let path = pipes.clone();
+        let mut pipe = make_pipe(&path, 0);
+        point(&path, &pipe);
+        std::os::unix::fs::symlink(path.join("current"), &descriptor).unwrap();
+        let mut next = make_pipe(&path, 1);
+        let server = std::thread::spawn(move || {
+            let (lock, changed) = &*serving;
+            for n in 2.. {
+                if lock.lock().unwrap().stop {
+                    return;
+                }
+                // Blocks until a reader opens this read's pipe.
+                let mut reader = std::fs::OpenOptions::new().write(true).open(&pipe).unwrap();
+                // Later readers wait at the next read's pipe.
+                point(&path, &next);
+                let current = std::mem::replace(&mut pipe, next.clone());
+                let mut gating = lock.lock().unwrap();
+                gating.waiting = true;
+                changed.notify_all();
+                while gating.held && gating.admitted == 0 && !gating.stop {
+                    gating = changed.wait(gating).unwrap();
+                }
+                if gating.admitted > 0 {
+                    gating.admitted -= 1;
+                }
+                gating.waiting = false;
+                gating.served += 1;
+                let stop = gating.stop;
+                changed.notify_all();
+                drop(gating);
+                // A reader that ended while it waited is no longer there.
+                let _ = std::io::Write::write_all(&mut reader, &served);
+                // Gone before its writer closes, the pipe is never opened
+                // again by a reader no writer would serve.
+                std::fs::remove_file(&current).unwrap();
+                drop(reader);
+                if stop {
+                    let _ = std::fs::remove_file(&pipe);
+                    return;
+                }
+                next = make_pipe(&path, n);
+            }
+        });
+        Self {
+            descriptor,
+            pipes,
+            content,
+            shared,
+            server: Some(server),
+        }
+    }
+    fn until(&self, what: &str, done: impl Fn(&Gating) -> bool) {
+        let (lock, changed) = &*self.shared;
+        let (gating, timeout) = changed
+            .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(20), |gating| {
+                !done(gating)
+            })
+            .unwrap();
+        drop(gating);
+        assert!(!timeout.timed_out(), "timed out waiting for {what}");
+    }
+    /// Later source reads wait at the gate.
+    pub fn hold(&self) {
+        let (lock, changed) = &*self.shared;
+        lock.lock().unwrap().held = true;
+        changed.notify_all();
+    }
+    /// Waits until a source read stands at the held gate.
+    pub fn held(&self) {
+        self.until("a source read at the gate", |gating| {
+            gating.held && gating.waiting
+        });
+    }
+    /// Lets the source read standing at the held gate through.
+    pub fn admit(&self) {
+        self.held();
+        let served = {
+            let (lock, changed) = &*self.shared;
+            let mut gating = lock.lock().unwrap();
+            gating.admitted += 1;
+            changed.notify_all();
+            gating.served
+        };
+        self.until("the admitted source read", |gating| gating.served > served);
+    }
+    /// Every source read passes at once again.
+    pub fn open(&self) {
+        let (lock, changed) = &*self.shared;
+        lock.lock().unwrap().held = false;
+        changed.notify_all();
+    }
+}
+impl Drop for Gate {
+    fn drop(&mut self) {
+        {
+            let (lock, changed) = &*self.shared;
+            let mut gating = lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            gating.stop = true;
+            gating.held = false;
+            changed.notify_all();
+        }
+        // A reader of its own releases a server waiting for one.
+        let release = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+            .open(&self.descriptor);
+        if let Some(server) = self.server.take() {
+            let _ = server.join();
+        }
+        drop(release);
+        let _ = std::fs::remove_file(&self.descriptor);
+        let _ = std::fs::remove_dir_all(&self.pipes);
+        if let Some(content) = &self.content {
+            let restored = std::fs::write(&self.descriptor, content);
+            // While a failing test unwinds, a second panic would abort it.
+            if !std::thread::panicking() {
+                restored.unwrap();
+            }
+        }
     }
 }
 

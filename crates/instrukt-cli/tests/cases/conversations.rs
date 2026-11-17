@@ -22,10 +22,17 @@ fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV1
 #[test]
 fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
-    let mut c = Company::new("");
+    // History is off, so the conversation relay is the stand-in's only
+    // source reader while the runner runs.
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     // The company starts its sessions on its own order of profiles.
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
+    // The computer runs other work: many other threads, one of them
+    // streaming and rewritten while instrukt reads.
+    let mut elsewhere = c.store.elsewhere(200, "Elsewhere chatter.");
+    elsewhere.stream();
+    let gate = c.store.gate();
     c.run();
     let channel = "C1";
     // The runner dies before the runtime accepted the question's opening.
@@ -59,6 +66,20 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     c.runner_ended();
     let session = c.session();
     assert_eq!(c.runtime.message_count(&session), 1);
+    // Restarted while the opening turn runs, with the source otherwise
+    // quiet: recovery binds the session and reads its thread mid-turn. The
+    // runner dies once that read is retained, as its next source read
+    // begins, and the turn finishes while it is down.
+    c.store
+        .thread(&session, None, None, "2026-11-08T10:00:00.000Z");
+    elsewhere.settle();
+    gate.hold();
+    c.run();
+    gate.admit();
+    elsewhere.nudge();
+    gate.held();
+    c.runner_dies();
+    gate.open();
     // Someone types in the session's thread directly, and both turns finish
     // while the runner is down: the typed one comes first in the thread, so
     // it is read before the answer's, and it is not posted. An answer longer
@@ -100,6 +121,21 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     wait("nothing left to post", || {
         c.conversations().conversations.is_empty()
     });
+    // While the other thread streams again, a later catch-up of this
+    // conversation completes: the next source read stands at the gate
+    // after it. Its outcome leaves no cause.
+    elsewhere.stream();
+    gate.hold();
+    gate.admit();
+    gate.held();
+    let status = c.conversations();
+    assert!(
+        status.conversations.is_empty(),
+        "{:?}",
+        status.conversations
+    );
+    assert_eq!(status.relay_failure, None);
+    gate.open();
     assert_eq!(
         destinations(&c),
         [

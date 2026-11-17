@@ -54,7 +54,19 @@ fn wait_for(condition: impl FnMut() -> bool) {
 fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     let env = common::TestEnv::new();
     let store = history::T3Store::new(&env);
+    // History is off, so the link relay is the stand-in's only source
+    // reader while the runner runs.
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {history: false}\n",
+    )
+    .unwrap();
+    // Other work on the computer: many other threads, one of them streaming
+    // and rewritten while the link's threads are read.
+    let mut elsewhere = store.elsewhere(200, "Elsewhere chatter.");
+    elsewhere.stream();
     let fake = runtime::FakeT3::create(&env);
+    let gate = store.gate();
     fake.seed("parent", env.home(), "peer-a", "opening a");
     fake.seed("child", env.home(), "peer-b", "opening b");
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
@@ -92,7 +104,16 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     native_db.execute("INSERT INTO orchestration_v2_projection_runs VALUES ('ongoing','child','running',?1,NULL,?2)",instrukt_core::state_db::rusqlite::params![at,ongoing.to_string()]).unwrap();
     let partial = serde_json::json!({"id":"streaming","threadId":"child","runId":"ongoing","role":"assistant","text":"Unfinished output stays here.","streaming":true,"createdAt":at,"updatedAt":at});
     native_db.execute("INSERT INTO orchestration_v2_projection_messages VALUES ('streaming','child','assistant',1,?1,?1,?2)",instrukt_core::state_db::rusqlite::params![at,partial.to_string()]).unwrap();
+    // The runner's first start, with every source read held: no runner has
+    // read before. Its first read is the child direction's, as directions
+    // are read in source order, while the child's run is still unfinished.
+    // That read is let through and its finished turn reaches the parent; the
+    // runner dies as its next source read begins, so the position that read
+    // left is the one kept. A turn finishes while it is down, with the other
+    // work settled and nothing else changing.
+    gate.hold();
     let runner = run();
+    gate.admit();
     wait_for(|| fake.message_count("parent") == 2);
     let delivered = boundaries(
         &fake
@@ -101,12 +122,33 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     );
     insta::assert_snapshot!("finished-turn-relay", delivered);
     assert_eq!(fake.message_count("child"), 1);
+    gate.held();
+    drop(runner);
+    elsewhere.settle();
+    store.turn(
+        "child",
+        "fresh-after-restart",
+        4,
+        "A fresh clarification.",
+        "A fresh reply.",
+    );
+    gate.open();
+    let runner = run();
+    wait_for(|| {
+        links::status(&home).unwrap()[0]
+            .directions
+            .iter()
+            .any(|d| d.delivered_turn.as_deref() == Some("fresh-after-restart"))
+    });
+    assert_eq!(fake.message_count("parent"), 3);
+    // The other work runs again.
+    elsewhere.stream();
     // A native change with unchanged occurrence time still reaches the independent reader.
     let db = instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap();
     db.execute("UPDATE orchestration_v2_projection_runs SET payload_json=json_set(payload_json,'$.id','second-run','$.ordinal',2),run_id='second-run' WHERE run_id='native-run'",[]).unwrap();
     db.execute("UPDATE orchestration_v2_projection_messages SET payload_json=json_set(payload_json,'$.runId','second-run') WHERE json_extract(payload_json,'$.runId')='native-run'",[]).unwrap();
     db.execute("UPDATE orchestration_v2_projection_turn_items SET payload_json=json_set(payload_json,'$.runId','second-run') WHERE json_extract(payload_json,'$.runId')='native-run'",[]).unwrap();
-    wait_for(|| fake.message_count("parent") == 3);
+    wait_for(|| fake.message_count("parent") == 4);
     db.execute("UPDATE orchestration_v2_projection_runs SET payload_json=json_set(payload_json,'$.id','empty-run','$.ordinal',3),run_id='empty-run' WHERE run_id='second-run'",[]).unwrap();
     db.execute("UPDATE orchestration_v2_projection_messages SET payload_json=json_set(payload_json,'$.runId','empty-run','$.text',CASE role WHEN 'user' THEN '[Instrukt Assignment]' || char(10) || 'internal instructions' || char(10) || '[/Instrukt Assignment]' ELSE 'NOOP' END) WHERE json_extract(payload_json,'$.runId')='second-run'",[]).unwrap();
     db.execute("UPDATE orchestration_v2_projection_turn_items SET payload_json=json_set(payload_json,'$.runId','empty-run') WHERE json_extract(payload_json,'$.runId')='second-run'",[]).unwrap();
@@ -116,29 +158,17 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
             .iter()
             .any(|d| d.delivered_turn.as_deref() == Some("empty-run"))
     });
-    assert_eq!(fake.message_count("parent"), 3);
+    assert_eq!(fake.message_count("parent"), 4);
     assert!(
         links::status(&home).unwrap()[0]
             .directions
             .iter()
             .any(|d| matches!(d.receipts.get("empty-run"), Some(links::Disposition::Empty)))
     );
-    drop(runner);
-    store.turn(
-        "child",
-        "fresh-after-restart",
-        4,
-        "A fresh clarification.",
-        "A fresh reply.",
-    );
-    let runner = run();
-    wait_for(|| {
-        links::status(&home).unwrap()[0]
-            .directions
-            .iter()
-            .any(|d| d.delivered_turn.as_deref() == Some("fresh-after-restart"))
-    });
-    assert_eq!(fake.message_count("parent"), 4);
+    // The other threads' changes left no cause on the link.
+    let link = links::status(&home).unwrap().remove(0);
+    assert_eq!(link.failure, None);
+    assert!(link.directions.iter().all(|d| d.failure.is_none()));
     env.instrukt(env.home())
         .env("T3CODE_THREAD_ID", a.id.as_str())
         .args(["discuss", "close"])

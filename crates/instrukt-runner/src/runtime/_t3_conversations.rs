@@ -2,9 +2,10 @@
 use super::_t3_fingerprint::{self, Fingerprint};
 use super::conversations::{
     ConversationChanges, ConversationNotifications, ConversationRecord, ConversationSource,
-    RecordKind, Role, SourceError, SourcePosition,
+    RecordKind, Role, Scope, SourceError, SourcePosition,
 };
 use crate::runtime::_t3_home::T3Home;
+use instrukt_core::ids::SessionId;
 use instrukt_core::state_db::rusqlite::types::ValueRef;
 use instrukt_core::{
     config::Env,
@@ -16,7 +17,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -393,7 +394,7 @@ struct Position {
     version: u8,
     loaded: BTreeMap<String, Fingerprint>,
     #[serde(default)]
-    observed: std::collections::BTreeSet<String>,
+    observed: BTreeSet<String>,
     after: Option<String>,
 }
 impl Default for Position {
@@ -443,44 +444,71 @@ impl T3Conversations {
         }
     }
 }
-/// Each aggregate visits only one bounded rowid scope; no read transaction spans scopes.
-fn discover(path: &Path) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
+/// Each aggregate visits only one bounded rowid scope; no read transaction
+/// spans scopes. A scope of named conversations visits only their rows.
+fn discover(path: &Path, scope: Scope<'_>) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
+    let threads: Vec<Option<&str>> = match scope {
+        Scope::All => vec![None],
+        Scope::Only(ids) => ids
+            .iter()
+            .map(|id| Some(id.as_str()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+    };
     let mut fingerprints = BTreeMap::new();
-    for projection in PROJECTIONS {
-        let mut after = 0_i64;
-        loop {
-            let db = open(path)?;
-            _t3_fingerprint::register(&db)?;
-            let sql = format!(
-                "SELECT thread_id,max(source_rowid),{}('{}',source_rowid,native_id,thread_id,native_clock,payload_json,streaming,extra) FROM (SELECT rowid source_rowid,{} native_id,thread_id,{} native_clock,payload_json,{} streaming,{} extra FROM {} WHERE rowid>?1 ORDER BY rowid LIMIT {BATCH_SIZE}) GROUP BY thread_id",
-                _t3_fingerprint::FUNCTION,
-                projection.name(),
-                projection.id(),
-                projection.clock(),
-                projection.streaming_column(),
-                projection.extra_column(),
-                projection.table()
-            );
-            let mut statement = db.prepare(&sql)?;
-            let rows = statement
-                .query_map([after], |r| {
+    for thread in threads {
+        for projection in PROJECTIONS {
+            let mut after = 0_i64;
+            loop {
+                let db = open(path)?;
+                _t3_fingerprint::register(&db)?;
+                let sql = format!(
+                    "SELECT thread_id,max(source_rowid),{}('{}',source_rowid,native_id,thread_id,native_clock,payload_json,streaming,extra) FROM (SELECT rowid source_rowid,{} native_id,thread_id,{} native_clock,payload_json,{} streaming,{} extra FROM {} WHERE rowid>?1{} ORDER BY rowid LIMIT {BATCH_SIZE}) GROUP BY thread_id",
+                    _t3_fingerprint::FUNCTION,
+                    projection.name(),
+                    projection.id(),
+                    projection.clock(),
+                    projection.streaming_column(),
+                    projection.extra_column(),
+                    projection.table(),
+                    if thread.is_some() {
+                        " AND thread_id=?2"
+                    } else {
+                        ""
+                    }
+                );
+                let mut statement = db.prepare(&sql)?;
+                let read = |r: &instrukt_core::state_db::rusqlite::Row<'_>| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, i64>(1)?,
                         r.get::<_, String>(2)?,
                     ))
-                })?
+                };
+                let rows = match thread {
+                    Some(thread) => statement.query_map(params![after, thread], read)?,
+                    None => statement.query_map([after], read)?,
+                }
                 .collect::<Result<Vec<_>, _>>()?;
-            if rows.is_empty() {
-                break;
-            }
-            for (thread, rowid, value) in rows {
-                after = after.max(rowid);
-                _t3_fingerprint::merge(&mut fingerprints, thread, serde_json::from_str(&value)?);
+                if rows.is_empty() {
+                    break;
+                }
+                for (thread, rowid, value) in rows {
+                    after = after.max(rowid);
+                    _t3_fingerprint::merge(
+                        &mut fingerprints,
+                        thread,
+                        serde_json::from_str(&value)?,
+                    );
+                }
             }
         }
     }
     Ok(fingerprints)
+}
+fn conversation(thread: &str) -> Result<SessionId, SourceError> {
+    SessionId::parse(thread).map_err(|_| source_error("invalid conversation reference"))
 }
 fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, SourceError> {
     let value = &row.payload;
@@ -554,6 +582,244 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
         native: row.payload,
     })
 }
+/// How often a scoped read reads one of its conversations again, rediscovering
+/// it first, when it changed while being read: a conversation that is being
+/// written settles between two reads far more often than not.
+const SCOPED_READS: usize = 3;
+
+/// One conversation read whole.
+enum Read {
+    /// Its rows matched the fingerprint it was discovered with.
+    Settled {
+        fingerprint: Fingerprint,
+        records: Vec<ConversationRecord>,
+        streaming: bool,
+        incomplete_runs: BTreeSet<String>,
+    },
+    /// It changed while it was read, so its rows may mix two states.
+    Unsettled,
+}
+
+impl T3Conversations {
+    fn read(&self, thread: &str, expected: &Fingerprint) -> Result<Read, SourceError> {
+        let mut fingerprint = Fingerprint::default();
+        let mut records = Vec::new();
+        let mut streaming = false;
+        let mut incomplete_runs = BTreeSet::new();
+        for projection in PROJECTIONS {
+            let mut after = String::new();
+            loop {
+                let rows = batch(&self.path, projection, thread, &after)?;
+                let Some(last) = rows.last() else {
+                    break;
+                };
+                after = last.native_id.clone();
+                for row in rows {
+                    fingerprint.add(&row.fingerprint);
+                    if row.streaming {
+                        streaming = true;
+                        incomplete_runs
+                            .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
+                    } else {
+                        records.push(normalized(projection, row)?);
+                    }
+                }
+            }
+        }
+        if &fingerprint != expected {
+            tracing::debug!(event = "t3_source_unsettled", conversation = %thread);
+            return Ok(Read::Unsettled);
+        }
+        Ok(Read::Settled {
+            fingerprint,
+            records,
+            streaming,
+            incomplete_runs,
+        })
+    }
+
+    /// A scoped conversation read whole, discovering it again before each
+    /// further attempt while it keeps changing under the read.
+    fn read_scoped(&self, thread: &str, expected: Fingerprint) -> Result<Read, SourceError> {
+        let mut expected = expected;
+        for attempt in 1..=SCOPED_READS {
+            if let read @ Read::Settled { .. } = self.read(thread, &expected)? {
+                return Ok(read);
+            }
+            if attempt < SCOPED_READS {
+                let id = conversation(thread)?;
+                match discover(&self.path, Scope::Only(std::slice::from_ref(&id)))?.remove(thread) {
+                    Some(again) => expected = again,
+                    None => break,
+                }
+            }
+        }
+        Ok(Read::Unsettled)
+    }
+}
+
+/// What one settled conversation contributes to a batch; its fingerprint is
+/// loaded unless it is still streaming.
+fn contribute(
+    changes: &mut ConversationChanges,
+    state: &mut Position,
+    thread: &str,
+    read: Read,
+) -> Result<(), SourceError> {
+    let Read::Settled {
+        fingerprint,
+        records,
+        streaming,
+        incomplete_runs,
+    } = read
+    else {
+        changes.unsettled.push(conversation(thread)?);
+        return Ok(());
+    };
+    if !streaming {
+        state.loaded.insert(thread.to_owned(), fingerprint);
+    }
+    match super::_t3_completed::completed(
+        &records,
+        &incomplete_runs.into_iter().collect::<Vec<_>>(),
+    ) {
+        Ok(turns) => changes.completed_turns.extend(turns),
+        Err(error) => changes
+            .turn_failures
+            .push(super::conversations::TurnEvidenceFailure {
+                conversation: conversation(thread)?,
+                cause: error.to_string(),
+            }),
+    }
+    let mut named = false;
+    for record in records
+        .iter()
+        .filter(|record| matches!(record.kind, RecordKind::Conversation))
+    {
+        named = true;
+        changes
+            .conversations
+            .push(conversation(&record.conversation_id)?);
+    }
+    if !named {
+        changes.missing.push(conversation(thread)?);
+    }
+    changes.records.extend(records);
+    Ok(())
+}
+
+fn empty_changes(position: SourcePosition, has_more: bool) -> ConversationChanges {
+    ConversationChanges {
+        records: Vec::new(),
+        position,
+        has_more,
+        completed_turns: Vec::new(),
+        conversations: Vec::new(),
+        turn_failures: Vec::new(),
+        missing: Vec::new(),
+        unsettled: Vec::new(),
+    }
+}
+
+impl T3Conversations {
+    /// The next conversation of a pass over every conversation, one per
+    /// batch. The pass discovers them once and keeps that inventory while
+    /// its own positions come back; any other position starts a new pass
+    /// from the first conversation, so a position retained across a restart
+    /// is caught up whole.
+    fn all(
+        &self,
+        position: Option<&SourcePosition>,
+        mut state: Position,
+    ) -> Result<ConversationChanges, SourceError> {
+        let fingerprints = {
+            let mut cache = self.pass.borrow_mut();
+            if cache
+                .as_ref()
+                .is_none_or(|pass| pass.expected.as_ref() != position)
+            {
+                *cache = Some(Pass {
+                    fingerprints: discover(&self.path, Scope::All)?,
+                    expected: None,
+                });
+                state.after = None;
+            }
+            cache
+                .as_ref()
+                .map(|pass| pass.fingerprints.clone())
+                .ok_or_else(|| source_error("missing source fingerprint pass"))?
+        };
+        let next = fingerprints.iter().find(|(thread, fingerprint)| {
+            state.after.as_ref().is_none_or(|after| *thread > after)
+                && state.loaded.get(*thread) != Some(*fingerprint)
+        });
+        let Some((thread, expected)) = next else {
+            let missing = state
+                .observed
+                .iter()
+                .filter(|thread| !fingerprints.contains_key(*thread))
+                .map(|id| {
+                    SessionId::parse(id)
+                        .map_err(|_| source_error("invalid missing conversation reference"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            state.after = None;
+            *self.pass.borrow_mut() = None;
+            let mut changes = empty_changes(SourcePosition(serde_json::to_value(state)?), false);
+            changes.missing = missing;
+            return Ok(changes);
+        };
+        state.observed.insert(thread.clone());
+        state.after = Some(thread.clone());
+        let read = self.read(thread, expected)?;
+        let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), true);
+        contribute(&mut changes, &mut state, thread, read)?;
+        changes.position = SourcePosition(serde_json::to_value(state)?);
+        if let Some(pass) = self.pass.borrow_mut().as_mut() {
+            pass.expected = Some(changes.position.clone());
+        }
+        Ok(changes)
+    }
+
+    /// Every changed conversation of the scope in one batch: a scope names
+    /// one or two conversations, so a scoped read never leaves a pass half
+    /// done, and every scoped read compares the whole scope with what its
+    /// position loaded. Conversations outside the scope are not read and
+    /// leave the position.
+    fn only(
+        &self,
+        ids: &[SessionId],
+        mut state: Position,
+    ) -> Result<ConversationChanges, SourceError> {
+        let only = ids.iter().map(SessionId::as_str).collect::<BTreeSet<_>>();
+        state
+            .loaded
+            .retain(|thread, _| only.contains(thread.as_str()));
+        state
+            .observed
+            .retain(|thread| only.contains(thread.as_str()));
+        state.after = None;
+        let fingerprints = discover(&self.path, Scope::Only(ids))?;
+        let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), false);
+        changes.missing = state
+            .observed
+            .iter()
+            .filter(|thread| !fingerprints.contains_key(*thread))
+            .map(|id| conversation(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (thread, expected) in fingerprints {
+            if state.loaded.get(&thread) == Some(&expected) {
+                continue;
+            }
+            state.observed.insert(thread.clone());
+            let read = self.read_scoped(&thread, expected)?;
+            contribute(&mut changes, &mut state, &thread, read)?;
+        }
+        changes.position = SourcePosition(serde_json::to_value(state)?);
+        Ok(changes)
+    }
+}
+
 impl ConversationSource for T3Conversations {
     fn identity(&self) -> &str {
         &self.identity
@@ -561,131 +827,15 @@ impl ConversationSource for T3Conversations {
     fn changed_since(
         &self,
         position: Option<&SourcePosition>,
+        scope: Scope<'_>,
     ) -> Result<ConversationChanges, SourceError> {
         validate(&self.path, &self.location)?;
         let mut state = migrate_position(position)?;
         state.observed.extend(state.loaded.keys().cloned());
-        let mut cache = self.pass.borrow_mut();
-        if cache
-            .as_ref()
-            .is_none_or(|pass| pass.expected.as_ref() != position)
-        {
-            *cache = Some(Pass {
-                fingerprints: discover(&self.path)?,
-                expected: None,
-            });
-            state.after = None;
+        match scope {
+            Scope::All => self.all(position, state),
+            Scope::Only(ids) => self.only(ids, state),
         }
-        let pass = cache
-            .as_mut()
-            .ok_or_else(|| source_error("missing source fingerprint pass"))?;
-        let next = pass
-            .fingerprints
-            .iter()
-            .find(|(thread, fingerprint)| {
-                state.after.as_ref().is_none_or(|after| *thread > after)
-                    && state.loaded.get(*thread) != Some(*fingerprint)
-            })
-            .map(|(id, fp)| (id.clone(), fp.clone()));
-        if let Some((thread, expected)) = next {
-            state.observed.insert(thread.clone());
-            let mut fingerprint = Fingerprint::default();
-            let mut records = Vec::new();
-            let mut streaming = false;
-            let mut incomplete_runs = std::collections::BTreeSet::new();
-            for projection in PROJECTIONS {
-                let mut after = String::new();
-                loop {
-                    let rows = batch(&self.path, projection, &thread, &after)?;
-                    let Some(last) = rows.last() else {
-                        break;
-                    };
-                    after = last.native_id.clone();
-                    for row in rows {
-                        fingerprint.add(&row.fingerprint);
-                        if row.streaming {
-                            streaming = true;
-                            incomplete_runs
-                                .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
-                        } else {
-                            records.push(normalized(projection, row)?);
-                        }
-                    }
-                }
-            }
-            if fingerprint != expected {
-                *cache = None;
-                return Err(source_error(
-                    "conversation changed during its read; retry catch-up",
-                ));
-            }
-            if !streaming {
-                state.loaded.insert(thread.clone(), fingerprint);
-            }
-            state.after = Some(thread.clone());
-            let position = SourcePosition(serde_json::to_value(state)?);
-            pass.expected = Some(position.clone());
-            let (completed_turns, turn_failures) = match super::_t3_completed::completed(
-                &records,
-                &incomplete_runs.into_iter().collect::<Vec<_>>(),
-            ) {
-                Ok(turns) => (turns, Vec::new()),
-                Err(error) => (
-                    Vec::new(),
-                    vec![super::conversations::TurnEvidenceFailure {
-                        conversation: instrukt_core::ids::SessionId::parse(&thread)
-                            .map_err(|_| source_error("invalid conversation reference"))?,
-                        cause: error.to_string(),
-                    }],
-                ),
-            };
-            return Ok(ConversationChanges {
-                position,
-                has_more: true,
-                completed_turns,
-                turn_failures,
-                conversations: records
-                    .iter()
-                    .filter(|record| matches!(record.kind, RecordKind::Conversation))
-                    .map(|record| {
-                        instrukt_core::ids::SessionId::parse(&record.conversation_id)
-                            .map_err(|_| source_error("invalid conversation reference"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                missing: if records
-                    .iter()
-                    .any(|record| matches!(record.kind, RecordKind::Conversation))
-                {
-                    Vec::new()
-                } else {
-                    vec![
-                        instrukt_core::ids::SessionId::parse(&thread)
-                            .map_err(|_| source_error("invalid conversation reference"))?,
-                    ]
-                },
-                records,
-            });
-        }
-        let missing = state
-            .observed
-            .iter()
-            .filter(|thread| !pass.fingerprints.contains_key(*thread))
-            .map(|id| {
-                instrukt_core::ids::SessionId::parse(id)
-                    .map_err(|_| source_error("invalid missing conversation reference"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        state.after = None;
-        *cache = None;
-        Ok(ConversationChanges {
-            records: Vec::new(),
-            position: SourcePosition(serde_json::to_value(state)?),
-            has_more: false,
-            completed_turns: Vec::new(),
-            conversations: Vec::new(),
-            turn_failures: Vec::new(),
-            missing,
-        })
     }
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError> {
         super::_t3_notifications::subscribe(&self.path)
