@@ -4,7 +4,6 @@
 #![allow(clippy::unwrap_used, reason = "isolated feature scenarios")]
 
 use crate::fixtures::conversing::{Company, company_home, slack_settings, wait};
-use crate::fixtures::slack::BOT_USER;
 use instrukt_runner::connectors::API_URL_SETTING;
 use instrukt_runner::conversations::{ConnectionState, Status};
 
@@ -66,17 +65,17 @@ fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL2
 #[test]
-fn in_a_channel_only_a_tag_reaches_the_agent_with_everything_since_the_previous_tag() {
-    let mut c = Company::new("");
+fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since_the_previous_tag()
+{
+    let mut c = Company::new(", context_messages: 2");
     c.run();
     let root = c.slack.say("C1", "UANNA", "Shall we ship on Friday?", None);
     c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> What do you think?", Some(&root));
     let session = c.session();
-    assert_eq!(
-        c.delivered(&session, 0).context,
-        context(&["UANNA"], &[false])
-    );
+    let first = c.delivered(&session, 0);
+    assert_eq!(first.context, context(&["UANNA"], &[false]));
+    assert!(!first.left_out);
     c.finish_turn(&session, 0, "Friday works.");
     wait("the answer's post", || !c.slack.posts().is_empty());
     c.slack.say("C1", "UANNA", "Agreed.", Some(&root));
@@ -88,14 +87,17 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_everything_since_the_previous_
         c.runtime.message_count(&session) == 2
     });
     // The untagged messages reached the agent only as what accompanies the
-    // tag: the agent's own answer, then both, across more than one page.
+    // tag. Since the previous tag there were three — the agent's own answer,
+    // then both — so the most recent two accompany it, read across more than
+    // one page, and the context says earlier ones were left out.
     let delivered = c.delivered(&session, 1);
     assert_eq!(delivered.member, c.member("UANNA"));
     assert_eq!(delivered.members, 1);
     assert_eq!(
         delivered.context,
-        context(&[BOT_USER, "UANNA", "USTEVEN"], &[true, false, false])
+        context(&["UANNA", "USTEVEN"], &[false, false])
     );
+    assert!(delivered.left_out);
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL3
@@ -113,6 +115,7 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
     let delivered = c.delivered(&first, 0);
     assert_eq!(delivered.member, c.member("USTEVEN"));
     assert_eq!(delivered.context, context(&["U2", "U3"], &[false, false]));
+    assert!(delivered.left_out);
     // A first tag inside a long thread: the most recent of that thread.
     let root = c.slack.say("C2", "U1", "A long thread.", None);
     for user in ["U2", "U3", "U4"] {
@@ -131,6 +134,7 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
     let delivered = c.delivered(&second, 0);
     assert_eq!(delivered.member, c.member("UANNA"));
     assert_eq!(delivered.context, context(&["U3", "U4"], &[false, false]));
+    assert!(delivered.left_out);
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL4

@@ -30,6 +30,8 @@ pub struct Delivered {
     pub members: usize,
     /// Each accompanying message's speaker and whether it is the agent's own.
     pub context: Vec<(String, bool)>,
+    /// Whether the context says earlier messages were left out.
+    pub left_out: bool,
 }
 
 pub struct Running(std::process::Child);
@@ -197,16 +199,18 @@ impl Company {
         let context = spans
             .iter()
             .find_map(|span| match span {
-                Span::Context { body, .. } => envelopes::context_entries(body),
+                Span::Context { body, .. } => envelopes::context_body(body),
                 _ => None,
             })
-            .unwrap()
-            .into_iter()
-            .map(|entry| (entry.speaker.to_owned(), entry.own))
-            .collect();
+            .unwrap();
         Delivered {
             member,
-            context,
+            left_out: context.left_out,
+            context: context
+                .entries
+                .into_iter()
+                .map(|entry| (entry.speaker.to_owned(), entry.own))
+                .collect(),
             members: spans
                 .iter()
                 .filter(|span| matches!(span, Span::Member { .. }))

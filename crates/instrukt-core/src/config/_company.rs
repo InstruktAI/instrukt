@@ -14,8 +14,8 @@ use crate::ids::ProjectSlug;
 /// and in a member entry.
 pub const CONNECTORS: [&str; 1] = ["slack"];
 
-/// How many earlier messages accompany the first tag in a conversation when
-/// a Slack declaration does not say.
+/// The largest number of earlier messages that accompany an addressed
+/// message when a Slack declaration does not say.
 pub const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
 
 /// One person as a company home lists them.
@@ -56,7 +56,39 @@ pub struct SlackConnector {
     pub app_token: String,
     /// Reference to the bot token used to read and post.
     pub bot_token: String,
+    /// The largest number of earlier messages that accompany an addressed
+    /// message.
     pub context_messages: u64,
+}
+
+/// What `context_messages` is, as its finding and editor schema say it.
+const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted";
+
+/// The editor schema of a company home's `connectors` map.
+pub(super) fn connectors_schema() -> serde_json::Value {
+    let reference =
+        serde_json::json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "slack": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["app_token", "bot_token"],
+                "properties": {
+                    "app_token": reference,
+                    "bot_token": reference,
+                    "context_messages": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": DEFAULT_CONTEXT_MESSAGES,
+                        "description": CONTEXT_MESSAGES,
+                    },
+                },
+            },
+        },
+    })
 }
 
 fn finding(path: &str, kind: FindingKind, message: impl Into<String>) -> KeyFinding {
@@ -218,7 +250,7 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
                         out.push(finding(
                             &field_at,
                             FindingKind::InvalidValue,
-                            "expected a positive whole number",
+                            CONTEXT_MESSAGES,
                         ));
                     }
                 }

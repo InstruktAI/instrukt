@@ -717,7 +717,8 @@ CREATE TABLE IF NOT EXISTS project_boards (
 /// Version 17: conversations through connectors. Each conversation's bound
 /// session, the start request captured for its first message and its own
 /// answer-source position; each addressed message from receipt to its
-/// answered turn, with its text, captured context and framed input; each
+/// answered turn, with its text and, from the time what accompanies it is
+/// read, its captured context, boundary token and framed input; each
 /// answer piece and when the connector accepted its post; each sender's
 /// pending or sent refusal; and each connector's connection state. Applying it again over a database that
 /// already holds the tables changes nothing.
@@ -745,7 +746,7 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     written_at   TEXT NOT NULL,
     arrived_at   TEXT NOT NULL,
     state        TEXT NOT NULL CHECK (state IN ('received', 'pending', 'sent', 'answered')),
-    text         TEXT,
+    text         TEXT NOT NULL,
     context_json TEXT,
     boundary     TEXT,
     content      TEXT,
@@ -759,7 +760,7 @@ CREATE TABLE IF NOT EXISTS conversation_answers (
     conversation TEXT NOT NULL,
     turn         TEXT NOT NULL,
     piece        INTEGER NOT NULL,
-    text         TEXT,
+    text         TEXT NOT NULL,
     posted_at    TEXT,
     failure      TEXT,
     PRIMARY KEY (company, connector, conversation, turn, piece)

@@ -121,6 +121,14 @@ pub struct Earlier {
     pub text: String,
 }
 
+/// What accompanies one addressed message: at most `context_messages` of
+/// the most recent earlier messages, and whether earlier ones were left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Accompanying {
+    pub messages: Vec<Earlier>,
+    pub left_out: bool,
+}
+
 /// What a connector supplies for one message addressed to the agent, as it
 /// arrives.
 #[derive(Debug, Clone)]
@@ -255,22 +263,57 @@ pub fn unread(
         .unwrap_or_default())
 }
 
-/// Record what accompanies a received message, or why it could not be read.
+/// Record what accompanies a received message and frame it for its turn,
+/// or record why what accompanies it could not be read.
 pub fn captured(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     unread: &Unread,
-    context: Result<Vec<Earlier>, String>,
+    accompanying: Result<Accompanying, String>,
 ) -> Result<(), ConversationError> {
-    let (stage, context, failure) = match context {
-        Ok(context) => (Stage::Pending, Some(serde_json::to_string(&context)?), None),
-        Err(failure) => (Stage::Received, None, Some(failure)),
+    let state = RunnerState::new(home);
+    let accompanying = match accompanying {
+        Ok(accompanying) => accompanying,
+        Err(failure) => {
+            state.write::<_, StateError>(|tx| {
+                tx.execute(
+                    "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
+                    params![company.as_str(), connector, unread.conversation, unread.message, failure, Stage::Received.as_str()],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+                Ok(())
+            })?;
+            return Ok(());
+        }
     };
-    RunnerState::new(home).write::<_, StateError>(|tx| {
+    let row = state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT member,written_at,text FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                params![company.as_str(), connector, unread.conversation, unread.message],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            )
+            .map_err(state::sql(path))
+        })?
+        .ok_or_else(|| ConversationError::Refused("the received message is gone".into()))?;
+    let (member, written_at, text) = row;
+    let written_at: Timestamp = written_at
+        .parse()
+        .map_err(|e: jiff::Error| ConversationError::Refused(e.to_string()))?;
+    let (token, content) = framed(
+        connector,
+        &unread.conversation,
+        &member,
+        written_at,
+        &text,
+        &accompanying,
+    )?;
+    let context = serde_json::to_string(&accompanying)?;
+    state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET state=?5,context_json=coalesce(?6,context_json),failure=?7 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?8",
-            params![company.as_str(), connector, unread.conversation, unread.message, stage.as_str(), context, failure, Stage::Received.as_str()],
+            "UPDATE conversation_messages SET state=?5,context_json=?6,boundary=?7,content=?8,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?9",
+            params![company.as_str(), connector, unread.conversation, unread.message, Stage::Pending.as_str(), context, token, content, Stage::Received.as_str()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -364,12 +407,10 @@ struct Conversation {
 
 struct Message {
     message: String,
-    member: String,
-    written_at: Timestamp,
     stage: Stage,
-    text: Option<String>,
-    context: Option<Vec<Earlier>>,
+    /// Present from `pending` on.
     boundary: Option<String>,
+    /// The framed input, present from `pending` on.
     content: Option<String>,
 }
 
@@ -445,18 +486,14 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,member,written_at,state,text,context_json,boundary,content FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state<>?4 ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state<>?4 ORDER BY written_us, message")
                 .map_err(state::sql(path))?;
             q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, Option<String>>(5)?,
-                    r.get::<_, Option<String>>(6)?,
-                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -465,24 +502,16 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
         })?
         .unwrap_or_default();
     rows.into_iter()
-        .map(
-            |(message, member, written_at, stage, text, context, boundary, content)| {
-                Ok(Message {
-                    message,
-                    member,
-                    written_at: written_at
-                        .parse()
-                        .map_err(|e: jiff::Error| ConversationError::Refused(e.to_string()))?,
-                    stage: Stage::parse(&stage).ok_or_else(|| {
-                        ConversationError::Refused(format!("unknown message stage `{stage}`"))
-                    })?,
-                    text,
-                    context: context.map(|c| serde_json::from_str(&c)).transpose()?,
-                    boundary,
-                    content,
-                })
-            },
-        )
+        .map(|(message, stage, boundary, content)| {
+            Ok(Message {
+                message,
+                stage: Stage::parse(&stage).ok_or_else(|| {
+                    ConversationError::Refused(format!("unknown message stage `{stage}`"))
+                })?,
+                boundary,
+                content,
+            })
+        })
         .collect()
 }
 
@@ -498,18 +527,22 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
 /// One addressed message framed for its own turn: the context envelope and
 /// the member envelope, sharing one fresh boundary token that occurs nowhere
 /// in what they frame.
-fn framed(c: &Conversation, m: &Message) -> Result<(String, String), ConversationError> {
-    let missing =
-        || ConversationError::Refused("message text or context is not yet captured".into());
-    let text = m.text.as_deref().ok_or_else(missing)?;
-    let context = m.context.as_ref().ok_or_else(missing)?;
-    let mut scanned: Vec<&str> = vec![text, &c.connector, &c.conversation, &m.member];
-    for entry in context {
+fn framed(
+    connector: &str,
+    conversation: &str,
+    member: &str,
+    written_at: Timestamp,
+    text: &str,
+    accompanying: &Accompanying,
+) -> Result<(String, String), ConversationError> {
+    let mut scanned: Vec<&str> = vec![text, connector, conversation, member];
+    for entry in &accompanying.messages {
         scanned.push(&entry.text);
         scanned.push(&entry.speaker);
     }
     let token = envelopes::delivery_boundary(&scanned)?;
-    let entries: Vec<ContextEntry<'_>> = context
+    let entries: Vec<ContextEntry<'_>> = accompanying
+        .messages
         .iter()
         .map(|e| ContextEntry {
             speaker: &e.speaker,
@@ -520,12 +553,12 @@ fn framed(c: &Conversation, m: &Message) -> Result<(String, String), Conversatio
         .collect();
     let input = format!(
         "{}\n{}",
-        envelopes::context(&token, &entries),
+        envelopes::context(&token, &entries, accompanying.left_out),
         envelopes::member(
-            &c.connector,
-            &c.conversation,
-            &m.member,
-            Some(m.written_at),
+            connector,
+            conversation,
+            member,
+            Some(written_at),
             &token,
             text
         )
@@ -682,7 +715,9 @@ fn start(
             let selection = crate::agents::selections(&config, home, &preferences, now)?
                 .into_iter()
                 .next();
-            let (token, input) = framed(c, next)?;
+            let input = next.content.as_deref().ok_or_else(|| {
+                ConversationError::Refused("the message is not framed yet".into())
+            })?;
             let request = RuntimeStart {
                 preferences,
                 selection,
@@ -714,11 +749,6 @@ fn start(
                     ],
                 )
                 .map_err(state::sql(&path))?;
-                tx.execute(
-                    "UPDATE conversation_messages SET boundary=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, next.message, token],
-                )
-                .map_err(state::sql(&path))?;
                 Ok(())
             })?;
             request
@@ -744,29 +774,15 @@ fn send(
     next: &Message,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
+    let content = next
+        .content
+        .as_deref()
+        .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
     // A send whose acceptance was lost is observed before sending again.
-    let content = match &next.content {
-        Some(content) => {
-            let seen = adapter.observe_input(session, content, now)?;
-            if seen.state != crate::runtime::InputState::Unknown {
-                accepted(state, c, &next.message, None)?;
-                return Ok(());
-            }
-            content.clone()
-        }
-        None => {
-            let (token, content) = framed(c, next)?;
-            state.write::<_, StateError>(|tx| {
-                tx.execute(
-                    "UPDATE conversation_messages SET boundary=?5,content=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, next.message, token, content],
-                )
-                .map_err(state::sql(&state::db_path(tx)))?;
-                Ok(())
-            })?;
-            content
-        }
-    };
+    if adapter.observe_input(session, content, now)?.state != crate::runtime::InputState::Unknown {
+        accepted(state, c, &next.message, None)?;
+        return Ok(());
+    }
     let thread = adapter.read_state(session)?;
     if !matches!(
         thread.state,
@@ -774,7 +790,7 @@ fn send(
     ) {
         return Ok(());
     }
-    adapter.send(session, &content)?;
+    adapter.send(session, content)?;
     accepted(state, c, &next.message, None)?;
     Ok(())
 }

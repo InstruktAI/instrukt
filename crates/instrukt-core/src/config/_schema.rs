@@ -774,7 +774,8 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
         }
         Shape::Webhooks => super::_webhooks::editor_schema(),
-        Shape::Members | Shape::Connectors => json!({ "type": "object" }),
+        Shape::Members => json!({ "type": "object" }),
+        Shape::Connectors => super::_company::connectors_schema(),
         Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
         Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),
         Shape::Credential | Shape::LocalRedisUrl => json!({ "type": "string" }),

@@ -15,7 +15,7 @@ use instrukt_core::ids::ProjectSlug;
 use jiff::Timestamp;
 use serde_json::Value;
 
-use crate::conversations::{self, ConnectionState, Earlier, Incoming, Intake};
+use crate::conversations::{self, Accompanying, ConnectionState, Earlier, Incoming, Intake};
 
 /// The connector's key under `connectors` and in a member entry.
 pub const SLACK: &str = "slack";
@@ -254,17 +254,20 @@ impl SlackApi {
         self.call("chat.postMessage", false, &form).map(drop)
     }
 
-    /// Messages of a channel or thread strictly between `oldest` and
-    /// `latest`, across every page, oldest first; with `recent`, only that
-    /// many of the most recent.
+    /// The most recent `cap` messages of a channel or thread strictly
+    /// between `oldest` and `latest`, oldest first, and whether the range
+    /// held more. Channel history arrives newest first, so the read stops
+    /// once one message beyond the cap is in hand; a thread's replies arrive
+    /// oldest first, so they are read to the end of the range while only the
+    /// most recent `cap` are held.
     fn read(
         &self,
         channel: &str,
         thread: Option<&str>,
         oldest: Option<&str>,
         latest: &str,
-        recent: Option<usize>,
-    ) -> Result<Vec<Value>, SlackError> {
+        cap: usize,
+    ) -> Result<(Vec<Value>, bool), SlackError> {
         let method = if thread.is_some() {
             "conversations.replies"
         } else {
@@ -275,14 +278,23 @@ impl SlackApi {
             cause: "invalid message time".into(),
         })?;
         let oldest_us = oldest.and_then(ts_micros);
+        // History needs one beyond the cap; replies take the largest page.
+        let limit = if thread.is_none() {
+            cap.saturating_add(1).min(200)
+        } else {
+            200
+        }
+        .to_string();
         let mut cursor: Option<String> = None;
-        let mut found = Vec::new();
+        let mut held: std::collections::VecDeque<(i64, Value)> = std::collections::VecDeque::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut left_out = false;
         loop {
             let mut form = vec![
                 ("channel", channel),
                 ("latest", latest),
                 ("inclusive", "false"),
-                ("limit", "200"),
+                ("limit", limit.as_str()),
             ];
             if let Some(oldest) = oldest {
                 form.push(("oldest", oldest));
@@ -301,17 +313,25 @@ impl SlackApi {
                     method: method.into(),
                     cause: "no messages".into(),
                 })?;
-            found.extend(
-                page.iter()
-                    .filter(|m| {
-                        message_ts(m)
-                            .is_some_and(|at| at < latest_us && oldest_us.is_none_or(|o| at > o))
-                    })
-                    .cloned(),
-            );
-            // Channel history pages run newest first: enough recent messages
-            // end the read.
-            if thread.is_none() && recent.is_some_and(|n| found.len() >= n) {
+            for message in page {
+                let Some(at) = message_ts(message)
+                    .filter(|at| *at < latest_us && oldest_us.is_none_or(|o| *at > o))
+                else {
+                    continue;
+                };
+                if !seen.insert(at) {
+                    continue;
+                }
+                held.push_back((at, message.clone()));
+                if thread.is_some() && held.len() > cap {
+                    // Oldest first: the earliest held message is left out.
+                    held.pop_front();
+                    left_out = true;
+                }
+            }
+            // Newest first: one beyond the cap shows earlier ones exist.
+            if thread.is_none() && held.len() > cap {
+                left_out = true;
                 break;
             }
             cursor = body
@@ -324,14 +344,12 @@ impl SlackApi {
                 break;
             }
         }
-        found.sort_by_key(|m| message_ts(m).unwrap_or(0));
-        found.dedup_by_key(|m| message_ts(m));
-        if let Some(n) = recent
-            && found.len() > n
-        {
-            found.drain(..found.len() - n);
+        let mut found: Vec<(i64, Value)> = held.into_iter().collect();
+        found.sort_by_key(|(at, _)| *at);
+        if found.len() > cap {
+            found.drain(..found.len() - cap);
         }
-        Ok(found)
+        Ok((found.into_iter().map(|(_, m)| m).collect(), left_out))
     }
 }
 
@@ -713,26 +731,27 @@ fn intake(
     }
 }
 
-/// What accompanies a received message: the most recent `context_messages`
-/// before the first in a conversation — of the thread, or of the channel
-/// when it starts the thread — or every message since the previous one.
+/// What accompanies a received message: of the messages before the first
+/// in a conversation — of the thread, or of the channel when it starts the
+/// thread — or of those since the previous one, at most `context_messages`
+/// of the most recent, and whether earlier ones were left out.
 fn accompanying(
     api: &SlackApi,
     declared: &SlackConnector,
     me: &(String, Option<String>),
     unread: &conversations::Unread,
-) -> Result<Vec<Earlier>, SlackError> {
+) -> Result<Accompanying, SlackError> {
     let (channel, thread) = split_conversation(&unread.conversation);
     let ts = unread.message.as_str();
-    let earlier = match &unread.previous {
-        Some(previous) => api.read(channel, thread, Some(previous), ts, None)?,
+    let cap = usize::try_from(declared.context_messages).unwrap_or(usize::MAX);
+    let (earlier, left_out) = match &unread.previous {
+        Some(previous) => api.read(channel, thread, Some(previous), ts, cap)?,
         None => {
             let within = thread.filter(|thread| *thread != ts);
-            let count = usize::try_from(declared.context_messages).unwrap_or(usize::MAX);
-            api.read(channel, within, None, ts, Some(count))?
+            api.read(channel, within, None, ts, cap)?
         }
     };
-    Ok(earlier
+    let messages = earlier
         .iter()
         .map(|m| {
             let user = m.get("user").and_then(Value::as_str).unwrap_or_default();
@@ -758,7 +777,8 @@ fn accompanying(
                     .to_owned(),
             }
         })
-        .collect())
+        .collect();
+    Ok(Accompanying { messages, left_out })
 }
 
 #[cfg(test)]

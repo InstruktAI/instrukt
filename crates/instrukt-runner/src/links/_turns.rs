@@ -112,7 +112,7 @@ mod tests {
         let token = "0123456789abcdef0123456789abcdef";
         let framed = format!(
             "{}\n{}",
-            envelopes::context(token, &[]),
+            envelopes::context(token, &[], false),
             envelopes::member("slack", "C1/1.2", "steven", None, token, "a question")
         );
         let contribution = TurnContribution {
