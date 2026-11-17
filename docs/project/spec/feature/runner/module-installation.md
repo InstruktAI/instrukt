@@ -163,6 +163,11 @@ four states, with the cause where there is one:
 | `obsolete` | An owned service remains and there is no demand. |
 | `no_demand` | There is no demand and no owned service. |
 
+A company home that cannot be read leaves the demand unresolved. Nothing is
+withdrawn on the strength of it, and where the state would otherwise be
+`obsolete` or `no_demand` it is `unmet`, with that home as the cause.
+Companies whose homes can be read are served as before.
+
 Removing the last declared connector ends the demand; the next `instrukt install` withdraws the owned service under the
 withdrawal and ownership rules below. A run started by hand is never the
 service and is never stopped by withdrawal.
