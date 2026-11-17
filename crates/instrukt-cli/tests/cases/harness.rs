@@ -307,20 +307,34 @@ fn a_publication_refused_part_way_keeps_the_previous_one() {
 fn a_refusal_the_record_cannot_keep_fails_the_test_and_is_rolled_back() {
     let mut env = TestEnv::new();
     let republication = republication(&mut env);
-    // The record cannot grow: it is a sparse file as large as its volume
-    // holds, so an append to it fails.
+    // The record cannot grow: it is made as long as the file system lets a
+    // file be, found by halving the gap between a length it accepts and one
+    // it refuses. The file stays sparse, so this takes no room on the volume.
     let record = env.path("fence").join(instrukt_core::fsx::FENCE_RECORD);
     let file = std::fs::OpenOptions::new()
         .write(true)
         .open(&record)
         .unwrap();
-    let largest = (20..64_u32)
-        .rev()
-        .map(|bits| (1_u64 << bits) - 1)
-        .find(|size| file.set_len(*size).is_ok())
-        .unwrap();
+    let (mut accepted, mut refused) = (0_u64, 1_u64 << 63);
+    while refused - accepted > 1 {
+        let length = accepted + (refused - accepted) / 2;
+        if file.set_len(length).is_ok() {
+            accepted = length;
+        } else {
+            refused = length;
+        }
+    }
+    file.set_len(accepted).unwrap();
     drop(file);
-    assert!(largest > 0);
+    // An append of the test's own fails before instrukt starts.
+    let appended = std::io::Write::write_all(
+        &mut std::fs::OpenOptions::new()
+            .append(true)
+            .open(&record)
+            .unwrap(),
+        b"\n",
+    );
+    assert!(appended.is_err());
     let output = env
         .instrukt(republication.repo.path())
         .arg("sync")
