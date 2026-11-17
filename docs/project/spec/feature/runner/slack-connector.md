@@ -60,6 +60,7 @@ oauth_config:
       - channels:history
       - groups:history
       - im:history
+      - im:write
       - users:read
       - users:read.email
 settings:
@@ -222,6 +223,16 @@ splitting ends, so an answer that is an exact multiple of the limit is
 followed by no empty part. Nothing is inserted, so no part is longer than
 12,000 characters.
 
+### Direct messages from instrukt
+
+When instrukt has something for one person alone, such as a sign-in link
+(`project/instrukt/spec/feature/runner/mcp-access`), the connector sends it
+to that person's direct-message channel with the agent, which it opens with
+`conversations.open` for the person's Slack id, and posts it with the bot
+token. It is never posted in a channel or a thread, whichever conversation
+the person was in. Such a message is no answer: it starts no turn and is not
+delivered to the agent.
+
 ## Use cases
 
 ### UC-SL1: Connect a company's Slack without exposing the computer
@@ -311,4 +322,5 @@ And an answer longer than Slack takes in one message arrives in parts, in order,
 - https://docs.slack.dev/reference/methods/chat.postMessage/ — `markdown_text`: Markdown Slack renders, at most 12,000 characters, never together with `text` or `blocks`; `thread_ts` for a reply in a thread.
 - https://docs.slack.dev/reference/block-kit/blocks/markdown-block/ — the Markdown Slack renders, and that an image shows as link text.
 - https://docs.slack.dev/reference/objects/user-object/ — the fields that tell a full member from a bot, a guest and a member of another workspace.
+- https://docs.slack.dev/reference/methods/conversations.open/ — opening a direct message with a person; a bot needs `im:write`.
 - https://docs.slack.dev/reference/methods/assistant.threads.setStatus/ — the status line: its text, its two-minute limit and its removal when the app replies.

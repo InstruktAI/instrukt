@@ -16,8 +16,9 @@ relay and the connectors through which people address a company's agent;
 scheduled `tick` does neither. It has no consumer daemon beside the runner;
 with a company's connector declared, an owned service keeps `instrukt run`
 itself running.
-A separate opt-in loopback webhook receiver accepts signed external events on
-the designated ingress computer. The work context owns work content, artifacts
+A separate opt-in loopback webhook receiver accepts signed external events,
+and the returns of people's sign-ins to MCP servers, on the designated ingress
+computer. The work context owns work content, artifacts
 and stamps; workflow owns authorization and derived workflow state.
 
 ## Ubiquitous language
@@ -106,6 +107,15 @@ Native agent-operation prose is supplied by configuration and rendered through `
 : The company member whose addressed message started a conversation session's
   current turn.
 
+**Sign-in**
+: A speaker's one-time authorization, in their own browser, of instrukt's
+  calls to an MCP server under their own login; started by the first call
+  that needs it and completed through the receiver's sign-in return.
+
+**Signed-in login**
+: The login a sign-in yields, kept per company, person and server in the
+  state database and renewed by instrukt until it ends.
+
 ## Ownership boundary
 
 - **Owns:** Per-computer history extraction/search and merged history queries;
@@ -118,11 +128,12 @@ Native agent-operation prose is supplied by configuration and rendered through `
   connectors, conversation bindings, per-message turn delivery with its
   speaker, and posting a conversation's answers back; agents'
   access to declared MCP servers (which declarations a caller sees and the
-  login a call carries); the
+  login a call carries), people's sign-ins to them and the logins kept from
+  them; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, plus retained history, source positions and import provenance), whose schema is published in
+  conversation links and directional relay positions, held task failures and the last wake-up, registered MCP clients, signed-in logins and pending sign-ins, plus retained history, source positions and import provenance), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -137,7 +148,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list|resolve-start` surface,
   `instrukt history extract|import-teleclaude|search|show`,
-  `instrukt ticks status`, `instrukt mcp list|list-tools|call`, and wake-up
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
@@ -418,7 +429,7 @@ has no origin, as declared in Canonical fields.
 - **Anomaly notification** — `project/instrukt/spec/feature/runner/anomaly-notification`
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
-  — use a declared server's tools under the right login and load them only when needed.
+  — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
 - **Conversations** — [project/instrukt/spec/feature/runner/conversations](../feature/runner/conversations.md)
   — ask a company's agent where the team talks, be answered there by the one session that knows the conversation.
 - **Slack connector** — [project/instrukt/spec/feature/runner/slack-connector](../feature/runner/slack-connector.md)

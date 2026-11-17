@@ -16,15 +16,21 @@ same stream as remote reactions, without a direct request-dispatch path.
 ### Receiver and public edge
 
 The global-only `ingress.computer` names the existing stable instrukt machine ID,
-not a hostname inferred at runtime. Only that computer serves source endpoints.
+not a hostname inferred at runtime. Only that computer serves source endpoints
+and the MCP sign-in return.
 The receiver checks placement before serving and exits when no longer ingress.
-A valid enabled nonempty source set supplies receiver demand; an empty map or
-disabled events does not. Installation/withdrawal mechanisms belong to S7.
+A valid enabled nonempty source set supplies receiver demand, and so does a
+company home's MCP server declared with sign-in while events is on; an empty
+map or disabled events does not. Installation/withdrawal mechanisms belong to
+S7.
 
 The standalone receiver serves HTTP on `127.0.0.1` at global-only `ingress.port`.
 A local operator-controlled edge terminates TLS, filters abuse and forwards only
-the inbound prefix. A local request still needs a signature. No session-control,
-work-command or general public API surface is exposed.
+the inbound prefix. A local request to a source still needs a signature. The
+sign-in return under the same prefix is unsigned: it takes a code for a
+pending sign-in and hands it on through cluster Redis as a short-lived entry
+that is no event (`project/instrukt/spec/feature/runner/mcp-access`). No
+session-control, work-command or general public API surface is exposed.
 
 The admitted service manager holds the listening socket across receiver restarts
 and passes it to each process. Connections queue during restart within provider

@@ -41,7 +41,10 @@ The general path is `/hooks/inbound/<kind>/<slug>/<domain>`: kind and slug
 identify the origin home; domain selects its declared source and event domain.
 Projects and company homes have endpoints. A person home is vocabulary only and
 has no endpoint. No other path segment or query parameter is accepted;
-secrets never occur in URLs. An undeclared domain, an unregistered project or
+secrets never occur in URLs. The one other path under the prefix is the MCP
+sign-in return, `GET /hooks/inbound/sign-in`: it is no source, verifies no
+signature and publishes no event; its contract is
+`project/instrukt/spec/feature/runner/mcp-access`. An undeclared domain, an unregistered project or
 a company without a home has no endpoint, even with valid signing material. An
 empty map creates none.
 Effective events-off sources are a plain finding and are not served; source

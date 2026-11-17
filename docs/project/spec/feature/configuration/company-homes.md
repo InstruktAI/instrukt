@@ -63,8 +63,11 @@ members:
 A company's people reach its agent through its connectors, which know them
 from their providers (`project/instrukt/spec/feature/runner/conversations`).
 `members` in the company home's settings holds what a provider cannot supply:
-a person's own logins for the company's tools. A person working for two
-companies is a member entry in each, and nothing links the two.
+a person's own stored logins for the company's tools. A person working for two
+companies is a member entry in each, and nothing links the two. A tool whose
+server the company declares with sign-in needs no member entry: the person
+signs in themselves, and that login is kept in the computer's state database,
+never in the home (`project/instrukt/spec/feature/runner/mcp-access`).
 
 | Field | Contract |
 | --- | --- |

@@ -38,7 +38,10 @@ was written, its text, the conversation's earlier messages its provider
 contract says accompany it, and whether that contract left earlier messages
 out. It posts the agent's answer to a conversation it carries, rendered as its
 provider contract says, and shows there that the agent is working where its
-provider has a way to. Which messages count as
+provider has a way to. It also sends a person it carries messages from a
+direct message that instrukt has for them alone, such as a sign-in link
+(`project/instrukt/spec/feature/runner/mcp-access`); that message goes
+nowhere else and starts no turn. Which messages count as
 addressed, who counts as the company's own, and what accompanies a message is
 each connector's own contract
 (`project/instrukt/spec/feature/runner/slack-connector`).
@@ -193,7 +196,8 @@ And no subscribed procedure is activated by that message
 - A message written while a connector's connection is down is received only
   when the provider still offers it on reconnection.
 - The agent cannot start a conversation or post anything that is not the
-  answer to an addressed message.
+  answer to an addressed message. The direct messages instrukt sends about a
+  person's sign-ins are instrukt's own, not the agent's.
 - A post whose acceptance was lost can be sent twice.
 - A conversation session loads its procedure, and instrukt renders the
   company's knowledge, when the session starts. A later change to either

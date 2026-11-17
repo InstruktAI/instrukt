@@ -33,8 +33,9 @@ own and is no layer.
 
 **Member**
 : A person's entry in a company home: a key, a display name, their email
-address and references to their own tool logins. An entry gives a person
-logins; it does not decide whom the company's agent answers.
+address and references to their own stored tool logins. An entry gives a
+person logins; it does not decide whom the company's agent answers. A login a
+person signs in for is kept by the runner, not in the entry.
 
 **Effective configuration**
 : The global layer with the project layer applied over it, for a caller
