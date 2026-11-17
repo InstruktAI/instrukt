@@ -633,15 +633,15 @@ impl Owned {
             .proofs(desired.name)
             .into_iter()
             .any(|record| record.scheduler == desired.scheduler && record.unit == desired.unit);
-        let (loaded, _) = service_process(desired)?;
+        let process = service_process(desired)?;
         anyhow::ensure!(
-            identified || !loaded,
+            identified || !(process.loaded || process.pid.is_some()),
             "ownership conflict: {} is already loaded without an installation record; move the foreign unit before running instrukt install",
             desired.unit
         );
         let registered = self.registered(desired.name) && !self.updates.contains_key(&desired.name);
         let identity = crate::runner::service_identity(request.home, request.wake.executable)?;
-        let stale = runner_stale(request.home, desired, &identity)?;
+        let stale = runner_stale(request.home, &process, &identity);
         let paths = desired.files.keys().cloned().collect::<Vec<_>>();
         let cause = if changed {
             Some("its definition is missing or stale".to_owned())
@@ -673,15 +673,18 @@ impl Owned {
         let repaired = self.resources.contains_key(&desired.name);
         self.begin(request.home, desired)?;
         self.write_files(desired)?;
-        if loaded {
+        // An existing process is stopped whether or not the unit is
+        // enabled, so the start runs the desired executable and
+        // configuration.
+        if process.loaded || process.pid.is_some() {
             stop(desired)?;
         }
         start(desired)?;
         let started = std::time::Instant::now();
-        let mut stale = runner_stale(request.home, desired, &identity)?;
+        let mut stale = runner_stale(request.home, &service_process(desired)?, &identity);
         while stale.is_some() && started.elapsed() < RUNNER_START_WAIT {
             std::thread::sleep(Duration::from_millis(250));
-            stale = runner_stale(request.home, desired, &identity)?;
+            stale = runner_stale(request.home, &service_process(desired)?, &identity);
         }
         let mut recorded = desired.clone();
         recorded.registered = true;
@@ -1062,9 +1065,16 @@ const RETRY_SECONDS: u32 = 5;
 /// that it runs the desired executable and configuration.
 const RUNNER_START_WAIT: Duration = Duration::from_secs(30);
 
-/// The process id the service manager reports for `d`'s service, if it
-/// runs one, and whether the manager has the service loaded and enabled.
-fn service_process(d: &Definition) -> anyhow::Result<(bool, Option<u32>)> {
+/// What the service manager knows of a service: whether it has the unit
+/// loaded, whether it is enabled to start at login or boot, and the id of
+/// its live process. Each is a separate fact.
+struct ServiceProcess {
+    loaded: bool,
+    enabled: bool,
+    pid: Option<u32>,
+}
+
+fn service_process(d: &Definition) -> anyhow::Result<ServiceProcess> {
     match d.scheduler {
         Scheduler::Launchd => {
             let result =
@@ -1076,7 +1086,12 @@ fn service_process(d: &Definition) -> anyhow::Result<(bool, Option<u32>)> {
                 fields.next()?;
                 (fields.next()? == d.unit).then(|| pid.parse::<u32>().ok())
             });
-            Ok((row.is_some(), row.flatten()))
+            // A loaded user agent is the one launchd starts at login.
+            Ok(ServiceProcess {
+                loaded: row.is_some(),
+                enabled: row.is_some(),
+                pid: row.flatten(),
+            })
         }
         Scheduler::SystemdUser => {
             let enabled = command(&["systemctl", "--user", "is-enabled", "--quiet", &d.unit])?;
@@ -1086,41 +1101,43 @@ fn service_process(d: &Definition) -> anyhow::Result<(bool, Option<u32>)> {
             )
             .run(Duration::from_secs(10))?;
             anyhow::ensure!(result.success, "cannot inspect systemd unit {}", d.unit);
-            Ok((
+            Ok(ServiceProcess {
+                loaded: systemd_loaded(&d.unit)?,
                 enabled,
-                result
+                pid: result
                     .stdout
                     .trim()
                     .parse::<u32>()
                     .ok()
                     .filter(|pid| *pid != 0),
-            ))
+            })
         }
-        Scheduler::Crontab => Ok((false, None)),
+        Scheduler::Crontab => Ok(ServiceProcess {
+            loaded: false,
+            enabled: false,
+            pid: None,
+        }),
     }
 }
 
-/// Why the runner service is not current: no live process, or one that
-/// does not run the desired executable and configuration. `None` when the
-/// manager's live process published `identity`.
-fn runner_stale(home: &Home, d: &Definition, identity: &str) -> anyhow::Result<Option<String>> {
-    let (enabled, pid) = service_process(d)?;
-    if !enabled {
-        return Ok(Some(
-            "the service manager does not have it loaded and enabled".into(),
-        ));
+/// Why the runner service is not current: not enabled to start at login or
+/// boot, no live process, or a process that does not run the desired
+/// executable and configuration. `None` when the manager's live process is
+/// the incarnation that published `identity`.
+fn runner_stale(home: &Home, process: &ServiceProcess, identity: &str) -> Option<String> {
+    if !process.enabled {
+        return Some("the service manager does not have it enabled".into());
     }
-    let Some(pid) = pid else {
-        return Ok(Some("no live service process".into()));
+    let Some(pid) = process.pid else {
+        return Some("no live service process".into());
     };
-    let published = crate::runner::published_service(home);
-    Ok(match published {
-        Some(record) if record.pid == pid && record.identity == identity => None,
-        Some(record) if record.pid == pid => Some(
+    match crate::runner::published_service(home) {
+        Some(record) if record.describes(pid) && record.identity == identity => None,
+        Some(record) if record.describes(pid) => Some(
             "its process runs another executable or configuration than the installed ones".into(),
         ),
         _ => Some("its process has not published what it runs".into()),
-    })
+    }
 }
 
 /// The owned service that runs the installed binary's `instrukt run` as the

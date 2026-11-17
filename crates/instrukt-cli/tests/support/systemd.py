@@ -2,9 +2,11 @@
 `loginctl` at the process boundary. Unit files are read from the user unit
 folder on `daemon-reload`; enabled, loaded and active are kept apart; a
 service's ExecStart runs with its Environment lines; `Restart=` and
-`RestartSec=` decide whether and when an exited process starts again; a
-simulated restart of the computer ends every process and starts the
-enabled services again."""
+`RestartSec=` decide whether and when an exited process starts again.
+Enabling a unit wants it from the targets its [Install] section names, and
+nothing else: a unit without `WantedBy=default.target` is not enabled. A
+simulated restart of the computer ends every process and starts the units
+the user manager's default target wants."""
 import json
 import os
 import shlex
@@ -26,6 +28,7 @@ class Unit:
     enabled: bool = False
     due: float | None = None
     starts: int = 0
+    wanted_by: list[str] = field(default_factory=list)
 
 
 def unquote(value: str) -> list[str]:
@@ -46,6 +49,8 @@ def parse(path: str) -> Unit:
                 unit.restart = value
             elif key == "RestartSec":
                 unit.restart_sec = float(value)
+            elif key == "WantedBy":
+                unit.wanted_by.extend(value.split())
     return unit
 
 
@@ -99,6 +104,7 @@ def reload(folder: str, units: dict[str, Unit]) -> None:
             old = units[name]
             old.argv, old.environment = fresh.argv, fresh.environment
             old.restart, old.restart_sec = fresh.restart, fresh.restart_sec
+            old.wanted_by = fresh.wanted_by
         else:
             units[name] = fresh
     for name in list(units):
@@ -120,7 +126,9 @@ def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str
     elif operation == "enable":
         reload(folder, units)
         target = units[rest[0]]
-        target.enabled = True
+        # Enabling links the unit into the targets that want it; a unit
+        # without an installation target stays not enabled.
+        target.enabled = "default.target" in target.wanted_by
         if now and target.pid is None:
             start(target)
     elif operation == "disable":
@@ -156,7 +164,7 @@ def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str
             stop(each)
         reload(folder, units)
         for each in units.values():
-            if each.enabled:
+            if each.enabled and "default.target" in each.wanted_by:
                 start(each)
     elif operation == "kill-process":
         if unit is not None and unit.pid is not None:

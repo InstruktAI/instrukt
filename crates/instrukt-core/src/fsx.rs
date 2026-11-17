@@ -105,6 +105,20 @@ impl LockGuard {
         &self.path
     }
 
+    /// Takes the exclusive lock on `path`, waiting for as long as another
+    /// holder keeps it; the operating system grants it as that holder lets go.
+    pub fn wait(path: &Path) -> Result<Self, FsError> {
+        let file = open_lock_file(path)?;
+        file.lock().map_err(|source| FsError::Lock {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(Self {
+            _file: file,
+            path: path.to_path_buf(),
+        })
+    }
+
     /// The open lock file, for a holder that records itself in it.
     pub fn file(&self) -> &File {
         &self._file

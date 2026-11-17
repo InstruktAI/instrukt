@@ -2356,6 +2356,10 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
 ]
 "#);
         assert!(!instrukt(&c, &["install", "--check"]).status.success());
+        // Status shows the running service with that cause.
+        let service = status(&c);
+        assert_eq!(service.state, ServiceState::Running);
+        insta::assert_json_snapshot!(service.cause, @r#""the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`""#);
         manager.linger(true);
         // Installing again finds the right process running and keeps it.
         let pid = manager.pid();
@@ -2396,6 +2400,11 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
             .collect::<Vec<_>>()
     };
     let before = definition(&c);
+    if cfg!(target_os = "linux") {
+        // Disabled while its process keeps running, it is still restarted.
+        manager.request(&["disable", manager.unit]);
+        assert!(manager.pid().is_some());
+    }
     std::fs::remove_file(&installed).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &installed).unwrap();
     assert!(!instrukt(&c, &["install", "--check"]).status.success());
@@ -2405,6 +2414,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     });
     assert_eq!(definition(&c), before);
     assert_eq!(state(&c), ServiceState::Running);
+    assert!(manager.registered());
     // The runner exits at once while its configuration cannot be read; the
     // manager keeps starting it, and once the configuration is back the
     // service runs again.
@@ -2427,8 +2437,8 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         c.slack.connections() == 6
     });
     assert_ne!(definition(&c), before);
-    // A run started by hand holds the runner lock; the service started
-    // meanwhile runs and waits, then takes over when that run ends.
+    // A run started by hand holds the runner lock, and a second one started
+    // by hand waits for it, saying so.
     manager.hold();
     let by_hand = Running::spawn(
         c.env
@@ -2440,11 +2450,34 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     wait("the hand-started run's connection", || {
         c.slack.connections() == 7
     });
+    let said = c.env.path("waiting-run.stderr");
+    let mut waiting = c
+        .env
+        .command(&installed, c.env.home())
+        .arg("run")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&said).unwrap())
+        .spawn()
+        .unwrap();
+    wait("the second run waiting", || {
+        std::fs::read_to_string(&said).is_ok_and(|text| !text.is_empty())
+    });
+    // The service started meanwhile runs and waits too.
     manager.start();
     wait("the waiting service", || state(&c) == ServiceState::Running);
     assert_eq!(c.slack.connections(), 7);
+    // The holder dies without letting go: the service takes the lock, and
+    // the run that was waiting by hand is refused naming the service.
     drop(by_hand);
     wait("the service taking over", || c.slack.connections() == 8);
+    wait("the waiting run's end", || {
+        waiting.try_wait().unwrap().is_some()
+    });
+    assert!(!waiting.wait().unwrap().success());
+    insta::assert_snapshot!(
+        "a-waiting-run-refused-when-the-service-takes-the-lock",
+        std::fs::read_to_string(&said).unwrap()
+    );
     // The computer restarts: the manager starts the runner again.
     let pid = manager.pid();
     manager.reboot();

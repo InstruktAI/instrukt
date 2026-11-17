@@ -848,21 +848,35 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
     }
     // The company agent starts on the company's profile with its role's
     // tier; the project agent on the machine's order for its role.
-    let agents = instrukt_core::config::Agents::load(&instrukt_core::home::Home::at_user_home(
-        r.computer.env.home().into(),
-    ))
-    .unwrap();
+    let home = instrukt_core::home::Home::at_user_home(r.computer.env.home().into());
+    let agents = instrukt_core::config::Agents::load(&home).unwrap();
+    let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
     for (event, role, order) in [
         ("company", "company-responder", Some(vec![profile.clone()])),
         ("project", "responder", None),
     ] {
-        let expected = agents
-            .select(Some(role), None, None, order.as_deref())
+        let (agent, tier) = agents
+            .order(Some(role), None, None, order.as_deref())
             .unwrap()
             .remove(0);
         let session = r.delivered_to(event);
-        assert_eq!(r.runtime.provider(session.id.as_str()), expected.instance);
-        assert_eq!(r.runtime.model(session.id.as_str()), expected.model);
+        let started = instrukt_runner::keyed::request(
+            &home,
+            adapter.as_ref(),
+            &r.runtime.key(session.id.as_str()),
+        )
+        .unwrap();
+        assert_eq!(
+            started.preferences.first(),
+            Some(&instrukt_runner::agents::AgentChoice {
+                agent,
+                tier: Some(tier)
+            })
+        );
+        assert_eq!(
+            r.runtime.provider(session.id.as_str()),
+            agents.profiles[&started.preferences[0].agent].instance
+        );
     }
 }
 

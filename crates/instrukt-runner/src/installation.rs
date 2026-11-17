@@ -148,7 +148,8 @@ pub enum ServiceState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct ServiceStatus {
     pub state: ServiceState,
-    /// Why it is unmet or obsolete.
+    /// Why it is unmet or obsolete, or a prerequisite it still lacks while
+    /// it runs, such as starting at boot on Linux.
     pub cause: Option<String>,
     pub paths: Vec<PathBuf>,
 }
@@ -375,20 +376,31 @@ fn runner_service(
         report.finding(ResourceKind::Runner, cause);
         status(ServiceState::Unmet, Some(cause.into()))
     } else {
-        if request.scheduler == Scheduler::SystemdUser
-            && let Err(cause) = lingering()
-        {
+        // The boot prerequisite is a cause of the service's status beside
+        // whatever its process shows.
+        let boot = if request.scheduler == Scheduler::SystemdUser {
+            lingering().err()
+        } else {
+            None
+        };
+        if let Some(cause) = &boot {
             report.finding(ResourceKind::Runner, cause);
         }
-        match owned.runner_service(request, &desired, &demand.conversations, report) {
-            Ok(None) => status(ServiceState::Running, None),
-            Ok(Some(cause)) => status(ServiceState::Unmet, Some(cause)),
-            Err(error) => {
-                let cause = error.to_string();
-                report.finding(ResourceKind::Runner, &cause);
-                status(ServiceState::Unmet, Some(cause))
-            }
-        }
+        let (state, cause) =
+            match owned.runner_service(request, &desired, &demand.conversations, report) {
+                Ok(None) => (ServiceState::Running, None),
+                Ok(Some(cause)) => (ServiceState::Unmet, Some(cause)),
+                Err(error) => {
+                    let cause = error.to_string();
+                    report.finding(ResourceKind::Runner, &cause);
+                    (ServiceState::Unmet, Some(cause))
+                }
+            };
+        let cause = match (cause, boot) {
+            (Some(cause), Some(boot)) => Some(format!("{cause}; {boot}")),
+            (cause, boot) => cause.or(boot),
+        };
+        status(state, cause)
     };
     report.runner_service = Some(found);
 }

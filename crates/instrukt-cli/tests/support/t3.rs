@@ -206,9 +206,11 @@ impl FakeT3 {
         ids.sort();
         ids
     }
-    /// The model a thread was started on.
-    pub fn model(&self, id: &str) -> String {
-        self.read(id)["model"].as_str().unwrap().to_owned()
+    /// The semantic key a thread was started under, as its title carries
+    /// it last.
+    pub fn key(&self, id: &str) -> String {
+        let title = self.read(id)["title"].as_str().unwrap().to_owned();
+        title.rsplit(" · ").next().unwrap().to_owned()
     }
     /// The provider instance a thread was started on.
     pub fn provider(&self, id: &str) -> instrukt_core::ids::ProviderInstanceId {

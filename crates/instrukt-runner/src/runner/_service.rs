@@ -16,13 +16,28 @@ use super::RunnerError;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceRecord {
     pub pid: u32,
+    /// When that process started, as the operating system records it, so a
+    /// reused process id never makes an old record look current.
+    pub started: String,
     pub identity: String,
+}
+
+impl ServiceRecord {
+    /// Whether this record describes the live process `pid` that is
+    /// running now.
+    pub fn describes(&self, pid: u32) -> bool {
+        self.pid == pid
+            && super::_holder::incarnation(pid).as_deref() == Some(self.started.as_str())
+    }
 }
 
 /// The identity of a runner service executing `executable` with this
 /// computer's configuration: the executable's path and file, the global
-/// layer, the agent profiles and every company home's document, and the
-/// size and time of each company's secrets file, never its content.
+/// layer, the agent profiles and the document of every company home that
+/// company discovery recognises, and the size and time of each company's
+/// secrets file, never its content. The executable and the secrets files
+/// count by their file identity (device, inode, size and time), not by
+/// their content.
 pub fn service_identity(home: &Home, executable: &Path) -> std::io::Result<String> {
     let mut digest = Sha256::new();
     let mut file = |label: &str, path: &Path, content: bool| -> std::io::Result<()> {
@@ -53,13 +68,11 @@ pub fn service_identity(home: &Home, executable: &Path) -> std::io::Result<Strin
     file("executable", executable, false)?;
     file("global", &home.global_config(), true)?;
     file("agents", &home.agents_file(), true)?;
-    let mut companies = match std::fs::read_dir(home.companies_dir()) {
-        Ok(entries) => entries
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<Result<Vec<_>, _>>()?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error),
-    };
+    let mut companies = instrukt_core::config::company_homes(home)
+        .map_err(std::io::Error::other)?
+        .into_iter()
+        .map(|(name, _)| home.company_dir(&name))
+        .collect::<Vec<_>>();
     companies.sort();
     for company in companies {
         file("company", &company.join("instrukt.yaml"), true)?;
@@ -78,6 +91,7 @@ pub(super) fn publish(home: &Home) -> Result<(), RunnerError> {
         .map_err(|e| unpublished(&e))?;
     let record = ServiceRecord {
         pid: std::process::id(),
+        started: super::_holder::own_incarnation().map_err(|e| unpublished(&e))?,
         identity: service_identity(home, &executable).map_err(|e| unpublished(&e))?,
     };
     let bytes = serde_json::to_vec(&record).map_err(|e| unpublished(&e))?;
