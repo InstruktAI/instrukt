@@ -248,8 +248,12 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
             capability: Capability::InputConsumption,
         })
     }
-    /// The input that opened the session's turn in progress, as the runtime
-    /// records it; `None` when no turn is in progress.
+    /// The input that opened the turn the session has in progress at the
+    /// moment of asking, as the runtime records it; `None` when it has none.
+    /// It names the session's current turn, not the turn that started the
+    /// process asking: a command left running past its turn observes the turn
+    /// then in progress. An error means the runtime cannot say, which callers
+    /// treat as no answer.
     fn active_turn_input(&self, _session: &SessionRef) -> Result<Option<String>, SessionsError> {
         Err(SessionsError::MissingCapability {
             runtime: self.runtime().name().into(),

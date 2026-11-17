@@ -26,6 +26,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// The most pages a catalog may take.
 const MOST_PAGES: usize = 100;
 
+/// The most bytes one reply may hold, an event stream's included.
+const MOST_REPLY_BYTES: u64 = 10 * 1024 * 1024;
+
 /// One tool of a server's catalog.
 #[derive(Debug, Clone, Serialize)]
 pub struct Tool {
@@ -87,9 +90,21 @@ impl<'a> Session<'a> {
                 version.unwrap_or("none")
             )));
         }
-        for required in ["capabilities", "serverInfo"] {
-            if !initialized.get(required).is_some_and(Value::is_object) {
-                return Err(session.failure(format!("its initialization lacks `{required}`")));
+        if !initialized
+            .get("capabilities")
+            .is_some_and(Value::is_object)
+        {
+            return Err(session.failure("its initialization lacks `capabilities`".into()));
+        }
+        let info = initialized.get("serverInfo");
+        for field in ["name", "version"] {
+            if !info
+                .and_then(|info| info.get(field))
+                .is_some_and(Value::is_string)
+            {
+                return Err(
+                    session.failure(format!("its initialization's `serverInfo` lacks `{field}`"))
+                );
             }
         }
         session.initialized = true;
@@ -142,9 +157,13 @@ impl<'a> Session<'a> {
             .ok_or_else(|| self.failure("a tool in its catalog has no name".into()))?;
         let input_schema = tool
             .get("inputSchema")
-            .filter(|schema| schema.is_object())
+            .filter(|schema| schema.get("type").and_then(Value::as_str) == Some("object"))
             .cloned()
-            .ok_or_else(|| self.failure(format!("its tool `{name}` has no input shape")))?;
+            .ok_or_else(|| {
+                self.failure(format!(
+                    "its tool `{name}` has no input shape of type object"
+                ))
+            })?;
         let description = match tool.get("description") {
             None | Some(Value::Null) => None,
             Some(Value::String(text)) => Some(text.clone()),
@@ -168,8 +187,11 @@ impl<'a> Session<'a> {
             "tools/call",
             json!({ "name": tool, "arguments": arguments }),
         )?;
-        if !result.get("content").is_some_and(Value::is_array) {
+        let Some(content) = result.get("content").and_then(Value::as_array) else {
             return Err(self.failure("its tool result lacks `content`".into()));
+        };
+        if let Some(cause) = content.iter().find_map(malformed_block) {
+            return Err(self.failure(format!("its tool result holds {cause}")));
         }
         match result.get("isError") {
             None | Some(Value::Bool(false)) => Ok(result),
@@ -235,18 +257,23 @@ impl<'a> Session<'a> {
             .unwrap_or_default()
             .to_ascii_lowercase();
         if !(200..300).contains(&status) {
-            let text = response.body_mut().read_to_string().unwrap_or_default();
+            let text = bounded_text(&mut response).unwrap_or_default();
             return Err(self.failure(format!("HTTP {status} to {method}: {}", text.trim())));
         }
         let answer = if kind.starts_with("text/event-stream") {
-            // The answer completes the request as soon as its event arrives.
-            let reader = std::io::BufReader::new(response.body_mut().as_reader());
+            // The answer completes the request as soon as its event arrives;
+            // the reply's size bound applies before lines and events gather.
+            let reader = std::io::BufReader::new(
+                response
+                    .body_mut()
+                    .with_config()
+                    .limit(MOST_REPLY_BYTES)
+                    .reader(),
+            );
             answer_in_stream(reader, id)
                 .map_err(|error| self.failure(format!("unreadable answer to {method}: {error}")))?
         } else if kind.starts_with("application/json") {
-            let text = response
-                .body_mut()
-                .read_to_string()
+            let text = bounded_text(&mut response)
                 .map_err(|error| self.failure(format!("unreadable answer to {method}: {error}")))?;
             serde_json::from_str::<Value>(&text).ok()
         } else {
@@ -277,7 +304,7 @@ impl<'a> Session<'a> {
         let mut response = self.post(&json!({"jsonrpc": "2.0", "method": method}))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
-            let text = response.body_mut().read_to_string().unwrap_or_default();
+            let text = bounded_text(&mut response).unwrap_or_default();
             return Err(self.failure(format!("HTTP {status} to {method}: {}", text.trim())));
         }
         Ok(())
@@ -286,7 +313,8 @@ impl<'a> Session<'a> {
 
 impl Drop for Session<'_> {
     /// Asks the server, once, to end the session it opened; a server that does
-    /// not end it is logged and changes no outcome.
+    /// not end it, or answers that it cannot, is logged and changes no
+    /// outcome.
     fn drop(&mut self) {
         let Some(session) = self.session.take() else {
             return;
@@ -300,8 +328,7 @@ impl Drop for Session<'_> {
             request = request.header("Authorization", authorization);
         }
         match request.call() {
-            Ok(response) if response.status().is_success() || response.status().as_u16() == 405 => {
-            }
+            Ok(response) if response.status().is_success() => {}
             Ok(response) => tracing::warn!(
                 event = "mcp_session_not_ended",
                 server = self.target.name,
@@ -314,6 +341,36 @@ impl Drop for Session<'_> {
             ),
         }
     }
+}
+
+/// A reply's text, failing when it exceeds the reply's size bound.
+fn bounded_text(response: &mut ureq::http::Response<ureq::Body>) -> Result<String, ureq::Error> {
+    response
+        .body_mut()
+        .with_config()
+        .limit(MOST_REPLY_BYTES)
+        .read_to_string()
+}
+
+/// Why a content block of a tool result is malformed, if it is: it is no
+/// object with a type, or a known type lacks what that type requires. A
+/// block of an unknown type is admitted.
+fn malformed_block(block: &Value) -> Option<String> {
+    let Some(kind) = block.get("type").and_then(Value::as_str) else {
+        return Some("a content block without a type".into());
+    };
+    let text = |field: &str| block.get(field).is_some_and(Value::is_string);
+    let complete = match kind {
+        "text" => text("text"),
+        "image" | "audio" => text("data") && text("mimeType"),
+        "resource_link" => text("uri") && text("name"),
+        "resource" => block
+            .get("resource")
+            .and_then(|resource| resource.get("uri"))
+            .is_some_and(Value::is_string),
+        _ => true,
+    };
+    (!complete).then(|| format!("a `{kind}` content block that lacks what that type requires"))
 }
 
 /// The JSON-RPC message answering `id` in an event stream, read until it

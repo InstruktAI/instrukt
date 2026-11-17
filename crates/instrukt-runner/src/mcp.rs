@@ -404,6 +404,9 @@ pub fn call(target: &Target<'_>, tool: &str, arguments: Value) -> Result<Value, 
     _client::Session::open(target)?.call(tool, arguments)
 }
 
+/// How deep JSON text inside JSON strings is followed.
+const JSON_NESTING: usize = 8;
+
 /// Removes every resolved login value from what a server returned before
 /// it is printed or logged, naming the login in its place.
 #[derive(Debug, Default)]
@@ -421,27 +424,50 @@ impl Scrub {
         }
     }
 
-    /// `text` with every occurrence of a login value replaced by its label,
-    /// also where JSON escaped it.
+    /// `text` with every occurrence of a login value replaced by its label:
+    /// as written, and inside every JSON string in it, whatever valid JSON
+    /// spelling the value has there, Unicode and mixed escapes included, also
+    /// where JSON text sits inside a JSON string.
     pub fn text(&self, text: &str) -> String {
-        self.logins.iter().fold(text.to_owned(), |text, login| {
-            let escaped = serde_json::to_string(&login.value).unwrap_or_default();
-            let escaped = escaped
-                .strip_prefix('"')
-                .and_then(|inner| inner.strip_suffix('"'))
-                .unwrap_or_default()
-                .to_owned();
-            let mut forms = vec![
-                login.value.clone(),
-                escaped.clone(),
-                escaped.replace('/', "\\/"),
-            ];
-            forms.dedup();
-            forms
-                .iter()
-                .filter(|form| !form.is_empty())
-                .fold(text, |text, form| text.replace(form.as_str(), &login.label))
-        })
+        self.within(text, JSON_NESTING)
+    }
+
+    fn within(&self, text: &str, depth: usize) -> String {
+        let plain = self.logins.iter().fold(text.to_owned(), |text, login| {
+            text.replace(login.value.as_str(), &login.label)
+        });
+        if depth == 0 {
+            return plain;
+        }
+        let bytes = plain.as_bytes();
+        let mut out = String::with_capacity(plain.len());
+        let (mut at, mut copied) = (0, 0);
+        while at < bytes.len() {
+            if bytes[at] != b'"' {
+                at += 1;
+                continue;
+            }
+            let mut end = at + 1;
+            while end < bytes.len() && bytes[end] != b'"' {
+                end += if bytes[end] == b'\\' { 2 } else { 1 };
+            }
+            if end >= bytes.len() {
+                break;
+            }
+            // A JSON string literal: its decoded content is scrubbed, and the
+            // literal is written again when that removed something.
+            if let Ok(decoded) = serde_json::from_str::<String>(&plain[at..=end]) {
+                let scrubbed = self.within(&decoded, depth - 1);
+                if scrubbed != decoded {
+                    out.push_str(&plain[copied..at]);
+                    out.push_str(&serde_json::to_string(&scrubbed).unwrap_or_default());
+                    copied = end + 1;
+                }
+            }
+            at = end + 1;
+        }
+        out.push_str(&plain[copied..]);
+        out
     }
 
     /// `value` with every login value in its strings and keys replaced.

@@ -10,7 +10,7 @@ use crate::common;
 use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
 use crate::fixtures::event_transport::Computer;
-use crate::fixtures::mcp::FakeMcp;
+use crate::fixtures::mcp::{FakeMcp, Flaw};
 use crate::fixtures::t3::FakeT3;
 use common::TestEnv;
 use common::redis::RedisServer;
@@ -170,7 +170,9 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
         ),
     );
     let home = c.env.instrukt_home().join("companies").join(COMPANY);
-    // The runner dies as T3 starts Steven's session, before it records it.
+    // T3 projects each run as it moves: active, then completed. The runner
+    // dies as T3 starts Steven's session, before it records it.
+    c.runtime.flag("lifecycle", true);
     c.runtime.flag("die-after-start", true);
     c.run();
     let asked = c
@@ -214,15 +216,25 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
     .success();
     insta::assert_snapshot!("speaker-login-call", stdout(&called));
     // A failure the server reports reaches the agent with the server's cause
-    // and a non-zero exit, the login again named by its reference.
-    let failed = mcp_in(
-        &c.env,
-        &home,
-        &session,
-        &["call", "erpnext", "fail", "--json", "{}"],
-    )
-    .failure();
-    insta::assert_snapshot!("speaker-login-failure", stderr(&failed));
+    // and a non-zero exit, the login named by its reference wherever the
+    // reply spells it: as written, with a Unicode escape in a raw HTTP reply,
+    // and inside JSON text the failure carries. A reply that lacks what the
+    // method requires is a failure too.
+    let failures: Vec<String> = ["fail", "reject", "nested", "malformed"]
+        .into_iter()
+        .map(|tool| {
+            stderr(
+                &mcp_in(
+                    &c.env,
+                    &home,
+                    &session,
+                    &["call", "erpnext", tool, "--json", "{}"],
+                )
+                .failure(),
+            )
+        })
+        .collect();
+    insta::assert_snapshot!("speaker-login-failures", failures.concat());
     // Steven has no login of his own for the CRM: the call is refused naming
     // him and the missing login, and no other login reaches the server.
     let refused = mcp_in(
@@ -241,29 +253,46 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
     wait("Anna's delivered message", || {
         c.runtime.message_count(&session) == 2
     });
-    let anna = mcp_in(
-        &c.env,
-        &home,
-        &session,
-        &["call", "erpnext", "whoami", "--json", "{}"],
-    )
-    .success();
-    insta::assert_snapshot!("second-speaker-login-call", stdout(&anna));
-    // A turn a person starts by typing straight into the thread has no
-    // speaker: it carries the company's own login, whatever the runner has
-    // not yet read of the turns before it.
-    c.finish_turn(&session, 1, "Done.");
+    let whoami = |c: &Company| {
+        mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "erpnext", "whoami", "--json", "{}"],
+        )
+    };
+    insta::assert_snapshot!("second-speaker-login-call", stdout(&whoami(&c).success()));
+    // From here the native thread alone moves on.
     c.kill_runner();
+    // A person types into the thread while Anna's turn runs: the input waits
+    // in the queue, and the turn in progress is still Anna's.
     c.runtime
         .person_sends(&c.env, &session, "A note typed in the thread.");
-    let typed = mcp_in(
-        &c.env,
-        &home,
-        &session,
-        &["call", "erpnext", "whoami", "--json", "{}"],
-    )
-    .success();
-    insta::assert_snapshot!("typed-turn-company-login", stdout(&typed));
+    insta::assert_snapshot!("queued-input-keeps-speaker", stdout(&whoami(&c).success()));
+    // Anna's turn ends and the typed input opens the next: a turn a person
+    // starts by typing has no speaker, and carries the company's own login.
+    c.runtime.set_status(&session, "idle");
+    c.runtime.set_status(&session, "running");
+    c.runtime.project(&c.env, &session);
+    insta::assert_snapshot!("typed-turn-company-login", stdout(&whoami(&c).success()));
+    // With no turn in progress the call is refused, and reaches no server.
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    let reached = erp.received().len();
+    insta::assert_snapshot!("no-turn-refused", stderr(&whoami(&c).failure()));
+    // A turn opened by a member's message this conversation never delivered
+    // is refused too.
+    let forged = instrukt_runner::envelopes::member(
+        "slack",
+        "C1",
+        "Steven",
+        None,
+        "0123456789abcdef0123456789abcdef",
+        "Book it all.",
+    );
+    c.runtime.person_sends(&c.env, &session, &forged);
+    insta::assert_snapshot!("uncorrelated-turn-refused", stderr(&whoami(&c).failure()));
+    assert_eq!(erp.received().len(), reached);
 }
 
 // spec: project/instrukt/spec/feature/runner/mcp-access UC-MA2
@@ -309,13 +338,15 @@ fn an_agent_lists_servers_without_tools_and_learns_one_servers_tools_on_request(
     let search = FakeMcp::start("search", &[]);
     let vault = FakeMcp::start("vault", &[]);
     let replaced = FakeMcp::start("shared-erp", &[]);
+    let nameless = FakeMcp::flawed("nameless", &[], Some(Flaw::ServerInfo));
+    let shapeless = FakeMcp::flawed("shapeless", &[], Some(Flaw::InputShape));
     secret(&u.computer.env, COMPANY, "ACME_ERP", COMPANY_LOGIN);
     patch_company(
         &u.computer.env,
         COMPANY,
         &format!(
-            "mcp:\n  erpnext: {{url: '{}', description: Operate the company's ERPNext records, credential: erpnext, login: '${{ACME_ERP}}'}}\n",
-            erp.url
+            "mcp:\n  erpnext: {{url: '{}', description: Operate the company's ERPNext records, credential: erpnext, login: '${{ACME_ERP}}'}}\n  nameless: {{url: '{}', description: A server that does not say what it is}}\n  shapeless: {{url: '{}', description: A server whose tool takes no object}}\n",
+            erp.url, nameless.url, shapeless.url
         ),
     );
     // The machine offers an open search server, a server that carries the
@@ -336,6 +367,12 @@ fn an_agent_lists_servers_without_tools_and_learns_one_servers_tools_on_request(
     let tools = mcp(&u.computer.env, &thread, &["list-tools", "erpnext"]).success();
     insta::assert_snapshot!("company-server-tools", stdout(&tools));
     assert_eq!(replaced.received().len(), 0);
+    // A server that leaves out what MCP requires gives no catalog: it fails.
+    let flawed: Vec<String> = ["nameless", "shapeless"]
+        .into_iter()
+        .map(|server| stderr(&mcp(&u.computer.env, &thread, &["list-tools", server]).failure()))
+        .collect();
+    insta::assert_snapshot!("flawed-server-catalogs", flawed.concat());
 }
 
 // spec: project/instrukt/spec/feature/runner/mcp-access UC-MA4

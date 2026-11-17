@@ -129,8 +129,17 @@ pub(super) struct NativeInput {
     pub reference: Option<String>,
 }
 
-/// The text of the input that opened `thread`'s run in progress: the run T3
-/// started last and has not ended. `None` when no run is in progress.
+/// The text of the input that opened `thread`'s run in progress: among the
+/// thread's runs whose projected status is `starting`, `running` or
+/// `waiting`, the one projected last, and the user message its
+/// `userMessageId` names. `None` when no run has such a status.
+///
+/// T3's projection writer establishes that these statuses mark an active run
+/// and that a run's `userMessageId` is its opening input; `preparing` and
+/// `queued` runs have not started. It does not establish that a thread has at
+/// most one active run, so with several the one projected last is taken.
+/// That the runs of a thread move from queued to active to ended is shown by
+/// the test stand-in alone; the T3 contract suite runs no provider turn.
 pub(super) fn active_opening(
     home: &Home,
     env: &Env,
