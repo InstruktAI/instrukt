@@ -627,7 +627,7 @@ impl T3Conversations {
             }
         }
         if &fingerprint != expected {
-            tracing::debug!(event = "conversation_source_unsettled", conversation = %thread);
+            tracing::debug!(event = "t3_source_unsettled", conversation = %thread);
             return Ok(Read::Unsettled);
         }
         Ok(Read::Settled {
