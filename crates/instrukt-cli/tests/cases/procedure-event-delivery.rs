@@ -758,12 +758,24 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         .join("companies/acme")
         .canonicalize()
         .unwrap();
-    // The home's document was written by an older instrukt.
+    // The home's document was written by an older instrukt, and it orders
+    // its sessions' profiles.
     let document = company.join("instrukt.yaml");
     let older = instrukt_core::config::CURRENT_SCHEMA_VERSION - 1;
+    let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     std::fs::write(
         &document,
-        format!("schema_version: {older}\ncompany: acme\n"),
+        format!("schema_version: {older}\ncompany: acme\nprofiles: [{profile}]\n"),
+    )
+    .unwrap();
+    // The company role's tier is not the machine default's.
+    std::fs::write(
+        r.computer.env.instrukt_home().join("agents.yaml"),
+        instrukt_core::config::SHIPPED_AGENTS.replacen(
+            "roles:\n",
+            "roles:\n  company-responder: {class: agent, can: [all], order: [claude, codex], tier: strong}\n",
+            1,
+        ),
     )
     .unwrap();
     r.scoped("platform", "configuration:global", "none");
@@ -832,6 +844,38 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         assert_eq!(
             assignment.project,
             (event == "project").then(|| fork.clone())
+        );
+    }
+    // The company agent starts on the company's profile with its role's
+    // tier; the project agent on the machine's order for its role.
+    let home = instrukt_core::home::Home::at_user_home(r.computer.env.home().into());
+    let agents = instrukt_core::config::Agents::load(&home).unwrap();
+    let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
+    for (event, role, order) in [
+        ("company", "company-responder", Some(vec![profile.clone()])),
+        ("project", "responder", None),
+    ] {
+        let (agent, tier) = agents
+            .order(Some(role), None, None, order.as_deref())
+            .unwrap()
+            .remove(0);
+        let session = r.delivered_to(event);
+        let started = instrukt_runner::keyed::request(
+            &home,
+            adapter.as_ref(),
+            &r.runtime.key(session.id.as_str()),
+        )
+        .unwrap();
+        assert_eq!(
+            started.preferences.first(),
+            Some(&instrukt_runner::agents::AgentChoice {
+                agent,
+                tier: Some(tier)
+            })
+        );
+        assert_eq!(
+            r.runtime.provider(session.id.as_str()),
+            agents.profiles[&started.preferences[0].agent].instance
         );
     }
 }

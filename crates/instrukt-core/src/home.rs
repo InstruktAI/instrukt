@@ -218,6 +218,12 @@ impl Home {
         self.state_dir().join("runner.lock")
     }
 
+    /// `~/.instrukt/state/runner-service.json` — what the runner service
+    /// executes, published by the service when it starts.
+    pub fn runner_service_file(&self) -> PathBuf {
+        self.state_dir().join("runner-service.json")
+    }
+
     /// Serializes history catch-up and legacy imports without holding the database writer lock.
     pub fn history_lock_file(&self) -> PathBuf {
         self.state_dir().join("history.lock")

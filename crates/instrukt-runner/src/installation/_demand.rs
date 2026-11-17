@@ -33,6 +33,13 @@ pub(super) struct Demand {
     pub history: Vec<String>,
     pub history_owned_redis: Vec<String>,
     pub sources: Vec<SourceDemand>,
+    /// Company homes declaring a connector while conversations are on, as
+    /// `company:<name>`: they demand the runner service.
+    pub conversations: Vec<String>,
+    /// Why conversation demand cannot be served or read in full: a
+    /// connector's company whose runtime cannot carry conversations, or a
+    /// company document that cannot be read while conversations is on.
+    pub conversation_blockers: Vec<String>,
     pub complete: bool,
     pub redis_references: Vec<String>,
 }
@@ -58,6 +65,8 @@ pub(super) fn read(
         history: vec![],
         history_owned_redis: vec![],
         sources: vec![],
+        conversations: vec![],
+        conversation_blockers: vec![],
         complete: true,
         redis_references: Vec::new(),
     };
@@ -181,18 +190,37 @@ pub(super) fn read(
 
 /// Company homes follow the machine's global switches: a nonempty valid
 /// source map demands events infrastructure and the receiver while events is
-/// on. A company folder whose document cannot be read or is invalid makes
-/// demand incomplete, so shared resources are never withdrawn on its account.
+/// on, and a declared connector demands the runner service while
+/// conversations is on. A company folder whose document cannot be read or is
+/// invalid makes demand incomplete, so shared resources are never withdrawn
+/// on its account.
 fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::Result<()> {
     let global = Configuration::load_global(home)?;
+    let conversations = global.conversations_enabled()?;
     for (name, config) in instrukt_core::config::company_homes(home)? {
+        let label = format!("company:{name}");
+        let mut blocker = None;
         let result = (|| -> anyhow::Result<()> {
             let config = match config {
                 Ok(config) => config,
                 // A folder without a settings document is no company.
                 Err(instrukt_core::config::ConfigError::NoLayer { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    if conversations {
+                        blocker = Some(error.to_string());
+                    }
+                    return Err(error.into());
+                }
             };
+            if conversations && config.slack_connector()?.is_some() {
+                demand.conversations.push(label.clone());
+                let features = [Feature::Conversations];
+                if let Some(unavailable) = global.unavailable(&features)? {
+                    let cause = unavailable.describe(&features);
+                    blocker = Some(cause.clone());
+                    anyhow::bail!("{cause}");
+                }
+            }
             let sources = config.webhooks()?;
             if sources.is_empty() {
                 return Ok(());
@@ -205,7 +233,7 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
             if let Some(unavailable) = global.unavailable(&features)? {
                 anyhow::bail!("{}", unavailable.describe(&features));
             }
-            demand.events.push(format!("company:{name}"));
+            demand.events.push(label.clone());
             demand.sources.push(SourceDemand {
                 kind: "company",
                 slug: name.clone(),
@@ -217,6 +245,11 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
         if let Err(error) = result {
             demand.complete = false;
             report.finding(format!("company {name}"), error);
+        }
+        if let Some(cause) = blocker {
+            demand
+                .conversation_blockers
+                .push(format!("company {name}: {cause}"));
         }
     }
     Ok(())

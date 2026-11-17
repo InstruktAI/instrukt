@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use instrukt_core::config::{ConfigError, Configuration, Env, Module};
-use instrukt_core::fsx::{FsError, LockGuard};
+use instrukt_core::fsx::FsError;
 use instrukt_core::github;
 use instrukt_core::home::Home;
 use instrukt_core::ids::CommitSha;
@@ -35,6 +35,13 @@ use crate::transport::{EventScope, ScopedTransport, TransportError};
 /// How long `instrukt run` waits for a tick in progress to finish.
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 
+mod _holder;
+mod _service;
+pub use _service::{ServiceRecord, published_service, service_identity};
+
+/// The argument the owned runner service passes to `instrukt run`.
+pub const SERVICE_FLAG: &str = "--service";
+
 /// A runner invocation could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
@@ -44,6 +51,22 @@ pub enum RunnerError {
     History(#[from] crate::history::HistoryError),
     #[error("conversations: {0}")]
     Conversations(String),
+    #[error(
+        "instrukt's runner service is already running `instrukt run`, which serves every enabled module; no second run is started"
+    )]
+    ServiceRunning,
+    #[error(
+        "cannot publish the runner lock's holder in {}: {source}; restore write access to the state directory",
+        path.display()
+    )]
+    HolderUnpublished {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+    #[error(
+        "cannot publish the runner service's identity: {0}; restore write access to the state directory"
+    )]
+    ServiceUnpublished(String),
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
     #[error("the activation wake channel failed; accepted work remains pending")]
@@ -127,7 +150,7 @@ pub enum TickOutcome {
 /// One wake-up at `now`; exits at once when the runner lock is held.
 pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, RunnerError> {
     let state = RunnerState::new(cx.home);
-    let Some(_runner) = LockGuard::try_acquire(&cx.home.runner_lock_file())? else {
+    let Some(_runner) = _holder::tick(cx.home)? else {
         return Ok(TickOutcome::Busy);
     };
     let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
@@ -154,9 +177,13 @@ pub fn run(
     cx: &RunnerContext<'_>,
     clock: impl Fn() -> Timestamp + Send + Sync + 'static,
     interval: Duration,
+    service: bool,
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
-    let _runner = LockGuard::acquire(&cx.home.runner_lock_file(), RUN_LOCK_WAIT)?;
+    if service {
+        _service::publish(cx.home)?;
+    }
+    let _runner = _holder::run(cx.home, service)?;
     // Initialize the shared schema before independent workers open connections.
     drop(instrukt_core::state_db::StateDb::open(cx.home).map_err(StateError::from)?);
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);

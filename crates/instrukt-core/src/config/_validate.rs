@@ -39,6 +39,13 @@ fn findings_in_scope(
     let mut found = judge(value, layer.kind(), global.as_ref());
     if let Layer::Company(name) = layer {
         found.extend(company_identity(name, value));
+        if let Some(profiles) = value.get("profiles") {
+            // A missing agents.yaml reads as the shipped defaults; one that
+            // cannot be read or is invalid leaves the names unchecked, which
+            // is this company's finding.
+            let declared = super::Agents::load(&home.for_inspection());
+            super::_company::check_profiles(name, profiles, &declared, &mut found);
+        }
         let effective = effective_value(global.as_ref(), None)?;
         found.extend(ingress_signing(
             home,

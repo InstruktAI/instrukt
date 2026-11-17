@@ -206,6 +206,19 @@ impl FakeT3 {
         ids.sort();
         ids
     }
+    /// The semantic key a thread was started under, as its title carries
+    /// it last.
+    pub fn key(&self, id: &str) -> String {
+        let title = self.read(id)["title"].as_str().unwrap().to_owned();
+        title.rsplit(" · ").next().unwrap().to_owned()
+    }
+    /// The provider instance a thread was started on.
+    pub fn provider(&self, id: &str) -> instrukt_core::ids::ProviderInstanceId {
+        instrukt_core::ids::ProviderInstanceId::parse(
+            self.read(id)["providerInstanceId"].as_str().unwrap(),
+        )
+        .unwrap()
+    }
     fn read(&self, id: &str) -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(self.state.join(format!("{id}.json"))).unwrap())
             .unwrap()

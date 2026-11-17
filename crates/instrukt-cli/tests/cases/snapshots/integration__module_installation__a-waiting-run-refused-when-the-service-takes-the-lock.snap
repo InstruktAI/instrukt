@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+assertion_line: 2477
+expression: "std::fs::read_to_string(&said).unwrap()"
+---
+instrukt: waiting for the runner lock, which another runner invocation holds
+instrukt: instrukt's runner service is already running `instrukt run`, which serves every enabled module; no second run is started

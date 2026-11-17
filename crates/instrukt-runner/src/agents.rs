@@ -14,16 +14,36 @@ pub fn role_order(
     config: &Configuration,
     task: Option<&AgentPreference>,
     role: Option<&str>,
+    home_order: Option<&[instrukt_core::ids::ProfileName]>,
 ) -> Result<Vec<AgentChoice>, crate::sessions::SessionsError> {
     Ok(config
         .agents()?
-        .order(role, task.map(|t| &t.agent), task.and_then(|t| t.tier))?
+        .order(
+            role,
+            task.map(|t| &t.agent),
+            task.and_then(|t| t.tier),
+            home_order,
+        )?
         .into_iter()
         .map(|(agent, tier)| AgentChoice {
             agent,
             tier: Some(tier),
         })
         .collect())
+}
+
+/// The order a session that runs in `exact_home` is started on in place of
+/// its role mapping's: a company home's `profiles`, when it names them.
+pub fn home_order(
+    home: &instrukt_core::home::Home,
+    exact_home: &str,
+) -> Result<Option<Vec<instrukt_core::ids::ProfileName>>, crate::sessions::SessionsError> {
+    let Some(company) = exact_home.strip_prefix("company:") else {
+        return Ok(None);
+    };
+    let company = instrukt_core::ids::ProjectSlug::parse(company)
+        .map_err(|e| crate::sessions::SessionsError::Refused(e.to_string()))?;
+    Ok(Configuration::load_company(home, &company)?.profiles()?)
 }
 
 /// Persisted agent/model marks, normalized at the command's controlled clock.

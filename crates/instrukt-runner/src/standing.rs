@@ -509,7 +509,9 @@ fn deliver_group(
             .collect::<Result<Vec<_>, _>>()?;
         let (count, content) = inputs::compose(now, &prefix, &entries)?;
         selected.truncate(count);
-        let preferences = crate::agents::role_order(&config, None, fixed.role.as_deref())?;
+        let home_order = crate::agents::home_order(state.home(), &first.home)?;
+        let preferences =
+            crate::agents::role_order(&config, None, fixed.role.as_deref(), home_order.as_deref())?;
         let selection = crate::agents::selections(&config, invocation.home(), &preferences, now)?
             .into_iter()
             .next();
@@ -790,7 +792,9 @@ pub fn reserve_manual(
         return Ok(request);
     }
     let (root, _) = checkout(&state, &home)?;
-    let order = crate::agents::role_order(config, None, entry.role.as_deref())?;
+    let home_order = crate::agents::home_order(invocation.home(), &home)?;
+    let order =
+        crate::agents::role_order(config, None, entry.role.as_deref(), home_order.as_deref())?;
     let request = ManualReservation {
         preferences: order.clone(),
         selection: crate::agents::selections(config, invocation.home(), &order, now)?
@@ -876,7 +880,13 @@ fn prepare_successor(
         prefix.push_str(opening);
     }
     let config = execution_config(state.home(), cx.home, cx.root)?;
-    let order = crate::agents::role_order(&config, None, cx.current.role.as_deref())?;
+    let home_order = crate::agents::home_order(state.home(), cx.home)?;
+    let order = crate::agents::role_order(
+        &config,
+        None,
+        cx.current.role.as_deref(),
+        home_order.as_deref(),
+    )?;
     let selection = crate::agents::selections(&config, state.home(), &order, cx.now)?
         .into_iter()
         .next();

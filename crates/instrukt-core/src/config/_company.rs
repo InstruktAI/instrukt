@@ -14,6 +14,61 @@ use crate::ids::ProjectSlug;
 /// and in a member entry.
 pub const CONNECTORS: [&str; 1] = ["slack"];
 
+/// Why an empty `profiles` list is a finding.
+pub(super) const EMPTY_PROFILES: &str = "lists no profile; name the profiles its sessions start on, or remove profiles to use the machine-wide order";
+
+/// The findings of a company home's `profiles` against the profiles the
+/// machine's `agents.yaml` declares: each name it does not declare, and an
+/// empty list. Each names the company.
+pub(super) fn check_profiles(
+    company: &ProjectSlug,
+    value: &Value,
+    declared: &Result<super::Agents, ConfigError>,
+    out: &mut Vec<KeyFinding>,
+) {
+    let Some(names) = value.as_sequence() else {
+        return;
+    };
+    if names.is_empty() {
+        out.push(finding(
+            "profiles",
+            FindingKind::InvalidValue,
+            format!("company {company} {EMPTY_PROFILES}"),
+        ));
+        return;
+    }
+    let declared = match declared {
+        Ok(declared) => declared,
+        Err(error) => {
+            out.push(finding(
+                "profiles",
+                FindingKind::InvalidValue,
+                format!(
+                    "company {company} names profiles, and the machine's agents.yaml that declares them cannot be read: {error}"
+                ),
+            ));
+            return;
+        }
+    };
+    for (i, name) in names.iter().enumerate() {
+        let Some(name) = name.as_str() else {
+            continue;
+        };
+        let known = crate::ids::ProfileName::parse(name)
+            .ok()
+            .is_some_and(|name| declared.profiles.contains_key(&name));
+        if !known {
+            out.push(finding(
+                &format!("profiles[{i}]"),
+                FindingKind::UnresolvedReference,
+                format!(
+                    "company {company} names profile `{name}`, which the machine's agents.yaml does not declare"
+                ),
+            ));
+        }
+    }
+}
+
 /// The largest number of earlier messages that accompany an addressed
 /// message when a Slack declaration does not say.
 pub const DEFAULT_CONTEXT_MESSAGES: u64 = 30;

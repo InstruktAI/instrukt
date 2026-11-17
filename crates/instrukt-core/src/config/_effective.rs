@@ -296,6 +296,29 @@ impl Configuration {
         super::_company::members(self.value.get("members"))
     }
 
+    /// A company home's `profiles`: the order its sessions are started on,
+    /// in place of the machine-wide one. `None` when it names none; an
+    /// empty list orders no session.
+    pub fn profiles(&self) -> Result<Option<Vec<crate::ids::ProfileName>>, ConfigError> {
+        let Some(value) = self.value.get("profiles") else {
+            return Ok(None);
+        };
+        let names = value
+            .as_sequence()
+            .ok_or_else(|| invalid("profiles", "expected a list of profile names"))?
+            .iter()
+            .map(|name| {
+                name.as_str()
+                    .and_then(|name| crate::ids::ProfileName::parse(name).ok())
+                    .ok_or_else(|| invalid("profiles", "expected a list of profile names"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if names.is_empty() {
+            return Err(invalid("profiles", super::_company::EMPTY_PROFILES));
+        }
+        Ok(Some(names))
+    }
+
     /// A company document's Slack connector, if it declares one.
     pub fn slack_connector(&self) -> Result<Option<super::SlackConnector>, ConfigError> {
         super::_company::slack(self.value.get("connectors"))

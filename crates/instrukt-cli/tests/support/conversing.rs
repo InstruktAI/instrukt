@@ -37,18 +37,61 @@ pub struct Delivered {
     pub left_out: bool,
 }
 
-pub struct Running(std::process::Child);
+/// A child process the test owns: ended and reaped when dropped, also when
+/// the test fails.
+pub struct Running {
+    child: std::process::Child,
+    /// How it ended, when a native wait already reaped it.
+    reaped: Option<std::process::ExitStatus>,
+}
 impl Running {
     pub fn spawn(command: &mut std::process::Command) -> Self {
-        Self(command.spawn().unwrap())
+        Self {
+            child: command.spawn().unwrap(),
+            reaped: None,
+        }
+    }
+    fn pid(&self) -> rustix::process::Pid {
+        rustix::process::Pid::from_raw(i32::try_from(self.child.id()).unwrap()).unwrap()
+    }
+    /// How it ended, once it has.
+    pub fn exited(&mut self) -> Option<std::process::ExitStatus> {
+        if self.reaped.is_none() {
+            return self.child.try_wait().unwrap();
+        }
+        self.reaped
+    }
+    /// Sends it `signal`.
+    pub fn signal(&self, signal: rustix::process::Signal) {
+        rustix::process::kill_process(self.pid(), signal).unwrap();
+    }
+    /// Whether it has stopped since it was last asked, as a native wait
+    /// reports without blocking. An end it reports is kept as its exit.
+    pub fn stopped(&mut self) -> bool {
+        if self.reaped.is_some() {
+            return false;
+        }
+        let options = rustix::process::WaitOptions::UNTRACED | rustix::process::WaitOptions::NOHANG;
+        match rustix::process::waitpid(Some(self.pid()), options).unwrap() {
+            Some((_, status)) if status.stopped() => true,
+            Some((_, status)) => {
+                use std::os::unix::process::ExitStatusExt as _;
+                self.reaped = Some(std::process::ExitStatus::from_raw(status.as_raw()));
+                false
+            }
+            None => false,
+        }
     }
 }
 impl Drop for Running {
     fn drop(&mut self) {
-        if self.0.try_wait().unwrap().is_none() {
-            self.0.kill().unwrap();
+        if self.reaped.is_some() {
+            return;
         }
-        self.0.wait().unwrap();
+        if self.child.try_wait().unwrap().is_none() {
+            self.child.kill().unwrap();
+        }
+        self.child.wait().unwrap();
     }
 }
 
@@ -78,6 +121,13 @@ pub fn company_home(env: &TestEnv, name: &str, app: &str, bot: &str, settings: &
             .assert()
             .success();
     }
+    patch_company(env, name, settings);
+}
+
+/// Applies `settings` to the company home `name` through the configuration
+/// verbs.
+pub fn patch_company(env: &TestEnv, name: &str, settings: &str) {
+    let here = env.path("");
     let revision = env
         .run(&here, ["config", "get", "--company", name, "--revision"])
         .success();
@@ -147,14 +197,12 @@ impl Company {
     /// Starts the long-lived runner and waits for its outward connection.
     pub fn run(&mut self) {
         let before = self.slack.connections();
-        self.runner = Some(Running(
+        self.runner = Some(Running::spawn(
             self.env
                 .instrukt_process(self.env.home())
                 .arg("run")
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .unwrap(),
+                .stderr(std::process::Stdio::null()),
         ));
         wait("the connector's outward connection", || {
             self.slack.connections() > before
@@ -164,9 +212,7 @@ impl Company {
     /// Waits until the runner process has ended on its own.
     pub fn runner_ended(&mut self) {
         let runner = self.runner.as_mut().unwrap();
-        wait("the runner's end", || {
-            runner.0.try_wait().unwrap().is_some()
-        });
+        wait("the runner's end", || runner.exited().is_some());
     }
 
     /// The agent sessions started so far.

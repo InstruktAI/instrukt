@@ -2156,3 +2156,356 @@ fn blueprint_missing_uv_or_failed_uv_is_unmet_and_disable_retains_tool() {
     env.run(env.home(), ["install", "--check"]).success();
     assert_eq!(bytes, std::fs::read(binary).unwrap());
 }
+
+/// The computer's service manager as a stand-in at the process boundary:
+/// launchd on macOS, the user's systemd manager (with `loginctl`) on Linux.
+/// It runs each definition's real command line and environment, keeps
+/// loaded, enabled and running apart, restarts exited services by their own
+/// policy and starts them again after a simulated restart of the computer.
+struct ServiceManager {
+    child: std::process::Child,
+    socket: std::path::PathBuf,
+    _dir: tempfile::TempDir,
+    unit: &'static str,
+    agents: std::path::PathBuf,
+}
+impl ServiceManager {
+    fn new(env: &mut TestEnv) -> Self {
+        let python = env
+            .command(std::path::Path::new("/usr/bin/which"), env.home())
+            .arg("python3")
+            .output()
+            .unwrap();
+        let python = String::from_utf8(python.stdout).unwrap().trim().to_owned();
+        let (script, unit, commands): (&str, &str, &[&str]) = if cfg!(target_os = "macos") {
+            ("launchd.py", "ai.instrukt.runner", &["launchctl"])
+        } else {
+            (
+                "systemd.py",
+                "instrukt-runner.service",
+                &["systemctl", "loginctl"],
+            )
+        };
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/support")
+            .join(script);
+        let dir = tempfile::Builder::new()
+            .prefix("instrukt-manager-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = dir.path().join("control");
+        let units = env.home().join(".config/systemd/user");
+        let child = env
+            .command(std::path::Path::new(&python), env.home())
+            .arg(&script)
+            .arg("serve")
+            .arg(&socket)
+            .arg(&units)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        crate::common::wait_until(
+            "the service manager's socket",
+            std::time::Duration::from_secs(5),
+            || socket.exists(),
+        );
+        for command in commands {
+            let wrapper = env.path("runtime-bin").join(command);
+            std::fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/sh\nexec '{python}' '{}' call '{}' \"$@\"\n",
+                    script.display(),
+                    socket.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        Self {
+            child,
+            socket,
+            _dir: dir,
+            unit: if cfg!(target_os = "macos") {
+                "ai.instrukt.runner"
+            } else {
+                unit
+            },
+            agents: env.home().join("Library/LaunchAgents"),
+        }
+    }
+    fn request(&self, args: &[&str]) -> serde_json::Value {
+        use std::io::{BufRead, Write};
+        let mut socket = std::os::unix::net::UnixStream::connect(&self.socket).unwrap();
+        serde_json::to_writer(&mut socket, args).unwrap();
+        socket.write_all(b"\n").unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(socket)
+            .read_line(&mut line)
+            .unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+    /// The service's live process id, if it has one.
+    fn pid(&self) -> Option<u64> {
+        self.request(&["inspect", self.unit])["pid"].as_u64()
+    }
+    /// How many times the manager has started the service's process.
+    fn starts(&self) -> u64 {
+        self.request(&["inspect", self.unit])["starts"]
+            .as_u64()
+            .unwrap()
+    }
+    /// The service's process dies; the manager's own policy restarts it.
+    fn kill(&self) {
+        self.request(&["kill-process", self.unit]);
+    }
+    /// The service stays registered with no process.
+    fn hold(&self) {
+        let operation = if cfg!(target_os = "macos") {
+            "hold"
+        } else {
+            "stop"
+        };
+        self.request(&[operation, self.unit]);
+    }
+    /// The service is started.
+    fn start(&self) {
+        let operation = if cfg!(target_os = "macos") {
+            "kickstart"
+        } else {
+            "start"
+        };
+        self.request(&[operation, self.unit]);
+    }
+    /// The computer restarts: every process ends and the manager starts
+    /// what is registered to start.
+    fn reboot(&self) {
+        if cfg!(target_os = "macos") {
+            self.request(&["reboot", self.agents.to_str().unwrap()]);
+        } else {
+            self.request(&["reboot"]);
+        }
+    }
+    /// Whether the manager still has the service registered.
+    fn registered(&self) -> bool {
+        if cfg!(target_os = "macos") {
+            self.request(&["list", self.unit])["ok"] == true
+        } else {
+            self.request(&["inspect", self.unit])["enabled"] == true
+        }
+    }
+    /// The user's linger state, on Linux.
+    fn linger(&self, on: bool) {
+        self.request(&["linger", if on { "yes" } else { "no" }]);
+    }
+}
+impl Drop for ServiceManager {
+    fn drop(&mut self) {
+        use std::io::Write;
+        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&self.socket) {
+            let _ = stream.write_all(b"[\"shutdown\"]\n");
+        } else {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI13
+#[test]
+fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
+    use crate::fixtures::conversing::{Company, Running, wait};
+    let mut c = Company::new("");
+    // The installed executable sits where an upgrade replaces it.
+    let installed = c.env.path("installed/instrukt");
+    std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &installed).unwrap();
+    let manager = ServiceManager::new(&mut c.env);
+    let instrukt = |c: &Company, args: &[&str]| {
+        c.env
+            .command(&installed, c.env.home())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let status = |c: &Company| -> instrukt_runner::installation::ServiceStatus {
+        let output = instrukt(c, &["events", "status", "--json"]);
+        assert!(output.status.success());
+        let status: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        serde_json::from_value(status["runner_service"].clone()).unwrap()
+    };
+    let state = |c: &Company| status(c).state;
+    use instrukt_runner::installation::ServiceState;
+    // Demanded and not installed: inspection reports it unmet.
+    assert!(!instrukt(&c, &["install", "--check"]).status.success());
+    assert_eq!(state(&c), ServiceState::Unmet);
+    // Installing starts the runner as a service: it connects the company's
+    // connector without anyone starting it.
+    let first = instrukt(&c, &["install", "--json"]);
+    wait("the service's connector connection", || {
+        c.slack.connections() == 1
+    });
+    if cfg!(target_os = "linux") {
+        // The user's manager does not start at boot without a login: that
+        // prerequisite is reported, and installation leaves it as it is.
+        assert!(!first.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+        insta::assert_json_snapshot!(report["findings"], @r#"
+[
+  "runner service: the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`"
+]
+"#);
+        assert!(!instrukt(&c, &["install", "--check"]).status.success());
+        // Status shows the running service with that cause.
+        let service = status(&c);
+        assert_eq!(service.state, ServiceState::Running);
+        insta::assert_json_snapshot!(service.cause, @r#""the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`""#);
+        manager.linger(true);
+        // Installing again finds the right process running and keeps it.
+        let pid = manager.pid();
+        assert!(instrukt(&c, &["install"]).status.success());
+        assert_eq!(manager.pid(), pid);
+    } else {
+        assert!(first.status.success());
+    }
+    assert!(instrukt(&c, &["install", "--check"]).status.success());
+    assert_eq!(state(&c), ServiceState::Running);
+    // While the service runs, a run started by hand is refused naming it.
+    let refused = instrukt(&c, &["run"]);
+    assert!(!refused.status.success());
+    insta::assert_snapshot!(
+        "second-run-refused-while-the-service-runs",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    // Its process is killed: the manager starts it again.
+    manager.kill();
+    wait("the restarted service's connection", || {
+        c.slack.connections() == 2
+    });
+    // Registered but stopped, it is unmet until installation starts it.
+    manager.hold();
+    assert!(!instrukt(&c, &["install", "--check"]).status.success());
+    assert_eq!(state(&c), ServiceState::Unmet);
+    assert!(instrukt(&c, &["install"]).status.success());
+    wait("the started service's connection", || {
+        c.slack.connections() == 3
+    });
+    // The executable is upgraded in place, its definition unchanged:
+    // installation restarts the service on the new executable.
+    let definition = |c: &Company| {
+        status(c)
+            .paths
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let before = definition(&c);
+    if cfg!(target_os = "linux") {
+        // Disabled while its process keeps running, it is still restarted.
+        manager.request(&["disable", manager.unit]);
+        assert!(manager.pid().is_some());
+    }
+    std::fs::remove_file(&installed).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &installed).unwrap();
+    assert!(!instrukt(&c, &["install", "--check"]).status.success());
+    assert!(instrukt(&c, &["install"]).status.success());
+    wait("the upgraded service's connection", || {
+        c.slack.connections() == 4
+    });
+    assert_eq!(definition(&c), before);
+    assert_eq!(state(&c), ServiceState::Running);
+    assert!(manager.registered());
+    // The runner exits at once while its configuration cannot be read; the
+    // manager keeps starting it, and once the configuration is back the
+    // service runs again.
+    let global = c.env.instrukt_home().join("instrukt.yaml");
+    let configuration = std::fs::read(&global).unwrap();
+    std::fs::write(&global, "invalid: [").unwrap();
+    let starts = manager.starts();
+    manager.kill();
+    wait("two failed starts", || manager.starts() >= starts + 2);
+    std::fs::write(&global, &configuration).unwrap();
+    wait("the recovered service's connection", || {
+        c.slack.connections() == 5
+    });
+    // The definition changes: installation repairs it and restarts the
+    // service with it.
+    let path = c.env.injected("PATH").unwrap().to_owned();
+    c.env.set_env("PATH", &format!("{path}:/changed-tools"));
+    assert!(instrukt(&c, &["install"]).status.success());
+    wait("the repaired service's connection", || {
+        c.slack.connections() == 6
+    });
+    assert_ne!(definition(&c), before);
+    // A run started by hand holds the runner lock, and a second one started
+    // by hand waits for it, saying so.
+    manager.hold();
+    let by_hand = Running::spawn(
+        c.env
+            .command(&installed, c.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
+    wait("the hand-started run's connection", || {
+        c.slack.connections() == 7
+    });
+    let said = c.env.path("waiting-run.stderr");
+    let mut waiting = Running::spawn(
+        c.env
+            .command(&installed, c.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::fs::File::create(&said).unwrap()),
+    );
+    wait("the second run waiting", || {
+        std::fs::read_to_string(&said).is_ok_and(|text| !text.is_empty())
+    });
+    // The service started meanwhile runs and waits too.
+    manager.start();
+    wait("the waiting service", || state(&c) == ServiceState::Running);
+    assert_eq!(c.slack.connections(), 7);
+    // The holder dies without letting go while the run waiting by hand is
+    // held still: the service takes the lock. Resumed, that run is refused
+    // naming the service.
+    waiting.signal(rustix::process::Signal::STOP);
+    wait("the waiting run held still", || waiting.stopped());
+    drop(by_hand);
+    wait("the service taking over", || c.slack.connections() == 8);
+    waiting.signal(rustix::process::Signal::CONT);
+    wait("the waiting run's end", || waiting.exited().is_some());
+    assert!(!waiting.exited().unwrap().success());
+    insta::assert_snapshot!(
+        "a-waiting-run-refused-when-the-service-takes-the-lock",
+        std::fs::read_to_string(&said).unwrap()
+    );
+    // The computer restarts: the manager starts the runner again.
+    let pid = manager.pid();
+    manager.reboot();
+    wait("the service's connection after the restart", || {
+        c.slack.connections() == 9
+    });
+    assert_ne!(manager.pid(), pid);
+    // Switching conversations off ends the demand: the next install
+    // withdraws the service.
+    std::fs::write(
+        &global,
+        format!(
+            "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{conversations: false}}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    assert_eq!(state(&c), ServiceState::Obsolete);
+    assert!(instrukt(&c, &["install"]).status.success());
+    assert!(!manager.registered());
+    assert_eq!(state(&c), ServiceState::NoDemand);
+    // A computer with no service manager that keeps a process running: the
+    // prerequisite is reported and installation claims no success.
+    let bare = Company::new("");
+    let unmet = bare.env.run(bare.env.home(), ["install"]).failure();
+    insta::assert_snapshot!(
+        "runner-service-without-a-service-manager",
+        String::from_utf8_lossy(&unmet.get_output().stdout)
+    );
+}

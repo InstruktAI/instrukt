@@ -55,6 +55,8 @@ pub enum ResourceKind {
     LocalRedis,
     #[serde(rename = "graphify")]
     Graphify,
+    #[serde(rename = "runner service")]
+    Runner,
 }
 impl ResourceKind {
     pub fn name(self) -> &'static str {
@@ -64,6 +66,7 @@ impl ResourceKind {
             Self::Receiver => "receiver",
             Self::LocalRedis => "local Redis",
             Self::Graphify => "graphify",
+            Self::Runner => "runner service",
         }
     }
 }
@@ -124,11 +127,41 @@ pub struct Resource {
     pub projects: Vec<String>,
     pub detail: String,
 }
+/// The runner service's state (`module-installation`, "Runner service").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceState {
+    /// A live owned service process runs the desired installed executable
+    /// and configuration; it may be waiting for the runner lock.
+    Running,
+    /// There is demand, and its service is missing, stale, stopped, in
+    /// conflict with a definition instrukt does not own, or cannot be
+    /// inspected.
+    Unmet,
+    /// An owned service remains and there is no demand.
+    Obsolete,
+    /// There is no demand and no owned service.
+    NoDemand,
+}
+
+/// The runner service as an installation or inspection found it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct ServiceStatus {
+    pub state: ServiceState,
+    /// Why it is unmet or obsolete, or a prerequisite it still lacks while
+    /// it runs, such as starting at boot on Linux.
+    pub cause: Option<String>,
+    pub paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Report {
     pub resources: Vec<Resource>,
     pub findings: Vec<String>,
     pub notices: Vec<String>,
+    /// The runner service, when this convergence considered it.
+    #[serde(skip)]
+    pub runner_service: Option<ServiceStatus>,
 }
 impl Report {
     pub fn healthy(&self) -> bool {
@@ -169,6 +202,8 @@ pub struct Request<'a> {
     pub wake: WakeUp<'a>,
     pub check: bool,
     pub module: Option<Module>,
+    /// Limit convergence to conversations' dependencies: the runner service.
+    pub conversations: bool,
     pub github: &'a dyn crate::interfaces::GitHubReadiness,
     pub now: jiff::Timestamp,
 }
@@ -186,7 +221,10 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     let mut report = Report::default();
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
-    if request.check && (request.module.is_none() || request.module == Some(Module::Todos)) {
+    if request.check
+        && !request.conversations
+        && (request.module.is_none() || request.module == Some(Module::Todos))
+    {
         for work in &demand.work {
             if let Err(error) =
                 request
@@ -213,7 +251,9 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     {
         report.notices.push(notice);
     }
-    if request.module.is_none() || request.module == Some(Module::Blueprint) {
+    if (request.module.is_none() && !request.conversations)
+        || request.module == Some(Module::Blueprint)
+    {
         graphify(request, &demand.blueprint, &mut report);
     }
     if request.module == Some(Module::Blueprint) {
@@ -225,6 +265,12 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         owned
             .persist_migration(request.home)
             .map_err(|e| InstallationError::Ownership(e.to_string()))?;
+    }
+    if request.module.is_none() {
+        runner_service(request, &mut owned, &demand, &mut report);
+    }
+    if request.conversations {
+        return Ok(report);
     }
     if request.module != Some(Module::History)
         && (request.module != Some(Module::Events) || !demand.events.is_empty())
@@ -279,6 +325,103 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         }
     }
     Ok(report)
+}
+/// The owned service that keeps `instrukt run` running while a company
+/// home declares a connector and conversations are on; withdrawn when that
+/// demand ends. Its state is recorded in the report as it was found.
+fn runner_service(
+    request: &Request<'_>,
+    owned: &mut _services::Owned,
+    demand: &Demand,
+    report: &mut Report,
+) {
+    let desired = _services::runner(request);
+    let paths = desired.files.keys().cloned().collect::<Vec<_>>();
+    let status = |state, cause: Option<String>| ServiceStatus {
+        state,
+        cause,
+        paths: paths.clone(),
+    };
+    let found = if !demand.conversation_blockers.is_empty() {
+        let cause = demand.conversation_blockers.join("; ");
+        report.finding(ResourceKind::Runner, &cause);
+        status(ServiceState::Unmet, Some(cause))
+    } else if demand.conversations.is_empty() {
+        if !owned.registered(ResourceKind::Runner) {
+            status(ServiceState::NoDemand, None)
+        } else {
+            let check = request.check;
+            match owned.withdraw_named(request, ResourceKind::Runner, demand.complete, report) {
+                Ok(()) if check => status(
+                    ServiceState::Obsolete,
+                    Some("no company declares a connector while conversations is on".into()),
+                ),
+                Ok(()) => status(ServiceState::NoDemand, None),
+                Err(error) => {
+                    let cause = error.to_string();
+                    report.finding(ResourceKind::Runner, &cause);
+                    status(ServiceState::Obsolete, Some(cause))
+                }
+            }
+        }
+    } else if request.scheduler == Scheduler::Crontab {
+        report.resource(
+            ResourceKind::Runner,
+            Disposition::Unmet,
+            vec![],
+            &demand.conversations,
+            "no service manager keeps a process running",
+        );
+        let cause = "conversations need a service manager that keeps `instrukt run` running: launchd on macOS or a systemd user manager on Linux; cron cannot keep a process running";
+        report.finding(ResourceKind::Runner, cause);
+        status(ServiceState::Unmet, Some(cause.into()))
+    } else {
+        // The boot prerequisite is a cause of the service's status beside
+        // whatever its process shows.
+        let boot = if request.scheduler == Scheduler::SystemdUser {
+            lingering().err()
+        } else {
+            None
+        };
+        if let Some(cause) = &boot {
+            report.finding(ResourceKind::Runner, cause);
+        }
+        let (state, cause) =
+            match owned.runner_service(request, &desired, &demand.conversations, report) {
+                Ok(None) => (ServiceState::Running, None),
+                Ok(Some(cause)) => (ServiceState::Unmet, Some(cause)),
+                Err(error) => {
+                    let cause = error.to_string();
+                    report.finding(ResourceKind::Runner, &cause);
+                    (ServiceState::Unmet, Some(cause))
+                }
+            };
+        let cause = match (cause, boot) {
+            (Some(cause), Some(boot)) => Some(format!("{cause}; {boot}")),
+            (cause, boot) => cause.or(boot),
+        };
+        status(state, cause)
+    };
+    report.runner_service = Some(found);
+}
+
+/// Whether the user's systemd manager starts at boot without a login, read
+/// from the user's linger state; instrukt never changes it.
+fn lingering() -> Result<(), String> {
+    let uid = rustix::process::getuid().as_raw().to_string();
+    let door = "the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`";
+    match crate::process::Invocation::program(
+        "loginctl",
+        &["show-user", &uid, "--property=Linger", "--value"],
+    )
+    .run(std::time::Duration::from_secs(10))
+    {
+        Ok(result) if result.success && result.stdout.trim() == "yes" => Ok(()),
+        Ok(result) if result.success => Err(door.into()),
+        Ok(_) | Err(_) => Err(format!(
+            "cannot read the user's linger state with loginctl; {door}"
+        )),
+    }
 }
 fn graphify(request: &Request<'_>, projects: &[String], report: &mut Report) {
     if projects.is_empty() {
@@ -457,6 +600,13 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         module: Some(Module::Events),
         ..request.clone()
     })?;
+    let runner_service = converge(&Request {
+        check: true,
+        module: None,
+        conversations: true,
+        ..request.clone()
+    })?
+    .runner_service;
     let configured = Configuration::load_global(request.home)?
         .get(None, request.env)?
         .get("redis")
@@ -473,7 +623,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
     Ok(
-        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?}),
+        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
     )
 }
 

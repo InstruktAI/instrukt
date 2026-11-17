@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, reason = "isolated feature scenarios")]
 
 use crate::common;
-use crate::fixtures::conversing::{Company, wait};
+use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
 use instrukt_runner::connectors::SLACK;
 use instrukt_runner::conversations::{self, SLACK_MESSAGE_LIMIT, TURN_AWAY};
@@ -23,6 +23,9 @@ fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
 #[test]
 fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let mut c = Company::new("");
+    // The company starts its sessions on its own order of profiles.
+    let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
+    patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
     c.run();
     let channel = "C1";
     // The runner dies before the runtime accepted the question's opening.
@@ -112,6 +115,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
             .map(|post| post.text.chars().count())
             .sum::<usize>(),
         reply.chars().count()
+    );
+    // The session was started on the company's profile.
+    assert_eq!(
+        c.runtime.provider(&session),
+        instrukt_core::config::Agents::load(&home).unwrap().profiles[&profile].instance
     );
     // One session, which received one opening input.
     assert_eq!(c.sessions(), [session.as_str()]);

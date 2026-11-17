@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+assertion_line: 2217
+expression: "String::from_utf8_lossy(&unmet.get_output().stdout)"
+---
+unmet: runner service |  | projects: company:acme | no service manager keeps a process running
+unmet: runner service: conversations need a service manager that keeps `instrukt run` running: launchd on macOS or a systemd user manager on Linux; cron cannot keep a process running

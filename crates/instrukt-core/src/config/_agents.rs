@@ -446,20 +446,28 @@ impl Agents {
             .collect()
     }
 
+    /// The profiles a selection walks, each with its tier: a task override
+    /// first, then `home_order` when the session's home names one (a
+    /// company home's `profiles`), else the role mapping's order. The tier
+    /// comes from the task, then the role mapping, then `default`.
     pub fn order(
         &self,
         role: Option<&str>,
         task_profile: Option<&ProfileName>,
         task_tier: Option<Tier>,
+        home_order: Option<&[ProfileName]>,
     ) -> Result<Vec<(ProfileName, Tier)>, ConfigError> {
         let entry = role
             .and_then(|r| self.roles.get(r))
             .unwrap_or(&self.default);
-        let order = entry
-            .order
-            .as_ref()
-            .or(self.default.order.as_ref())
-            .ok_or_else(|| invalid("missing default order"))?;
+        let order = match home_order {
+            Some(order) => order,
+            None => entry
+                .order
+                .as_deref()
+                .or(self.default.order.as_deref())
+                .ok_or_else(|| invalid("missing default order"))?,
+        };
         let tier = task_tier
             .or(entry.tier)
             .or(self.default.tier)
@@ -481,8 +489,9 @@ impl Agents {
         role: Option<&str>,
         task_profile: Option<&ProfileName>,
         task_tier: Option<Tier>,
+        home_order: Option<&[ProfileName]>,
     ) -> Result<Vec<AgentSelection>, ConfigError> {
-        self.order(role, task_profile, task_tier)?
+        self.order(role, task_profile, task_tier, home_order)?
             .into_iter()
             .map(|(name, tier)| self.model_chain(&name, tier))
             .collect::<Result<Vec<_>, _>>()

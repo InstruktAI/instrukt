@@ -743,9 +743,14 @@ fn start(
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
             let checkout: PathBuf = home.company_dir(&c.company);
-            Configuration::load_company(home, &c.company)?;
+            let company = Configuration::load_company(home, &c.company)?;
             let config = Configuration::load_global(home)?;
-            let preferences = crate::agents::role_order(&config, None, Some(CONVERSATION_ROLE))?;
+            let preferences = crate::agents::role_order(
+                &config,
+                None,
+                Some(CONVERSATION_ROLE),
+                company.profiles()?.as_deref(),
+            )?;
             let selection = crate::agents::selections(&config, home, &preferences, now)?
                 .into_iter()
                 .next();
