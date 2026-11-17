@@ -120,7 +120,7 @@ impl Drop for RunnerLock {
 }
 
 /// The holder the lock file names, when it is that live incarnation.
-fn holder(path: &Path) -> Option<Holder> {
+pub(super) fn holder(path: &Path) -> Option<Holder> {
     let record = std::fs::read_to_string(path).ok()?;
     let mut fields = record.trim_end_matches('\n').splitn(3, ' ');
     let holder = Holder::named(fields.next()?)?;

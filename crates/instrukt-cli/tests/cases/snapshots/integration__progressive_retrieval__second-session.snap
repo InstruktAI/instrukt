@@ -30,7 +30,6 @@ blueprint: false
 todos: false
 events: false
 history: true
-conversations: false
 ```
 
 Then report.

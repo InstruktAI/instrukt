@@ -5,7 +5,9 @@
 //! subscribed procedure is activated on this path.
 //!
 //! The record moves each addressed message through its stages: received
-//! (retained before the connector acknowledges it), pending (its
+//! (retained, with its sender's connector identity, before the connector
+//! acknowledges it), refused (its provider's record shows its sender is not
+//! one of the company's own), pending (its sender admitted and its
 //! accompanying messages captured), sent (accepted by the runtime as its own
 //! turn) and answered (its turn finished). Each answer piece stays pending
 //! until the connector accepted its post.
@@ -28,10 +30,6 @@ use crate::state::{self, RunnerState, StateError};
 
 /// Slack's guidance for one message's text; longer answers are split.
 pub const SLACK_MESSAGE_LIMIT: usize = 4000;
-
-/// The one fixed reply a sender no member lists receives.
-pub const TURN_AWAY: &str =
-    "You are not listed among this company's members, so its agent does not answer you here.";
 
 /// A connector's connection state, as `instrukt events status` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +66,8 @@ impl ConnectionState {
 enum Stage {
     /// Retained before the connector acknowledged it.
     Received,
+    /// Its sender is not one of the company's own; a reply is owed to them.
+    Refused,
     /// Its accompanying messages captured; waiting for its turn.
     Pending,
     /// Accepted by the runtime as its own turn.
@@ -79,15 +79,22 @@ impl Stage {
     fn as_str(self) -> &'static str {
         match self {
             Self::Received => "received",
+            Self::Refused => "refused",
             Self::Pending => "pending",
             Self::Sent => "sent",
             Self::Answered => "answered",
         }
     }
     fn parse(text: &str) -> Option<Self> {
-        [Self::Received, Self::Pending, Self::Sent, Self::Answered]
-            .into_iter()
-            .find(|stage| stage.as_str() == text)
+        [
+            Self::Received,
+            Self::Refused,
+            Self::Pending,
+            Self::Sent,
+            Self::Answered,
+        ]
+        .into_iter()
+        .find(|stage| stage.as_str() == text)
     }
 }
 
@@ -138,6 +145,8 @@ pub struct Incoming {
     pub conversation: String,
     /// The connector's identity of the message, unique in its conversation.
     pub message: String,
+    /// The sender's identity on the connector. It decides nothing:
+    /// admission reads the provider's record for it.
     pub sender: String,
     pub written_at: Timestamp,
     pub text: String,
@@ -146,12 +155,18 @@ pub struct Incoming {
 /// What became of an incoming addressed message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Intake {
-    /// Retained for its conversation's session.
+    /// Retained, waiting for its sender's admission.
     Retained,
-    /// Its sender is listed by no member: a refusal is retained for posting.
-    Refused,
-    /// Already retained, or its sender already refused here.
+    /// Already retained.
     Repeated,
+}
+
+/// The sender of an admitted message, as the provider gave them when it was
+/// admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sender {
+    pub name: String,
+    pub email: Option<String>,
 }
 
 /// The semantic start key of a conversation's session.
@@ -167,31 +182,16 @@ fn micros(at: Timestamp) -> i64 {
     at.as_microsecond()
 }
 
-/// Retain one incoming addressed message — or, for a sender no member
-/// lists, the one refusal owed to them in this conversation — before the
-/// connector acknowledges it. Nothing here waits on the network.
+/// Retain one incoming addressed message, with its sender's connector
+/// identity, before the connector acknowledges it. Nothing here waits on the
+/// network and nothing here decides who is answered.
 pub fn retain(
     home: &Home,
     incoming: &Incoming,
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
-    let members = Configuration::load_company(home, &incoming.company)?.members()?;
     let state = RunnerState::new(home);
     let company = incoming.company.as_str();
-    let Some(member) = members.resolve(&incoming.connector, &incoming.sender) else {
-        let inserted = state.write::<_, StateError>(|tx| {
-            tx.execute(
-                "INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
-                params![company, incoming.connector, incoming.conversation, incoming.sender, now.to_string()],
-            )
-            .map_err(state::sql(&state::db_path(tx)))
-        })?;
-        return Ok(if inserted > 0 {
-            Intake::Refused
-        } else {
-            Intake::Repeated
-        });
-    };
     let semantic = key(
         &incoming.company,
         &incoming.connector,
@@ -205,13 +205,13 @@ pub fn retain(
         )
         .map_err(state::sql(&path))?;
         tx.execute(
-            "INSERT INTO conversation_messages(company,connector,conversation,message,member,written_us,written_at,arrived_at,state,text) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
+            "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
             params![
                 company,
                 incoming.connector,
                 incoming.conversation,
                 incoming.message,
-                member.key.as_str(),
+                incoming.sender,
                 micros(incoming.written_at),
                 incoming.written_at.to_string(),
                 now.to_string(),
@@ -224,18 +224,26 @@ pub fn retain(
     if inserted == 0 {
         return Ok(Intake::Repeated);
     }
-    tracing::info!(event = "conversation_message_accepted", company = %incoming.company, connector = %incoming.connector, conversation = %incoming.conversation, member = %member.key);
+    tracing::info!(event = "conversation_message_accepted", company = %incoming.company, connector = %incoming.connector, conversation = %incoming.conversation);
     Ok(Intake::Retained)
 }
 
-/// A retained message whose accompanying messages are still to be read.
+/// A received message: its sender still to be admitted, or what
+/// accompanies it still to be read.
 #[derive(Debug, Clone)]
 pub struct Unread {
     pub conversation: String,
     pub message: String,
-    /// The previous addressed message of the conversation in written order,
-    /// if any: the lower bound of this one's range.
+    /// The previous addressed message of the conversation in written order
+    /// that was not refused, if any: the lower bound of this one's range.
     pub previous: Option<String>,
+    /// The sender's connector identity; `None` for a message stored before
+    /// senders were kept, which was admitted when it was stored.
+    pub sender: Option<String>,
+    /// Whether the sender was admitted.
+    pub admitted: bool,
+    /// The message's text as written.
+    pub text: String,
 }
 
 /// The received messages of one company's connector, oldest written first.
@@ -247,13 +255,16 @@ pub fn unread(
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1) FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us AND p.state<>?4 ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
                 .map_err(state::sql(path))?;
-            q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
+            q.query_map(params![company.as_str(), connector, Stage::Received.as_str(), Stage::Refused.as_str()], |r| {
                 Ok(Unread {
                     conversation: r.get(0)?,
                     message: r.get(1)?,
                     previous: r.get(2)?,
+                    sender: r.get(3)?,
+                    admitted: r.get(4)?,
+                    text: r.get(5)?,
                 })
             })
             .map_err(state::sql(path))?
@@ -263,13 +274,112 @@ pub fn unread(
         .unwrap_or_default())
 }
 
-/// Record what accompanies a received message and frame it for its turn,
-/// or record why what accompanies it could not be read.
+/// Record the sender of a received message as admitted, with the name and
+/// email address the provider gave; once written they do not change.
+pub fn admitted(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    unread: &Unread,
+    sender: &Sender,
+) -> Result<(), ConversationError> {
+    RunnerState::new(home).write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
+            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// Record that the provider's record shows a received message's sender is
+/// not one of the company's own: the message is refused and the one reply
+/// owed to that sender in that conversation is retained, in one
+/// transaction.
+pub fn refused(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    unread: &Unread,
+    sender: &str,
+    now: Timestamp,
+) -> Result<(), ConversationError> {
+    RunnerState::new(home).write::<_, StateError>(|tx| {
+        let path = state::db_path(tx);
+        let changed = tx
+            .execute(
+                "UPDATE conversation_messages SET state=?5,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
+                params![company.as_str(), connector, unread.conversation, unread.message, Stage::Refused.as_str(), Stage::Received.as_str()],
+            )
+            .map_err(state::sql(&path))?;
+        if changed > 0 {
+            tx.execute(
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
+                params![company.as_str(), connector, unread.conversation, sender, now.to_string()],
+            )
+            .map_err(state::sql(&path))?;
+        }
+        Ok(())
+    })?;
+    tracing::info!(event = "conversation_sender_refused", company = %company, connector, conversation = %unread.conversation);
+    Ok(())
+}
+
+/// Record why a received message is still waiting: its sender could not be
+/// looked up, or what accompanies it could not be read.
+pub fn waiting(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    unread: &Unread,
+    cause: &str,
+) -> Result<(), ConversationError> {
+    RunnerState::new(home).write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
+            params![company.as_str(), connector, unread.conversation, unread.message, cause, Stage::Received.as_str()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// The admitted messages of one company's connector whose turn has not yet
+/// ended, oldest written first: those the connector shows the agent working
+/// on.
+pub fn working(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+) -> Result<Vec<(String, String)>, ConversationError> {
+    Ok(RunnerState::new(home)
+        .read(|conn, path| {
+            let mut q = conn
+                .prepare("SELECT conversation,message FROM conversation_messages WHERE company=?1 AND connector=?2 AND ((state=?3 AND sender_name IS NOT NULL) OR state IN (?4,?5)) ORDER BY written_us, message")
+                .map_err(state::sql(path))?;
+            q.query_map(
+                params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or_default())
+}
+
+/// Record what accompanies an admitted received message and frame it for
+/// its turn with `text`, its text as the connector supplies it; or record
+/// why what accompanies it could not be read.
 pub fn captured(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     unread: &Unread,
+    text: &str,
     accompanying: Result<Accompanying, String>,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
@@ -290,23 +400,25 @@ pub fn captured(
     let row = state
         .read(|conn, path| {
             conn.query_row(
-                "SELECT member,written_at,text FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                "SELECT sender_name,written_at FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
                 params![company.as_str(), connector, unread.conversation, unread.message],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
             )
             .map_err(state::sql(path))
         })?
         .ok_or_else(|| ConversationError::Refused("the received message is gone".into()))?;
-    let (member, written_at, text) = row;
+    let (name, written_at) = row;
+    let name = name
+        .ok_or_else(|| ConversationError::Refused("the message's sender is not admitted".into()))?;
     let written_at: Timestamp = written_at
         .parse()
         .map_err(|e: jiff::Error| ConversationError::Refused(e.to_string()))?;
     let (token, content) = framed(
         connector,
         &unread.conversation,
-        &member,
+        &name,
         written_at,
-        &text,
+        text,
         &accompanying,
     )?;
     let context = serde_json::to_string(&accompanying)?;
@@ -322,7 +434,7 @@ pub fn captured(
 }
 
 /// Retain why a company's intake could not even begin — its Slack access
-/// could not be prepared — on its outstanding refusals and unread messages.
+/// could not be prepared — on its outstanding refusals and received messages.
 pub fn intake_failed(
     home: &Home,
     company: &ProjectSlug,
@@ -398,12 +510,9 @@ pub fn refusal_posted(
 }
 
 /// The company homes whose declared connector `instrukt run` hosts: every
-/// valid company home declaring one while the machine's
-/// `modules.conversations` is on.
+/// valid company home declaring one. Declaring a connector is what gives a
+/// company conversations.
 pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, SlackConnector)>, ConversationError> {
-    if !Configuration::load_global(home)?.conversations_enabled()? {
-        return Ok(Vec::new());
-    }
     let mut hosted = Vec::new();
     for (name, config) in instrukt_core::config::company_homes(home)? {
         match config.and_then(|config| config.slack_connector()) {
@@ -508,14 +617,15 @@ fn reread(
         .find(|o| o.semantic_key == c.semantic_key))
 }
 
-/// The conversation's messages not yet answered, oldest written first.
+/// The conversation's messages neither answered nor refused, oldest written
+/// first.
 fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, ConversationError> {
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state<>?4 ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) ORDER BY written_us, message")
                 .map_err(state::sql(path))?;
-            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()], |r| {
+            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -554,17 +664,17 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
 }
 
 /// One addressed message framed for its own turn: the context envelope and
-/// the member envelope, sharing one fresh boundary token that occurs nowhere
-/// in what they frame.
+/// the member envelope naming its sender, sharing one fresh boundary token
+/// that occurs nowhere in what they frame.
 fn framed(
     connector: &str,
     conversation: &str,
-    member: &str,
+    sender: &str,
     written_at: Timestamp,
     text: &str,
     accompanying: &Accompanying,
 ) -> Result<(String, String), ConversationError> {
-    let mut scanned: Vec<&str> = vec![text, connector, conversation, member];
+    let mut scanned: Vec<&str> = vec![text, connector, conversation, sender];
     for entry in &accompanying.messages {
         scanned.push(&entry.text);
         scanned.push(&entry.speaker);
@@ -586,7 +696,7 @@ fn framed(
         envelopes::member(
             connector,
             conversation,
-            member,
+            sender,
             Some(written_at),
             &token,
             text
@@ -1229,9 +1339,11 @@ pub struct Status {
 
 /// Connection states, conversations with pending messages, answers or
 /// refusals, and their outstanding failures with their cause; no
-/// conversation text or credentials.
+/// conversation text or credentials. A connector no running runner hosts is
+/// stopped, whatever it last recorded.
 pub fn status(home: &Home) -> Result<Status, ConversationError> {
     let state = RunnerState::new(home);
+    let hosted = crate::runner::hosting(home);
     let connectors = state
         .read(|conn, path| {
             let mut q = conn
@@ -1247,11 +1359,12 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
         .unwrap_or_default()
         .into_iter()
         .map(|(company, connector, state, failure)| {
+            let state = ConnectionState::parse(&state)
+                .ok_or_else(|| ConversationError::Refused(format!("unknown connection state `{state}`")))?;
             Ok(ConnectorStatus {
                 company,
                 connector,
-                state: ConnectionState::parse(&state)
-                    .ok_or_else(|| ConversationError::Refused(format!("unknown connection state `{state}`")))?,
+                state: if hosted { state } else { ConnectionState::Stopped },
                 failure,
             })
         })
@@ -1259,9 +1372,9 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("WITH addresses AS (SELECT company,connector,conversation FROM connected_conversations UNION SELECT company,connector,conversation FROM conversation_refusals) SELECT a.company,a.connector,a.conversation,(SELECT count(*) FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND m.state<>?1),(SELECT count(*) FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND x.posted_at IS NULL),(SELECT count(*) FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND r.replied_at IS NULL),(SELECT json_group_array(f) FROM (SELECT failure AS f FROM connected_conversations c WHERE c.company=a.company AND c.connector=a.connector AND c.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND failure IS NOT NULL)) FROM addresses a ORDER BY a.company,a.connector,a.conversation")
+                .prepare("WITH addresses AS (SELECT company,connector,conversation FROM connected_conversations UNION SELECT company,connector,conversation FROM conversation_refusals) SELECT a.company,a.connector,a.conversation,(SELECT count(*) FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND m.state NOT IN (?1,?2)),(SELECT count(*) FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND x.posted_at IS NULL),(SELECT count(*) FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND r.replied_at IS NULL),(SELECT json_group_array(f) FROM (SELECT failure AS f FROM connected_conversations c WHERE c.company=a.company AND c.connector=a.connector AND c.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND failure IS NOT NULL)) FROM addresses a ORDER BY a.company,a.connector,a.conversation")
                 .map_err(state::sql(path))?;
-            q.query_map([Stage::Answered.as_str()], |r| {
+            q.query_map([Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -1354,6 +1467,7 @@ mod tests {
         }
         for stage in [
             Stage::Received,
+            Stage::Refused,
             Stage::Pending,
             Stage::Sent,
             Stage::Answered,

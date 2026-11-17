@@ -327,7 +327,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     Ok(report)
 }
 /// The owned service that keeps `instrukt run` running while a company
-/// home declares a connector and conversations are on; withdrawn when that
+/// home declares a connector; withdrawn when that
 /// demand ends. Its state is recorded in the report as it was found.
 fn runner_service(
     request: &Request<'_>,
@@ -354,7 +354,7 @@ fn runner_service(
             match owned.withdraw_named(request, ResourceKind::Runner, demand.complete, report) {
                 Ok(()) if check => status(
                     ServiceState::Obsolete,
-                    Some("no company declares a connector while conversations is on".into()),
+                    Some("no company home declares a connector".into()),
                 ),
                 Ok(()) => status(ServiceState::NoDemand, None),
                 Err(error) => {

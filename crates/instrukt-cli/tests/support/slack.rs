@@ -23,6 +23,8 @@ pub const BOT_TOKEN: &str = "xoxb-fake-bot";
 /// The agent's bot user and bot ids in the fake workspace.
 pub const BOT_USER: &str = "UAGENT";
 pub const BOT_ID: &str = "BAGENT";
+/// The workspace the app is installed in.
+pub const TEAM: &str = "TFAKE";
 
 /// The most messages one history or replies page carries, so that every
 /// read the scenarios make spans pages.
@@ -36,8 +38,87 @@ pub struct Post {
     pub text: String,
 }
 
+/// One person in Slack's records: their names, address and standing.
+#[derive(Debug, Clone)]
+pub struct Person {
+    pub id: String,
+    pub display_name: String,
+    pub real_name: String,
+    pub email: Option<String>,
+    pub team: String,
+    pub deleted: bool,
+    pub bot: bool,
+    pub guest: bool,
+}
+impl Person {
+    /// A full member of the workspace.
+    pub fn member(id: &str, display_name: &str, real_name: &str, email: &str) -> Self {
+        Self {
+            id: id.into(),
+            display_name: display_name.into(),
+            real_name: real_name.into(),
+            email: Some(email.into()),
+            team: TEAM.into(),
+            deleted: false,
+            bot: false,
+            guest: false,
+        }
+    }
+    /// The name Slack shows for them: the display name, the real name when
+    /// that is empty, the id when there is neither.
+    pub fn shown(&self) -> String {
+        [&self.display_name, &self.real_name]
+            .into_iter()
+            .find(|name| !name.is_empty())
+            .cloned()
+            .unwrap_or_else(|| self.id.clone())
+    }
+    fn record(&self) -> Value {
+        let mut profile = json!({"display_name": self.display_name, "real_name": self.real_name});
+        if let Some(email) = &self.email {
+            profile["email"] = json!(email);
+        }
+        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "real_name": self.real_name, "profile": profile})
+    }
+}
+
+/// The people of the fake workspace: the agent's bot, three full members
+/// and a guest.
+fn people() -> std::collections::BTreeMap<String, Person> {
+    let mut agent = Person::member(BOT_USER, "agent", "agent", "agent@example.com");
+    agent.bot = true;
+    let mut stranger = Person::member(
+        "USTRANGER",
+        "Visitor",
+        "Visiting Guest",
+        "guest@other.example",
+    );
+    stranger.guest = true;
+    [
+        agent,
+        Person::member(
+            "USTEVEN",
+            "Steven",
+            "Steven Sonneveld",
+            "steven@example.com",
+        ),
+        Person::member("UANNA", "", "Anna", "anna@example.com"),
+        Person::member("UBRAM", "", "", "bram@example.com"),
+        stranger,
+    ]
+    .into_iter()
+    .map(|person| (person.id.clone(), person))
+    .collect()
+}
+
 #[derive(Default)]
 struct Workspace {
+    /// Slack's records of its people, by id.
+    people: std::collections::BTreeMap<String, Person>,
+    /// Every status line call: channel, thread and text.
+    statuses: Vec<(String, String, String)>,
+    /// `users.info` answers that Slack cannot be asked.
+    refuse_lookups: bool,
     /// Every message written, in order: `channel`, `ts`, optional `thread_ts`,
     /// `user`, optional `bot_id`, `text`.
     messages: Vec<Value>,
@@ -73,6 +154,7 @@ impl FakeSlack {
     pub fn start() -> Self {
         let workspace = Arc::new(Mutex::new(Workspace {
             next: 1,
+            people: people(),
             ..Workspace::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -201,7 +283,23 @@ impl FakeSlack {
         };
         match method {
             "apps.connections.open" => json!({"ok": true, "url": socket_url}),
-            "auth.test" => json!({"ok": true, "user_id": BOT_USER, "bot_id": BOT_ID}),
+            "auth.test" => {
+                json!({"ok": true, "user_id": BOT_USER, "bot_id": BOT_ID, "team_id": TEAM})
+            }
+            "users.info" if w.refuse_lookups => json!({"ok": false, "error": "ratelimited"}),
+            "users.info" => match w.people.get(arg("user").unwrap()) {
+                Some(person) => json!({"ok": true, "user": person.record()}),
+                None => json!({"ok": false, "error": "user_not_found"}),
+            },
+            "assistant.threads.setStatus" => {
+                let call = (
+                    arg("channel_id").unwrap().to_owned(),
+                    arg("thread_ts").unwrap().to_owned(),
+                    arg("status").unwrap_or_default().to_owned(),
+                );
+                w.statuses.push(call);
+                json!({"ok": true})
+            }
             "conversations.history" | "conversations.replies" => {
                 let channel = arg("channel").unwrap();
                 let thread = arg("ts");
@@ -321,6 +419,59 @@ impl FakeSlack {
             json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts}),
         );
         ts
+    }
+
+    /// One of Slack's own notices in a channel, such as a person joining it.
+    pub fn notice(&self, channel: &str, subtype: &str, user: &str, thread: Option<&str>) -> String {
+        let mut w = self.workspace.lock().unwrap();
+        let ts = Self::stamp(&mut w);
+        let mut message = json!({"channel": channel, "ts": ts, "user": user, "subtype": subtype, "text": format!("<@{user}> has joined the channel")});
+        if let Some(thread) = thread {
+            message["thread_ts"] = json!(thread);
+        }
+        w.messages.push(message);
+        ts
+    }
+
+    /// Slack's record of the person `id`.
+    pub fn person(&self, id: &str) -> Person {
+        self.workspace.lock().unwrap().people[id].clone()
+    }
+
+    /// Changes Slack's record of the person `id`.
+    pub fn change(&self, id: &str, change: impl FnOnce(&mut Person)) {
+        change(self.workspace.lock().unwrap().people.get_mut(id).unwrap());
+    }
+
+    /// Whether `users.info` answers that Slack cannot be asked.
+    pub fn refuse_lookups(&self, refuse: bool) {
+        self.workspace.lock().unwrap().refuse_lookups = refuse;
+    }
+
+    /// The status line Slack shows on a channel's thread, or on a direct
+    /// message's message: the last text set there, `None` once cleared.
+    pub fn status(&self, channel: &str, thread: &str) -> Option<String> {
+        self.workspace
+            .lock()
+            .unwrap()
+            .statuses
+            .iter()
+            .rev()
+            .find(|(c, t, _)| c == channel && t == thread)
+            .map(|(_, _, text)| text.clone())
+            .filter(|text| !text.is_empty())
+    }
+
+    /// How many times a status was set or cleared on a channel's thread or
+    /// a direct message's message.
+    pub fn status_calls(&self, channel: &str, thread: &str) -> usize {
+        self.workspace
+            .lock()
+            .unwrap()
+            .statuses
+            .iter()
+            .filter(|(c, t, _)| c == channel && t == thread)
+            .count()
     }
 
     /// History and replies reads wait until [`FakeSlack::release_reads`].

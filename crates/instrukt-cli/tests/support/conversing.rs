@@ -17,19 +17,22 @@ use crate::fixtures::t3::FakeT3;
 /// The company the scenarios address.
 pub const COMPANY: &str = "acme";
 
-/// The members the company lists, by key and Slack identity.
-pub const MEMBERS: &str = "{steven: {name: Steven Sonneveld, slack: USTEVEN}, anna: {name: Anna, slack: UANNA}, bram: {slack: UBRAM}}";
+/// The members the company lists, with their own tool logins.
+pub const MEMBERS: &str = "{steven: {name: Steven Sonneveld, email: steven@example.com}}";
 
 /// What one accepted runtime input carried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delivered {
-    /// The member whose addressed message it is.
-    pub member: ProjectSlug,
+    /// The name of the person whose addressed message it is.
+    pub member: String,
     /// How many member envelopes it carries.
     pub members: usize,
-    /// Each accompanying message's speaker, as the company's member that
-    /// speaker identity resolves to, and whether it is the agent's own post.
-    pub context: Vec<(Option<ProjectSlug>, bool)>,
+    /// Each accompanying message's speaker, by name, and whether it is the
+    /// agent's own post.
+    pub context: Vec<(String, bool)>,
+    /// How many Slack mentions in markup the addressed message and its
+    /// accompanying messages still carry.
+    pub markup: usize,
     /// How many of the addressed message and its accompanying messages
     /// arrived with no text.
     pub empty: usize,
@@ -172,7 +175,7 @@ impl Company {
         std::fs::write(
             env.instrukt_home().join("instrukt.yaml"),
             format!(
-                "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{conversations: true{modules}}}\n{machine}",
+                "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{history: true{modules}}}\n{machine}",
                 instrukt_core::config::CURRENT_SCHEMA_VERSION
             ),
         )
@@ -254,13 +257,10 @@ impl Company {
         let (member, body) = spans
             .iter()
             .find_map(|span| match span {
-                Span::Member { member, body, .. } => {
-                    Some((ProjectSlug::parse(member).unwrap(), *body))
-                }
+                Span::Member { member, body, .. } => Some(((*member).to_owned(), *body)),
                 _ => None,
             })
             .unwrap();
-        let members = self.members();
         let context = spans
             .iter()
             .find_map(|span| match span {
@@ -268,6 +268,7 @@ impl Company {
                 _ => None,
             })
             .unwrap();
+        let mentioned = instrukt_runner::connectors::mentioned;
         Delivered {
             member,
             left_out: context.left_out,
@@ -277,17 +278,16 @@ impl Company {
                     .iter()
                     .filter(|entry| entry.chars == 0)
                     .count(),
+            markup: mentioned(body).len()
+                + context
+                    .entries
+                    .iter()
+                    .map(|entry| mentioned(&entry.text).len())
+                    .sum::<usize>(),
             context: context
                 .entries
                 .iter()
-                .map(|entry| {
-                    (
-                        members
-                            .resolve(instrukt_runner::connectors::SLACK, entry.speaker)
-                            .map(|member| member.key.clone()),
-                        entry.own,
-                    )
-                })
+                .map(|entry| (entry.speaker.to_owned(), entry.own))
                 .collect(),
             members: spans
                 .iter()
@@ -326,22 +326,13 @@ impl Company {
         ProjectSlug::parse(COMPANY).unwrap()
     }
 
-    /// The key of the member the company lists for a Slack identity, as
-    /// configuration resolves it.
-    pub fn member(&self, slack: &str) -> ProjectSlug {
-        self.members()
-            .resolve(instrukt_runner::connectors::SLACK, slack)
-            .unwrap()
-            .key
-            .clone()
+    /// The name Slack shows for the person `slack`.
+    pub fn member(&self, slack: &str) -> String {
+        self.slack.person(slack).shown()
     }
 
-    /// The company's member list, as configuration reads it.
-    pub fn members(&self) -> instrukt_core::config::Members {
-        let home = instrukt_core::home::Home::at_user_home(self.env.home().to_path_buf());
-        instrukt_core::config::Configuration::load_company(&home.for_inspection(), &self.company())
-            .unwrap()
-            .members()
-            .unwrap()
+    /// Ends the runner the way a signal does, with no chance to record it.
+    pub fn kill_runner(&mut self) {
+        drop(self.runner.take());
     }
 }

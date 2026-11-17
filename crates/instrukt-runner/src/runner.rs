@@ -39,6 +39,15 @@ mod _holder;
 mod _service;
 pub use _service::{ServiceRecord, published_service, service_identity};
 
+/// Whether a running `instrukt run`, the runner service's or one started by
+/// hand, holds the runner lock now: the one that hosts connectors.
+pub fn hosting(home: &Home) -> bool {
+    matches!(
+        _holder::holder(&home.runner_lock_file()),
+        Some(_holder::Holder::Service | _holder::Holder::Run)
+    )
+}
+
 /// The argument the owned runner service passes to `instrukt run`.
 pub const SERVICE_FLAG: &str = "--service";
 

@@ -11,7 +11,8 @@ pub enum Feature {
     SessionStatus,
     LinkedSessionInput,
     WorktreeAttachment,
-    /// Conversations through company connectors (`modules.conversations`).
+    /// Conversations through company connectors: a company home's declared
+    /// connector gives them.
     Conversations,
 }
 impl Feature {
@@ -32,7 +33,6 @@ impl Feature {
         match module {
             "events" => &[Self::StandingAgents],
             "todos" => &[Self::TodoDispatch, Self::RecurringTasks],
-            super::CONVERSATIONS => &[Self::Conversations],
             _ => &[],
         }
     }

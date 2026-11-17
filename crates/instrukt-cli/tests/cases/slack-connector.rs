@@ -5,15 +5,15 @@
 
 use crate::fixtures::conversing::{Company, company_home, slack_settings, wait};
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::connectors::API_URL_SETTING;
+use instrukt_runner::connectors::{API_URL_SETTING, WORKING};
 use instrukt_runner::conversations::{ConnectionState, Status};
 
-/// Accompanying messages by the company members who wrote them, none the
-/// agent's own.
-fn said_by(c: &Company, speakers: &[&str]) -> Vec<(Option<ProjectSlug>, bool)> {
+/// Accompanying messages by the people who wrote them, by the names Slack
+/// shows, none the agent's own.
+fn said_by(c: &Company, speakers: &[&str]) -> Vec<(String, bool)> {
     speakers
         .iter()
-        .map(|speaker| (Some(c.member(speaker)), false))
+        .map(|speaker| (c.member(speaker), false))
         .collect()
 }
 
@@ -68,7 +68,7 @@ fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_
     });
     c.slack.release_reads();
     wait("both conversations' sessions", || c.sessions().len() == 2);
-    let mut members: Vec<ProjectSlug> = c
+    let mut members: Vec<String> = c
         .sessions()
         .iter()
         .map(|session| {
@@ -77,10 +77,22 @@ fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_
             delivered.member
         })
         .collect();
-    members.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    members.sort();
     let mut expected = vec![c.member("USTEVEN"), c.member("UANNA")];
-    expected.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    expected.sort();
     assert_eq!(members, expected);
+    // Stopped by a signal, the runner records nothing: no running runner
+    // hosts the connector, so it shows as stopped.
+    c.kill_runner();
+    let status: Status = serde_json::from_value(c.status()["conversations"].clone()).unwrap();
+    assert_eq!(
+        status
+            .connectors
+            .iter()
+            .find(|connector| ProjectSlug::parse(&connector.company).as_ref() == Ok(&c.company()))
+            .map(|connector| connector.state),
+        Some(ConnectionState::Stopped)
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL2
@@ -90,18 +102,31 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since
     let mut c = Company::new(", context_messages: 2");
     c.run();
     let root = c.slack.say("C1", "UANNA", "Shall we ship on Friday?", None);
-    c.slack
-        .mention("C1", "USTEVEN", "<@UAGENT> What do you think?", Some(&root));
+    // Slack's own notice of someone joining accompanies no message.
+    c.slack.notice("C1", "channel_join", "UBRAM", Some(&root));
+    c.slack.mention(
+        "C1",
+        "USTEVEN",
+        "<@UAGENT> What do you think, <@UANNA|anna>?",
+        Some(&root),
+    );
     let session = c.session();
     let first = c.delivered(&session, 0);
     assert_eq!(first.context, said_by(&c, &["UANNA"]));
     assert!(!first.left_out);
     assert_eq!(first.empty, 0);
+    // Mentions reach the agent as names.
+    assert_eq!(first.markup, 0);
     c.finish_turn(&session, 0, "Friday works.");
     wait("the answer's post", || !c.slack.posts().is_empty());
     c.slack.say("C1", "UANNA", "Agreed.", Some(&root));
-    c.slack
-        .say("C1", "USTEVEN", "Then QA runs on Thursday.", Some(&root));
+    c.slack.say(
+        "C1",
+        "USTEVEN",
+        "Then QA runs on Thursday, <@UBRAM>.",
+        Some(&root),
+    );
+    c.slack.notice("C1", "channel_join", "UBRAM", Some(&root));
     c.slack
         .mention("C1", "UANNA", "<@UAGENT> Anything to add?", Some(&root));
     wait("the tagged message", || {
@@ -110,13 +135,15 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since
     // The untagged messages reached the agent only as what accompanies the
     // tag. Since the previous tag there were three — the agent's own answer,
     // then both — so the most recent two accompany it, read across more than
-    // one page, and the context says earlier ones were left out.
+    // one page, and the context says earlier ones were left out. The notice
+    // after them counts for nothing.
     let delivered = c.delivered(&session, 1);
     assert_eq!(delivered.member, c.member("UANNA"));
     assert_eq!(delivered.members, 1);
     assert_eq!(delivered.context, said_by(&c, &["UANNA", "USTEVEN"]));
     assert!(delivered.left_out);
     assert_eq!(delivered.empty, 0);
+    assert_eq!(delivered.markup, 0);
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL3
@@ -164,9 +191,14 @@ fn every_direct_message_reaches_the_agent_without_a_tag() {
     let mut c = Company::new("");
     c.run();
     let channel = "D1";
-    c.slack
+    let first = c
+        .slack
         .direct(channel, "UANNA", "Can you check the invoice?");
     let session = c.session();
+    // While the agent works, Slack shows it on the addressed message.
+    wait("the status on the direct message", || {
+        c.slack.status(channel, &first).as_deref() == Some(WORKING)
+    });
     c.finish_turn(&session, 0, "The invoice is paid.");
     c.slack.direct(channel, "UANNA", "And the next one?");
     wait("the second direct message", || {
@@ -178,6 +210,9 @@ fn every_direct_message_reaches_the_agent_without_a_tag() {
         assert_eq!(delivered.empty, 0);
     }
     wait("the answer's post", || !c.slack.posts().is_empty());
+    wait("the finished message's status cleared", || {
+        c.slack.status(channel, &first).is_none()
+    });
     let posts = c.slack.posts();
     assert_eq!(posts.len(), 1);
     assert_eq!(

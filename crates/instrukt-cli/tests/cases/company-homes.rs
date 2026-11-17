@@ -197,14 +197,15 @@ fn each_company_resolves_its_own_secret_and_never_the_machines_or_anothers() {
 
 // spec: project/instrukt/spec/feature/configuration/company-homes UC-CH3
 #[test]
-fn members_are_listed_once_with_their_logins_as_references_and_a_shared_identity_is_refused() {
+fn members_are_listed_with_their_addresses_and_logins_as_references_and_a_shared_address_is_refused()
+ {
     let env = TestEnv::new();
     let here = env.path("");
     company(
         &env,
         "acme",
         Some(
-            "{members: {steven: {name: Steven Sonneveld, slack: U04ABC123, credentials: {erpnext: '${STEVEN_ERPNEXT_LOGIN}'}}, anna: {slack: U04DEF456}}}",
+            "{members: {steven: {name: Steven Sonneveld, email: steven@example.com, credentials: {erpnext: '${STEVEN_ERPNEXT_LOGIN}'}}, anna: {email: anna@example.com}}}",
         ),
     );
     env.run(&here, ["config", "validate", "--company", "acme"])
@@ -216,7 +217,8 @@ fn members_are_listed_once_with_their_logins_as_references_and_a_shared_identity
                 .success()
         )
     );
-    // A second member listing the same Slack identity is refused, naming both.
+    // A second member listing the same address, written in other case, is
+    // refused, naming both.
     let revision = stdout(
         &env.run(&here, ["config", "get", "--company", "acme", "--revision"])
             .success(),
@@ -232,7 +234,7 @@ fn members_are_listed_once_with_their_logins_as_references_and_a_shared_identity
                 "--revision",
                 revision.trim(),
                 "--yaml",
-                "{members: {bram: {slack: U04ABC123, credentials: {erpnext: plain-password}}}}",
+                "{members: {bram: {email: Steven@Example.com, credentials: {erpnext: plain-password}}}}",
             ],
         )
         .failure();

@@ -1,9 +1,11 @@
 //! Connectors hosted by `instrukt run` (`slack-connector` spec): one Socket
 //! Mode connection per declared Slack connector, opened outward with the
 //! app token. Each envelope is acknowledged as soon as what it carries is
-//! retained; reading the accompanying messages and posting refusals follow
-//! from the retained record, retried until done. Only mentions and direct
-//! messages reach the agent.
+//! retained; deciding who is answered from Slack's record of the sender,
+//! reading the accompanying messages, posting refusals and keeping Slack's
+//! status line follow from the retained record, retried until done. Only
+//! mentions and direct messages reach the agent.
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
@@ -15,10 +17,43 @@ use instrukt_core::ids::ProjectSlug;
 use jiff::Timestamp;
 use serde_json::Value;
 
-use crate::conversations::{self, Accompanying, ConnectionState, Earlier, Incoming, Intake};
+use crate::conversations::{
+    self, Accompanying, ConnectionState, Earlier, Incoming, Intake, Sender,
+};
 
-/// The connector's key under `connectors` and in a member entry.
+/// The connector's key under `connectors`.
 pub const SLACK: &str = "slack";
+
+/// The one fixed reply a sender who is not one of the company's own
+/// receives, in a channel and in a direct message alike.
+pub const TURN_AWAY: &str = "I only answer members of this workspace.";
+
+/// The text of Slack's status line while the agent works; Slack puts the
+/// app's name in front of it.
+pub const WORKING: &str = "is working on your request";
+
+/// Slack's own user that posts its notices; never one of the company's own.
+const SLACKBOT: &str = "USLACKBOT";
+
+/// The subtypes of messages people write; any other subtype is one of
+/// Slack's own notices, such as a person joining a channel.
+const WRITTEN: [&str; 4] = [
+    "thread_broadcast",
+    "file_share",
+    "bot_message",
+    "me_message",
+];
+
+/// How often a status that stays is set again: Slack drops it after two
+/// minutes.
+const STATUS_RENEWAL: Duration = Duration::from_secs(50);
+
+/// The longest wait between two passes of a company's intake, so a status
+/// that stays is renewed in time.
+const PASS: Duration = Duration::from_secs(10);
+
+/// The longest wait before retrying intake work that failed.
+const MOST_BACKOFF: Duration = Duration::from_secs(60);
 
 /// The setting that points the connector at a local stand-in for Slack.
 /// Only a loopback address is accepted.
@@ -27,7 +62,8 @@ pub const API_URL_SETTING: &str = "INSTRUKT_SLACK_API_URL";
 /// Slack's Web API.
 const SLACK_API: &str = "https://slack.com/api";
 
-/// How long retained intake work that failed waits before it is retried.
+/// How long retained intake work that failed first waits before it is
+/// retried; each further failure doubles it, up to [`MOST_BACKOFF`].
 const RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
@@ -224,23 +260,52 @@ impl SlackApi {
         Ok(url.to_owned())
     }
 
-    /// The bot's own user and bot ids, to mark the agent's own posts.
-    fn identity(&self) -> Result<(String, Option<String>), SlackError> {
+    /// The bot's own user and bot ids, to mark the agent's own posts, and
+    /// the workspace the app is installed in.
+    fn identity(&self) -> Result<Me, SlackError> {
         let body = self.call("auth.test", false, &[])?;
-        let user = body
-            .get("user_id")
-            .and_then(Value::as_str)
-            .filter(|id| !id.is_empty())
-            .ok_or_else(|| SlackError::Api {
-                method: "auth.test".into(),
-                cause: "no user_id".into(),
-            })?;
-        Ok((
-            user.to_owned(),
-            body.get("bot_id")
+        let field = |name: &str| {
+            body.get(name)
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| SlackError::Api {
+                    method: "auth.test".into(),
+                    cause: format!("no {name}"),
+                })
+        };
+        Ok(Me {
+            user: field("user_id")?,
+            team: field("team_id")?,
+            bot: body
+                .get("bot_id")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-        ))
+        })
+    }
+
+    /// Slack's record of the person `user`.
+    fn user(&self, user: &str) -> Result<Value, SlackError> {
+        let body = self.call("users.info", false, &[("user", user)])?;
+        body.get("user").cloned().ok_or_else(|| SlackError::Api {
+            method: "users.info".into(),
+            cause: "no user".into(),
+        })
+    }
+
+    /// Set Slack's status line on a conversation's thread, or clear it with
+    /// an empty `status`.
+    fn status(&self, channel: &str, thread: &str, status: &str) -> Result<(), SlackError> {
+        self.call(
+            "assistant.threads.setStatus",
+            false,
+            &[
+                ("channel_id", channel),
+                ("thread_ts", thread),
+                ("status", status),
+            ],
+        )
+        .map(drop)
     }
 
     /// Post `text` into a conversation: its thread in a channel, or the
@@ -314,6 +379,11 @@ impl SlackApi {
                     cause: "no messages".into(),
                 })?;
             for message in page {
+                // Slack's own notices accompany no message and do not
+                // count toward the cap.
+                if notice(message) {
+                    continue;
+                }
                 let Some(at) = message_ts(message)
                     .filter(|at| *at < latest_us && oldest_us.is_none_or(|o| *at > o))
                 else {
@@ -351,6 +421,140 @@ impl SlackApi {
         }
         Ok((found.into_iter().map(|(_, m)| m).collect(), left_out))
     }
+}
+
+/// The connector's own identity in its workspace.
+#[derive(Debug, Clone)]
+struct Me {
+    user: String,
+    bot: Option<String>,
+    /// The workspace the app is installed in.
+    team: String,
+}
+
+/// Whether `message` is one of Slack's own notices rather than something a
+/// person or an app wrote.
+fn notice(message: &Value) -> bool {
+    message
+        .get("subtype")
+        .and_then(Value::as_str)
+        .is_some_and(|subtype| !WRITTEN.contains(&subtype))
+}
+
+/// Whether Slack's record shows a person who is one of the company's own:
+/// an active account, no bot and not Slackbot, no guest, and of the
+/// workspace the app is installed in. A record that leaves one of these
+/// undecided admits no one. The name is the display name, the real name
+/// when that is empty, the Slack id when Slack gives neither.
+fn admission(record: &Value, me: &Me) -> Option<Sender> {
+    let flag = |name: &str| record.get(name).and_then(Value::as_bool);
+    let id = record.get("id").and_then(Value::as_str)?;
+    let enterprise_teams = record
+        .get("enterprise_user")
+        .and_then(|e| e.get("teams"))
+        .and_then(Value::as_array);
+    let in_workspace = record.get("team_id").and_then(Value::as_str) == Some(me.team.as_str())
+        || enterprise_teams.is_some_and(|teams| {
+            teams
+                .iter()
+                .any(|team| team.as_str() == Some(me.team.as_str()))
+        });
+    let own = flag("deleted") == Some(false)
+        && flag("is_bot") == Some(false)
+        && id != SLACKBOT
+        && flag("is_restricted") == Some(false)
+        && flag("is_ultra_restricted") == Some(false)
+        && in_workspace;
+    own.then(|| Sender {
+        name: name(record).unwrap_or_else(|| id.to_owned()),
+        email: record
+            .get("profile")
+            .and_then(|p| p.get("email"))
+            .and_then(Value::as_str)
+            .filter(|email| !email.is_empty())
+            .map(str::to_owned),
+    })
+}
+
+/// A person's name in Slack's record: their display name, or their real
+/// name when that is empty.
+fn name(record: &Value) -> Option<String> {
+    let profile = record.get("profile");
+    [
+        profile.and_then(|p| p.get("display_name")),
+        profile.and_then(|p| p.get("real_name")),
+        record.get("real_name"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .map(str::trim)
+    .find(|name| !name.is_empty())
+    .map(str::to_owned)
+}
+
+/// The people's names one intake pass needs, each asked of Slack once. A
+/// name Slack cannot give is the Slack id.
+struct Names<'a> {
+    api: &'a SlackApi,
+    known: HashMap<String, String>,
+}
+impl Names<'_> {
+    fn of(&mut self, user: &str) -> String {
+        if let Some(name) = self.known.get(user) {
+            return name.clone();
+        }
+        let found = self
+            .api
+            .user(user)
+            .ok()
+            .and_then(|record| name(&record))
+            .unwrap_or_else(|| user.to_owned());
+        self.known.insert(user.to_owned(), found.clone());
+        found
+    }
+
+    /// `text` with every mention written as `@` and that person's name;
+    /// nothing else changes.
+    fn written(&mut self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(start) = rest.find("<@") {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + 2..];
+            match after.find('>') {
+                Some(end) => {
+                    let inner = &after[..end];
+                    let user = inner.split('|').next().unwrap_or(inner);
+                    out.push('@');
+                    out.push_str(&self.of(user));
+                    rest = &after[end + 1..];
+                }
+                None => {
+                    out.push_str(&rest[start..]);
+                    rest = "";
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+}
+
+/// The Slack ids `text` mentions in Slack's markup.
+pub fn mentioned(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<@") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('>') else {
+            break;
+        };
+        let inner = &after[..end];
+        found.push(inner.split('|').next().unwrap_or(inner).to_owned());
+        rest = &after[end + 1..];
+    }
+    found
 }
 
 /// `<channel>/<thread ts>` for a channel thread, `<channel>` for a direct
@@ -552,7 +756,8 @@ fn connection(
 }
 
 /// The company's retained intake work, until `stop`: run when a retained
-/// envelope nudges it, and retried within a bound while work remains.
+/// envelope nudges it, and again after a failure once its backoff has
+/// passed. Slack's status line is kept on every pass.
 fn intake_worker(
     home: &Home,
     endpoint: &SlackEndpoint,
@@ -563,13 +768,28 @@ fn intake_worker(
     nudges: &std::sync::mpsc::Receiver<()>,
 ) {
     let mut me = None;
+    let mut statuses = Statuses::default();
+    let mut backoff = RETRY;
+    let mut retry_at = Instant::now();
+    let mut nudged = true;
     while !stop.load(Ordering::Acquire) {
         match SlackApi::with(home, company, declared, endpoint) {
             Ok(api) => {
                 if me.is_none() {
                     me = api.identity().ok();
                 }
-                intake(home, company, declared, &api, me.as_ref(), wake);
+                if nudged || Instant::now() >= retry_at {
+                    let clean = intake(home, company, declared, &api, me.as_ref(), wake);
+                    // A failed lookup or read is retried later, within
+                    // Slack's limits; a clean pass resets the wait.
+                    backoff = if clean {
+                        RETRY
+                    } else {
+                        (backoff * 2).min(MOST_BACKOFF)
+                    };
+                    retry_at = Instant::now() + backoff;
+                }
+                statuses.keep(home, company, &api);
             }
             // A failure before any request stays with the outstanding work.
             Err(error) => {
@@ -578,13 +798,78 @@ fn intake_worker(
                 {
                     tracing::warn!(event = "connector_intake_failed", company = %company, connector = SLACK, error = %record);
                 }
+                retry_at = Instant::now() + RETRY;
             }
         }
-        let until = Instant::now() + RETRY;
+        nudged = false;
+        let until = Instant::now()
+            + PASS.min(
+                retry_at
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(100)),
+            );
         while Instant::now() < until && !stop.load(Ordering::Acquire) {
             if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
+                nudged = true;
                 break;
             }
+        }
+    }
+}
+
+/// Slack's status line, kept for every admitted message whose turn has not
+/// ended: on a channel conversation's thread while any of its messages is
+/// unfinished, on a direct message's addressed message while that message
+/// is. A status is set when it starts, again when its messages change (Slack
+/// drops it when the app posts) and at least once a minute, and cleared when
+/// it no longer stays. After a restart the same holds for every unfinished
+/// message. A status Slack refuses is logged and fails nothing.
+#[derive(Default)]
+struct Statuses {
+    /// Each status set: its channel and thread, the messages it stands for
+    /// and when it was last set.
+    set: HashMap<(String, String), (Vec<String>, Instant)>,
+}
+impl Statuses {
+    fn keep(&mut self, home: &Home, company: &ProjectSlug, api: &SlackApi) {
+        let working = match conversations::working(home, company, SLACK) {
+            Ok(working) => working,
+            Err(error) => {
+                tracing::warn!(event = "connector_status_unread", company = %company, error = %error);
+                return;
+            }
+        };
+        let mut wanted: HashMap<(String, String), Vec<String>> = HashMap::new();
+        for (conversation, message) in working {
+            let (channel, thread) = split_conversation(&conversation);
+            let target = (channel.to_owned(), thread.unwrap_or(&message).to_owned());
+            wanted.entry(target).or_default().push(message);
+        }
+        let now = Instant::now();
+        for (target, messages) in &wanted {
+            let due = self.set.get(target).is_none_or(|(set, at)| {
+                set != messages || now.duration_since(*at) >= STATUS_RENEWAL
+            });
+            if due {
+                self.call(api, company, target, WORKING);
+                self.set.insert(target.clone(), (messages.clone(), now));
+            }
+        }
+        let ended: Vec<_> = self
+            .set
+            .keys()
+            .filter(|target| !wanted.contains_key(*target))
+            .cloned()
+            .collect();
+        for target in ended {
+            self.call(api, company, &target, "");
+            self.set.remove(&target);
+        }
+    }
+
+    fn call(&self, api: &SlackApi, company: &ProjectSlug, target: &(String, String), status: &str) {
+        if let Err(error) = api.status(&target.0, &target.1, status) {
+            tracing::warn!(event = "connector_status_refused", company = %company, connector = SLACK, error = %error);
         }
     }
 }
@@ -684,12 +969,7 @@ fn session(
 
 /// Retain one Events API envelope if it is a mention in a channel or a
 /// direct message. Nothing here waits on the network.
-fn receive(
-    home: &Home,
-    company: &ProjectSlug,
-    me: &(String, Option<String>),
-    envelope: &Value,
-) -> Result<(), String> {
+fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Result<(), String> {
     if envelope.get("type").and_then(Value::as_str) != Some("events_api") {
         return Ok(());
     }
@@ -707,7 +987,7 @@ fn receive(
             if text("channel_type") == Some("im")
                 && text("subtype").is_none()
                 && event.get("bot_id").is_none()
-                && sender != me.0 =>
+                && sender != me.user =>
         {
             None
         }
@@ -726,26 +1006,122 @@ fn receive(
         text: text("text").unwrap_or_default().to_owned(),
     };
     match conversations::retain(home, &incoming, Timestamp::now()).map_err(|e| e.to_string())? {
-        Intake::Retained | Intake::Refused | Intake::Repeated => Ok(()),
+        Intake::Retained | Intake::Repeated => Ok(()),
     }
 }
 
-/// Retained intake work of one company: post owed refusals, and read what
-/// accompanies each received message. A failure stays with its record and
-/// is retried; the relay is woken for what became deliverable.
+/// Retained intake work of one company: post owed refusals, decide for each
+/// received message from Slack's record of its sender read now whether it is
+/// answered, and read what accompanies each admitted one. A failure stays
+/// with its record and is retried; while Slack cannot be asked, a message
+/// waits and nothing is delivered or replied. The relay is woken for what
+/// became deliverable. Returns whether the pass ended without a failure.
 fn intake(
     home: &Home,
     company: &ProjectSlug,
     declared: &SlackConnector,
     api: &SlackApi,
-    me: Option<&(String, Option<String>)>,
+    me: Option<&Me>,
     wake: &SyncSender<()>,
-) {
+) -> bool {
+    let mut clean = true;
     let result = (|| -> Result<(), conversations::ConversationError> {
+        let owned;
+        let me = match me {
+            Some(me) => me,
+            None => match api.identity() {
+                Ok(identity) => {
+                    owned = identity;
+                    &owned
+                }
+                Err(error) => {
+                    clean = false;
+                    for unread in conversations::unread(home, company, SLACK)? {
+                        conversations::waiting(home, company, SLACK, &unread, &error.to_string())?;
+                    }
+                    return Ok(());
+                }
+            },
+        };
+        let mut names = Names {
+            api,
+            known: HashMap::new(),
+        };
+        let mut readable = false;
+        for unread in conversations::unread(home, company, SLACK)? {
+            if !unread.admitted {
+                let Some(sender) = unread.sender.as_deref() else {
+                    clean = false;
+                    conversations::waiting(
+                        home,
+                        company,
+                        SLACK,
+                        &unread,
+                        "the message has no sender",
+                    )?;
+                    continue;
+                };
+                match api.user(sender) {
+                    Ok(record) => match admission(&record, me) {
+                        Some(admitted) => {
+                            names.known.insert(sender.to_owned(), admitted.name.clone());
+                            conversations::admitted(home, company, SLACK, &unread, &admitted)?;
+                        }
+                        None => {
+                            conversations::refused(
+                                home,
+                                company,
+                                SLACK,
+                                &unread,
+                                sender,
+                                Timestamp::now(),
+                            )?;
+                            continue;
+                        }
+                    },
+                    // Slack answered that it knows no such person.
+                    Err(SlackError::Api { cause, .. })
+                        if cause == "user_not_found" || cause == "user_not_visible" =>
+                    {
+                        conversations::refused(
+                            home,
+                            company,
+                            SLACK,
+                            &unread,
+                            sender,
+                            Timestamp::now(),
+                        )?;
+                        continue;
+                    }
+                    Err(error) => {
+                        clean = false;
+                        conversations::waiting(
+                            home,
+                            company,
+                            SLACK,
+                            &unread,
+                            &format!("who sent it cannot be looked up yet: {error}"),
+                        )?;
+                        continue;
+                    }
+                }
+            }
+            let text = names.written(&unread.text);
+            let context =
+                accompanying(api, declared, me, &mut names, &unread).map_err(|e| e.to_string());
+            readable |= context.is_ok();
+            clean &= context.is_ok();
+            conversations::captured(home, company, SLACK, &unread, &text, context)?;
+        }
+        if readable {
+            let _ = wake.try_send(());
+        }
+        // Replies owed, those decided now among them.
         for refusal in conversations::unsent_refusals(home, company, SLACK)? {
             let outcome = api
-                .post(&refusal.conversation, conversations::TURN_AWAY)
+                .post(&refusal.conversation, TURN_AWAY)
                 .map_err(|e| e.to_string());
+            clean &= outcome.is_ok();
             conversations::refusal_posted(
                 home,
                 company,
@@ -755,41 +1131,25 @@ fn intake(
                 Timestamp::now(),
             )?;
         }
-        let owned;
-        let me = match me {
-            Some(me) => me,
-            None => {
-                let Ok(identity) = api.identity() else {
-                    return Ok(());
-                };
-                owned = identity;
-                &owned
-            }
-        };
-        let mut readable = false;
-        for unread in conversations::unread(home, company, SLACK)? {
-            let context = accompanying(api, declared, me, &unread).map_err(|e| e.to_string());
-            readable |= context.is_ok();
-            conversations::captured(home, company, SLACK, &unread, context)?;
-        }
-        if readable {
-            let _ = wake.try_send(());
-        }
         Ok(())
     })();
     if let Err(error) = result {
+        clean = false;
         tracing::warn!(event = "connector_intake_failed", company = %company, connector = SLACK, error = %error);
     }
+    clean
 }
 
 /// What accompanies a received message: of the messages before the first
 /// in a conversation — of the thread, or of the channel when it starts the
 /// thread — or of those since the previous one, at most `context_messages`
-/// of the most recent, and whether earlier ones were left out.
+/// of the most recent, and whether earlier ones were left out. Speakers are
+/// named and mentions written as names, as for the addressed message.
 fn accompanying(
     api: &SlackApi,
     declared: &SlackConnector,
-    me: &(String, Option<String>),
+    me: &Me,
+    names: &mut Names<'_>,
     unread: &conversations::Unread,
 ) -> Result<Accompanying, SlackError> {
     let (channel, thread) = split_conversation(&unread.conversation);
@@ -809,23 +1169,22 @@ fn accompanying(
             let own = m
                 .get("bot_id")
                 .and_then(Value::as_str)
-                .is_some_and(|bot| Some(bot) == me.1.as_deref())
-                || (!user.is_empty() && user == me.0);
-            let speaker = m
-                .get("user_profile")
-                .and_then(|p| p.get("display_name").or_else(|| p.get("real_name")))
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())
-                .unwrap_or(user);
-            Earlier {
-                speaker: speaker.to_owned(),
-                own,
-                at: m.get("ts").and_then(Value::as_str).and_then(ts_time),
-                text: m
-                    .get("text")
+                .is_some_and(|bot| Some(bot) == me.bot.as_deref())
+                || (!user.is_empty() && user == me.user);
+            let speaker = if user.is_empty() {
+                m.get("username")
+                    .or_else(|| m.get("bot_id"))
                     .and_then(Value::as_str)
                     .unwrap_or_default()
-                    .to_owned(),
+                    .to_owned()
+            } else {
+                names.of(user)
+            };
+            Earlier {
+                speaker,
+                own,
+                at: m.get("ts").and_then(Value::as_str).and_then(ts_time),
+                text: names.written(m.get("text").and_then(Value::as_str).unwrap_or_default()),
             }
         })
         .collect();
@@ -834,8 +1193,82 @@ fn accompanying(
 
 #[cfg(test)]
 mod tests {
-    use super::{SlackEndpoint, split_conversation, ts_micros};
+    use super::{Me, SlackEndpoint, admission, mentioned, notice, split_conversation, ts_micros};
     use instrukt_core::config::Env;
+    use serde_json::{Value, json};
+
+    fn me() -> Me {
+        Me {
+            user: "UAGENT".into(),
+            bot: Some("BAGENT".into()),
+            team: "T1".into(),
+        }
+    }
+
+    fn member() -> Value {
+        json!({"id": "U1", "team_id": "T1", "deleted": false, "is_bot": false, "is_restricted": false, "is_ultra_restricted": false, "profile": {"display_name": "", "real_name": "Alex Example", "email": "alex@example.com"}})
+    }
+
+    #[test]
+    fn only_a_full_member_of_the_installed_workspace_is_answered() {
+        let admitted = admission(&member(), &me()).unwrap();
+        assert_eq!(admitted.email.as_deref(), Some("alex@example.com"));
+        let changed = |field: &str, value: Value| {
+            let mut record = member();
+            record[field] = value;
+            admission(&record, &me())
+        };
+        assert_eq!(changed("deleted", json!(true)), None);
+        assert_eq!(changed("is_bot", json!(true)), None);
+        assert_eq!(changed("is_restricted", json!(true)), None);
+        assert_eq!(changed("is_ultra_restricted", json!(true)), None);
+        assert_eq!(changed("team_id", json!("T2")), None);
+        assert_eq!(changed("id", json!("USLACKBOT")), None);
+        // A record that leaves a deciding field undecided admits no one.
+        let mut undecided = member();
+        undecided
+            .as_object_mut()
+            .unwrap()
+            .remove("is_ultra_restricted");
+        assert_eq!(admission(&undecided, &me()), None);
+        // In an Enterprise organization, the workspaces it lists decide.
+        let mut enterprise = changed_team(member());
+        enterprise["enterprise_user"] = json!({"teams": ["T9", "T1"]});
+        assert!(admission(&enterprise, &me()).is_some());
+    }
+
+    fn changed_team(mut record: Value) -> Value {
+        record["team_id"] = json!("E1");
+        record
+    }
+
+    #[test]
+    fn a_name_falls_back_from_the_display_name_to_the_real_name_to_the_id() {
+        let name = |profile: Value| {
+            let mut record = member();
+            record["profile"] = profile;
+            record.as_object_mut().unwrap().remove("real_name");
+            admission(&record, &me()).unwrap().name
+        };
+        assert_eq!(
+            name(json!({"display_name": "alex", "real_name": "Alex Example"})),
+            "alex"
+        );
+        assert_eq!(
+            name(json!({"display_name": "", "real_name": "Alex Example"})),
+            "Alex Example"
+        );
+        assert_eq!(name(json!({})), "U1");
+    }
+
+    #[test]
+    fn mentions_and_notices_are_recognised_in_slacks_markup() {
+        assert_eq!(mentioned("hi <@U1> and <@U2|sam>, <#C1>"), ["U1", "U2"]);
+        assert!(mentioned("no mention").is_empty());
+        assert!(notice(&json!({"subtype": "channel_join"})));
+        assert!(!notice(&json!({"subtype": "thread_broadcast"})));
+        assert!(!notice(&json!({"text": "a message"})));
+    }
 
     #[test]
     fn slack_times_order_by_their_microseconds() {

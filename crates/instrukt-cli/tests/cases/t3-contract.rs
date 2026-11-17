@@ -73,12 +73,12 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         env.set_env("T3CODE_NO_BROWSER", "true");
         env.set_env("T3CODE_TELEMETRY_ENABLED", "false");
         let project = env.git_repo("project");
-        project.write("instrukt.yaml", "schema_version: 5\nproject: contract\n");
+        project.write("instrukt.yaml", "schema_version: 6\nproject: contract\n");
         project.commit("feat: disposable contract project");
         fs::create_dir_all(env.instrukt_home()).unwrap();
         fs::write(
             env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 5\nrunner: {runtime: t3}\nmodules: {history: true}\n",
+            "schema_version: 6\nrunner: {runtime: t3}\nmodules: {history: true}\n",
         )
         .unwrap();
         manifest["operation"] = json!("real CLI, readiness, projection and input boundaries");

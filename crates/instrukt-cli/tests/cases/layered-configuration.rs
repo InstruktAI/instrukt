@@ -140,8 +140,18 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     // wrote carry it. Initializing again brings both layers to the current
     // schema with every setting kept, and reads answer as before.
     let env = TestEnv::new();
-    let global = format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n");
+    let global =
+        format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\n");
     write_global(&env, &global);
+    // A company home an earlier instrukt wrote, whose member named a Slack
+    // identity.
+    let company = env.instrukt_home().join("companies/acme");
+    std::fs::create_dir_all(&company).unwrap();
+    std::fs::write(
+        company.join("instrukt.yaml"),
+        "schema_version: 5\ncompany: acme\nmembers:\n  alex: {email: alex@example.com, slack: U1}\n",
+    )
+    .unwrap();
     let layer = "schema_version: 1\nproject: kept\nboard: acme/7\nactions:\n  test: make test\n";
     let repo = project(&env, "kept", layer);
 
@@ -161,6 +171,27 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     insta::assert_snapshot!(read(&["config", "get", "board"]), @"acme/7");
     insta::assert_snapshot!(read(&["config", "get", "ticks"]), @"off");
     env.run(repo.path(), ["config", "validate"]).success();
+    // The machine's conversations switch is gone, whatever its value; the
+    // member keeps their address and loses the Slack identity.
+    let machine: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert!(machine["modules"].get("conversations").is_none());
+    assert_eq!(machine["modules"]["blueprint"].as_bool(), Some(true));
+    env.run(repo.path(), ["config", "init", "--company", "acme"])
+        .success();
+    env.run(repo.path(), ["config", "validate", "--company", "acme"])
+        .success();
+    let converted: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(company.join("instrukt.yaml")).unwrap())
+            .unwrap();
+    assert!(converted["members"]["alex"].get("slack").is_none());
+    assert_eq!(
+        converted["schema_version"].as_u64(),
+        Some(CURRENT_SCHEMA_VERSION)
+    );
+    insta::assert_snapshot!(read(&["config", "get", "--company", "acme", "members.alex.email"]), @"alex@example.com");
 }
 
 /// A project whose layer a newer instrukt wrote; returns it with the

@@ -10,13 +10,13 @@ use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 5;
+pub const CURRENT_SCHEMA_VERSION: u64 = 6;
 
 pub(super) const DEFAULT_DEPENDENCY_BRANCH_PREFIX: &str = "renovate/";
 
-/// The global-only switch below `modules` for conversations through
-/// connectors; it is no project module.
-pub const CONVERSATIONS: &str = "conversations";
+/// The key below `modules` that switched conversations on in schema
+/// versions before 6; conversion removes it.
+pub(super) const CONVERSATIONS: &str = "conversations";
 
 /// The `blueprint.engine` values that name a shipped adapter: the only
 /// values a project layer may give it. Any other value is a command, which
@@ -202,7 +202,6 @@ fn schema() -> Node {
             map(Module::ALL
                 .iter()
                 .map(|module| (module.key(), Leaf(Both, Shape::Bool)))
-                .chain([(CONVERSATIONS, Leaf(GlobalOnly, Shape::Bool))])
                 .collect()),
         ),
         (
@@ -822,7 +821,6 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                     Value::Bool(module == Module::History),
                 );
             }
-            insert_at(&mut root, &["modules", CONVERSATIONS], Value::Bool(false));
             insert_at(&mut root, &["ticks"], text("on"));
             insert_at(
                 &mut root,
@@ -1032,12 +1030,14 @@ mod tests {
                 [("members", N), ("connectors", N), ("profiles", N)]
             );
         }
+        // A declared connector gives conversations; no layer holds a switch.
         let switch = yaml("schema_version: 1\nmodules: {conversations: true}\n");
-        assert_eq!(check(&switch, LayerKind::Global), []);
-        assert_eq!(
-            judged(&check(&switch, LayerKind::Project)),
-            [("modules.conversations", N)]
-        );
+        for layer in [LayerKind::Global, LayerKind::Project] {
+            assert_eq!(
+                judged(&check(&switch, layer)),
+                [("modules.conversations", FindingKind::UnknownKey)]
+            );
+        }
     }
 
     #[test]
