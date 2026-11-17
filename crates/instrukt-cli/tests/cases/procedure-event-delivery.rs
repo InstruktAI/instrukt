@@ -53,6 +53,20 @@ impl Responsibility {
     fn tick(&self) {
         self.computer.tick();
     }
+    /// The session instrukt handed the event `id` to, as its delivery
+    /// record names it.
+    fn delivered_to(&self, id: &str) -> instrukt_core::ids::SessionRef {
+        let target: String = self
+            .computer
+            .db()
+            .query_row(
+                "SELECT target FROM standing_deliveries WHERE event_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        instrukt_core::ids::SessionRef::parse(&target).unwrap()
+    }
     fn conversation(&self) -> String {
         work::redact(&self.runtime.input_log("s1"))
     }
@@ -778,30 +792,48 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         stored["schema_version"].as_u64(),
         Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
     );
-    // Each assignment names the home it works in; only the company agent's
-    // names a company.
-    let place = |id: &String| {
-        let folder = r.runtime.folder(id).canonicalize().unwrap();
-        if folder == company {
-            "company"
-        } else if folder == platform.path().canonicalize().unwrap() {
-            "platform"
-        } else {
-            "project"
-        }
-    };
-    let mut briefs: Vec<_> = threads
-        .iter()
-        .map(|id| {
-            format!(
-                "== {}\n{}",
-                place(id),
-                work::redact(&r.runtime.input_log(id))
-            )
-        })
-        .collect();
-    briefs.sort();
-    insta::assert_snapshot!("home-named-assignments", briefs.join("\n\n"));
+    // Each agent's assignment, as instrukt resolves it for that session,
+    // names the home it works in; only the company agent's names a company.
+    let acme =
+        instrukt_core::ids::ProjectSlug::parse(company.file_name().unwrap().to_str().unwrap())
+            .unwrap();
+    let fork = instrukt_core::config::project_slug(r.computer.project.path())
+        .unwrap()
+        .unwrap();
+    for (event, folder) in [
+        ("company", company.clone()),
+        ("project", r.computer.project.path().canonicalize().unwrap()),
+        ("platform", platform.path().canonicalize().unwrap()),
+    ] {
+        let session = r.delivered_to(event);
+        assert_eq!(
+            r.runtime
+                .folder(session.id.as_str())
+                .canonicalize()
+                .unwrap(),
+            folder
+        );
+        let assignment = instrukt_runner::assignments::resolve(
+            &instrukt_core::home::Home::at_user_home(r.computer.env.home().into()),
+            &session,
+            instrukt_todos::work::recorded_assignment,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            assignment.workspace.map(|w| w.canonicalize().unwrap()),
+            Some(folder)
+        );
+        assert_eq!(
+            assignment.company,
+            (event == "company").then(|| acme.clone())
+        );
+        assert_eq!(assignment.platform, event == "platform");
+        assert_eq!(
+            assignment.project,
+            (event == "project").then(|| fork.clone())
+        );
+    }
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
@@ -1007,7 +1039,11 @@ fn an_open_unattended_agent_receives_a_later_event_like_an_attended_one() {
     r.runtime.consume("s1");
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 3);
-    insta::assert_snapshot!("unattended-continued-log", r.conversation());
+    // Every later event reached the one open unattended agent.
+    let agent = r.delivered_to("initial");
+    for event in ["second", "third"] {
+        assert_eq!(r.delivered_to(event), agent);
+    }
 }
 
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA27
@@ -1031,5 +1067,6 @@ fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), before + 1);
-    insta::assert_snapshot!("unattended-settled-woken-log", r.conversation());
+    // The later event reached the same, human-settled thread.
+    assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
 }
