@@ -663,7 +663,7 @@ fn native_completed_turns_suppress_inherited_echoes_but_preserve_other_human_spa
         "Do not echo this contribution.",
     )
     .unwrap();
-    // A peer envelope written before peer envelopes carried a boundary.
+    // A peer envelope without a boundary.
     let old = "[Peer (t3:earlier:peer · human:earlier · unknown)]\nKeep this original human attribution.\n[/Peer (t3:earlier:peer · human:earlier · unknown)]";
     let input = format!(
         "New leading human clarification.\n{inherited}\n{old}\nNew trailing human clarification."

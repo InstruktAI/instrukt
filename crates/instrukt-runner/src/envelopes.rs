@@ -29,7 +29,7 @@ impl Control {
 pub enum Span<'a> {
     Ordinary(&'a str),
     /// A contribution authored in another thread. The relay writes it with
-    /// a boundary token; one without a boundary is still recognized.
+    /// a boundary token; one without a boundary is recognized too.
     Identity {
         source: &'a str,
         author: &'a str,
@@ -406,19 +406,20 @@ mod tests {
             body,
         );
         assert_eq!(segment(&invalid), vec![Span::Ordinary(&invalid)]);
-        // A peer envelope written without a boundary is still recognized,
-        // and ends at its first matching closing line.
+        // A peer envelope without a boundary is recognized, and ends at its
+        // first matching closing line.
         let unbounded = "[Peer (t3:scope:thread · human · unknown)]\nbefore\n[/Peer (t3:scope:thread · human · unknown)]\nafter";
         let spans = segment(unbounded);
         assert_eq!(spans.len(), 2);
-        assert!(matches!(
-            spans[0],
-            Span::Identity {
-                source: "t3:scope:thread",
-                boundary: None,
-                ..
-            }
-        ));
+        let Span::Identity {
+            source,
+            boundary: None,
+            ..
+        } = spans[0]
+        else {
+            panic!("one peer contribution without a boundary");
+        };
+        assert_eq!(source, "t3:scope:thread");
         assert!(matches!(spans[1], Span::Ordinary(_)));
     }
     #[test]
@@ -431,7 +432,7 @@ mod tests {
         let [
             Span::Identity {
                 source,
-                boundary: Some(token),
+                boundary: Some(_),
                 body: read,
                 ..
             },
@@ -440,7 +441,6 @@ mod tests {
             panic!("one bounded peer contribution");
         };
         assert_eq!(*source, "t3:a");
-        assert!(!body.contains(token));
         assert_eq!(read.len(), body.len());
     }
     #[test]

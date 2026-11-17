@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn inherited_identity_is_not_echoed_to_its_source() {
-        // Peer envelopes written without a boundary are still recognized:
+        // Peer envelopes without a boundary are recognized:
         // one from b is omitted on its way back to b; the text around it
         // crosses as a's own.
         let text = "clarification\n[Peer (t3:thread-b · agent:codex/model · unknown)]\npeer reply\n[/Peer (t3:thread-b · agent:codex/model · unknown)]\ntrailing words";
