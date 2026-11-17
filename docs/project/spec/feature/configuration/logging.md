@@ -44,9 +44,9 @@ diagnostics would otherwise be gone with them.
   as the InstruktAI logging contract defines them, implemented by the crate;
   instrukt adds no validation of its own. One command departs from them:
   `instrukt mcp` writes no third-party record below WARNING and gives no
-  third-party logger a spotlight, whatever these variables say, because a
-  server's reply can hold a login and only instrukt's own records are scrubbed
-  (`project/instrukt/spec/feature/runner/mcp-access`).
+  third-party logger a spotlight, whatever these variables say
+  (`project/instrukt/spec/feature/runner/mcp-access`,
+  `sdlc/policy/security-awareness`).
 - The logging crate owns open and write failures. instrukt initialises it
   before any other work and never continues when initialisation fails;
   there is no degraded mode.
