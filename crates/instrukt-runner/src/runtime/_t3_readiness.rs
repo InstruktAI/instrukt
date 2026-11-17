@@ -127,7 +127,9 @@ fn command_failure(error: crate::process::ProcessError) -> CommandFailure {
     match error {
         crate::process::ProcessError::Spawn { .. } => CommandFailure::Launch,
         crate::process::ProcessError::Timeout { .. } => CommandFailure::Timeout,
-        crate::process::ProcessError::Io { .. } => CommandFailure::Io,
+        crate::process::ProcessError::Io { .. } | crate::process::ProcessError::Clock { .. } => {
+            CommandFailure::Io
+        }
     }
 }
 fn command_output(
