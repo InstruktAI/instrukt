@@ -392,6 +392,11 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
             "`instrukt run` serves the todos, events and history modules and conversations, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`, or switch on `modules.conversations` with a company's declared connector"
         );
     }
+    if command == "sessions" {
+        bail!(
+            "`instrukt sessions` serves the todos and events modules and the sessions conversations start, and all are off; switch on `modules.todos` or `modules.events`, or switch on `modules.conversations` with a company's declared connector"
+        );
+    }
     bail!(
         "`instrukt {command}` serves the todos and events modules, and both are off; switch on `modules.todos` or `modules.events`"
     )

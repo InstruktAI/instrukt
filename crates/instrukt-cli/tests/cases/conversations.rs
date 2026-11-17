@@ -8,7 +8,6 @@ use crate::fixtures::conversing::{Company, wait};
 use crate::fixtures::documented;
 use instrukt_runner::connectors::SLACK;
 use instrukt_runner::conversations::{self, SLACK_MESSAGE_LIMIT, TURN_AWAY};
-use instrukt_runner::sessions::SessionsError;
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// Where each post went: its channel and thread.
@@ -36,18 +35,18 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // Restarted, the question stays pending with its cause: a start that
     // remains unresolved, its key and the command that resolves it.
     c.run();
-    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{question}"));
-    let unresolved = SessionsError::Unresolved { key: key.clone() }.to_string();
-    wait("the unresolved start's cause", || {
+    wait("the pending question's cause", || {
         c.conversations()
             .conversations
             .iter()
-            .any(|pending| pending.failures.contains(&unresolved))
+            .any(|pending| !pending.failures.is_empty())
     });
-    let pending = c.conversations().conversations;
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].pending_messages, 1);
+    insta::assert_snapshot!(
+        "unresolved-opening-status",
+        serde_json::to_string_pretty(&c.status()["conversations"]["conversations"]).unwrap()
+    );
     assert!(c.sessions().is_empty());
+    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{question}"));
     // Nothing was created: the start is resolved as such, and the retry dies
     // after the runtime accepted the opening and before the runner bound it.
     c.runtime.flag("die-after-start", true);
@@ -58,13 +57,13 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let session = c.session();
     assert_eq!(c.runtime.message_count(&session), 1);
     // Someone types in the session's thread directly, and both turns finish
-    // while the runner is down: the typed one is read before the answer's,
-    // and it is not posted. An answer longer than one Slack message arrives
-    // as its pieces.
+    // while the runner is down: the typed one comes first in the thread, so
+    // it is read before the answer's, and it is not posted. An answer longer
+    // than one Slack message arrives as its pieces.
     c.store.turn(
         &session,
         "direct",
-        100,
+        0,
         "A note typed in the thread.",
         "Noted.",
     );

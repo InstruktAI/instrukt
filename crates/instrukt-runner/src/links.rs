@@ -499,15 +499,11 @@ fn relay_direction(
             )));
         }
         {
-            // A member message crosses only from the thread its conversation
-            // is bound to, as the conversation records hold that binding.
-            let bound = bound_conversations(home, &d.source)?;
             let turns = _turns::finished(
                 &batch.completed_turns,
                 d.source.id.as_str(),
                 &format!("{}:{}", source.identity(), d.source.id),
                 &format!("{}:{}", source.identity(), d.target.id),
-                &bound,
             )?;
             for (id, content) in turns {
                 if d.seen.insert(id.clone()) {
@@ -528,21 +524,6 @@ fn relay_direction(
         }
     }
     Ok(())
-}
-/// The (connector, conversation) pairs bound to `session`.
-fn bound_conversations(
-    home: &Home,
-    session: &SessionRef,
-) -> Result<Vec<(String, String)>, LinkError> {
-    let db = StateRead::open(home)?
-        .ok_or_else(|| LinkError::Refused("link state disappeared".into()))?;
-    let mut query = db
-        .conn()
-        .prepare("SELECT connector, conversation FROM connected_conversations WHERE session=?1")?;
-    let rows = query
-        .query_map([session.to_string()], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
 }
 fn deliver(
     home: &Home,

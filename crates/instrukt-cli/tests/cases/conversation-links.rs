@@ -94,9 +94,11 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     native_db.execute("INSERT INTO orchestration_v2_projection_messages VALUES ('streaming','child','assistant',1,?1,?1,?2)",instrukt_core::state_db::rusqlite::params![at,partial.to_string()]).unwrap();
     let runner = run();
     wait_for(|| fake.message_count("parent") == 2);
-    let delivered = fake
-        .message("parent", 1)
-        .replace(source.identity(), "t3:[SOURCE]");
+    let delivered = boundaries(
+        &fake
+            .message("parent", 1)
+            .replace(source.identity(), "t3:[SOURCE]"),
+    );
     insta::assert_snapshot!("finished-turn-relay", delivered);
     assert_eq!(fake.message_count("child"), 1);
     // A native change with unchanged occurrence time still reaches the independent reader.
@@ -452,8 +454,11 @@ fn an_agent_opens_the_requested_discussion_and_reuses_its_one_opening_contributi
         .unwrap();
     insta::assert_snapshot!(
         "cli-opening-contribution",
-        fake.message("child", 1)
-            .replace(source.identity(), "t3:[SOURCE]")
+        boundaries(
+            &fake
+                .message("child", 1)
+                .replace(source.identity(), "t3:[SOURCE]")
+        )
     );
 }
 
@@ -493,8 +498,11 @@ fn either_agent_sends_a_final_contribution_then_closes_the_discussion_for_everyo
         .unwrap();
     insta::assert_snapshot!(
         "cli-final-contribution",
-        fake.message("parent", 1)
-            .replace(source.identity(), "t3:[SOURCE]")
+        boundaries(
+            &fake
+                .message("parent", 1)
+                .replace(source.identity(), "t3:[SOURCE]")
+        )
     );
 }
 
@@ -653,13 +661,10 @@ fn native_completed_turns_suppress_inherited_echoes_but_preserve_other_human_spa
         "agent:original",
         "unknown",
         "Do not echo this contribution.",
-    );
-    let old = instrukt_runner::envelopes::peer(
-        "t3:earlier:peer",
-        "human:earlier",
-        "unknown",
-        "Keep this original human attribution.",
-    );
+    )
+    .unwrap();
+    // A peer envelope written before peer envelopes carried a boundary.
+    let old = "[Peer (t3:earlier:peer · human:earlier · unknown)]\nKeep this original human attribution.\n[/Peer (t3:earlier:peer · human:earlier · unknown)]";
     let input = format!(
         "New leading human clarification.\n{inherited}\n{old}\nNew trailing human clarification."
     );
@@ -682,8 +687,11 @@ fn native_completed_turns_suppress_inherited_echoes_but_preserve_other_human_spa
     assert_eq!(fake.message_count("child"), 1);
     insta::assert_snapshot!(
         "real-relay-no-echo",
-        fake.message("parent", 1)
-            .replace(source.identity(), "t3:[SOURCE]")
+        boundaries(
+            &fake
+                .message("parent", 1)
+                .replace(source.identity(), "t3:[SOURCE]")
+        )
     );
     drop(runner);
 }
@@ -795,6 +803,33 @@ fn both_members_continue_locally_after_close_while_the_runner_processes_fresh_tu
         fake.message("child", child_before + 1)
     );
     drop(runner);
+}
+
+/// `text` with each distinct boundary token of an envelope line numbered in
+/// the order it first appears, so an opening and its closing line show the
+/// same number.
+fn boundaries(text: &str) -> String {
+    let mut seen: Vec<String> = Vec::new();
+    text.lines()
+        .map(|line| {
+            let token = line
+                .strip_suffix(")]")
+                .and_then(|rest| rest.rsplit_once(" · "))
+                .map(|(_, token)| token)
+                .filter(|token| token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit()));
+            match token {
+                Some(token) => {
+                    let n = seen.iter().position(|t| t == token).unwrap_or_else(|| {
+                        seen.push(token.to_owned());
+                        seen.len() - 1
+                    });
+                    line.replace(token, &format!("[BOUNDARY-{}]", n + 1))
+                }
+                None => line.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn diagnostic_reference(text: &str) -> String {

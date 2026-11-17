@@ -190,7 +190,7 @@ fn contribution(
             &author,
             &envelopes::minute(Some(request.now)),
             text,
-        ),
+        )?,
         sending: false,
         origin,
     })
