@@ -469,7 +469,7 @@ fn feature_capabilities(
 
 /// Whether this computer is the ingress and another computer reacts to
 /// external facts, as the effective global settings name them.
-fn receiving_only(effective: &Value, this: Option<&crate::machine::MachineId>) -> bool {
+pub(super) fn receiving_only(effective: &Value, this: Option<&crate::machine::MachineId>) -> bool {
     let Some(this) = this else {
         return false;
     };

@@ -311,6 +311,10 @@ fn another_computer_reacts_to_external_facts_and_the_server_runs_nothing() {
         identity(&other)["ingress"]["reactions"].as_str(),
         Some(other_id.as_str())
     );
+    // The server publishes a matching procedure of its own too: only the
+    // computer that reacts may run it.
+    server.subscribe("erp.invoice.*");
+    server.tick();
     // The server is valid as it is: receiving and publishing need no runtime.
     server
         .env

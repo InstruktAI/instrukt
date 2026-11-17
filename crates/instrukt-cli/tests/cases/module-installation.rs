@@ -308,7 +308,40 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     env.run(env.home(), ["install"]).success();
     assert!(receiver.is_file());
     env.run(env.home(), ["install", "--check"]).success();
+    // On Linux the local Redis becomes instrukt's own private service.
+    let mut _private = None;
     if cfg!(target_os = "linux") {
+        event_config(
+            &env,
+            None,
+            &redis.url,
+            Some(&format!(
+                "ingress: {{computer: '{}', port: {}}}\n",
+                machine.trim(),
+                health.port
+            )),
+        );
+        env.run(env.home(), ["install"]).success();
+        _private = Some(PrivateRedis(
+            env.command(std::path::Path::new("redis-server"), env.home())
+                .arg(env.instrukt_home().join("state/redis/redis.conf"))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        ));
+        crate::common::wait_until(
+            "the private Redis checked",
+            std::time::Duration::from_secs(10),
+            || {
+                env.instrukt(env.home())
+                    .args(["install", "--check"])
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            },
+        );
         // The user's manager does not start at boot without a login: one
         // finding names every owned unit that needs it, and installation
         // leaves it as it is.
@@ -320,7 +353,7 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
         let report: serde_json::Value = serde_json::from_slice(&check.get_output().stdout).unwrap();
         insta::assert_json_snapshot!(report["findings"], @r#"
         [
-          "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the receiver's socket and service, the minute timer"
+          "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the receiver's socket and service, the private local Redis service, the minute timer"
         ]
         "#);
         std::fs::remove_file(off).unwrap();
@@ -369,6 +402,42 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     assert!(receiver.is_file());
     assert!(env.path("runtime-bin/active").exists());
     env.run(env.home(), ["install", "--check"]).success();
+
+    // Receiving and publishing need no agent: with another computer named as
+    // the one that reacts, this ingress installs and checks its receiver with
+    // no runtime chosen, for the company's source alone and with the
+    // project's source beside it.
+    let reacting = std::fs::read_to_string(&global)
+        .unwrap()
+        .replace("runner: {runtime: t3}\n", "")
+        .replace(
+            &format!("computer: '{}',", machine.trim()),
+            &format!(
+                "computer: '{}', reactions: '1111111111111111',",
+                machine.trim()
+            ),
+        );
+    std::fs::write(&global, &reacting).unwrap();
+    env.run(env.home(), ["install"]).success();
+    assert!(receiver.is_file());
+    env.run(env.home(), ["install", "--check"]).success();
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 6\nproject: events\nmodules: {history: false, events: true}\nwebhooks:\n  service: {secret: '${SIGNING_KEY}'}\n",
+    );
+    env.run(env.home(), ["install"]).success();
+    env.run(env.home(), ["install", "--check"]).success();
+    // Where this computer reacts itself, its events still need a runtime.
+    std::fs::write(
+        &global,
+        reacting.replace(", reactions: '1111111111111111'", ""),
+    )
+    .unwrap();
+    let check = env
+        .run(env.home(), ["install", "--check", "--json"])
+        .failure();
+    let report: serde_json::Value = serde_json::from_slice(&check.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!("reacting-ingress-needs-runtime", report["findings"]);
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI8

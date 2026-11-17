@@ -16,11 +16,31 @@ change wakes the agent. On the reacting computer it can activate for a project
 another computer emitted it for, and fails there when that project is absent.
 An activation already accepted before the upgrade is delivered as before.
 
-Before upgrading each computer, let its pending events drain: keep
-`instrukt run` running, or run `instrukt tick`, until
-`instrukt events status` shows no pending or lagging entries for the
-procedure-activation consumer, then upgrade it at once. Upgrade every
-participating computer the same way.
+Before upgrading, take every participating computer through these steps
+together, so that no older entry is left to be read under the new rules:
+
+1. **Keep the old producers quiet.** On every computer, stop what runs ticks
+   and the runner, and keep it stopped until all computers are upgraded: on
+   macOS `launchctl unload ~/Library/LaunchAgents/ai.instrukt.tick.plist` (and
+   `ai.instrukt.runner.plist` where it exists), on Linux
+   `systemctl --user stop instrukt-tick.timer instrukt-runner.service`, or the
+   `instrukt tick` line in the crontab where the wake-up is cron; also stop any
+   `instrukt run` started by hand. From here on, ticks run only by hand.
+2. **Finish publishing the old events.** Run `instrukt tick` by hand until the
+   computer's state database holds no unpublished entry of either event. The
+   old installation has no command that shows this; read it with `sqlite3`:
+   `sqlite3 ~/.instrukt/state/instrukt.db "SELECT count(*) FROM events WHERE
+   publication_state = 'pending' AND name IN ('runner.upstream_changed',
+   'runner.main_failing')"` must answer `0`. A tick publishes a bounded batch
+   at a time, so one tick is not always enough.
+3. **Settle the consumers.** Run `instrukt tick` by hand on every participating
+   computer until its `instrukt events status` shows no pending entries and no
+   lag for every procedure-activation consumer, and step 2 still answers `0`.
+   A tick can observe a new change and record a new old-kind event; when it
+   does, steps 2 and 3 repeat.
+4. **Upgrade every computer** without running another tick in between, then
+   run `instrukt install` on each; it registers the wake-up and the runner
+   service again.
 
 On Linux every owned unit that has to run without a login (the runner service,
 the receiver's socket and service, the private local Redis service and the
