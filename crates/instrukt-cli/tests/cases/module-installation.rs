@@ -2495,13 +2495,26 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         c.slack.connections() == 9
     });
     assert_ne!(manager.pid(), pid);
-    // Removing the company's last declared connector ends the demand: the
-    // next install withdraws the service.
+    // A neighbouring company home that cannot be read leaves the demand
+    // unresolved; the readable company's service still runs.
+    let broken = c.env.instrukt_home().join("companies/broken");
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("instrukt.yaml"), "invalid: [").unwrap();
+    assert!(!instrukt(&c, &["install"]).status.success());
+    assert_eq!(state(&c), ServiceState::Running);
+    // Removing the company's last declared connector ends the known demand,
+    // but while that home stays unreadable nothing is withdrawn.
     let document = c.env.instrukt_home().join("companies/acme/instrukt.yaml");
     let mut settings: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(&document).unwrap()).unwrap();
     settings.as_mapping_mut().unwrap().remove("connectors");
     std::fs::write(&document, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+    assert_eq!(state(&c), ServiceState::Unmet);
+    assert!(!instrukt(&c, &["install"]).status.success());
+    assert!(manager.registered());
+    // Once it can be read, the demand is resolved: the next install
+    // withdraws the service.
+    std::fs::remove_dir_all(&broken).unwrap();
     assert_eq!(state(&c), ServiceState::Obsolete);
     assert!(instrukt(&c, &["install"]).status.success());
     assert!(!manager.registered());

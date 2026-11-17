@@ -61,16 +61,14 @@ const NOTICES: [&str; 20] = [
     "reminder_add",
 ];
 
-/// How often a status that stays is set again: Slack drops it after two
-/// minutes.
-const STATUS_RENEWAL: Duration = Duration::from_secs(50);
+/// About how often a status that stays is set again: Slack drops it after
+/// two minutes. The status is a courtesy; nothing promises this timing.
+const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
-/// How often the status worker looks at what is unfinished and at the
-/// app's own posts.
+/// How often the status pass looks at what is unfinished.
 const STATUS_TICK: Duration = Duration::from_secs(1);
 
-/// How long one status call may take, so a slow one never holds another
-/// status past its renewal.
+/// How long one status call may take.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The longest wait before retrying intake work that failed.
@@ -88,16 +86,30 @@ const SLACK_API: &str = "https://slack.com/api";
 /// that wait, up to [`MOST_BACKOFF`].
 const RETRY: Duration = Duration::from_secs(2);
 
-/// Until when Slack limited a method for a company's workspace, as its
-/// `Retry-After` said. No call of that method for that workspace is made
-/// before then.
-static LIMITS: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), Instant>>> =
-    std::sync::LazyLock::new(Default::default);
+/// Until when Slack limited each method for each company's workspace, as
+/// its `Retry-After` said. The runner owns one and every client of its
+/// connectors shares it, so no call of a limited method for that workspace
+/// is made before its wait is over while the runner runs. A wait that has
+/// passed is retired.
+#[derive(Debug, Clone, Default)]
+pub struct Limits(Arc<std::sync::Mutex<HashMap<(String, String), Instant>>>);
+impl Limits {
+    /// Until when `method` is limited for `company`'s workspace, if it is.
+    fn until(&self, company: &str, method: &str) -> Option<Instant> {
+        let mut limits = self.0.lock().ok()?;
+        let now = Instant::now();
+        limits.retain(|_, until| *until > now);
+        limits
+            .get(&(company.to_owned(), method.to_owned()))
+            .copied()
+    }
 
-/// When the app last posted into each conversation of each company, so its
-/// status, which Slack drops on such a post, is set again at once.
-static POSTED: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), Instant>>> =
-    std::sync::LazyLock::new(Default::default);
+    fn limit(&self, company: &str, method: &str, until: Instant) {
+        if let Ok(mut limits) = self.0.lock() {
+            limits.insert((company.to_owned(), method.to_owned()), until);
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SlackError {
@@ -133,19 +145,23 @@ fn loopback(uri: &tungstenite::http::Uri) -> bool {
 /// stand-in on a loopback address. Read once when the runner starts.
 #[derive(Debug, Clone)]
 pub struct SlackEndpoint {
+    /// The waits Slack named, shared by every client this endpoint makes.
+    limits: Limits,
     api: String,
     local: bool,
 }
 
 impl SlackEndpoint {
     /// Slack's own hosts unless [`API_URL_SETTING`] names a loopback
-    /// address; any other value refuses.
+    /// address; any other value refuses. The endpoint starts knowing no wait
+    /// and keeps those Slack names for as long as it lives.
     pub fn from_env(env: &Env) -> Result<Self, SlackError> {
         match env
             .get(API_URL_SETTING)
             .filter(|url| !url.trim().is_empty())
         {
             None => Ok(Self {
+                limits: Limits::default(),
                 api: SLACK_API.into(),
                 local: false,
             }),
@@ -155,6 +171,7 @@ impl SlackEndpoint {
                     return Err(SlackError::Endpoint);
                 }
                 Ok(Self {
+                    limits: Limits::default(),
                     api: url.trim_end_matches('/').to_owned(),
                     local: true,
                 })
@@ -261,13 +278,8 @@ impl SlackApi {
         form: &[(&str, &str)],
         timeout: Option<Duration>,
     ) -> Result<Value, SlackError> {
-        let key = (self.company.to_string(), method.to_owned());
-        let limited = LIMITS
-            .lock()
-            .ok()
-            .and_then(|limits| limits.get(&key).copied())
-            .filter(|until| *until > Instant::now());
-        if let Some(until) = limited {
+        let company = self.company.to_string();
+        if let Some(until) = self.endpoint.limits.until(&company, method) {
             return Err(SlackError::Limited {
                 method: method.into(),
                 seconds: until.saturating_duration_since(Instant::now()).as_secs() + 1,
@@ -300,9 +312,11 @@ impl SlackApi {
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .unwrap_or(1);
-            if let Ok(mut limits) = LIMITS.lock() {
-                limits.insert(key, Instant::now() + Duration::from_secs(seconds));
-            }
+            self.endpoint.limits.limit(
+                &company,
+                method,
+                Instant::now() + Duration::from_secs(seconds),
+            );
             tracing::warn!(event = "connector_rate_limited", company = %self.company, method, seconds);
             return Err(SlackError::Limited {
                 method: method.into(),
@@ -400,15 +414,7 @@ impl SlackApi {
         if let Some(thread) = thread {
             form.push(("thread_ts", thread));
         }
-        self.call("chat.postMessage", false, &form)?;
-        // Slack drops a status in the place the app posts to.
-        if let Ok(mut posted) = POSTED.lock() {
-            posted.insert(
-                (self.company.to_string(), conversation.to_owned()),
-                Instant::now(),
-            );
-        }
-        Ok(())
+        self.call("chat.postMessage", false, &form).map(drop)
     }
 
     /// The most recent `cap` messages of a channel or thread strictly
@@ -686,12 +692,6 @@ impl Connections {
             hosted: Vec::new(),
         };
         let demand = conversations::demand(home)?;
-        // What is unfinished now is read before any worker or the relay can
-        // finish it, so its status is cleared even if an earlier run set it.
-        let mut unfinished = Vec::new();
-        for (company, _) in &demand {
-            unfinished.push(conversations::working(home, company, SLACK)?);
-        }
         let hosted: Vec<(String, String)> = demand
             .iter()
             .map(|(company, _)| (company.to_string(), SLACK.to_owned()))
@@ -699,8 +699,8 @@ impl Connections {
         if let Err(error) = crate::runner::publish_hosted(home, &hosted) {
             tracing::warn!(event = "connector_hosting_unpublished", error = %error);
         }
-        for ((company, declared), unfinished) in demand.into_iter().zip(unfinished) {
-            let thread = connections.spawn(&company, &declared, unfinished);
+        for (company, declared) in demand {
+            let thread = connections.spawn(&company, &declared);
             connections.hosted.push(Hosted {
                 company,
                 declared,
@@ -714,7 +714,6 @@ impl Connections {
         &self,
         company: &ProjectSlug,
         declared: &SlackConnector,
-        unfinished: Vec<(String, String)>,
     ) -> Option<std::thread::JoinHandle<()>> {
         let home = self.home.clone();
         let endpoint = self.endpoint.clone();
@@ -727,9 +726,7 @@ impl Connections {
             .name(format!("slack-{company}"))
             .spawn(move || {
                 let _notice = notice;
-                connection(
-                    &home, &endpoint, &company, &declared, &stop, &wake, unfinished,
-                );
+                connection(&home, &endpoint, &company, &declared, &stop, &wake);
             });
         match spawned {
             Ok(thread) => Some(thread),
@@ -767,9 +764,7 @@ impl Connections {
                 ConnectionState::Failed,
                 Some(cause),
             );
-            let unfinished =
-                conversations::working(&self.home, &hosted.company, SLACK).unwrap_or_default();
-            let thread = self.spawn(&hosted.company, &hosted.declared, unfinished);
+            let thread = self.spawn(&hosted.company, &hosted.declared);
             self.hosted[index].thread = thread;
         }
     }
@@ -804,7 +799,6 @@ fn connection(
     declared: &SlackConnector,
     stop: &AtomicBool,
     wake: &SyncSender<()>,
-    unfinished_at_start: Vec<(String, String)>,
 ) {
     // Intake runs beside the socket, so reading what accompanies a message
     // or posting a refusal never holds back the next acknowledgement. Its
@@ -838,15 +832,7 @@ fn connection(
         });
         scope.spawn(move || {
             let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
-            status_worker(
-                home,
-                endpoint,
-                company,
-                declared,
-                &quit,
-                &admissions,
-                unfinished_at_start,
-            );
+            status_worker(home, endpoint, company, declared, &quit, &admissions);
         });
         let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
         let mut backoff = Duration::from_secs(1);
@@ -945,25 +931,16 @@ fn intake_worker(
 /// addressed message.
 type Place = (String, String);
 
-/// What the status worker knows of one place.
-struct Indicated {
-    /// The unfinished messages it stands for.
-    messages: Vec<String>,
-    /// When this process last set it; `None` when an earlier run may have.
-    set: Option<Instant>,
-}
-
-/// Slack's status line for one company, kept apart from intake so a slow or
-/// refused status call never holds a message, and a slow intake never holds
-/// a status: on the thread of a channel conversation while any of its
-/// admitted messages is unfinished, on a direct message's addressed message
-/// while that message is. A status is set when a message is admitted, again
-/// when its messages change, at once after a post of the app's own in its
-/// conversation (Slack drops it then) and at least once a minute. It is
-/// cleared when nothing unfinished remains there, also for a place an
-/// earlier run set: the places unfinished when the run started are known
-/// before anything finishes them. A status Slack refuses is logged and fails
-/// nothing.
+/// Slack's status line for one company, a courtesy kept on a best-effort
+/// basis apart from intake and the relay, so no status call holds a
+/// message. A plain periodic pass reads the places with unfinished admitted
+/// messages, sets each whose last attempt is [`STATUS_INTERVAL`] old or
+/// more, and clears once each place this process set that has no unfinished
+/// work left. A message's admission wakes the pass, so its first status
+/// comes promptly. A call that fails or is skipped is left to the next
+/// regular setting, and a clear that does not happen to Slack's own two
+/// minutes; nothing is made up for and nothing set by an earlier run is
+/// cleared.
 fn status_worker(
     home: &Home,
     endpoint: &SlackEndpoint,
@@ -971,23 +948,30 @@ fn status_worker(
     declared: &SlackConnector,
     stop: &dyn Fn() -> bool,
     admitted: &std::sync::mpsc::Receiver<()>,
-    unfinished_at_start: Vec<(String, String)>,
 ) {
-    let mut known: HashMap<Place, Indicated> = HashMap::new();
-    for (conversation, message) in unfinished_at_start {
-        let entry = known
-            .entry(place(&conversation, &message))
-            .or_insert_with(|| Indicated {
-                messages: Vec::new(),
-                set: None,
-            });
-        entry.messages.push(message);
-    }
+    let mut attempted: HashMap<Place, Instant> = HashMap::new();
+    let mut failing: Option<String> = None;
     while !stop() {
-        match SlackApi::with(home, company, declared, endpoint) {
-            Ok(api) => keep(home, company, &api, &mut known),
-            Err(error) => {
-                tracing::warn!(event = "connector_status_unprepared", company = %company, error = %error);
+        let pass = SlackApi::with(home, company, declared, endpoint)
+            .map_err(|error| error.to_string())
+            .and_then(|api| {
+                let working =
+                    conversations::working(home, company, SLACK).map_err(|e| e.to_string())?;
+                Ok((api, working))
+            });
+        match pass {
+            Ok((api, working)) => {
+                if let Some(cause) = failing.take() {
+                    tracing::info!(event = "connector_status_recovered", company = %company, cause = %cause);
+                }
+                keep(&api, &working, &mut attempted);
+            }
+            // A continuing cause is logged once, when it starts or changes.
+            Err(cause) => {
+                if failing.as_deref() != Some(cause.as_str()) {
+                    tracing::warn!(event = "connector_status_unprepared", company = %company, error = %cause);
+                    failing = Some(cause);
+                }
             }
         }
         let until = Instant::now() + STATUS_TICK;
@@ -1005,67 +989,36 @@ fn place(conversation: &str, message: &str) -> Place {
     (channel.to_owned(), thread.unwrap_or(message).to_owned())
 }
 
-/// One pass of the status worker: set, renew and clear.
-fn keep(home: &Home, company: &ProjectSlug, api: &SlackApi, known: &mut HashMap<Place, Indicated>) {
-    let working = match conversations::working(home, company, SLACK) {
-        Ok(working) => working,
-        Err(error) => {
-            tracing::warn!(event = "connector_status_unread", company = %company, error = %error);
-            return;
-        }
-    };
-    let mut wanted: HashMap<Place, (String, Vec<String>)> = HashMap::new();
-    for (conversation, message) in working {
-        wanted
-            .entry(place(&conversation, &message))
-            .or_insert_with(|| (conversation.clone(), Vec::new()))
-            .1
-            .push(message);
-    }
-    let posted = POSTED
-        .lock()
-        .map(|posted| posted.clone())
-        .unwrap_or_default();
-    let now = Instant::now();
-    for (target, (conversation, messages)) in wanted.iter() {
-        let posted_at = posted
-            .get(&(company.to_string(), conversation.clone()))
-            .copied();
-        let due = known
+/// One status pass: set what stays and is due, clear once what no longer
+/// stays. Each call's outcome is only logged.
+fn keep(api: &SlackApi, working: &[(String, String)], attempted: &mut HashMap<Place, Instant>) {
+    let wanted: std::collections::HashSet<Place> = working
+        .iter()
+        .map(|(conversation, message)| place(conversation, message))
+        .collect();
+    for target in &wanted {
+        let due = attempted
             .get(target)
-            .is_none_or(|indicated| match indicated.set {
-                None => true,
-                Some(set) => {
-                    indicated.messages != *messages
-                        || now.duration_since(set) >= STATUS_RENEWAL
-                        || posted_at.is_some_and(|at| at >= set)
-                }
-            });
+            .is_none_or(|at| at.elapsed() >= STATUS_INTERVAL);
         if due {
-            call(api, company, target, WORKING);
-            known.insert(
-                target.clone(),
-                Indicated {
-                    messages: messages.clone(),
-                    set: Some(Instant::now()),
-                },
-            );
+            attempted.insert(target.clone(), Instant::now());
+            call(api, target, WORKING);
         }
     }
-    let ended: Vec<Place> = known
+    let ended: Vec<Place> = attempted
         .keys()
-        .filter(|target| !wanted.contains_key(*target))
+        .filter(|target| !wanted.contains(*target))
         .cloned()
         .collect();
     for target in ended {
-        call(api, company, &target, "");
-        known.remove(&target);
+        attempted.remove(&target);
+        call(api, &target, "");
     }
 }
 
-fn call(api: &SlackApi, company: &ProjectSlug, target: &Place, status: &str) {
+fn call(api: &SlackApi, target: &Place, status: &str) {
     if let Err(error) = api.status(&target.0, &target.1, status) {
-        tracing::warn!(event = "connector_status_refused", company = %company, connector = SLACK, error = %error);
+        tracing::debug!(event = "connector_status_skipped", company = %api.company, connector = SLACK, error = %error);
     }
 }
 

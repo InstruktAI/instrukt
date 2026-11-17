@@ -234,11 +234,6 @@ fn every_direct_message_reaches_the_agent_without_a_tag() {
     wait("the finished message's status cleared", || {
         c.slack.status(channel, &first).is_none()
     });
-    // The answer's post in the direct message drops every status there;
-    // the unfinished second message has its status set again at once.
-    wait("the second message's status set again", || {
-        c.slack.status(channel, &second).as_deref() == Some(WORKING)
-    });
     let posts = c.slack.posts();
     assert_eq!(posts.len(), 1);
     assert_eq!(

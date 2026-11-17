@@ -136,6 +136,10 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    /// `users.info` answers wait until released.
+    hold_lookups: bool,
+    /// How many lookups were held back.
+    held_lookups: usize,
     reads: usize,
     held: usize,
 }
@@ -195,6 +199,17 @@ impl FakeSlack {
                     {
                         if !counted {
                             workspace.lock().unwrap().held += 1;
+                            counted = true;
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    let mut counted = false;
+                    while method == "users.info"
+                        && workspace.lock().unwrap().hold_lookups
+                        && !stop.load(Ordering::Acquire)
+                    {
+                        if !counted {
+                            workspace.lock().unwrap().held_lookups += 1;
                             counted = true;
                         }
                         std::thread::sleep(Duration::from_millis(20));
@@ -369,7 +384,7 @@ impl FakeSlack {
                     thread: arg("thread_ts").map(str::to_owned),
                     text: arg("text").unwrap().to_owned(),
                 };
-                let ts = Self::stamp(&mut w);
+                let ts = Self::posted(&mut w);
                 let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": post.text});
                 if let Some(thread) = &post.thread {
                     message["thread_ts"] = json!(thread);
@@ -392,6 +407,25 @@ impl FakeSlack {
         let ts = format!("1700000{:03}.000100", w.next);
         w.next += 1;
         ts
+    }
+
+    /// The time of a post of the app's own: after every message the
+    /// workspace holds, those given an explicit time among them.
+    fn posted(w: &mut Workspace) -> String {
+        let micros = |ts: &str| -> i64 {
+            let (seconds, fraction) = ts.split_once('.').unwrap();
+            seconds.parse::<i64>().unwrap() * 1_000_000 + fraction.parse::<i64>().unwrap()
+        };
+        let stamp = Self::stamp(w);
+        let latest = w
+            .messages
+            .iter()
+            .filter_map(|m| m["ts"].as_str())
+            .map(micros)
+            .max()
+            .unwrap_or(0);
+        let at = micros(&stamp).max(latest + 100);
+        format!("{}.{:06}", at / 1_000_000, at % 1_000_000)
     }
 
     /// A person writes a message nobody addresses to the agent: Slack sends
@@ -529,6 +563,20 @@ impl FakeSlack {
             .iter()
             .filter(|(c, t, _)| c == channel && t == thread)
             .count()
+    }
+
+    /// Lookups of people wait until [`FakeSlack::release_lookups`].
+    pub fn hold_lookups(&self) {
+        self.workspace.lock().unwrap().hold_lookups = true;
+    }
+
+    pub fn release_lookups(&self) {
+        self.workspace.lock().unwrap().hold_lookups = false;
+    }
+
+    /// How many lookups were held back while lookups were held.
+    pub fn held_lookups(&self) -> usize {
+        self.workspace.lock().unwrap().held_lookups
     }
 
     /// History and replies reads wait until [`FakeSlack::release_reads`].

@@ -192,7 +192,9 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         .mention("C1", "USTEVEN", "<@UAGENT> Is the build green?", None);
     let session = c.session();
     // While the first turn runs, two more arrive out of the order they were
-    // written in, within one second.
+    // written in, within one second. The later-written one is taken in
+    // before the earlier one arrives: its lookup waits until then.
+    c.slack.hold_lookups();
     c.slack.mention_at(
         "1700000500.000100",
         "C1",
@@ -200,6 +202,7 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         "<@UAGENT> And the changelog?",
         Some(&root),
     );
+    wait("the later message taken in", || c.slack.held_lookups() > 0);
     c.slack.mention_at(
         "1700000500.000000",
         "C1",
@@ -210,46 +213,33 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
     wait("all three messages acknowledged", || {
         c.slack.acknowledged().len() == 3
     });
+    c.slack.release_lookups();
     // The runner dies right after the runtime accepted the second message
     // and before it recorded that, and that turn finishes while it is down.
     c.runtime.flag("die-after-send", true);
-    let statuses = c.slack.status_calls("C1", &root);
     c.finish_turn(&session, 0, "Green.");
     c.runner_ended();
     assert_eq!(c.runtime.message_count(&session), 2);
     c.finish_turn(&session, 1, "Written.");
     c.run();
-    // Restarted, it shows the agent working on the thread again.
-    wait("the status set again", || {
-        c.slack.status_calls("C1", &root) > statuses
-            && c.slack.status("C1", &root).as_deref() == Some(WORKING)
-    });
     // Restarted, it posts that answer once and the third message follows,
     // with no second copy of the second.
     wait("the third turn", || c.runtime.message_count(&session) == 3);
     assert_eq!(c.slack.posts().len(), 2);
-    // Each answer's post drops the thread's status in Slack while the third
-    // message is unfinished; it is set again at once.
-    wait("the status set again after the posts", || {
-        c.slack.status("C1", &root).as_deref() == Some(WORKING)
-    });
     c.finish_turn(&session, 2, "Done.");
     wait("nothing left to post", || {
         c.conversations().conversations.is_empty() && c.slack.posts().len() == 3
     });
     assert_eq!(c.runtime.message_count(&session), 3);
-    // Each names the person who wrote it, in written order. What accompanies
-    // the third depends on whether the second, written earlier, had arrived
-    // when the third was taken in; only its member envelope is recorded.
-    let third = c.input(&session, 2);
-    let third = &third[third.find("[Member").unwrap()..];
+    // Each names the person who wrote it, in written order. The third was
+    // taken in before the second arrived, so what accompanies it holds the
+    // second too.
     insta::assert_snapshot!(
         "three-turns-delivered",
-        format!(
-            "{}\n---\n{}\n---\n{third}",
-            c.input(&session, 0),
-            c.input(&session, 1)
-        )
+        (0..3)
+            .map(|n| c.input(&session, n))
+            .collect::<Vec<_>>()
+            .join("\n---\n")
     );
     for n in 0..3 {
         let delivered = c.delivered(&session, n);
@@ -268,10 +258,10 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
     let mut c = Company::new("");
     c.run();
     let channel = "C1";
-    // Slack limits the lookup of who wrote it and names a wait: the message
-    // waits, nothing is delivered or replied, and the cause shows. No lookup
-    // is made for this workspace before the wait is over, also not for a
-    // message that arrives meanwhile.
+    // Slack limits the lookup of who wrote it and names a wait far longer
+    // than this test: the message waits, nothing is delivered or replied,
+    // and the cause shows. No lookup is made for this workspace while the
+    // wait lasts, also not for a message that arrives meanwhile.
     let waiting = |c: &Company| {
         c.conversations()
             .conversations
@@ -279,7 +269,7 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
             .filter(|pending| pending.pending_messages == 1 && !pending.failures.is_empty())
             .count()
     };
-    c.slack.limit_lookup(8);
+    c.slack.limit_lookup(3600);
     let asked = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> Are you there?", None);
@@ -290,7 +280,10 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
     assert_eq!(c.slack.lookups(), looked_up);
     assert!(c.sessions().is_empty());
     assert!(c.slack.posts().is_empty());
-    // Once the wait is over both are answered.
+    // Restarted, the runner learns any wait again from Slack, which now
+    // answers: both are answered.
+    c.kill_runner();
+    c.run();
     wait("both conversations' sessions", || c.sessions().len() == 2);
     let mut inputs: Vec<String> = c
         .sessions()
@@ -322,11 +315,6 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
     for post in c.slack.posts() {
         assert_eq!(post.text, TURN_AWAY);
     }
-    // The reply's post dropped the thread's status in Slack; the message
-    // there is unfinished, so it is set again at once.
-    wait("the status set again after the reply", || {
-        c.slack.status(channel, &asked).as_deref() == Some(WORKING)
-    });
     let sessions = c.sessions();
     assert_eq!(sessions.len(), 2);
     assert_eq!(
