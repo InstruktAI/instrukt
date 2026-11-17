@@ -26,10 +26,25 @@ fn search(env: &TestEnv, query: &str) -> Value {
 fn extracted_conversations_survive_restart_and_source_deletion() {
     let env = TestEnv::new();
     let source = fixture::T3Store::new(&env);
+    // Other threads on the computer, one of them still streaming and
+    // rewritten while extraction reads it: the rest are extracted, and the
+    // streaming one is taken up once it has settled.
+    let streaming = source.elsewhere(40, "Elsewheretoken chatter.");
     env.run(env.home(), ["history", "extract", "--json"])
         .success();
     let first = search(&env, "jewels");
     assert_eq!(first["matches"].as_array().unwrap().len(), 2);
+    let during = search(&env, "Elsewheretoken");
+    assert_eq!(during["matches"].as_array().unwrap().len(), 40);
+    assert_eq!(during["failures"].as_array().unwrap().len(), 0);
+    drop(streaming);
+    assert_eq!(
+        search(&env, "Elsewheretoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        41
+    );
     source.remove_threads();
     let retained = search(&env, "jewels");
     assert_eq!(retained["matches"].as_array().unwrap().len(), 2);

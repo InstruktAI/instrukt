@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{home::Home, ids::SessionRef};
 use instrukt_runner::{
     process,
-    runtime::{InputState, RuntimeAdapter, T3},
+    runtime::{InputState, RuntimeAdapter, T3, conversations::Scope},
     sessions::SessionState,
 };
 use serde_json::{Value, json};
@@ -581,7 +581,7 @@ pub fn real(root: &Path) -> Result<()> {
     let mut position = None;
     let mut records = Vec::new();
     loop {
-        let changes = source.changed_since(position.as_ref())?;
+        let changes = source.changed_since(position.as_ref(), Scope::All)?;
         position = Some(changes.position);
         records.extend(changes.records);
         if !changes.has_more {
@@ -592,7 +592,7 @@ pub fn real(root: &Path) -> Result<()> {
         records.iter().any(|r| r.conversation_id == id),
         "real projection payloads absent"
     );
-    let mut unchanged = source.changed_since(position.as_ref())?;
+    let mut unchanged = source.changed_since(position.as_ref(), Scope::All)?;
     ensure!(
         unchanged.records.is_empty() && !unchanged.has_more,
         "unchanged source duplicated records"
@@ -608,7 +608,7 @@ pub fn real(root: &Path) -> Result<()> {
     );
     let mut changed = false;
     loop {
-        let changes = source.changed_since(Some(&unchanged.position))?;
+        let changes = source.changed_since(Some(&unchanged.position), Scope::All)?;
         changed |= !changes.records.is_empty();
         unchanged = changes;
         if !unchanged.has_more {

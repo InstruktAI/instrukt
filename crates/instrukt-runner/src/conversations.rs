@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::connectors::{SlackApi, SlackEndpoint};
 use crate::envelopes::{self, ContextEntry, Control, Span};
 use crate::keyed::{self, RuntimeInvocation};
-use crate::runtime::conversations::{AuthorKind, ConversationSource, SourcePosition};
+use crate::runtime::conversations::{AuthorKind, ConversationSource, Scope, SourcePosition};
 use crate::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::{self, RunnerState, StateError};
@@ -606,17 +606,11 @@ fn assignment(home: &Home, c: &Conversation) -> Result<String, ConversationError
     )))
 }
 
-/// The source's current end: a new session's answers start after it.
-fn source_end(source: &dyn ConversationSource) -> Result<SourcePosition, ConversationError> {
-    let mut position = None;
-    loop {
-        let batch = source.changed_since(position.as_ref())?;
-        position = Some(batch.position);
-        if !batch.has_more {
-            break;
-        }
-    }
-    position.ok_or_else(|| ConversationError::Refused("source supplied no position".into()))
+/// The position a new session's answers are read from: one over no
+/// conversation yet, so everything its own thread comes to hold is read after
+/// it. Capturing it reads no native history.
+fn opening_position(source: &dyn ConversationSource) -> Result<SourcePosition, ConversationError> {
+    Ok(source.changed_since(None, Scope::Only(&[]))?.position)
 }
 
 fn set_failure(
@@ -772,7 +766,7 @@ fn start(
                 brief: format!("{}\n{input}", assignment(home, c)?),
                 worktree: None,
             };
-            let position = source_end(source)?;
+            let position = opening_position(source)?;
             state.write::<_, StateError>(|tx| {
                 let path = state::db_path(tx);
                 tx.execute(
@@ -905,8 +899,11 @@ fn harvest(
             "the selected conversation source changed; restore the recorded source".into(),
         ));
     }
+    // Only the session's own thread is read: other threads, changing or
+    // not, neither delay nor fail its answers.
+    let own = std::slice::from_ref(&session.id);
     loop {
-        let batch = source.changed_since(Some(&position))?;
+        let batch = source.changed_since(Some(&position), Scope::Only(own))?;
         if batch.missing.iter().any(|id| id == &session.id) {
             return Err(ConversationError::Refused(
                 "the session's native conversation content is missing; restore it".into(),

@@ -26,6 +26,9 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // The company starts its sessions on its own order of profiles.
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
+    // The computer runs other work throughout: many other threads, one of
+    // them streaming and rewritten while instrukt reads.
+    let _elsewhere = c.store.elsewhere(200, "Elsewhere chatter.");
     c.run();
     let channel = "C1";
     // The runner dies before the runtime accepted the question's opening.
@@ -100,6 +103,10 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     wait("nothing left to post", || {
         c.conversations().conversations.is_empty()
     });
+    // With the other thread still streaming, no cause comes back.
+    for _ in 0..5 {
+        assert!(c.conversations().conversations.is_empty());
+    }
     assert_eq!(
         destinations(&c),
         [

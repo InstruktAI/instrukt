@@ -54,6 +54,9 @@ fn wait_for(condition: impl FnMut() -> bool) {
 fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     let env = common::TestEnv::new();
     let store = history::T3Store::new(&env);
+    // Other work on the computer throughout: many other threads, one of them
+    // streaming and rewritten while the link's threads are read.
+    let _elsewhere = store.elsewhere(200, "Elsewhere chatter.");
     let fake = runtime::FakeT3::create(&env);
     fake.seed("parent", env.home(), "peer-a", "opening a");
     fake.seed("child", env.home(), "peer-b", "opening b");
@@ -139,6 +142,10 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
             .any(|d| d.delivered_turn.as_deref() == Some("fresh-after-restart"))
     });
     assert_eq!(fake.message_count("parent"), 4);
+    // The other threads' changes left no cause on the link.
+    let link = links::status(&home).unwrap().remove(0);
+    assert_eq!(link.failure, None);
+    assert!(link.directions.iter().all(|d| d.failure.is_none()));
     env.instrukt(env.home())
         .env("T3CODE_THREAD_ID", a.id.as_str())
         .args(["discuss", "close"])

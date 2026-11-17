@@ -137,7 +137,8 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
     let mut report = Extraction::default();
     loop {
         let started = std::time::Instant::now();
-        let batch = source.changed_since(position.as_ref())?;
+        let batch =
+            source.changed_since(position.as_ref(), crate::runtime::conversations::Scope::All)?;
         let changed = position.as_ref() != Some(&batch.position);
         let loaded = _projection::apply(home, source.identity(), &batch)?;
         if changed || !batch.records.is_empty() {

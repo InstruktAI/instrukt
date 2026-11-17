@@ -146,6 +146,60 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         .unwrap();
         tx.commit().unwrap();
     }
+    /// Other work on the computer: `count` finished threads beside the
+    /// scenario's own, each saying `said`, and one more whose answer keeps
+    /// streaming, rewritten continuously, until the returned guard is
+    /// dropped. Its last text is `said` too.
+    #[allow(dead_code, reason = "shared by the source-reading scenarios")]
+    pub fn elsewhere(&self, count: usize, said: &str) -> Elsewhere {
+        let at = "2026-11-08T09:00:00.000Z";
+        let tx = self.db.unchecked_transaction().unwrap();
+        let threads = (0..count)
+            .map(|n| (format!("elsewhere-{n:04}"), false))
+            .chain([("elsewhere-streaming".to_owned(), true)]);
+        for (thread, streaming) in threads {
+            let payload = json!({"id":thread,"projectId":"project","title":"Elsewhere","lineage":{"parentThreadId":null,"relationshipToParent":null},"createdAt":at,"updatedAt":at,"archivedAt":null,"deletedAt":null});
+            tx.execute("INSERT INTO orchestration_v2_projection_threads VALUES(?1,'project','Elsewhere',?2,?2,NULL,NULL,?3)",params![thread,at,payload.to_string()]).unwrap();
+            let message = if streaming {
+                "elsewhere-answer".to_owned()
+            } else {
+                format!("{thread}-message")
+            };
+            let payload = json!({"id":message,"threadId":thread,"role":"assistant","text":said,"createdAt":at,"updatedAt":at,"streaming":streaming,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
+            tx.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',?3,?4,?4,?5)",params![message,thread,streaming,at,payload.to_string()]).unwrap();
+        }
+        tx.commit().unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = stop.clone();
+        let file = self.file.clone();
+        let said = said.to_owned();
+        let writer = std::thread::spawn(move || {
+            let db = Connection::open(&file).unwrap();
+            db.busy_timeout(Duration::from_secs(5)).unwrap();
+            let mut n = 0_u64;
+            while !stopping.load(std::sync::atomic::Ordering::Relaxed) {
+                n += 1;
+                let payload = json!({"id":"elsewhere-answer","threadId":"elsewhere-streaming","role":"assistant","text":format!("{said} {n}"),"createdAt":at,"updatedAt":at,"streaming":true,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
+                db.execute(
+                    "UPDATE orchestration_v2_projection_messages SET payload_json=?1 WHERE message_id='elsewhere-answer'",
+                    [payload.to_string()],
+                )
+                .unwrap();
+                // Paces the stream like a provider's deltas.
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let payload = json!({"id":"elsewhere-answer","threadId":"elsewhere-streaming","role":"assistant","text":said,"createdAt":at,"updatedAt":at,"streaming":false,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
+            db.execute(
+                "UPDATE orchestration_v2_projection_messages SET streaming=0,payload_json=?1 WHERE message_id='elsewhere-answer'",
+                [payload.to_string()],
+            )
+            .unwrap();
+        });
+        Elsewhere {
+            stop,
+            writer: Some(writer),
+        }
+    }
     pub fn remove_threads(&self) {
         self.db.execute_batch("DELETE FROM orchestration_v2_projection_messages;DELETE FROM orchestration_v2_projection_threads;").unwrap();
     }
@@ -199,6 +253,21 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             json!({"serverVersion":"future-compatible-release"}).to_string(),
         )
         .unwrap();
+    }
+}
+
+/// The streaming thread of [`T3Store::elsewhere`]; dropping it finishes that
+/// thread's answer.
+pub struct Elsewhere {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    writer: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for Elsewhere {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(writer) = self.writer.take() {
+            writer.join().unwrap();
+        }
     }
 }
 
