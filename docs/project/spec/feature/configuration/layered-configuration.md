@@ -282,7 +282,9 @@ with `--global` answers from the global layer alone. Writes address one layer
   or switched on with no runtime chosen, naming each missing capability and
   the selected runtime
   (`project/instrukt/spec/feature/runner/session-continuity`). A write
-  that would switch such a feature on is refused with the same naming;
+  that would switch such a feature on is refused with the same naming. Events
+  on a computer that is the ingress and not the reacting computer need no
+  runtime: receiving and publishing need no agent;
 - in a project, `modules.todos` on in the effective configuration while the
   project's code is not on GitHub, saying in plain words that todos need the
   project's code on GitHub

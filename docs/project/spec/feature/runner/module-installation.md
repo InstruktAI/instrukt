@@ -464,7 +464,10 @@ Then installation reports that prerequisite and claims no success
   convergence; successful parts are reported separately and reruns reuse them.
 - No release-pointer, daemon lifecycle, fleet update or legacy Redis config
   migration is imported from TeleClaude.
-- Each computer checks only its own settings. instrukt does not detect two computers that disagree on `ingress.computer` or `ingress.reactions`: then no computer reacts to external facts, the wrong one does, or two do, and nothing reports it. Agreement is established when the computers are configured (`project/instrukt/spec/feature/configuration/configuration-skill`); `instrukt events status` on each computer shows its machine ID and both settings as it reads them, for a person or an agent to compare.
+- Installation and `install --check` judge this computer's own settings
+  only: computers that disagree on the ingress or the reacting computer each
+  pass, and what follows is the owner's caveat
+  (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`).
 
 ## See Also
 

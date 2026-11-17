@@ -79,8 +79,15 @@ When the ingress and the reacting computer differ, they need different things:
 
 | Computer | Needs | Does not need |
 | --- | --- | --- |
-| Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `instrukt.yaml`, and the signing values in the declaring home's owner-only secrets file | A runtime, or any procedure run for an external fact |
+| Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `instrukt.yaml`, and the signing values in the declaring home's owner-only secrets file, with events enabled for the declaring home | A runtime (`project/instrukt/spec/feature/runner/session-continuity`), or any procedure run for an external fact |
 | Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
+
+Changing `ingress.reactions` or `ingress.computer` is a change the operator
+coordinates while nothing is in flight: intake is stopped or the stream has
+drained, the computer that reacted so far has settled what it accepted, then the
+setting is changed on every participating computer and intake resumes. An
+activation a computer has accepted stays with that computer and runs there. A
+fact read after the change is handled under the new setting.
 
 A home missing on the reacting computer fails visibly at the accepted
 activation's execution boundary. Another home or computer never substitutes
@@ -186,6 +193,7 @@ And the server publishes the fact and runs no procedure for it
 - Socket queuing survives receiver restart only within the provider timeout and an admitted service manager's support; it supplies no outage store-and-forward.
 - GitHub's delivery ID and event-type headers are not signed body fields. Source-scoped claim deduplication is bounded replay suppression, not independent authentication of those headers.
 - A scheduled-only reacting computer activates on its next tick within retention even while the receiver continues accepting.
+- Changing `ingress.reactions` or `ingress.computer` other than as a coordinated change while nothing is in flight is not supported: a fact may then find no reacting computer or two. No work moves between computers.
 - Activation keys are kept per computer. instrukt does not detect two computers that disagree on `ingress.computer` or `ingress.reactions`: then no computer reacts to external facts, the wrong one does, or two do, and nothing reports it. Agreement is established when the computers are configured (`project/instrukt/spec/feature/configuration/configuration-skill`); `instrukt events status` on each computer shows its machine ID and both settings as it reads them, for a person or an agent to compare.
 
 ## See Also

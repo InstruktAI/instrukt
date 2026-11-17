@@ -138,6 +138,13 @@ partial success; inaccessible computers stay incomplete. Runtime environment
 addresses and instrukt machine IDs remain separate observed facts; each
 computer's machine ID is read from its `instrukt events status`.
 
+The rule that retained readers are prepared before their producers
+(`project/instrukt/spec/feature/runner/module-installation`) includes the
+reacting computer when it is another computer than the ingress: it is
+configured and installed, with its consumer prepared, before the ingress starts
+receiving. A consumer prepared later starts at the stream's end and misses the
+facts published before it.
+
 ## Use cases
 
 #### UC-CS1: Configure a two-computer cluster
