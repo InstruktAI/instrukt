@@ -58,6 +58,14 @@ impl Env {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.vars.get(name).map(String::as_str)
     }
+    /// What [`crate::fsx::FENCE_VARIABLE`] says: the locations it keeps this
+    /// process from writing and where refusals are recorded; nothing when it
+    /// is unset.
+    pub fn write_fence(&self) -> crate::fsx::FenceSetting {
+        self.get(crate::fsx::FENCE_VARIABLE)
+            .map(crate::fsx::FenceSetting::parse)
+            .unwrap_or_default()
+    }
 }
 
 /// A runtime compiled into instrukt; selection is always explicit.

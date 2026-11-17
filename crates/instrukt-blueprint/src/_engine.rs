@@ -17,7 +17,6 @@
 //! An engine that cannot be found is reported with what to install;
 //! `instrukt install` converges the release pin.
 
-use std::fs::File;
 use std::io::{self, Write as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
@@ -286,7 +285,7 @@ impl Runner<'_> {
         let stdout_path = self.scratch.join("engine.stdout");
         let stderr_path = self.scratch.join("engine.stderr");
         let create = |path: &Path| {
-            File::create(path).map_err(|source| EngineError::Io {
+            instrukt_core::fsx::create(path).map_err(|source| EngineError::Io {
                 what: "cannot create",
                 path: path.to_path_buf(),
                 source,
@@ -471,9 +470,9 @@ fn remove_entry(path: &Path) -> Result<(), EngineError> {
         }
     };
     let removed = if meta.is_dir() {
-        std::fs::remove_dir_all(path)
+        instrukt_core::fsx::remove_dir_all(path)
     } else {
-        std::fs::remove_file(path)
+        instrukt_core::fsx::remove_file(path)
     };
     removed.map_err(|source| EngineError::Io {
         what: "cannot remove",

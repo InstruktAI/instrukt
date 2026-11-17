@@ -232,7 +232,7 @@ fn write(path: &Path, html: &str) -> anyhow::Result<()> {
         );
     }
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        instrukt_core::fsx::create_dir_all(parent)
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }
     instrukt_core::fsx::atomic_write(path, html.as_bytes())

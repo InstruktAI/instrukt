@@ -289,9 +289,7 @@ fn publish(
     config::migrate(home, &Layer::Global)?;
     config::bring_current(home, &Layer::Project(project.worktree.clone()))?;
     let committed = Committed::read(&project.primary, commit)?;
-    let checkout = tempfile::Builder::new()
-        .prefix("instrukt-sync-")
-        .tempdir()
+    let checkout = crate::fsx::temp_dir(tempfile::Builder::new().prefix("instrukt-sync-"))
         .map_err(|source| PublicationError::Io {
             path: std::env::temp_dir(),
             source,
@@ -693,9 +691,7 @@ fn write(
 ) -> Result<Vec<PathBuf>, PublicationError> {
     let root = home.root();
     let in_home = |path: &Path| confined(root, &relative_to(root, path)?);
-    let staging = tempfile::Builder::new()
-        .prefix(STAGING_PREFIX)
-        .tempdir_in(root)
+    let staging = crate::fsx::temp_dir_in(tempfile::Builder::new().prefix(STAGING_PREFIX), root)
         .map_err(|source| PublicationError::Io {
             path: root.to_path_buf(),
             source,

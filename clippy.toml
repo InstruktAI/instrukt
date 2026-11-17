@@ -3,3 +3,38 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-dbg-in-tests = false
 allow-print-in-tests = true
+# Every write passes the write fence (instrukt_core::fsx).
+disallowed-methods = [
+    { path = "std::fs::write", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::create_dir", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::create_dir_all", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::rename", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::remove_file", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::remove_dir", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::remove_dir_all", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::copy", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::hard_link", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::set_permissions", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::File::create", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::File::create_new", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::OpenOptions::open", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::fs::DirBuilder::create", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "std::os::unix::fs::symlink", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::tempfile", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::tempfile_in", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::tempdir", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::tempdir_in", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::NamedTempFile::new", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::NamedTempFile::new_in", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::NamedTempFile::persist", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::NamedTempFile::persist_noclobber", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::TempPath::persist", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::TempDir::new", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::TempDir::new_in", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::Builder::tempfile", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::Builder::tempfile_in", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::Builder::tempdir", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "tempfile::Builder::tempdir_in", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "rusqlite::Connection::open", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+    { path = "rusqlite::Connection::open_with_flags", reason = "write through instrukt_core::fsx, which admits every write at the write fence" },
+]

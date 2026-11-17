@@ -7,9 +7,16 @@
 //! - subprocesses (instrukt and git) run with a cleared environment: `PATH`,
 //!   the temporary `HOME`, an isolated git configuration and whatever the
 //!   test sets with [`TestEnv::set_env`] — no live session variable leaks in;
-//! - on drop it fails the test when anything on the live machine that
-//!   instrukt could write — `~/.instrukt`, the agent CLIs' entrypoints and
-//!   settings, the user's git configuration — changed while it ran.
+//! - every subprocess carries the write fence
+//!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home: an
+//!   instrukt process whose own file operation would land there, directly or
+//!   through a symbolic link, refuses it before it happens and records the
+//!   refusal in a record this test owns and names in the fence; on drop the
+//!   test fails when a refusal was recorded, or when the record cannot be
+//!   read. What other processes on the computer do to the live home is not
+//!   the test's concern and is not looked at. The fence is not a sandbox:
+//!   the programs instrukt starts and the test's own fixtures stay inside the
+//!   temporary home by construction.
 //!
 //! [`github::FakeGitHub`] (or [`TestEnv::with_fake_github`]) stands in for
 //! GitHub's API at the network line for the work, workflow and runner
@@ -90,14 +97,12 @@ pub struct TestEnv {
     root: TempDir,
     home: PathBuf,
     vars: BTreeMap<String, String>,
-    guard: LiveGuard,
     redis: std::sync::Mutex<Option<redis::RedisServer>>,
     readiness: std::sync::Mutex<Option<t3_readiness::Server>>,
 }
 
 impl TestEnv {
     pub fn new() -> Self {
-        let guard = LiveGuard::over_live_machine();
         let root = tempfile::Builder::new()
             .prefix("instrukt-test-")
             .tempdir()
@@ -184,11 +189,25 @@ impl TestEnv {
         );
         vars.insert("GIT_CONFIG_NOSYSTEM".into(), "1".into());
         vars.insert("LANG".into(), "C.UTF-8".into());
+        // The record lives in the test's own directory, where no command's
+        // settings point; the fence names it, and instrukt only appends to it.
+        let record = base.join("fence");
+        std::fs::create_dir_all(&record).unwrap();
+        std::fs::write(record.join(instrukt_core::fsx::FENCE_RECORD), "").unwrap();
+        let mut fence = live_fence(&base);
+        fence.push(PathBuf::from(format!(
+            "{}{}",
+            instrukt_core::fsx::FENCE_RECORD_ENTRY,
+            record.display()
+        )));
+        vars.insert(
+            instrukt_core::fsx::FENCE_VARIABLE.into(),
+            std::env::join_paths(fence).unwrap().into_string().unwrap(),
+        );
         Self {
             root,
             home,
             vars,
-            guard,
             redis: std::sync::Mutex::new(None),
             readiness: std::sync::Mutex::new(None),
         }
@@ -225,6 +244,37 @@ impl TestEnv {
 
     pub fn path(&self, relative: &str) -> PathBuf {
         self.base().join(relative)
+    }
+
+    /// Adds `location` to the write fence every later instrukt process
+    /// carries.
+    pub fn fence(&mut self, location: &Path) -> &mut Self {
+        let current = self
+            .vars
+            .get(instrukt_core::fsx::FENCE_VARIABLE)
+            .cloned()
+            .unwrap_or_default();
+        let mut fenced: Vec<PathBuf> = std::env::split_paths(&current).collect();
+        fenced.push(location.to_path_buf());
+        let joined = std::env::join_paths(fenced).unwrap().into_string().unwrap();
+        self.vars
+            .insert(instrukt_core::fsx::FENCE_VARIABLE.into(), joined);
+        self
+    }
+
+    /// The writes instrukt processes of this test refused at the fence, one
+    /// line each; taking them empties the record. A record that cannot be
+    /// read fails the test: it is never taken for no refusal.
+    pub fn refusals(&self) -> Vec<String> {
+        let record = self.path("fence").join(instrukt_core::fsx::FENCE_RECORD);
+        let text = std::fs::read_to_string(&record).unwrap_or_else(|error| {
+            panic!(
+                "the write fence's record {} cannot be read: {error}",
+                record.display()
+            )
+        });
+        std::fs::write(&record, "").unwrap();
+        text.lines().map(str::to_owned).collect()
     }
 
     /// Sets an environment variable for every later subprocess, e.g. a
@@ -356,10 +406,10 @@ impl Drop for TestEnv {
         if std::thread::panicking() {
             return;
         }
-        let changed = self.guard.changed();
+        let refused = self.refusals();
         assert!(
-            changed.is_empty(),
-            "the test wrote outside its temporary HOME ({}): {changed:#?}",
+            refused.is_empty(),
+            "the test tried to write outside its temporary HOME ({}): {refused:#?}",
             self.root.path().display()
         );
     }
@@ -434,7 +484,38 @@ where
         .to_owned()
 }
 
-/// What the guard compares for one path: the path itself (a symlink's own
+/// The live user's locations every instrukt process of a test is fenced
+/// from: the whole live home, unless the test's own directory lies inside
+/// it, and in every case the files and trees instrukt is known to write
+/// there (through a symbolic link, these may resolve outside the home).
+fn live_fence(base: &Path) -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let mut fenced: Vec<PathBuf> = [
+        ".instrukt",
+        ".t3",
+        ".gitconfig",
+        ".config/git",
+        ".claude",
+        ".codex",
+        ".gemini",
+        ".dsh",
+        ".teleclaude",
+        "Library/LaunchAgents",
+        ".config/systemd",
+    ]
+    .iter()
+    .map(|rel| home.join(rel))
+    .collect();
+    let real = home.canonicalize().unwrap_or_else(|_| home.clone());
+    if !base.starts_with(&real) {
+        fenced.insert(0, home);
+    }
+    fenced
+}
+
+/// What a snapshot compares for one path: the path itself (a symlink's own
 /// identity and where it points) and, followed, what it resolves to.
 /// `None` parts do not exist.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,55 +524,30 @@ struct Stat {
     target: Option<(u64, Option<SystemTime>)>,
 }
 
-/// A snapshot of live-machine paths instrukt could write, compared on drop.
-/// Symlinks are compared both as links and through their targets; any
-/// inspection failure other than a missing path fails the test.
-pub struct LiveGuard {
+/// A snapshot of files and directory trees of a test's own directory,
+/// compared later to show a command left them as they were. Symlinks are
+/// compared both as links and through their targets; any inspection
+/// failure other than a missing path fails the test.
+pub struct Snapshot {
     entries: BTreeMap<PathBuf, Stat>,
     trees: Vec<PathBuf>,
 }
 
-impl LiveGuard {
-    /// Guards the live user's `~/.instrukt` (whole tree), the user-scope
-    /// entrypoints and settings of supported agent CLIs, and the user's git
-    /// configuration.
-    pub fn over_live_machine() -> Self {
-        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-            return Self::over(Vec::new(), Vec::new());
-        };
-        let files = [
-            ".gitconfig",
-            ".claude/CLAUDE.md",
-            ".claude/settings.json",
-            ".codex/AGENTS.md",
-            ".codex/config.toml",
-            ".gemini/GEMINI.md",
-            ".gemini/settings.json",
-            ".gemini/antigravity-cli/AGENTS.md",
-            ".gemini/antigravity-cli/settings.json",
-            ".dsh/AGENTS.md",
-            ".teleclaude/docs/index.yaml",
-        ]
-        .iter()
-        .map(|rel| home.join(rel))
-        .collect();
-        Self::over(files, vec![home.join(".instrukt")])
-    }
-
-    /// Guards the given files and directory trees.
+impl Snapshot {
+    /// Snapshots the given files and directory trees.
     pub fn over(files: Vec<PathBuf>, trees: Vec<PathBuf>) -> Self {
-        let mut guard = Self {
+        let mut snapshot = Self {
             entries: BTreeMap::new(),
             trees,
         };
         for file in files {
             let state = stat(&file);
-            guard.entries.insert(file, state);
+            snapshot.entries.insert(file, state);
         }
-        for (path, state) in guard.walk_trees() {
-            guard.entries.insert(path, state);
+        for (path, state) in snapshot.walk_trees() {
+            snapshot.entries.insert(path, state);
         }
-        guard
+        snapshot
     }
 
     /// Paths that appeared, disappeared or changed since the snapshot.
@@ -524,7 +580,7 @@ impl LiveGuard {
                 match entry {
                     Ok(entry) => found.push((entry.path().to_path_buf(), stat(entry.path()))),
                     Err(err) if is_not_found(err.io_error()) => {}
-                    Err(err) => panic!("live guard cannot inspect {}: {err}", tree.display()),
+                    Err(err) => panic!("snapshot cannot inspect {}: {err}", tree.display()),
                 }
             }
         }
@@ -537,7 +593,7 @@ fn stat(path: &Path) -> Stat {
         Ok(meta) => {
             let points_to = if meta.file_type().is_symlink() {
                 Some(std::fs::read_link(path).unwrap_or_else(|err| {
-                    panic!("live guard cannot read link {}: {err}", path.display())
+                    panic!("snapshot cannot read link {}: {err}", path.display())
                 }))
             } else {
                 None
@@ -545,12 +601,12 @@ fn stat(path: &Path) -> Stat {
             Some((meta.len(), meta.modified().ok(), points_to))
         }
         Err(err) if is_not_found(Some(&err)) => None,
-        Err(err) => panic!("live guard cannot inspect {}: {err}", path.display()),
+        Err(err) => panic!("snapshot cannot inspect {}: {err}", path.display()),
     };
     let target = match std::fs::metadata(path) {
         Ok(meta) => Some((meta.len(), meta.modified().ok())),
         Err(err) if is_not_found(Some(&err)) => None,
-        Err(err) => panic!("live guard cannot inspect {}: {err}", path.display()),
+        Err(err) => panic!("snapshot cannot inspect {}: {err}", path.display()),
     };
     Stat { link, target }
 }

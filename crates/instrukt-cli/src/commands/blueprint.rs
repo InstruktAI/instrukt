@@ -199,12 +199,11 @@ fn ask(
         ctx.out.line(UNAVAILABLE)?;
         return Ok(ExitCode::SUCCESS);
     };
-    let scratch = tempfile::Builder::new()
-        .prefix("instrukt-blueprint-")
-        .tempdir()
-        .context("cannot make a scratch directory for the engine")?;
+    let scratch =
+        instrukt_core::fsx::temp_dir(tempfile::Builder::new().prefix("instrukt-blueprint-"))
+            .context("cannot make a scratch directory for the engine")?;
     let graph = scratch.path().join("graph.json");
-    std::fs::write(&graph, latest.graph.to_json()?)
+    instrukt_core::fsx::write(&graph, latest.graph.to_json()?)
         .with_context(|| format!("cannot write {}", graph.display()))?;
     let answer = engine
         .ask(question, args, &graph, scratch.path(), QUESTION_TIMEOUT)

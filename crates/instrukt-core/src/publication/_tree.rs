@@ -97,7 +97,7 @@ pub(super) fn stage_position(
     staged: &Path,
 ) -> Result<(), PublicationError> {
     let prefix = format!("{}/", position.dir());
-    std::fs::create_dir_all(staged).map_err(|source| PublicationError::Io {
+    crate::fsx::create_dir_all(staged).map_err(|source| PublicationError::Io {
         path: staged.to_path_buf(),
         source,
     })?;

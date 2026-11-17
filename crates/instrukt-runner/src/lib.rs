@@ -19,6 +19,13 @@
 //!   order and task due times.
 //! - [`anomaly`], [`ticks`] and [`install`] — notification, wake-up
 //!   accounting and the OS scheduler registration.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "unit tests build their scratch trees directly"
+    )
+)]
 
 pub mod agents;
 pub mod anomaly;

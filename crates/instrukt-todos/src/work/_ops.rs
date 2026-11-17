@@ -1288,7 +1288,7 @@ fn release_resources(
                 workspace.display()
             )));
         }
-        std::fs::remove_dir(&workspace).map_err(|source| WorkError::Io {
+        instrukt_core::fsx::remove_dir(&workspace).map_err(|source| WorkError::Io {
             path: workspace.clone(),
             source,
         })?;

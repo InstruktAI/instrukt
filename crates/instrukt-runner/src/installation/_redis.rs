@@ -91,8 +91,11 @@ pub(super) fn ensure(
                 quote(&acl)
             );
             if !request.check {
-                std::fs::create_dir_all(&redis_dir)?;
-                std::fs::set_permissions(&redis_dir, std::fs::Permissions::from_mode(0o700))?;
+                instrukt_core::fsx::create_dir_all(&redis_dir)?;
+                instrukt_core::fsx::set_permissions(
+                    &redis_dir,
+                    std::fs::Permissions::from_mode(0o700),
+                )?;
             }
             owned.retained_file(request, &conf, &expected_conf)?;
             let mut definition = _services::redis(request, &server, &conf);

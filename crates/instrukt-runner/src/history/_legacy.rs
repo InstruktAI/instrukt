@@ -35,7 +35,7 @@ pub(super) fn import(home: &Home, path: Option<&Path>) -> Result<Extraction, His
     if _store::position(home, &source)?.1 {
         return Ok(Extraction::default());
     }
-    let mut db = Connection::open_with_flags(
+    let mut db = instrukt_core::fsx::open_database(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;

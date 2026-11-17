@@ -157,7 +157,7 @@ fn real_pinned_graphify_contract() {
     env.run(repo.path(), ["sync"]).success();
     env.run(repo.path(), ["install", "--module", "blueprint"])
         .success();
-    let inspection = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    let inspection = common::Snapshot::over(vec![], vec![env.home().into()]);
     env.run(repo.path(), ["install", "--check", "--module", "blueprint"])
         .success();
     assert!(

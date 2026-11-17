@@ -56,10 +56,11 @@ pub(crate) fn checkout_entrypoints(
         }
     })?;
     let committed = Committed::read(&project.primary, &record.commit)?;
-    let temp = tempfile::tempdir().map_err(|source| PublicationError::Io {
-        path: std::env::temp_dir(),
-        source,
-    })?;
+    let temp =
+        crate::fsx::temp_dir(&tempfile::Builder::new()).map_err(|source| PublicationError::Io {
+            path: std::env::temp_dir(),
+            source,
+        })?;
     committed.materialize(temp.path())?;
     let config = Configuration::load(&home.for_inspection(), Some(temp.path()))?;
     let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
@@ -128,7 +129,7 @@ pub(crate) fn checkout_entrypoints(
         .filter(|old| !agents.iter().any(|(rel, _)| rel == *old))
     {
         let file = confined(&project.worktree, rel)?;
-        match std::fs::remove_file(&file) {
+        match crate::fsx::remove_file(&file) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => return Err(PublicationError::Io { path: file, source }),

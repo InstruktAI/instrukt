@@ -41,7 +41,7 @@ pub(super) fn server(request: &Request<'_>) -> anyhow::Result<PathBuf> {
     );
     // Download/extract only: no dpkg install, maintainer scripts or foreign services.
     // A missing shared library remains a prerequisite when the executable is checked.
-    std::fs::create_dir_all(&packages)?;
+    instrukt_core::fsx::create_dir_all(&packages)?;
     let done = Invocation::program("apt-get", &["download", "redis-server"])
         .cwd(&packages)
         .run(Duration::from_secs(300))?;

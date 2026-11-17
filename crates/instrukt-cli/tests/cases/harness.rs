@@ -1,11 +1,16 @@
 //! The harness's own guarantees: every command prints its contract on
 //! `--help` without acting, subprocesses see only the environment the test
-//! gives them, and writes to guarded live paths are detected.
+//! gives them, and an instrukt write outside the temporary home is refused
+//! before it lands, directly or through a symbolic link.
+
+#![allow(clippy::unwrap_used, reason = "isolated harness fixtures")]
 
 use crate::common;
 use std::collections::BTreeMap;
 
-use common::{LiveGuard, TestEnv};
+use crate::fixtures::documented;
+use common::{Snapshot, TestEnv};
+use instrukt_core::fsx::FENCE_EXIT;
 
 const COMMANDS: [&str; 15] = [
     "config",
@@ -104,39 +109,263 @@ fn commits_carry_the_isolated_git_identity() {
     );
 }
 
-#[test]
-fn a_write_to_a_guarded_path_is_detected() {
-    let live = tempfile::tempdir().unwrap();
-    let settings = live.path().join("settings.json");
-    std::fs::write(&settings, "{}").unwrap();
-    let tree = live.path().join(".instrukt");
-    let guard = LiveGuard::over(vec![settings.clone()], vec![tree.clone()]);
-    assert!(guard.changed().is_empty());
+/// A directory standing in for the live user's home: the real one is never
+/// written by these tests, not even to show it is protected.
+struct Live {
+    dir: tempfile::TempDir,
+}
+impl Live {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".instrukt")).unwrap();
+        std::fs::write(dir.path().join(".instrukt/keep"), "live data\n").unwrap();
+        Self { dir }
+    }
+    fn path(&self) -> std::path::PathBuf {
+        self.dir.path().canonicalize().unwrap()
+    }
+}
 
-    std::fs::create_dir_all(tree.join("docs")).unwrap();
-    std::fs::write(&settings, "{\"changed\": true}").unwrap();
-    let changed = guard.changed();
-    assert!(changed.contains(&settings), "{changed:?}");
-    assert!(changed.contains(&tree), "{changed:?}");
+/// Runs `instrukt config init --global` and returns its exit status and the
+/// first line of its stderr, the fence's own refusal, with the stand-in live
+/// home and the test's home named.
+fn initialize(env: &TestEnv, live: &Live) -> (Option<i32>, String) {
+    let output = env
+        .instrukt(env.home())
+        .args(["config", "init", "--global"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .replace(&live.path().display().to_string(), "[LIVE]")
+        .replace(&env.home().display().to_string(), "[TEST HOME]");
+    (output.status.code(), stderr)
 }
 
 #[test]
-fn a_write_through_a_guarded_symlink_is_detected() {
-    let live = tempfile::tempdir().unwrap();
-    let real = live.path().join("dotfiles/settings.json");
-    std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-    std::fs::write(&real, "{}").unwrap();
-    let link = live.path().join("settings.json");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
-    let guard = LiveGuard::over(vec![link.clone()], Vec::new());
-    assert!(guard.changed().is_empty());
+fn a_write_outside_the_temporary_home_is_refused_before_it_lands() {
+    let live = Live::new();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    env.set_env(
+        "INSTRUKT_HOME",
+        &live.path().join(".instrukt").display().to_string(),
+    );
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [LIVE]/.instrukt/locks resolves to [LIVE]/.instrukt/locks, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
 
-    std::fs::write(&real, "{\"written\": \"through the link\"}").unwrap();
-    assert_eq!(guard.changed(), vec![link.clone()]);
+#[test]
+fn a_write_through_a_symbolic_link_is_refused_before_it_lands() {
+    let live = Live::new();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    std::os::unix::fs::symlink(live.path().join(".instrukt"), env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/.instrukt/locks, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
 
-    let other = live.path().join("dotfiles/other.json");
-    std::fs::write(&other, "{\"written\": \"through the link\"}").unwrap();
-    std::fs::remove_file(&link).unwrap();
-    std::os::unix::fs::symlink(&other, &link).unwrap();
-    assert_eq!(guard.changed(), vec![link]);
+#[test]
+fn the_loggers_own_files_are_refused_before_they_land() {
+    let live = Live::new();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    // The temporary home's log location leads into the live home.
+    std::fs::create_dir_all(env.home().join(".local")).unwrap();
+    std::os::unix::fs::symlink(live.path(), env.home().join(".local/state")).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.local/state/instrukt-ai/instrukt resolves to [LIVE]/instrukt-ai/instrukt, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+/// A live database that keeps a write-ahead log; closed, it has no sidecars.
+fn live_database(live: &Live) -> std::path::PathBuf {
+    let database = live.path().join("mirrors.db");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(&database).unwrap();
+    db.pragma_update(None, "journal_mode", "WAL").unwrap();
+    db.execute_batch("CREATE TABLE kept(id INTEGER)").unwrap();
+    drop(db);
+    database
+}
+
+/// Imports the legacy store at `source` and returns the exit status.
+fn import(env: &TestEnv, source: &std::path::Path) -> Option<i32> {
+    env.instrukt(env.home())
+        .args(["history", "import-teleclaude", "--source"])
+        .arg(source)
+        .output()
+        .unwrap()
+        .status
+        .code()
+}
+
+#[test]
+fn a_read_that_would_write_beside_a_live_database_is_refused_before_it_lands() {
+    let live = Live::new();
+    let database = live_database(&live);
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    assert_eq!(import(&env, &database), Some(i32::from(FENCE_EXIT)));
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_read_through_a_link_to_a_live_database_is_refused_before_it_lands() {
+    let live = Live::new();
+    let database = live_database(&live);
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    // A link in the test's own directory, which SQLite follows to the live
+    // file and keeps its side files beside.
+    let link = env.path("source.db");
+    std::os::unix::fs::symlink(&database, &link).unwrap();
+    assert_eq!(import(&env, &link), Some(i32::from(FENCE_EXIT)));
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+/// A project published once while the Claude CLI is installed, then
+/// changed, with the CLI's entrypoint fenced: publishing it again writes the
+/// home's own publication before it reaches the entrypoint, and is refused
+/// there.
+struct Republication {
+    repo: common::Repo,
+    roots: Vec<std::path::PathBuf>,
+    previous: BTreeMap<std::path::PathBuf, Vec<u8>>,
+}
+
+fn republication(env: &mut TestEnv) -> Republication {
+    let claude = env.home().join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let care = |body: &str| documented::snippet("policy", "Care", "Care.", "", &[], body);
+    let repo = documented::project(
+        env,
+        "platform",
+        &[
+            (
+                "docs/general/index.yaml",
+                "expanded:\n  - general/policy/care\n".to_owned(),
+            ),
+            ("docs/general/policy/care.md", care("First.\n")),
+        ],
+    );
+    documented::sync(env, &repo);
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let roots = vec![
+        home.index_file(),
+        home.docs_dir(),
+        home.claims_dir(),
+        home.publication_state_dir(),
+        home.publication_outputs_dir(),
+        claude.clone(),
+    ];
+    let previous = published_files(&roots);
+    repo.write("docs/general/policy/care.md", &care("Second.\n"));
+    repo.commit("docs: change the care policy");
+    env.fence(&claude);
+    Republication {
+        repo,
+        roots,
+        previous,
+    }
+}
+
+#[test]
+fn a_publication_refused_part_way_keeps_the_previous_one() {
+    let mut env = TestEnv::new();
+    let republication = republication(&mut env);
+    let output = env
+        .instrukt(republication.repo.path())
+        .arg("sync")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
+    assert_eq!(
+        published_files(&republication.roots),
+        republication.previous
+    );
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_refusal_the_record_cannot_keep_fails_the_test_and_is_rolled_back() {
+    let mut env = TestEnv::new();
+    let republication = republication(&mut env);
+    // The record cannot grow: it is made as long as the file system lets a
+    // file be, found by halving the gap between a length it accepts and one
+    // it refuses. The file stays sparse, so this takes no room on the volume.
+    let record = env.path("fence").join(instrukt_core::fsx::FENCE_RECORD);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&record)
+        .unwrap();
+    let (mut accepted, mut refused) = (0_u64, 1_u64 << 63);
+    while refused - accepted > 1 {
+        let length = accepted + (refused - accepted) / 2;
+        if file.set_len(length).is_ok() {
+            accepted = length;
+        } else {
+            refused = length;
+        }
+    }
+    file.set_len(accepted).unwrap();
+    drop(file);
+    // An append of the test's own fails before instrukt starts.
+    let appended = std::io::Write::write_all(
+        &mut std::fs::OpenOptions::new()
+            .append(true)
+            .open(&record)
+            .unwrap(),
+        b"\n",
+    );
+    assert!(appended.is_err());
+    let output = env
+        .instrukt(republication.repo.path())
+        .arg("sync")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
+    assert_eq!(
+        published_files(&republication.roots),
+        republication.previous
+    );
+    // The refusal removed the record it could not append to, which fails
+    // the test as an unreadable record does.
+    assert!(!record.exists());
+    let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| env.refusals()));
+    assert!(verdict.is_err());
+    // This test of the fence lets its own verdict pass.
+    std::fs::write(&record, "").unwrap();
+}
+
+/// Every file under `roots`, with its content.
+fn published_files(roots: &[std::path::PathBuf]) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+    roots
+        .iter()
+        .flat_map(|root| walkdir::WalkDir::new(root).follow_links(true))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| {
+            (
+                entry.path().to_path_buf(),
+                std::fs::read(entry.path()).unwrap(),
+            )
+        })
+        .collect()
 }

@@ -3,6 +3,13 @@
 //! This file is the composition root: it parses the command line, builds
 //! the invocation context and hands each command to its context's command
 //! module under `commands/`.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "unit tests build their scratch trees directly"
+    )
+)]
 
 mod authorization;
 mod clock;
@@ -82,6 +89,20 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    if let Err(error) = instrukt_core::fsx::fence(&instrukt_core::config::Env::from_process()) {
+        eprintln!("instrukt: {error}");
+        return ExitCode::from(instrukt_core::fsx::FENCE_EXIT);
+    }
+    let code = run();
+    // A write refused at the fence ends the binary with the fence's own
+    // status, whatever the refused operation's caller made of it.
+    if instrukt_core::fsx::fence_refused() {
+        return ExitCode::from(instrukt_core::fsx::FENCE_EXIT);
+    }
+    code
+}
+
+fn run() -> ExitCode {
     let matches = match Cli::command().try_get_matches() {
         Ok(matches) => matches,
         Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
@@ -256,6 +277,15 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Sessions(_) => "sessions",
         Command::Install(_) => "install",
     };
+    // The logger creates its directory and file itself: under a fence, both
+    // are admitted where the library names them, before it does.
+    if instrukt_core::fsx::fence_active() {
+        instrukt_core::fsx::admit(&instrukt_ai_logging::resolve_log_dir("instrukt")?)?;
+        instrukt_core::fsx::admit(&instrukt_ai_logging::resolve_log_file(
+            "instrukt",
+            Some(source),
+        )?)?;
+    }
     instrukt_ai_logging::Builder::new("instrukt")
         .source(source)
         .app_prefix("instrukt_cli")

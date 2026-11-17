@@ -443,7 +443,7 @@ fn record_replaced(root: &Path, replaced: &str) -> Result<(), RepositoryError> {
 }
 
 fn remove_replaced(path: &Path) -> Result<(), RepositoryError> {
-    match std::fs::remove_file(path) {
+    match crate::fsx::remove_file(path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(RepositoryError::Remove {

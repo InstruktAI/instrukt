@@ -263,15 +263,15 @@ impl GraphStore {
         let target = self.dir.join(sha.as_str());
         // Left behind by an interrupted publication; we hold the lock.
         remove_if_present(&staging)?;
-        std::fs::create_dir_all(&staging).map_err(write(&staging))?;
+        instrukt_core::fsx::create_dir_all(&staging).map_err(write(&staging))?;
         let file_path = staging.join(GRAPH_FILE);
-        let mut file = std::fs::File::create(&file_path).map_err(write(&file_path))?;
+        let mut file = instrukt_core::fsx::create(&file_path).map_err(write(&file_path))?;
         file.write_all(&bytes).map_err(write(&file_path))?;
         file.sync_all().map_err(write(&file_path))?;
         drop(file);
         // A directory without a complete graph is not a graph.
         remove_if_present(&target)?;
-        std::fs::rename(&staging, &target).map_err(write(&target))?;
+        instrukt_core::fsx::rename(&staging, &target).map_err(write(&target))?;
         Ok(())
     }
 
@@ -320,7 +320,7 @@ impl GraphStore {
                 continue;
             }
             let path = entry.path();
-            if let Err(error) = std::fs::remove_dir_all(&path) {
+            if let Err(error) = instrukt_core::fsx::remove_dir_all(&path) {
                 published
                     .cleanup_failures
                     .push(CleanupFailure { path, error });
@@ -360,7 +360,7 @@ impl GraphStore {
 
 /// Removes the directory at `path`; one that does not exist is fine.
 fn remove_if_present(path: &Path) -> Result<(), StoreError> {
-    match std::fs::remove_dir_all(path) {
+    match instrukt_core::fsx::remove_dir_all(path) {
         Err(err) if err.kind() != io::ErrorKind::NotFound => Err(write(path)(err)),
         _ => Ok(()),
     }
