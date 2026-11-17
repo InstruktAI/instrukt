@@ -234,8 +234,9 @@ pub fn retain(
 pub struct Unread {
     pub conversation: String,
     pub message: String,
-    /// The previous addressed message of the conversation in written order
-    /// that was not refused, if any: the lower bound of this one's range.
+    /// The previous addressed message of the conversation in written order,
+    /// whether or not it was answered, if any: the lower bound of this one's
+    /// range.
     pub previous: Option<String>,
     /// The sender's connector identity; `None` for a message stored before
     /// senders were kept, which was admitted when it was stored.
@@ -255,9 +256,9 @@ pub fn unread(
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us AND p.state<>?4 ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
                 .map_err(state::sql(path))?;
-            q.query_map(params![company.as_str(), connector, Stage::Received.as_str(), Stage::Refused.as_str()], |r| {
+            q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
                 Ok(Unread {
                     conversation: r.get(0)?,
                     message: r.get(1)?,
@@ -1339,12 +1340,13 @@ pub struct Status {
 
 /// Connection states, conversations with pending messages, answers or
 /// refusals, and their outstanding failures with their cause; no
-/// conversation text or credentials. A connector no running runner hosts is
-/// stopped, whatever it last recorded.
+/// conversation text or credentials. A connector the running runner does not
+/// host is stopped, whatever an earlier run recorded for it, and a declared
+/// connector no run ever hosted is listed as stopped too.
 pub fn status(home: &Home) -> Result<Status, ConversationError> {
     let state = RunnerState::new(home);
-    let hosted = crate::runner::hosting(home);
-    let connectors = state
+    let hosted = crate::runner::hosted(home);
+    let mut connectors = state
         .read(|conn, path| {
             let mut q = conn
                 .prepare("SELECT company,connector,state,failure FROM connector_states ORDER BY company,connector")
@@ -1361,14 +1363,29 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
         .map(|(company, connector, state, failure)| {
             let state = ConnectionState::parse(&state)
                 .ok_or_else(|| ConversationError::Refused(format!("unknown connection state `{state}`")))?;
+            let live = hosted.contains(&(company.clone(), connector.clone()));
             Ok(ConnectorStatus {
                 company,
                 connector,
-                state: if hosted { state } else { ConnectionState::Stopped },
+                state: if live { state } else { ConnectionState::Stopped },
                 failure,
             })
         })
         .collect::<Result<Vec<_>, ConversationError>>()?;
+    for (company, _) in demand(home)? {
+        let listed = connectors.iter().any(|known| {
+            known.company == company.as_str() && known.connector == crate::connectors::SLACK
+        });
+        if !listed {
+            connectors.push(ConnectorStatus {
+                company: company.to_string(),
+                connector: crate::connectors::SLACK.to_owned(),
+                state: ConnectionState::Stopped,
+                failure: None,
+            });
+        }
+    }
+    connectors.sort_by(|a, b| (&a.company, &a.connector).cmp(&(&b.company, &b.connector)));
     let rows = state
         .read(|conn, path| {
             let mut q = conn

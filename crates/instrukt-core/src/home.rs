@@ -218,6 +218,12 @@ impl Home {
         self.state_dir().join("runner.lock")
     }
 
+    /// `~/.instrukt/state/runner-hosts.json` — the connectors the running
+    /// `instrukt run` hosts, published by that run.
+    pub fn runner_hosts_file(&self) -> PathBuf {
+        self.state_dir().join("runner-hosts.json")
+    }
+
     /// `~/.instrukt/state/runner-service.json` — what the runner service
     /// executes, published by the service when it starts.
     pub fn runner_service_file(&self) -> PathBuf {

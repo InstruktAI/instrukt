@@ -346,6 +346,12 @@ fn runner_service(
         let cause = demand.conversation_blockers.join("; ");
         report.finding(ResourceKind::Runner, &cause);
         status(ServiceState::Unmet, Some(cause))
+    } else if demand.conversations.is_empty() && !demand.unreadable_homes.is_empty() {
+        // An unreadable home may declare a connector: the demand is
+        // unresolved and nothing is withdrawn on the strength of it.
+        let cause = demand.unreadable_homes.join("; ");
+        report.finding(ResourceKind::Runner, &cause);
+        status(ServiceState::Unmet, Some(cause))
     } else if demand.conversations.is_empty() {
         if !owned.registered(ResourceKind::Runner) {
             status(ServiceState::NoDemand, None)

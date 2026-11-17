@@ -23,16 +23,10 @@ pub const MEMBERS: &str = "{steven: {name: Steven Sonneveld, email: steven@examp
 /// What one accepted runtime input carried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delivered {
-    /// The name of the person whose addressed message it is.
-    pub member: String,
     /// How many member envelopes it carries.
     pub members: usize,
-    /// Each accompanying message's speaker, by name, and whether it is the
-    /// agent's own post.
-    pub context: Vec<(String, bool)>,
-    /// How many Slack mentions in markup the addressed message and its
-    /// accompanying messages still carry.
-    pub markup: usize,
+    /// How many messages accompany it.
+    pub accompanying: usize,
     /// How many of the addressed message and its accompanying messages
     /// arrived with no text.
     pub empty: usize,
@@ -254,10 +248,10 @@ impl Company {
     pub fn delivered(&self, session: &str, n: usize) -> Delivered {
         let input = self.runtime.message(session, n);
         let spans = envelopes::segment(&input);
-        let (member, body) = spans
+        let body = spans
             .iter()
             .find_map(|span| match span {
-                Span::Member { member, body, .. } => Some(((*member).to_owned(), *body)),
+                Span::Member { body, .. } => Some(*body),
                 _ => None,
             })
             .unwrap();
@@ -268,9 +262,7 @@ impl Company {
                 _ => None,
             })
             .unwrap();
-        let mentioned = instrukt_runner::connectors::mentioned;
         Delivered {
-            member,
             left_out: context.left_out,
             empty: usize::from(body.is_empty())
                 + context
@@ -278,22 +270,28 @@ impl Company {
                     .iter()
                     .filter(|entry| entry.chars == 0)
                     .count(),
-            markup: mentioned(body).len()
-                + context
-                    .entries
-                    .iter()
-                    .map(|entry| mentioned(&entry.text).len())
-                    .sum::<usize>(),
-            context: context
-                .entries
-                .iter()
-                .map(|entry| (entry.speaker.to_owned(), entry.own))
-                .collect(),
+            accompanying: context.entries.len(),
             members: spans
                 .iter()
                 .filter(|span| matches!(span, Span::Member { .. }))
                 .count(),
         }
+    }
+
+    /// The session's `n`th input as the company's agent reads it, from its
+    /// conversation context on, with the delivery's boundary token as a
+    /// placeholder: what a snapshot of a delivered conversation records.
+    pub fn input(&self, session: &str, n: usize) -> String {
+        let input = self.runtime.message(session, n);
+        let boundary = envelopes::segment(&input)
+            .iter()
+            .find_map(|span| match span {
+                Span::Member { boundary, .. } => Some((*boundary).to_owned()),
+                _ => None,
+            })
+            .unwrap();
+        let start = input.find("[Instrukt Conversation Context").unwrap();
+        input[start..].replace(&boundary, "[BOUNDARY]")
     }
 
     /// Whether the session's `n`th input arrived while a turn was running,
@@ -324,11 +322,6 @@ impl Company {
 
     pub fn company(&self) -> ProjectSlug {
         ProjectSlug::parse(COMPANY).unwrap()
-    }
-
-    /// The name Slack shows for the person `slack`.
-    pub fn member(&self, slack: &str) -> String {
-        self.slack.person(slack).shown()
     }
 
     /// Ends the runner the way a signal does, with no chance to record it.

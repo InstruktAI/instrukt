@@ -121,12 +121,18 @@ impl Drop for RunnerLock {
 
 /// The holder the lock file names, when it is that live incarnation.
 pub(super) fn holder(path: &Path) -> Option<Holder> {
+    live_holder(path).map(|(holder, _, _)| holder)
+}
+
+/// The holder the lock file names with its process id and start, when it is
+/// that live incarnation.
+pub(super) fn live_holder(path: &Path) -> Option<(Holder, u32, String)> {
     let record = std::fs::read_to_string(path).ok()?;
     let mut fields = record.trim_end_matches('\n').splitn(3, ' ');
     let holder = Holder::named(fields.next()?)?;
     let pid = fields.next()?.parse::<u32>().ok()?;
     let start = fields.next()?;
-    (incarnation(pid).as_deref() == Some(start)).then_some(holder)
+    (incarnation(pid).as_deref() == Some(start)).then(|| (holder, pid, start.to_owned()))
 }
 
 /// The lock for a tick, which does nothing while another invocation holds it.

@@ -117,8 +117,15 @@ struct Workspace {
     people: std::collections::BTreeMap<String, Person>,
     /// Every status line call: channel, thread and text.
     statuses: Vec<(String, String, String)>,
+    /// The status line each place shows now: a call sets it, and a post of
+    /// the app's own in that place drops it, as Slack does.
+    shown: std::collections::BTreeMap<(String, String), String>,
     /// `users.info` answers that Slack cannot be asked.
     refuse_lookups: bool,
+    /// The next `users.info` is limited: HTTP 429 with this `Retry-After`.
+    limit_lookup: Option<u64>,
+    /// How many times `users.info` was called.
+    lookups: usize,
     /// Every message written, in order: `channel`, `ts`, optional `thread_ts`,
     /// `user`, optional `bot_id`, `text`.
     messages: Vec<Value>,
@@ -191,6 +198,31 @@ impl FakeSlack {
                             counted = true;
                         }
                         std::thread::sleep(Duration::from_millis(20));
+                    }
+                    let limited = {
+                        let mut w = workspace.lock().unwrap();
+                        if method == "users.info" {
+                            w.lookups += 1;
+                            w.limit_lookup.take()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(seconds) = limited {
+                        // As Slack does: HTTP 429, and the wait in Retry-After.
+                        let header =
+                            tiny_http::Header::from_bytes("Retry-After", seconds.to_string())
+                                .unwrap();
+                        request
+                            .respond(
+                                tiny_http::Response::from_string(
+                                    json!({"ok": false, "error": "ratelimited"}).to_string(),
+                                )
+                                .with_status_code(429)
+                                .with_header(header),
+                            )
+                            .unwrap();
+                        continue;
                     }
                     let answer =
                         Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
@@ -297,6 +329,8 @@ impl FakeSlack {
                     arg("thread_ts").unwrap().to_owned(),
                     arg("status").unwrap_or_default().to_owned(),
                 );
+                w.shown
+                    .insert((call.0.clone(), call.1.clone()), call.2.clone());
                 w.statuses.push(call);
                 json!({"ok": true})
             }
@@ -341,6 +375,12 @@ impl FakeSlack {
                     message["thread_ts"] = json!(thread);
                 }
                 w.messages.push(message);
+                // Slack drops the app's status in the place it posts to: the
+                // thread it answers in, or the direct message.
+                w.shown.retain(|(channel, thread), _| {
+                    channel != &post.channel
+                        || post.thread.as_ref().is_some_and(|posted| posted != thread)
+                });
                 w.posts.push(post);
                 json!({"ok": true, "ts": ts})
             }
@@ -422,10 +462,18 @@ impl FakeSlack {
     }
 
     /// One of Slack's own notices in a channel, such as a person joining it.
-    pub fn notice(&self, channel: &str, subtype: &str, user: &str, thread: Option<&str>) -> String {
+    pub fn notice(
+        &self,
+        channel: &str,
+        subtype: &str,
+        user: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) -> String {
         let mut w = self.workspace.lock().unwrap();
         let ts = Self::stamp(&mut w);
-        let mut message = json!({"channel": channel, "ts": ts, "user": user, "subtype": subtype, "text": format!("<@{user}> has joined the channel")});
+        let mut message =
+            json!({"channel": channel, "ts": ts, "user": user, "subtype": subtype, "text": text});
         if let Some(thread) = thread {
             message["thread_ts"] = json!(thread);
         }
@@ -448,17 +496,26 @@ impl FakeSlack {
         self.workspace.lock().unwrap().refuse_lookups = refuse;
     }
 
+    /// The next `users.info` is limited by Slack for `seconds`.
+    pub fn limit_lookup(&self, seconds: u64) {
+        self.workspace.lock().unwrap().limit_lookup = Some(seconds);
+    }
+
+    /// How many times `users.info` was called.
+    pub fn lookups(&self) -> usize {
+        self.workspace.lock().unwrap().lookups
+    }
+
     /// The status line Slack shows on a channel's thread, or on a direct
-    /// message's message: the last text set there, `None` once cleared.
+    /// message's message: the last text set there, `None` once cleared or
+    /// dropped by a post of the app's own in that place.
     pub fn status(&self, channel: &str, thread: &str) -> Option<String> {
         self.workspace
             .lock()
             .unwrap()
-            .statuses
-            .iter()
-            .rev()
-            .find(|(c, t, _)| c == channel && t == thread)
-            .map(|(_, _, text)| text.clone())
+            .shown
+            .get(&(channel.to_owned(), thread.to_owned()))
+            .cloned()
             .filter(|text| !text.is_empty())
     }
 
