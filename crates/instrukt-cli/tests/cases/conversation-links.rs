@@ -135,13 +135,17 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
             .iter()
             .any(|d| matches!(d.receipts.get("empty-run"), Some(links::Disposition::Empty)))
     );
-    // With the other work settled, one more unrelated change wakes the
-    // relay; the runner dies as a source read begins, after the reads before
-    // it retained their positions with the child's run still unfinished. A
-    // turn finishes while it is down, and nothing else changes.
+    // The other work settles and the runner stops. Started again with every
+    // source read held, its first read is the child direction's: directions
+    // are read in source order, and the child's run is still unfinished. That
+    // read is let through, and the runner dies as its next source read
+    // begins, after the child's observation was retained and before anything
+    // reads again. A turn finishes while it is down, and nothing else
+    // changes.
     elsewhere.settle();
+    drop(runner);
     gate.hold();
-    elsewhere.nudge();
+    let runner = run();
     gate.admit();
     gate.held();
     drop(runner);

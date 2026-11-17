@@ -297,8 +297,16 @@ impl Elsewhere {
     }
 }
 impl Drop for Elsewhere {
+    /// The stream always stops and its writer is reaped; a failing test
+    /// only skips the finished answer, and nothing here panics again while
+    /// it unwinds.
     fn drop(&mut self) {
-        if !std::thread::panicking() {
+        if std::thread::panicking() {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(writer) = self.writer.take() {
+                let _ = writer.join();
+            }
+        } else {
             self.settle();
         }
     }
@@ -345,13 +353,11 @@ pub struct Gate {
 /// The `n`th read's named pipe.
 fn make_pipe(pipes: &std::path::Path, n: usize) -> PathBuf {
     let pipe = pipes.join(format!("pipe-{n}"));
-    assert!(
-        std::process::Command::new("mkfifo")
-            .arg(&pipe)
-            .status()
-            .unwrap()
-            .success()
-    );
+    nix::unistd::mkfifo(
+        &pipe,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
     pipe
 }
 /// The descriptor, through the current link, points to `pipe` from now on.
@@ -470,7 +476,9 @@ impl Drop for Gate {
     fn drop(&mut self) {
         {
             let (lock, changed) = &*self.shared;
-            let mut gating = lock.lock().unwrap();
+            let mut gating = lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             gating.stop = true;
             gating.held = false;
             changed.notify_all();
@@ -487,7 +495,11 @@ impl Drop for Gate {
         let _ = std::fs::remove_file(&self.descriptor);
         let _ = std::fs::remove_dir_all(&self.pipes);
         if let Some(content) = &self.content {
-            std::fs::write(&self.descriptor, content).unwrap();
+            let restored = std::fs::write(&self.descriptor, content);
+            // While a failing test unwinds, a second panic would abort it.
+            if !std::thread::panicking() {
+                restored.unwrap();
+            }
         }
     }
 }

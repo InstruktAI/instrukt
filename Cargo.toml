@@ -39,6 +39,7 @@ redis = { version = "=1.8.1", default-features = false, features = ["streams", "
 regex = "1"
 notify = { version = "=8.2.2", default-features = false, features = ["macos_kqueue"] }
 rustix = { version = "1", features = ["fs", "process"] }
+nix = { version = "0.31", default-features = false, features = ["fs"] }
 signal-hook = "0.3"
 rusqlite = { version = "0.41", features = ["bundled", "functions", "serialize", "fallible_uint"] }
 schemars = "1"
