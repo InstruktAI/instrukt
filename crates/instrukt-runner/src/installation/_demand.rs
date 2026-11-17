@@ -4,9 +4,21 @@ use instrukt_core::{
     config::{Configuration, Module},
     home::Home,
 };
+/// One home declaring a nonempty source map: a project or a company home.
 pub(super) struct SourceDemand {
-    pub project: instrukt_core::ids::ProjectSlug,
+    /// The home's kind as its source paths name it: `project` or `company`.
+    pub kind: &'static str,
+    pub slug: instrukt_core::ids::ProjectSlug,
+    /// The configuration holding the home's `webhooks:` declarations.
     pub config: Configuration,
+    /// The protected file its signing references resolve from.
+    pub secrets: instrukt_core::config::SecretSource,
+}
+impl SourceDemand {
+    /// The home as demand and findings name it.
+    pub fn label(&self) -> String {
+        format!("{} {}", self.kind, self.slug)
+    }
 }
 pub(super) struct WorkDemand {
     pub project: instrukt_core::ids::ProjectSlug,
@@ -150,8 +162,10 @@ pub(super) fn read(
             }
             if !sources.is_empty() {
                 demand.sources.push(SourceDemand {
-                    project: record.project.clone(),
+                    kind: "project",
+                    slug: record.project.clone(),
                     config,
+                    secrets: instrukt_core::config::SecretSource::Machine,
                 });
             }
             Ok(())
@@ -161,7 +175,51 @@ pub(super) fn read(
             report.finding(format!("project {}", record.project), error);
         }
     }
+    companies(home, &mut demand, report)?;
     Ok(demand)
+}
+
+/// Company homes follow the machine's global switches: a nonempty valid
+/// source map demands events infrastructure and the receiver while events is
+/// on. A company folder whose document cannot be read or is invalid makes
+/// demand incomplete, so shared resources are never withdrawn on its account.
+fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::Result<()> {
+    let global = Configuration::load_global(home)?;
+    for (name, config) in instrukt_core::config::company_homes(home)? {
+        let result = (|| -> anyhow::Result<()> {
+            let config = match config {
+                Ok(config) => config,
+                // A folder without a settings document is no company.
+                Err(instrukt_core::config::ConfigError::NoLayer { .. }) => return Ok(()),
+                Err(error) => return Err(error.into()),
+            };
+            let sources = config.webhooks()?;
+            if sources.is_empty() {
+                return Ok(());
+            }
+            anyhow::ensure!(
+                global.module_enabled(Module::Events)?,
+                "webhook sources with the machine's events off; explicitly enable events or remove sources"
+            );
+            let features = [Feature::StandingAgents];
+            if let Some(unavailable) = global.unavailable(&features)? {
+                anyhow::bail!("{}", unavailable.describe(&features));
+            }
+            demand.events.push(format!("company:{name}"));
+            demand.sources.push(SourceDemand {
+                kind: "company",
+                slug: name.clone(),
+                config,
+                secrets: instrukt_core::config::SecretSource::Company(name.clone()),
+            });
+            Ok(())
+        })();
+        if let Err(error) = result {
+            demand.complete = false;
+            report.finding(format!("company {name}"), error);
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn owned_server(url: &str, owned: &std::path::Path) -> anyhow::Result<bool> {

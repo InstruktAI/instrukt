@@ -76,22 +76,13 @@ fn a_company_is_added_beside_the_others_and_a_misnamed_folder_is_no_company() {
         "acme",
         Some("{webhooks: {erp: {secret: '${ACME_HOOK}'}}}"),
     );
-    assert_eq!(
+    // The company's settings read back by its name, its reference unexpanded.
+    insta::assert_snapshot!(
+        "company-settings",
         stdout(
-            &env.run(&here, ["config", "get", "--company", "acme", "company"])
+            &env.run(&here, ["config", "get", "--company", "acme"])
                 .success()
-        ),
-        "acme\n"
-    );
-    assert_eq!(
-        stdout(
-            &env.run(
-                &here,
-                ["config", "get", "--company", "acme", "webhooks.erp.secret"]
-            )
-            .success()
-        ),
-        "${ACME_HOOK}\n"
+        )
     );
     env.run(&here, ["config", "validate", "--company", "acme"])
         .success();
@@ -178,11 +169,12 @@ fn each_company_resolves_its_own_secret_and_never_the_machines_or_anothers() {
     for wrong in [values[1].1, SECRET] {
         assert_eq!(receiver.signed(&route("acme"), BODY, wrong, &[]).0, 401);
     }
-    let (status, body) = receiver.signed(&route("bare"), BODY, SECRET, &[]);
-    assert_eq!(status, 500);
+    assert_eq!(receiver.signed(&route("bare"), BODY, SECRET, &[]).0, 500);
     assert_eq!(hooks::events(&redis).len(), 2);
 
-    let mut output = body;
+    // Reads and the finding name references and homes, never a value.
+    let home = env.instrukt_home().display().to_string();
+    let mut output = String::new();
     for name in ["acme", "sunfield", "bare"] {
         output.push_str(&stdout(
             &env.run(
@@ -195,11 +187,10 @@ fn each_company_resolves_its_own_secret_and_never_the_machines_or_anothers() {
     let validated = env
         .run(&env.path(""), ["config", "validate", "--company", "bare"])
         .failure();
-    let finding = stdout(&validated);
-    assert!(finding.contains("${HOOK_KEY}"), "{finding}");
-    output.push_str(&finding);
+    output.push_str(&stdout(&validated));
     output.push_str(&String::from_utf8_lossy(&validated.get_output().stderr));
-    for value in [values[0].1, values[1].1, SECRET, "unrelated-value"] {
-        assert!(!output.contains(value), "a value was disclosed: {output}");
-    }
+    insta::assert_snapshot!(
+        "company-secrets-undisclosed",
+        output.replace(&home, "[INSTRUKT_HOME]")
+    );
 }

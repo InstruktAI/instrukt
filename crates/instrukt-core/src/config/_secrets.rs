@@ -139,13 +139,8 @@ pub fn set_secret_in(
         ));
     }
     if let SecretSource::Company(company) = source {
-        let document = home.company_dir(company).join(super::CONFIG_FILE_NAME);
-        if !document.is_file() {
-            return Err(ConfigError::NoLayer {
-                path: document,
-                door: format!("instrukt config init --company {company}"),
-            });
-        }
+        // Only an existing company home has a secrets file of its own.
+        super::Configuration::load_company(&home.for_inspection(), company)?;
     }
     let machine = Home::at_user_home(home.machine_user_home().into());
     let _lock = LockGuard::acquire(

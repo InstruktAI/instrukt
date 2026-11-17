@@ -133,10 +133,19 @@ impl Configuration {
                 door: layer.init_door(),
             });
         };
-        if let Some(finding) = super::_validate::company_identity(name, &value) {
+        // Only a valid settings document makes its folder a company: the
+        // schema and the identity are judged together, here, for every
+        // consumer that serves or executes for the company.
+        let mut findings = _schema::check(&value, LayerKind::Company);
+        findings.extend(super::_validate::company_identity(name, &value));
+        if !findings.is_empty() {
             return Err(ConfigError::NotACompany {
                 dir: home.company_dir(name),
-                finding: format!("{}: {}", finding.key, finding.message),
+                finding: findings
+                    .iter()
+                    .map(|finding| format!("{}: {}", finding.key, finding.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
             });
         }
         Ok(Self::from_value(

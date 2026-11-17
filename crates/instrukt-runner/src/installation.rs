@@ -334,7 +334,8 @@ fn receiver(
     let mut health_route = None;
     for record in &demand.sources {
         let config = &record.config;
-        let ingress = config.ingress()?;
+        // Ingress is a machine setting: a company document carries none.
+        let ingress = global.ingress()?;
         // Check placement without minting an identity on a read-only path.
         let machine=std::fs::read_to_string(request.home.machine_id_file()).map_err(|_|anyhow::anyhow!("machine identity missing/unreadable; restore the recorded machine-id before receiver placement or withdrawal"))?;
         anyhow::ensure!(
@@ -346,14 +347,17 @@ fn receiver(
         }
         for (domain, source) in config.webhooks()? {
             health_route = Some(format!(
-                "/hooks/inbound/project/{}/{domain}",
-                record.project
+                "/hooks/inbound/{}/{}/{domain}",
+                record.kind, record.slug
             ));
             source
-                .resolve(request.home, &instrukt_core::config::SecretSource::Machine)
-                .map_err(|e| anyhow::anyhow!("project {} source {domain}: {e}", record.project))?;
+                .resolve(request.home, &record.secrets)
+                .map_err(|e| anyhow::anyhow!("{} source {domain}: {e}", record.label()))?;
         }
-        projects.push(record.project.to_string());
+        projects.push(match record.kind {
+            "project" => record.slug.to_string(),
+            kind => format!("{kind}:{}", record.slug),
+        });
         ingress_port = Some(ingress.port);
     }
     if let Some(port) = ingress_port {

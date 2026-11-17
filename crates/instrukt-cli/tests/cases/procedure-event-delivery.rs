@@ -744,6 +744,14 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         .join("companies/acme")
         .canonicalize()
         .unwrap();
+    // The home's document was written by an older instrukt.
+    let document = company.join("instrukt.yaml");
+    let older = instrukt_core::config::CURRENT_SCHEMA_VERSION - 1;
+    std::fs::write(
+        &document,
+        format!("schema_version: {older}\ncompany: acme\n"),
+    )
+    .unwrap();
     r.scoped("platform", "configuration:global", "none");
     r.scoped("company", "inbound_source:erp:company:acme", "company:acme");
     r.append("project");
@@ -762,12 +770,38 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         .collect();
     expected.sort();
     assert_eq!(folders, expected);
-    for id in &threads {
-        let brief = r.runtime.input_log(id);
-        let in_company = r.runtime.folder(id).canonicalize().unwrap() == company;
-        assert_eq!(brief.contains("Home: company:acme"), in_company, "{brief}");
-        assert_eq!(brief.contains("company:"), in_company, "{brief}");
-    }
+    // The writing tick persisted the company document at the current
+    // schema before work ran there.
+    let stored: serde_yaml_ng::Value =
+        serde_yaml_ng::from_slice(&std::fs::read(&document).unwrap()).unwrap();
+    assert_eq!(
+        stored["schema_version"].as_u64(),
+        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+    );
+    // Each assignment names the home it works in; only the company agent's
+    // names a company.
+    let place = |id: &String| {
+        let folder = r.runtime.folder(id).canonicalize().unwrap();
+        if folder == company {
+            "company"
+        } else if folder == platform.path().canonicalize().unwrap() {
+            "platform"
+        } else {
+            "project"
+        }
+    };
+    let mut briefs: Vec<_> = threads
+        .iter()
+        .map(|id| {
+            format!(
+                "== {}\n{}",
+                place(id),
+                work::redact(&r.runtime.input_log(id))
+            )
+        })
+        .collect();
+    briefs.sort();
+    insta::assert_snapshot!("home-named-assignments", briefs.join("\n\n"));
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
@@ -959,7 +993,6 @@ fn an_open_unattended_agent_receives_a_later_event_like_an_attended_one() {
     r.append("initial");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
-    assert!(r.runtime.input_log("s1").contains("Attendance: Unattended"));
     r.append("second");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
@@ -974,6 +1007,7 @@ fn an_open_unattended_agent_receives_a_later_event_like_an_attended_one() {
     r.runtime.consume("s1");
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 3);
+    insta::assert_snapshot!("unattended-continued-log", r.conversation());
 }
 
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA27
@@ -991,19 +1025,11 @@ fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human
         serde_json::from_slice(&std::fs::read(&shown).unwrap()).unwrap();
     assert_eq!(thread["settled"], false);
     assert_eq!(thread["archived"], false);
-    assert!(
-        r.runtime
-            .calls()
-            .iter()
-            .all(|call| !call.contains("settle") && !call.contains("archive")),
-        "{:?}",
-        r.runtime.calls()
-    );
     r.runtime.change("s1", "settled", true.into());
     let before = r.runtime.message_count("s1");
     r.append("later");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), before + 1);
-    assert!(r.runtime.input_log("s1").contains("\"later\""));
+    insta::assert_snapshot!("unattended-settled-woken-log", r.conversation());
 }

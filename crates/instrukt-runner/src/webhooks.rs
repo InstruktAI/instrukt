@@ -414,8 +414,14 @@ fn declaring(home: &Home, kind: HomeKind, slug: ProjectSlug) -> Result<Declaring
             // A company without a home, or a folder whose document names
             // another company, is no company: it has no endpoint.
             let document = home.company_dir(&slug).join("instrukt.yaml");
-            if !document.is_file() {
-                return Err(absent());
+            match std::fs::metadata(&document) {
+                Ok(metadata) if metadata.is_file() => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(absent());
+                }
+                // Anything else is an existing home this computer cannot
+                // inspect: a failure, never absence.
+                Ok(_) | Err(_) => return Err(unreadable()),
             }
             let sources = match Configuration::load_company(&inspection, &slug) {
                 Ok(config) => config,

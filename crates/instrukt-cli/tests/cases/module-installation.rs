@@ -297,6 +297,50 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     env.run(env.home(), ["install"]).success();
     assert!(receiver.is_file());
     env.run(env.home(), ["install", "--check"]).success();
+
+    // A company home's source alone keeps the events dependencies and the
+    // receiver while the machine's events switch is on, its signing value
+    // resolving from the company's own file.
+    let global = env.instrukt_home().join("instrukt.yaml");
+    let mut machine_settings = std::fs::read_to_string(&global).unwrap();
+    machine_settings.push_str("modules: {events: true}\n");
+    std::fs::write(&global, machine_settings).unwrap();
+    env.run(env.home(), ["config", "init", "--company", "acme"])
+        .success();
+    env.instrukt(env.home())
+        .args(["secrets", "set", "COMPANY_KEY", "--company", "acme"])
+        .write_stdin("company signing material")
+        .assert()
+        .success();
+    let revision = env
+        .run(
+            env.home(),
+            ["config", "get", "--company", "acme", "--revision"],
+        )
+        .success();
+    let revision = String::from_utf8(revision.get_output().stdout.clone()).unwrap();
+    env.run(
+        env.home(),
+        [
+            "config",
+            "patch",
+            "--company",
+            "acme",
+            "--revision",
+            revision.trim(),
+            "--yaml",
+            "{webhooks: {service: {secret: '${COMPANY_KEY}'}}}",
+        ],
+    )
+    .success();
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 5\nproject: events\nmodules: {history: false, events: false}\n",
+    );
+    env.run(env.home(), ["install"]).success();
+    assert!(receiver.is_file());
+    assert!(env.path("runtime-bin/active").exists());
+    env.run(env.home(), ["install", "--check"]).success();
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI8

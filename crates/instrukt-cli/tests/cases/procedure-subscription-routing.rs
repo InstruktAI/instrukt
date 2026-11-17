@@ -831,10 +831,16 @@ fn an_unavailable_execution_home_is_a_visible_failure_and_nothing_substitutes() 
         ),
     )
     .unwrap();
+    // A folder whose settings document has no schema version is no company
+    // home either.
+    let unversioned = computer.env.instrukt_home().join("companies/unversioned");
+    std::fs::create_dir_all(&unversioned).unwrap();
+    std::fs::write(unversioned.join("instrukt.yaml"), "company: unversioned\n").unwrap();
     for (id, home) in [
         ("unregistered", "project:absent"),
         ("homeless", "company:absent"),
         ("misnamed", "company:misnamed"),
+        ("unversioned", "company:unversioned"),
         ("person", "person:fork"),
     ] {
         append(&redis, &event(&computer, id, home, "example.fact"));

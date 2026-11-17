@@ -119,7 +119,10 @@ fn checkout(state: &RunnerState, home: &str) -> Result<(PathBuf, Option<String>)
     if let Some(company) = home.strip_prefix("company:") {
         let name =
             ProjectSlug::parse(company).map_err(|e| SessionsError::Refused(e.to_string()))?;
-        Configuration::load_company(&state.home().for_inspection(), &name).map_err(|e| {
+        // The runner's own home: a writing tick persists an older company
+        // document at the current schema before work runs there, while an
+        // inspecting home converts it in memory only.
+        Configuration::load_company(state.home(), &name).map_err(|e| {
             let reason = match e {
                 instrukt_core::config::ConfigError::NotACompany { finding, .. } => {
                     format!(" ({finding})")

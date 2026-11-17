@@ -120,15 +120,18 @@ pub fn company_homes(home: &Home) -> Result<Vec<CompanyHome>, ConfigError> {
             path: dir.clone(),
             source,
         })?;
-        if !entry.path().is_dir() {
-            continue;
-        }
         let folder = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        let config = match std::fs::metadata(&path) {
+            Ok(metadata) if !metadata.is_dir() => continue,
+            Ok(_) => None,
+            Err(source) => Some(Err(ConfigError::Read { path, source })),
+        };
         let Ok(name) = ProjectSlug::parse(&folder) else {
             tracing::warn!(event = "company_home_invalid", folder = %folder, "not a valid company name");
             continue;
         };
-        let config = Configuration::load_company(home, &name);
+        let config = config.unwrap_or_else(|| Configuration::load_company(home, &name));
         homes.push((name, config));
     }
     homes.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
