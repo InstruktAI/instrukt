@@ -186,6 +186,16 @@ impl FakeT3 {
         )
         .unwrap();
     }
+    /// A person types `text` straight into the thread `id`, as T3's own
+    /// interface sends it; with the thread idle it opens a turn of its own.
+    pub fn person_sends(&self, env: &TestEnv, id: &str, text: &str) {
+        let status = std::process::Command::new(&self.script)
+            .args(["thread", "send", id, text])
+            .env("HOME", env.home())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
     pub fn input_log(&self, id: &str) -> String {
         self.read(id)["messages"]
             .as_array()

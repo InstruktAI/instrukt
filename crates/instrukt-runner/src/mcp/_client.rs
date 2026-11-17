@@ -1,23 +1,30 @@
-//! One MCP session over the Streamable HTTP transport, opened for one
-//! request and closed after it: initialize, the initialized notification,
-//! the request, then a DELETE that ends the session.
+//! One MCP session over the Streamable HTTP transport of MCP version
+//! 2025-06-18, opened for one operation and ended after it: initialize, the
+//! initialized notification, the operation, then one request to end the
+//! session the server opened, on every path.
+//!
+//! Every reply is checked here, at the one transport boundary: a reply that is
+//! not a well-formed JSON-RPC answer to the request it was sent, or that lacks
+//! what the method requires, is a failure, never an empty result.
 
 use std::time::Duration;
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{McpError, Target};
 
-/// The protocol version this client offers; the server's answer is the one
-/// its later requests name.
-const PROTOCOL_VERSION: &str = "2025-06-18";
+/// The protocol version instrukt speaks.
+pub(super) const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// How long establishing a connection may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long one request, its answer included, may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The most pages a catalog may take.
+const MOST_PAGES: usize = 100;
 
 /// One tool of a server's catalog.
 #[derive(Debug, Clone, Serialize)]
@@ -29,18 +36,29 @@ pub struct Tool {
     pub input_schema: Value,
 }
 
+/// A session with one server. Dropping it asks the server, once, to end the
+/// session it opened.
 pub(super) struct Session<'a> {
     target: &'a Target<'a>,
     agent: ureq::Agent,
     session: Option<String>,
-    /// The negotiated protocol version, once initialization answered.
-    version: Option<String>,
+    /// Set once initialization agreed on the version.
+    initialized: bool,
     next: u64,
 }
 
 impl<'a> Session<'a> {
-    /// Opens a session with the server.
+    /// Opens a session with the server. A login is sent only to an address
+    /// that keeps it off the open network.
     pub(super) fn open(target: &'a Target<'a>) -> Result<Self, McpError> {
+        if target.authorization.is_some()
+            && !instrukt_core::config::mcp_address_admitted(target.url)
+        {
+            return Err(McpError::Server {
+                server: target.name.to_owned(),
+                cause: "its address is neither https nor this computer's loopback, so no login is sent to it".into(),
+            });
+        }
         let agent = ureq::Agent::config_builder()
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_global(Some(REQUEST_TIMEOUT))
@@ -51,7 +69,7 @@ impl<'a> Session<'a> {
             target,
             agent,
             session: None,
-            version: None,
+            initialized: false,
             next: 1,
         };
         let initialized = session.request(
@@ -62,58 +80,85 @@ impl<'a> Session<'a> {
                 "clientInfo": {"name": "instrukt", "version": env!("CARGO_PKG_VERSION")},
             }),
         )?;
-        session.version = Some(
-            initialized
-                .get("protocolVersion")
-                .and_then(Value::as_str)
-                .unwrap_or(PROTOCOL_VERSION)
-                .to_owned(),
-        );
+        let version = initialized.get("protocolVersion").and_then(Value::as_str);
+        if version != Some(PROTOCOL_VERSION) {
+            return Err(session.failure(format!(
+                "it answers protocol version {}, and instrukt speaks {PROTOCOL_VERSION}",
+                version.unwrap_or("none")
+            )));
+        }
+        for required in ["capabilities", "serverInfo"] {
+            if !initialized.get(required).is_some_and(Value::is_object) {
+                return Err(session.failure(format!("its initialization lacks `{required}`")));
+            }
+        }
+        session.initialized = true;
         session.notify("notifications/initialized")?;
         Ok(session)
     }
 
     /// The server's whole tool catalog, every page of it.
-    pub(super) fn list_tools(self) -> Result<Vec<Tool>, McpError> {
+    pub(super) fn list_tools(mut self) -> Result<Vec<Tool>, McpError> {
         let mut tools = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
         let mut cursor: Option<String> = None;
-        let mut session = self;
         loop {
+            if seen.len() >= MOST_PAGES {
+                return Err(self.failure(format!("its catalog takes more than {MOST_PAGES} pages")));
+            }
             let params = match &cursor {
                 Some(cursor) => json!({ "cursor": cursor }),
                 None => json!({}),
             };
-            let page = session.request("tools/list", params)?;
-            for tool in page
+            let page = self.request("tools/list", params)?;
+            let listed = page
                 .get("tools")
                 .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                tools.push(Tool {
-                    name: tool
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    description: tool
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    input_schema: tool.get("inputSchema").cloned().unwrap_or(Value::Null),
-                });
+                .ok_or_else(|| self.failure("its catalog page lacks `tools`".into()))?;
+            for tool in listed {
+                tools.push(self.tool(tool)?);
             }
-            cursor = page
-                .get("nextCursor")
-                .and_then(Value::as_str)
-                .filter(|next| !next.is_empty())
-                .map(str::to_owned);
-            if cursor.is_none() {
+            cursor = match page.get("nextCursor") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(next)) => Some(next.clone()),
+                Some(_) => return Err(self.failure("its `nextCursor` is not text".into())),
+            };
+            let Some(next) = &cursor else {
                 break;
+            };
+            if seen.contains(next) {
+                return Err(self.failure("it repeats a catalog cursor".into()));
             }
+            seen.push(next.clone());
         }
-        session.close();
         Ok(tools)
+    }
+
+    fn tool(&self, tool: &Value) -> Result<Tool, McpError> {
+        let name = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| self.failure("a tool in its catalog has no name".into()))?;
+        let input_schema = tool
+            .get("inputSchema")
+            .filter(|schema| schema.is_object())
+            .cloned()
+            .ok_or_else(|| self.failure(format!("its tool `{name}` has no input shape")))?;
+        let description = match tool.get("description") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) => Some(text.clone()),
+            Some(_) => {
+                return Err(self.failure(format!(
+                    "its tool `{name}` has a description that is not text"
+                )));
+            }
+        };
+        Ok(Tool {
+            name: name.to_owned(),
+            description,
+            input_schema,
+        })
     }
 
     /// The result of calling `tool`; a result the server marks as an error
@@ -122,13 +167,15 @@ impl<'a> Session<'a> {
         let result = self.request(
             "tools/call",
             json!({ "name": tool, "arguments": arguments }),
-        );
-        self.close();
-        let result = result?;
-        if result.get("isError").and_then(Value::as_bool) == Some(true) {
-            return Err(self.failure(cause_of(&result)));
+        )?;
+        if !result.get("content").is_some_and(Value::is_array) {
+            return Err(self.failure("its tool result lacks `content`".into()));
         }
-        Ok(result)
+        match result.get("isError") {
+            None | Some(Value::Bool(false)) => Ok(result),
+            Some(Value::Bool(true)) => Err(self.failure(cause_of(&result))),
+            Some(_) => Err(self.failure("its `isError` is not true or false".into())),
+        }
     }
 
     fn failure(&self, cause: String) -> McpError {
@@ -144,8 +191,8 @@ impl<'a> Session<'a> {
             .post(self.target.url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream");
-        if let Some(version) = &self.version {
-            request = request.header("MCP-Protocol-Version", version);
+        if self.initialized {
+            request = request.header("MCP-Protocol-Version", PROTOCOL_VERSION);
         }
         if let Some(session) = &self.session {
             request = request.header("Mcp-Session-Id", session);
@@ -162,6 +209,7 @@ impl<'a> Session<'a> {
             })
     }
 
+    /// The result of one request, from the one well-formed answer to it.
     fn request(&mut self, method: &str, params: Value) -> Result<Value, McpError> {
         let id = self.next;
         self.next += 1;
@@ -171,38 +219,58 @@ impl<'a> Session<'a> {
             "method": method,
             "params": params,
         }))?;
-        if let Some(session) = response
-            .headers()
-            .get("mcp-session-id")
-            .and_then(|value| value.to_str().ok())
+        if self.session.is_none()
+            && let Some(session) = response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok())
         {
             self.session = Some(session.to_owned());
         }
         let status = response.status().as_u16();
-        let streamed = response
+        let kind = response
             .headers()
             .get("content-type")
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|kind| kind.starts_with("text/event-stream"));
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|error| self.failure(format!("unreadable answer to {method}: {error}")))?;
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         if !(200..300).contains(&status) {
+            let text = response.body_mut().read_to_string().unwrap_or_default();
             return Err(self.failure(format!("HTTP {status} to {method}: {}", text.trim())));
         }
-        let answer = if streamed {
-            events(&text)
-                .into_iter()
-                .find(|message| message.get("id").and_then(Value::as_u64) == Some(id))
-        } else {
+        let answer = if kind.starts_with("text/event-stream") {
+            // The answer completes the request as soon as its event arrives.
+            let reader = std::io::BufReader::new(response.body_mut().as_reader());
+            answer_in_stream(reader, id)
+                .map_err(|error| self.failure(format!("unreadable answer to {method}: {error}")))?
+        } else if kind.starts_with("application/json") {
+            let text = response
+                .body_mut()
+                .read_to_string()
+                .map_err(|error| self.failure(format!("unreadable answer to {method}: {error}")))?;
             serde_json::from_str::<Value>(&text).ok()
+        } else {
+            return Err(self.failure(format!(
+                "its answer to {method} is neither JSON nor an event stream"
+            )));
         }
         .ok_or_else(|| self.failure(format!("no answer to {method}")))?;
-        if let Some(error) = answer.get("error") {
-            return Err(self.failure(cause_of_error(error)));
+        let envelope = answer
+            .as_object()
+            .filter(|envelope| envelope.get("jsonrpc").and_then(Value::as_str) == Some("2.0"))
+            .filter(|envelope| envelope.get("id").and_then(Value::as_u64) == Some(id))
+            .ok_or_else(|| {
+                self.failure(format!(
+                    "its answer to {method} is not a JSON-RPC answer to that request"
+                ))
+            })?;
+        match (envelope.get("result"), envelope.get("error")) {
+            (Some(Value::Object(result)), None) => Ok(Value::Object(result.clone())),
+            (None, Some(error)) => Err(self.failure(cause_of_error(error, method))),
+            _ => Err(self.failure(format!(
+                "its answer to {method} carries neither one result object nor one error"
+            ))),
         }
-        Ok(answer.get("result").cloned().unwrap_or(Value::Null))
     }
 
     fn notify(&mut self, method: &str) -> Result<(), McpError> {
@@ -214,10 +282,12 @@ impl<'a> Session<'a> {
         }
         Ok(())
     }
+}
 
-    /// Ends the server's session; a server that keeps none, or refuses the
-    /// request, needs nothing more.
-    fn close(&mut self) {
+impl Drop for Session<'_> {
+    /// Asks the server, once, to end the session it opened; a server that does
+    /// not end it is logged and changes no outcome.
+    fn drop(&mut self) {
         let Some(session) = self.session.take() else {
             return;
         };
@@ -225,42 +295,65 @@ impl<'a> Session<'a> {
             .agent
             .delete(self.target.url)
             .header("Mcp-Session-Id", &session)
-            .header(
-                "MCP-Protocol-Version",
-                self.version.as_deref().unwrap_or(PROTOCOL_VERSION),
-            );
+            .header("MCP-Protocol-Version", PROTOCOL_VERSION);
         if let Some(authorization) = self.target.authorization {
             request = request.header("Authorization", authorization);
         }
-        drop(request.call());
+        match request.call() {
+            Ok(response) if response.status().is_success() || response.status().as_u16() == 405 => {
+            }
+            Ok(response) => tracing::warn!(
+                event = "mcp_session_not_ended",
+                server = self.target.name,
+                status = response.status().as_u16()
+            ),
+            Err(_) => tracing::warn!(
+                event = "mcp_session_not_ended",
+                server = self.target.name,
+                status = "unreachable"
+            ),
+        }
     }
 }
 
-/// The JSON-RPC messages of a text/event-stream body.
-fn events(text: &str) -> Vec<Value> {
-    let mut messages = Vec::new();
-    let mut data: Vec<&str> = Vec::new();
-    for line in text.lines().chain(std::iter::once("")) {
+/// The JSON-RPC message answering `id` in an event stream, read until it
+/// arrives; earlier events, notifications and requests among them, are passed.
+fn answer_in_stream(reader: impl std::io::BufRead, id: u64) -> std::io::Result<Option<Value>> {
+    let mut data: Vec<String> = Vec::new();
+    let mut lines = reader.lines();
+    loop {
+        let line = lines.next().transpose()?;
+        let ended = line.is_none();
+        let line = line.unwrap_or_default();
         if line.is_empty() {
             if !data.is_empty() {
-                if let Ok(message) = serde_json::from_str(&data.join("\n")) {
-                    messages.push(message);
+                if let Ok(message) = serde_json::from_str::<Value>(&data.join("\n"))
+                    && message.get("id").and_then(Value::as_u64) == Some(id)
+                    && (message.get("result").is_some() || message.get("error").is_some())
+                {
+                    return Ok(Some(message));
                 }
                 data.clear();
             }
+            if ended {
+                return Ok(None);
+            }
         } else if let Some(rest) = line.strip_prefix("data:") {
-            data.push(rest.strip_prefix(' ').unwrap_or(rest));
+            data.push(rest.strip_prefix(' ').unwrap_or(rest).to_owned());
         }
     }
-    messages
 }
 
 /// A JSON-RPC error's cause: its message, and its data when it has any.
-fn cause_of_error(error: &Value) -> String {
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("an error without a message");
+fn cause_of_error(error: &Value, method: &str) -> String {
+    let Some((Some(message), Some(_))) = error.as_object().map(|error: &Map<String, Value>| {
+        (
+            error.get("message").and_then(Value::as_str),
+            error.get("code").and_then(Value::as_i64),
+        )
+    }) else {
+        return format!("its error answer to {method} has no code and message");
+    };
     match error.get("data") {
         Some(Value::String(data)) => format!("{message}: {data}"),
         Some(Value::Null) | None => message.to_owned(),
@@ -286,14 +379,24 @@ fn cause_of(result: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Value, answer_in_stream};
 
     #[test]
-    fn an_event_stream_yields_each_message_of_its_data_lines() {
-        let messages = events(
-            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\nid: 7\ndata: {\"jsonrpc\":\"2.0\",\ndata: \"id\":2,\"result\":{}}\n",
+    fn an_answer_completes_the_stream_read_at_its_own_event() {
+        let stream = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\ndata: {\"jsonrpc\":\"2.0\",\ndata: \"id\":2,\"result\":{}}\n\nnot a valid line that must never be read\n";
+        let answer = answer_in_stream(std::io::Cursor::new(stream), 2).unwrap();
+        assert_eq!(
+            answer
+                .as_ref()
+                .and_then(|answer| answer.get("id"))
+                .and_then(Value::as_u64),
+            Some(2)
         );
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].get("id").and_then(Value::as_u64), Some(2));
+        let none = answer_in_stream(
+            std::io::Cursor::new("data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\n\n"),
+            2,
+        )
+        .unwrap();
+        assert!(none.is_none());
     }
 }

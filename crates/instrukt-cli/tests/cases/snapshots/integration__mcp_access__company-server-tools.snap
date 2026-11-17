@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/mcp-access.rs
-assertion_line: 257
 expression: stdout(&tools)
 ---
 whoami: Say whose login reached the server

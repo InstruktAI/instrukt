@@ -4,8 +4,11 @@
 //! the closing DELETE. It records each request's JSON-RPC method and the
 //! `Authorization` header it carried.
 //!
-//! Its tools: `whoami` answers with the login the call carried, so a test
-//! sees what reaches the agent; `fail` reports a failure naming that login.
+//! It knows which principal each login it accepts belongs to. Its tools:
+//! `whoami` answers with its own name, the principal it authenticated and the
+//! login the call carried, so a test sees whose login reached which server
+//! and what of it reaches the agent; `fail` reports a failure naming that
+//! login.
 #![allow(clippy::unwrap_used, reason = "test fixture")]
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,7 +37,14 @@ pub struct FakeMcp {
 const SESSION: &str = "stand-in-session";
 
 impl FakeMcp {
-    pub fn start() -> Self {
+    /// A server called `name` that accepts `principals`: each login it knows,
+    /// with the principal it belongs to.
+    pub fn start(name: &str, principals: &[(&str, &str)]) -> Self {
+        let name = name.to_owned();
+        let principals: std::collections::BTreeMap<String, String> = principals
+            .iter()
+            .map(|(login, principal)| ((*login).to_owned(), (*principal).to_owned()))
+            .collect();
         let http = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let url = format!("http://{}/mcp", http.server_addr().to_ip().unwrap());
         let received = Arc::new(Mutex::new(Vec::new()));
@@ -43,6 +53,13 @@ impl FakeMcp {
             let received = Arc::clone(&received);
             let stop = Arc::clone(&stop);
             std::thread::spawn(move || {
+                let principal = |login: &Option<String>| match login {
+                    None => "nobody".to_owned(),
+                    Some(login) => principals
+                        .get(login)
+                        .cloned()
+                        .unwrap_or_else(|| "an unknown principal".to_owned()),
+                };
                 while !stop.load(Ordering::Acquire) {
                     let Ok(Some(mut request)) = http.recv_timeout(Duration::from_millis(50)) else {
                         continue;
@@ -78,6 +95,7 @@ impl FakeMcp {
                         )
                         .with_header(header("Content-Type", "application/json"))
                     };
+                    let who = principal(&authorization);
                     let login = authorization.unwrap_or_else(|| "no login".to_owned());
                     let response = match method.as_str() {
                         "initialize" => json_answer(json!({
@@ -118,7 +136,7 @@ impl FakeMcp {
                             .with_header(header("Content-Type", "application/json"))
                         }
                         "tools/call" => json_answer(json!({
-                            "content": [{"type": "text", "text": format!("called with {login}")}],
+                            "content": [{"type": "text", "text": format!("{name} answered {who}, carrying {login}")}],
                             "isError": false,
                         })),
                         _ => tiny_http::Response::from_string("").with_status_code(400),
@@ -138,15 +156,6 @@ impl FakeMcp {
     /// The requests received so far, in order.
     pub fn received(&self) -> Vec<Received> {
         self.received.lock().unwrap().clone()
-    }
-
-    /// The `Authorization` headers of the tool calls received so far.
-    pub fn call_logins(&self) -> Vec<Option<String>> {
-        self.received()
-            .into_iter()
-            .filter(|request| request.method == "tools/call")
-            .map(|request| request.authorization)
-            .collect()
     }
 }
 

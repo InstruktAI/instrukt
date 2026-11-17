@@ -47,14 +47,18 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         .as_deref()
         .map(ProjectSlug::parse)
         .transpose()?;
-    let view = mcp::view(&ctx.home, &caller(ctx)?, asked.as_ref())?;
+    let caller = caller(ctx)?;
+    let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
     match args.command {
         Command::List { json } => list(ctx, &view, json),
         Command::ListTools { name, json } => {
-            let visible = view.server(&name)?;
-            let (scrub, login) = login(ctx, &view, visible)?;
-            let tools = mcp::list_tools(&target(visible, login.as_deref()))
-                .map_err(|error| scrubbed(&scrub, &error))?;
+            let visible = view.server(&name)?.clone();
+            speak(ctx, &caller, &mut view)?;
+            let (scrub, login) = login(ctx, &view, &visible)?;
+            let started = std::time::Instant::now();
+            let tools = mcp::list_tools(&target(&visible, login.as_deref()));
+            completed(&visible, "tools/list", None, started, tools.is_ok());
+            let tools = tools.map_err(|error| scrubbed(&scrub, &error))?;
             if json {
                 ctx.out.json(&scrub.json(serde_json::to_value(&tools)?))?;
             } else if tools.is_empty() {
@@ -84,10 +88,13 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("--json takes the tool's arguments as one JSON object")
                 })?;
-            let visible = view.server(&name)?;
-            let (scrub, login) = login(ctx, &view, visible)?;
-            let result = mcp::call(&target(visible, login.as_deref()), &tool, arguments)
-                .map_err(|error| scrubbed(&scrub, &error))?;
+            let visible = view.server(&name)?.clone();
+            speak(ctx, &caller, &mut view)?;
+            let (scrub, login) = login(ctx, &view, &visible)?;
+            let started = std::time::Instant::now();
+            let result = mcp::call(&target(&visible, login.as_deref()), &tool, arguments);
+            completed(&visible, "tools/call", Some(&tool), started, result.is_ok());
+            let result = result.map_err(|error| scrubbed(&scrub, &error))?;
             ctx.out.json(&scrub.json(result))?;
             Ok(ExitCode::SUCCESS)
         }
@@ -100,7 +107,51 @@ fn caller(ctx: &Ctx) -> anyhow::Result<Caller> {
     let config = Configuration::load_global(&ctx.home)?;
     let session = config.caller(&wiring::environment(ctx)?)?;
     let company = authorization::caller(ctx)?.and_then(|(assignment, _)| assignment.company);
-    Ok(Caller { session, company })
+    Ok(Caller {
+        session,
+        company,
+        working_in: working_in(ctx),
+    })
+}
+
+/// The company home the working directory lies in, if any.
+fn working_in(ctx: &Ctx) -> Option<ProjectSlug> {
+    let companies = ctx.home.companies_dir().canonicalize().ok()?;
+    let here = ctx.cwd.canonicalize().ok()?;
+    let name = here.strip_prefix(&companies).ok()?.components().next()?;
+    ProjectSlug::parse(name.as_os_str().to_str()?).ok()
+}
+
+/// Establishes the speaker of the calling session's current turn, for a
+/// session working for its own company.
+fn speak(ctx: &Ctx, caller: &Caller, view: &mut View) -> anyhow::Result<()> {
+    let (Some(session), Some(_)) = (&caller.session, &caller.company) else {
+        return Ok(());
+    };
+    let Some(runtime) = Configuration::load_global(&ctx.home)?.runner_runtime()? else {
+        return Ok(());
+    };
+    let adapter = instrukt_runner::runtime::adapter(runtime);
+    view.speaker = mcp::speaker(&ctx.home, session, adapter.as_ref())?;
+    Ok(())
+}
+
+/// One completion record per catalog or tool operation, naming no value.
+fn completed(
+    visible: &Visible,
+    operation: &str,
+    tool: Option<&str>,
+    started: std::time::Instant,
+    succeeded: bool,
+) {
+    tracing::debug!(
+        event = "mcp_operation_completed",
+        server = visible.server.name.as_str(),
+        operation,
+        tool = tool.unwrap_or_default(),
+        succeeded,
+        duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    );
 }
 
 fn list(ctx: &mut Ctx, view: &View, json: bool) -> anyhow::Result<ExitCode> {

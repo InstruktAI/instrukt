@@ -291,14 +291,24 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
             Some(source),
         )?)?;
     }
-    instrukt_ai_logging::Builder::new("instrukt")
+    let mut builder = instrukt_ai_logging::Builder::new("instrukt")
         .source(source)
         .app_prefix("instrukt_cli")
         .app_prefix("instrukt_core")
         .app_prefix("instrukt_blueprint")
         .app_prefix("instrukt_runner")
-        .app_prefix("instrukt_todos")
-        .init()?;
+        .app_prefix("instrukt_todos");
+    if matches!(command, Command::Mcp(_)) {
+        // The HTTP client's records carry what an MCP server sent back, a
+        // reflected login among it, before instrukt can remove it: for this
+        // command no third-party record below a warning is written.
+        builder = builder.env_lookup(|name| match name {
+            "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("WARNING".into()),
+            "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
+            other => std::env::var_os(other),
+        });
+    }
+    builder.init()?;
     Ok(())
 }
 

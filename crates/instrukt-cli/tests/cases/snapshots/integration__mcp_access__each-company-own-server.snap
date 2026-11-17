@@ -1,0 +1,23 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: "answers.join(\"\\n\")"
+---
+acme: {
+  "content": [
+    {
+      "type": "text",
+      "text": "acme-erp answered nobody, carrying no login"
+    }
+  ],
+  "isError": false
+}
+
+beta: {
+  "content": [
+    {
+      "type": "text",
+      "text": "beta-erp answered nobody, carrying no login"
+    }
+  ],
+  "isError": false
+}

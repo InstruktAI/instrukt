@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/mcp-access.rs
-assertion_line: 220
 expression: stderr(&refused)
 ---
 instrukt: the call is refused: company acme declares no login of its own for MCP server `crm`, and nobody is asking

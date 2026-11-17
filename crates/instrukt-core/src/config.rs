@@ -45,7 +45,7 @@ pub use _layer::{
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,
     revision,
 };
-pub use _mcp::McpServer;
+pub use _mcp::{McpServer, admitted_address as mcp_address_admitted};
 pub use _module::Module;
 pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
 pub use _render::render_yaml;

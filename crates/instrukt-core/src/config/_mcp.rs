@@ -34,6 +34,25 @@ impl McpServer {
     }
 }
 
+/// Whether a login may be sent to `url`: an `https` address, or an `http`
+/// address on this computer's loopback, so a login never crosses the network
+/// unprotected.
+pub fn admitted_address(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    match parsed.scheme() {
+        "https" => parsed.host().is_some(),
+        "http" => match parsed.host() {
+            Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(address)) => address.is_loopback(),
+            Some(url::Host::Ipv6(address)) => address.is_loopback(),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 fn finding(path: &str, kind: FindingKind, message: impl Into<String>) -> KeyFinding {
     KeyFinding::new(path, kind, message)
 }
@@ -84,6 +103,20 @@ pub(super) fn check(value: &Value, path: &str, layer: LayerKind, out: &mut Vec<K
                 .map(str::trim)
                 .filter(|text| !text.is_empty());
             match field.as_str() {
+                "url" if text.is_some_and(|url| !admitted_address(url)) => out.push(finding(
+                    &field_at,
+                    FindingKind::InvalidValue,
+                    format!(
+                        "server `{name}`: `url` is an https address, or an http address on this computer's loopback; a login would cross the network unprotected"
+                    ),
+                )),
+                "description" if text.is_some_and(|text| text.contains(['\n', '\r'])) => {
+                    out.push(finding(
+                        &field_at,
+                        FindingKind::InvalidValue,
+                        format!("server `{name}`: `description` is one line"),
+                    ));
+                }
                 "url" | "description" if text.is_some() => {}
                 "url" | "description" => out.push(finding(
                     &field_at,
@@ -180,7 +213,7 @@ pub(super) fn servers(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{FindingKind, LayerKind, ProjectSlug, admitted_address, check, servers};
 
     fn judged(text: &str, layer: LayerKind) -> Vec<(String, FindingKind)> {
         let mut out = Vec::new();
@@ -222,6 +255,36 @@ mod tests {
                 LayerKind::Global
             ),
             [("mcp.c.credential".to_owned(), NotPermittedInLayer)]
+        );
+    }
+
+    #[test]
+    fn a_login_goes_only_to_https_or_this_computers_loopback() {
+        for admitted in [
+            "https://erp.example/mcp",
+            "http://127.0.0.1:8080/mcp",
+            "http://localhost/mcp",
+            "http://[::1]:9000/mcp",
+        ] {
+            assert!(admitted_address(admitted));
+        }
+        for refused in [
+            "http://erp.example/mcp",
+            "http://10.0.0.5/mcp",
+            "ftp://erp.example/mcp",
+            "erp.example/mcp",
+        ] {
+            assert!(!admitted_address(refused));
+        }
+        assert_eq!(
+            judged(
+                "a: {url: 'http://erp.example/mcp', description: A}\nb: {url: 'https://b.example', description: \"two\\nlines\"}\n",
+                LayerKind::Company
+            ),
+            [
+                ("mcp.a.url".to_owned(), FindingKind::InvalidValue),
+                ("mcp.b.description".to_owned(), FindingKind::InvalidValue),
+            ]
         );
     }
 

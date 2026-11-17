@@ -248,6 +248,14 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
             capability: Capability::InputConsumption,
         })
     }
+    /// The input that opened the session's turn in progress, as the runtime
+    /// records it; `None` when no turn is in progress.
+    fn active_turn_input(&self, _session: &SessionRef) -> Result<Option<String>, SessionsError> {
+        Err(SessionsError::MissingCapability {
+            runtime: self.runtime().name().into(),
+            capability: Capability::InputConsumption,
+        })
+    }
     fn assignment_evidence(
         &self,
         _session: &SessionRef,

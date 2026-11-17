@@ -17,6 +17,9 @@ use instrukt_core::ids::{ProjectSlug, SessionRef};
 use instrukt_core::state_db::{StateDbError, StateRead, rusqlite::OptionalExtension};
 use serde_json::Value;
 
+use crate::envelopes::{self, Span};
+use crate::runtime::RuntimeAdapter;
+
 pub use _client::Tool;
 pub use _logins::StoredLogins;
 
@@ -48,6 +51,14 @@ pub enum McpError {
         "the call is refused: company {company} declares no login of its own for MCP server `{server}`, and nobody is asking"
     )]
     MissingCompanyLogin { server: String, company: String },
+    #[error(
+        "the call is refused: this session works in company {company}'s home and no binding records it as that company's session yet; retry once the runner has recorded it"
+    )]
+    Unbound { company: String },
+    #[error(
+        "the call is refused: the speaker of this session's current turn cannot be established: {cause}"
+    )]
+    Turn { cause: String },
     #[error("MCP server `{server}` at {url} cannot be reached: {cause}")]
     Unreachable {
         server: String,
@@ -82,6 +93,10 @@ pub struct Caller {
     pub session: Option<SessionRef>,
     /// The company home the session's recorded assignment names.
     pub company: Option<ProjectSlug>,
+    /// The company home the caller works in, by its working directory. It
+    /// only withholds access: it never gives a session a company, a role or
+    /// a login.
+    pub working_in: Option<ProjectSlug>,
 }
 
 /// The person whose addressed message started the calling session's
@@ -153,6 +168,10 @@ pub struct View {
     /// The company whose servers the caller sees; `None` for the machine.
     pub company: Option<ProjectSlug>,
     pub servers: BTreeMap<ProjectSlug, Visible>,
+    /// The company home a recognized session works in while no assignment
+    /// records it: its servers' tools are refused.
+    pub unbound: Option<ProjectSlug>,
+    /// The speaker of the calling session's current turn, once established.
     pub speaker: Option<Speaker>,
 }
 
@@ -170,10 +189,15 @@ pub fn view(home: &Home, caller: &Caller, asked: Option<&ProjectSlug>) -> Result
         (Some(_), None, None) | (None, _, None) => None,
         (None, _, Some(asked)) => Some(asked.clone()),
     };
+    let unbound = match (&caller.session, &caller.company) {
+        (Some(_), None) => caller.working_in.clone(),
+        _ => None,
+    };
     let machine = Configuration::load_global(home)?.mcp_servers(LayerKind::Global)?;
     let Some(company) = company else {
         return Ok(View {
             company: None,
+            unbound,
             servers: machine
                 .into_iter()
                 .map(|(name, server)| {
@@ -215,38 +239,69 @@ pub fn view(home: &Home, caller: &Caller, asked: Option<&ProjectSlug>) -> Result
             );
         }
     }
-    let speaker = match (&caller.session, &caller.company) {
-        (Some(session), Some(_)) => speaker(home, session)?,
-        _ => None,
-    };
     Ok(View {
         company: Some(company),
         servers,
-        speaker,
+        unbound: None,
+        speaker: None,
     })
 }
 
 /// The speaker of `session`'s current turn: the sender recorded with the
-/// addressed message of its conversation the runtime accepted and whose turn
-/// has not finished, or whose send was begun and not yet recorded as
-/// accepted. A conversation has at most one such message, since the next is
-/// delivered only once the current turn has finished. A session bound to no
-/// conversation has none.
-pub fn speaker(home: &Home, session: &SessionRef) -> Result<Option<Speaker>, McpError> {
+/// addressed message that opened the turn the runtime has in progress. The
+/// turn is correlated with its stored delivery by the delivery's boundary
+/// token, which the member envelope of the turn's opening input carries. A
+/// session bound to no conversation, and a turn whose opening input carries
+/// no member envelope, have no speaker. Any other uncertainty refuses.
+pub fn speaker(
+    home: &Home,
+    session: &SessionRef,
+    adapter: &dyn RuntimeAdapter,
+) -> Result<Option<Speaker>, McpError> {
     let Some(db) = StateRead::open(home)? else {
+        return Ok(None);
+    };
+    let conversation = db
+        .conn()
+        .query_row(
+            "SELECT company,connector,conversation FROM connected_conversations WHERE session=?1",
+            [session.to_string()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(StateDbError::sqlite(db.path()))?;
+    let Some((company, connector, conversation)) = conversation else {
+        return Ok(None);
+    };
+    let opening = adapter
+        .active_turn_input(session)
+        .map_err(|error| McpError::Turn {
+            cause: error.to_string(),
+        })?
+        .ok_or_else(|| McpError::Turn {
+            cause: "the runtime has no turn of this session in progress".into(),
+        })?;
+    let boundary = envelopes::segment(&opening)
+        .into_iter()
+        .find_map(|span| match span {
+            Span::Member { boundary, .. } => Some(boundary.to_owned()),
+            _ => None,
+        });
+    let Some(boundary) = boundary else {
         return Ok(None);
     };
     let row = db
         .conn()
         .query_row(
-            "SELECT m.sender, m.sender_name, m.sender_email
-             FROM connected_conversations c
-             JOIN conversation_messages m
-               ON m.company=c.company AND m.connector=c.connector AND m.conversation=c.conversation
-             WHERE c.session=?1
-               AND (m.state='sent' OR (m.state='pending' AND m.attempted_at IS NOT NULL))
-             ORDER BY m.written_us, m.message LIMIT 1",
-            [session.to_string()],
+            "SELECT sender, sender_name, sender_email FROM conversation_messages
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND boundary=?4",
+            [&company, &connector, &conversation, &boundary],
             |r| {
                 Ok((
                     r.get::<_, Option<String>>(0)?,
@@ -257,7 +312,10 @@ pub fn speaker(home: &Home, session: &SessionRef) -> Result<Option<Speaker>, Mcp
         )
         .optional()
         .map_err(StateDbError::sqlite(db.path()))?;
-    Ok(row.map(|(identity, name, email)| Speaker {
+    let (identity, name, email) = row.ok_or_else(|| McpError::Turn {
+        cause: "the turn's addressed message is not one this conversation delivered".into(),
+    })?;
+    Ok(Some(Speaker {
         name: name
             .or_else(|| identity.clone())
             .unwrap_or_else(|| "an unnamed sender".to_owned()),
@@ -270,6 +328,11 @@ impl View {
     /// The server named `name`, or the refusal naming those this caller
     /// sees.
     pub fn server(&self, name: &str) -> Result<&Visible, McpError> {
+        if let Some(company) = &self.unbound {
+            return Err(McpError::Unbound {
+                company: company.to_string(),
+            });
+        }
         ProjectSlug::parse(name)
             .ok()
             .and_then(|slug| self.servers.get(&slug))
@@ -358,10 +421,26 @@ impl Scrub {
         }
     }
 
-    /// `text` with every login value replaced by its label.
+    /// `text` with every occurrence of a login value replaced by its label,
+    /// also where JSON escaped it.
     pub fn text(&self, text: &str) -> String {
         self.logins.iter().fold(text.to_owned(), |text, login| {
-            text.replace(&login.value, &login.label)
+            let escaped = serde_json::to_string(&login.value).unwrap_or_default();
+            let escaped = escaped
+                .strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+                .unwrap_or_default()
+                .to_owned();
+            let mut forms = vec![
+                login.value.clone(),
+                escaped.clone(),
+                escaped.replace('/', "\\/"),
+            ];
+            forms.dedup();
+            forms
+                .iter()
+                .filter(|form| !form.is_empty())
+                .fold(text, |text, form| text.replace(form.as_str(), &login.label))
         })
     }
 
