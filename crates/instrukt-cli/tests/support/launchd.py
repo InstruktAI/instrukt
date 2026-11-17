@@ -11,11 +11,13 @@ import sys
 from typing import TypedDict, cast
 
 
-class Definition(TypedDict):
+class Definition(TypedDict, total=False):
     Label: str
     ProgramArguments: list[str]
     EnvironmentVariables: dict[str, str]
     Sockets: dict[str, dict[str, str | int]]
+    RunAtLoad: bool
+    KeepAlive: bool
 
 
 class JobRow(TypedDict):
@@ -43,6 +45,7 @@ class Operation(StrEnum):
     FORCE_LEGACY = "force-legacy"
     IGNORE_DEBUG = "ignore-debug"
     STOP_PROCESS = "stop-process"
+    REBOOT = "reboot"
 
 
 @dataclass
@@ -78,16 +81,31 @@ def launch(job: Job) -> None:
     pid = os.fork()
     if pid == 0:
         listener = job.listener
-        assert listener is not None
-        if listener.fileno() != 3:
-            os.dup2(listener.fileno(), 3)
-        os.set_inheritable(3, True)
         environment = dict(os.environ, **definition["EnvironmentVariables"])
-        environment.update(LISTEN_PID=str(os.getpid()), LISTEN_FDS="1", LISTEN_FDNAMES="instrukt")
+        if listener is not None:
+            if listener.fileno() != 3:
+                os.dup2(listener.fileno(), 3)
+            os.set_inheritable(3, True)
+            environment.update(LISTEN_PID=str(os.getpid()), LISTEN_FDS="1", LISTEN_FDNAMES="instrukt")
         # Native cached argv/env are deliberately never re-read from disk.
         argv = definition["ProgramArguments"]
         os.execve(argv[0], argv, environment)
     job.pid = pid
+
+
+def load(path: str, generation: int) -> Job:
+    with open(path, "rb") as source:
+        definition = cast(Definition, plistlib.load(source))
+    job = Job(definition, custody=generation)
+    if "Sockets" in definition:
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", int(definition["Sockets"]["instrukt"]["SockServiceName"])))
+        listener.listen()
+        job.listener = listener  # Native socket jobs can remain cold until explicitly started.
+    elif definition.get("RunAtLoad"):
+        launch(job)
+    return job
 
 
 def serve(address: str) -> None:
@@ -111,17 +129,22 @@ def serve(address: str) -> None:
                             return  # The shutdown caller already closed its connection.
                         break
                     if operation == Operation.LOAD:
-                        with open(args[-1], "rb") as source:
-                            definition = cast(Definition, plistlib.load(source))
                         generation += 1
-                        job = Job(definition, custody=generation)
-                        jobs[definition["Label"]] = job
-                        if "Sockets" in definition:
-                            listener = socket.socket()
-                            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                            listener.bind(("127.0.0.1", int(definition["Sockets"]["instrukt"]["SockServiceName"])))
-                            listener.listen()
-                            job.listener = listener  # Native socket jobs can remain cold until explicitly started.
+                        job = load(args[-1], generation)
+                        jobs[job.definition["Label"]] = job
+                    elif operation == Operation.REBOOT:
+                        # A restart ends every job; at login launchd loads the
+                        # user's agents folder again.
+                        for previous in jobs.values():
+                            stop(previous)
+                            if previous.listener is not None:
+                                previous.listener.close()
+                        jobs.clear()
+                        for name in sorted(os.listdir(args[-1])):
+                            if name.endswith(".plist"):
+                                generation += 1
+                                job = load(os.path.join(args[-1], name), generation)
+                                jobs[job.definition["Label"]] = job
                     elif operation == Operation.DEBUG:
                         if not ignore_debug:
                             job = jobs[args[1].split("/")[-1]]

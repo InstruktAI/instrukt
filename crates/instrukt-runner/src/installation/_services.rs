@@ -347,7 +347,9 @@ impl Owned {
         if desired.name == ResourceKind::WakeUp {
             crate::install::register(request.scheduler, &request.wake)?;
         } else {
-            if desired.name == ResourceKind::Redis && active {
+            // A repaired runner service restarts, so the desired executable
+            // and configuration are the ones running.
+            if matches!(desired.name, ResourceKind::Redis | ResourceKind::Runner) && active {
                 stop(desired)?;
             }
             start(desired)?;
@@ -887,7 +889,14 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
         } else {
             String::new()
         };
-        files.insert(dir.join(format!("{stem}.service")),format!("[Unit]\nDescription=instrukt {name}\n{extra}\n[Service]\nExecStart={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nUMask=0077\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",args.iter().map(|s|quote(s)).collect::<Vec<_>>().join(" "),quote(&format!("HOME={}",request.home.machine_user_home().display())),quote(&format!("PATH={}",request.wake.path_env)),quote(&format!("INSTRUKT_HOME={}",request.home.root().display())),quote(&format!("INSTRUKT_DEVELOPMENT={}",u8::from(request.home.is_development())))));
+        // The runner is kept running whenever it exits; other services
+        // restart after a failure.
+        let restart = if name == RUNNER {
+            "always"
+        } else {
+            "on-failure"
+        };
+        files.insert(dir.join(format!("{stem}.service")),format!("[Unit]\nDescription=instrukt {name}\n{extra}\n[Service]\nExecStart={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nUMask=0077\nRestart={restart}\n\n[Install]\nWantedBy=default.target\n",args.iter().map(|s|quote(s)).collect::<Vec<_>>().join(" "),quote(&format!("HOME={}",request.home.machine_user_home().display())),quote(&format!("PATH={}",request.wake.path_env)),quote(&format!("INSTRUKT_HOME={}",request.home.root().display())),quote(&format!("INSTRUKT_DEVELOPMENT={}",u8::from(request.home.is_development())))));
         unit = if let Some(port) = socket {
             files.insert(dir.join(format!("{stem}.socket")),format!("[Socket]\nListenStream=127.0.0.1:{port}\nFileDescriptorName=instrukt\n\n[Install]\nWantedBy=sockets.target\n"));
             format!("{stem}.socket")
@@ -898,6 +907,8 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
     Definition {
         name: if name.starts_with("webhooks") {
             ResourceKind::Receiver
+        } else if name == RUNNER {
+            ResourceKind::Runner
         } else {
             ResourceKind::Redis
         },
@@ -908,6 +919,25 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
         probe: None,
     }
 }
+/// The runner service's name in its unit: `ai.instrukt.runner` under
+/// launchd, `instrukt-runner.service` under systemd.
+const RUNNER: &str = "runner";
+
+/// The owned service that runs the installed binary's `instrukt run` as the
+/// runner service.
+pub(super) fn runner(request: &Request<'_>) -> Definition {
+    native(
+        request,
+        RUNNER,
+        &[
+            request.wake.executable.display().to_string(),
+            "run".into(),
+            crate::runner::SERVICE_FLAG.into(),
+        ],
+        None,
+    )
+}
+
 pub(super) fn redis(request: &Request<'_>, executable: &Path, config: &Path) -> Definition {
     native(
         request,

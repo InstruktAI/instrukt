@@ -189,6 +189,7 @@ fn native_selection(
         &s.config,
         record.agent.as_ref(),
         dispatch.as_ref().and_then(|p| p.role.as_deref()),
+        None,
     )
     .map_err(|e| WorkError::refused(e.to_string()))?;
     let selection = instrukt_runner::agents::selections(&s.config, s.home(), &order, s.now)

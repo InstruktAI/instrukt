@@ -172,7 +172,7 @@ fn schema() -> Node {
         // Later company-home keys: refused until this instrukt supports them.
         ("members", Leaf(Rule::CompanyOnly, Shape::Members)),
         ("connectors", Leaf(Rule::CompanyOnly, Shape::Connectors)),
-        ("profiles", Leaf(Rule::NotYetSupported, Shape::Str)),
+        ("profiles", Leaf(Rule::CompanyOnly, Shape::StrList)),
         ("mcp", Leaf(Rule::NotYetSupported, Shape::Str)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
@@ -1021,15 +1021,15 @@ mod tests {
         );
         // Keys of a later company-home slice are refused in every document.
         for layer in [LayerKind::Global, LayerKind::Project, LayerKind::Company] {
-            let later = yaml("schema_version: 1\nprofiles: []\nmcp: {}\n");
-            assert_eq!(judged(&check(&later, layer)), [("profiles", N), ("mcp", N)]);
+            let later = yaml("schema_version: 1\nmcp: {}\n");
+            assert_eq!(judged(&check(&later, layer)), [("mcp", N)]);
         }
-        let people = yaml("schema_version: 1\nmembers: {}\nconnectors: {}\n");
+        let people = yaml("schema_version: 1\nmembers: {}\nconnectors: {}\nprofiles: [a]\n");
         assert_eq!(check(&people, LayerKind::Company), []);
         for layer in [LayerKind::Global, LayerKind::Project] {
             assert_eq!(
                 judged(&check(&people, layer)),
-                [("members", N), ("connectors", N)]
+                [("members", N), ("connectors", N), ("profiles", N)]
             );
         }
         let switch = yaml("schema_version: 1\nmodules: {conversations: true}\n");

@@ -244,6 +244,7 @@ fn dispatch_one(
         config,
         candidate.agent.as_ref(),
         prepared.role.as_ref().map(|r| r.as_str()),
+        None,
     ) {
         Ok(order) => order,
         Err(error) => {

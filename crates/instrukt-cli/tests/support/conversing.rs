@@ -78,6 +78,13 @@ pub fn company_home(env: &TestEnv, name: &str, app: &str, bot: &str, settings: &
             .assert()
             .success();
     }
+    patch_company(env, name, settings);
+}
+
+/// Applies `settings` to the company home `name` through the configuration
+/// verbs.
+pub fn patch_company(env: &TestEnv, name: &str, settings: &str) {
+    let here = env.path("");
     let revision = env
         .run(&here, ["config", "get", "--company", name, "--revision"])
         .success();

@@ -33,6 +33,9 @@ pub(super) struct Demand {
     pub history: Vec<String>,
     pub history_owned_redis: Vec<String>,
     pub sources: Vec<SourceDemand>,
+    /// Company homes declaring a connector while conversations are on, as
+    /// `company:<name>`: they demand the runner service.
+    pub conversations: Vec<String>,
     pub complete: bool,
     pub redis_references: Vec<String>,
 }
@@ -58,6 +61,7 @@ pub(super) fn read(
         history: vec![],
         history_owned_redis: vec![],
         sources: vec![],
+        conversations: vec![],
         complete: true,
         redis_references: Vec::new(),
     };
@@ -181,8 +185,10 @@ pub(super) fn read(
 
 /// Company homes follow the machine's global switches: a nonempty valid
 /// source map demands events infrastructure and the receiver while events is
-/// on. A company folder whose document cannot be read or is invalid makes
-/// demand incomplete, so shared resources are never withdrawn on its account.
+/// on, and a declared connector demands the runner service while
+/// conversations is on. A company folder whose document cannot be read or is
+/// invalid makes demand incomplete, so shared resources are never withdrawn
+/// on its account.
 fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::Result<()> {
     let global = Configuration::load_global(home)?;
     for (name, config) in instrukt_core::config::company_homes(home)? {
@@ -193,6 +199,13 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
                 Err(instrukt_core::config::ConfigError::NoLayer { .. }) => return Ok(()),
                 Err(error) => return Err(error.into()),
             };
+            if global.conversations_enabled()? && config.slack_connector()?.is_some() {
+                let features = [Feature::Conversations];
+                if let Some(unavailable) = global.unavailable(&features)? {
+                    anyhow::bail!("{}", unavailable.describe(&features));
+                }
+                demand.conversations.push(format!("company:{name}"));
+            }
             let sources = config.webhooks()?;
             if sources.is_empty() {
                 return Ok(());

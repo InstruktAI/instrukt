@@ -55,6 +55,8 @@ pub enum ResourceKind {
     LocalRedis,
     #[serde(rename = "graphify")]
     Graphify,
+    #[serde(rename = "runner service")]
+    Runner,
 }
 impl ResourceKind {
     pub fn name(self) -> &'static str {
@@ -64,6 +66,7 @@ impl ResourceKind {
             Self::Receiver => "receiver",
             Self::LocalRedis => "local Redis",
             Self::Graphify => "graphify",
+            Self::Runner => "runner service",
         }
     }
 }
@@ -169,6 +172,8 @@ pub struct Request<'a> {
     pub wake: WakeUp<'a>,
     pub check: bool,
     pub module: Option<Module>,
+    /// Limit convergence to conversations' dependencies: the runner service.
+    pub conversations: bool,
     pub github: &'a dyn crate::interfaces::GitHubReadiness,
     pub now: jiff::Timestamp,
 }
@@ -186,7 +191,10 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     let mut report = Report::default();
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
-    if request.check && (request.module.is_none() || request.module == Some(Module::Todos)) {
+    if request.check
+        && !request.conversations
+        && (request.module.is_none() || request.module == Some(Module::Todos))
+    {
         for work in &demand.work {
             if let Err(error) =
                 request
@@ -213,7 +221,9 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     {
         report.notices.push(notice);
     }
-    if request.module.is_none() || request.module == Some(Module::Blueprint) {
+    if (request.module.is_none() && !request.conversations)
+        || request.module == Some(Module::Blueprint)
+    {
         graphify(request, &demand.blueprint, &mut report);
     }
     if request.module == Some(Module::Blueprint) {
@@ -225,6 +235,14 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         owned
             .persist_migration(request.home)
             .map_err(|e| InstallationError::Ownership(e.to_string()))?;
+    }
+    if request.module.is_none()
+        && let Err(error) = runner_service(request, &mut owned, &demand, &mut report)
+    {
+        report.finding(ResourceKind::Runner, error);
+    }
+    if request.conversations {
+        return Ok(report);
     }
     if request.module != Some(Module::History)
         && (request.module != Some(Module::Events) || !demand.events.is_empty())
@@ -279,6 +297,40 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         }
     }
     Ok(report)
+}
+/// The owned service that keeps `instrukt run` running while a company
+/// home declares a connector and conversations are on; withdrawn when that
+/// demand ends.
+fn runner_service(
+    request: &Request<'_>,
+    owned: &mut _services::Owned,
+    demand: &Demand,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let desired = _services::runner(request);
+    if demand.conversations.is_empty() {
+        return owned.withdraw_named(request, ResourceKind::Runner, demand.complete, report);
+    }
+    if request.scheduler == Scheduler::Crontab {
+        report.resource(
+            ResourceKind::Runner,
+            Disposition::Unmet,
+            vec![],
+            &demand.conversations,
+            "no service manager keeps a process running",
+        );
+        anyhow::bail!(
+            "conversations need a service manager that keeps `instrukt run` running: launchd on macOS or a systemd user manager on Linux; cron cannot keep a process running"
+        );
+    }
+    owned.reconcile(
+        request,
+        &desired,
+        true,
+        demand.complete,
+        &demand.conversations,
+        report,
+    )
 }
 fn graphify(request: &Request<'_>, projects: &[String], report: &mut Report) {
     if projects.is_empty() {
@@ -447,6 +499,32 @@ pub fn ticks_status(
         stale,
     })
 }
+/// The runner service as an inspection found it: `running` when its owned
+/// definition is current and the service manager runs it, `unmet` when it
+/// is demanded but missing, stale or stopped, `obsolete` when it is no
+/// longer demanded but still registered, `no_demand` otherwise.
+fn runner_service_status(report: &Report) -> serde_json::Value {
+    let resource = report
+        .resources
+        .iter()
+        .find(|resource| resource.name == ResourceKind::Runner);
+    let findings = report
+        .findings
+        .iter()
+        .filter(|finding| finding.starts_with(ResourceKind::Runner.name()))
+        .collect::<Vec<_>>();
+    let state = match resource.map(|resource| resource.disposition) {
+        Some(Disposition::Reused) => "running",
+        Some(_) => "unmet",
+        None if findings.is_empty() => "no_demand",
+        None => "obsolete",
+    };
+    serde_json::json!({
+        "state": state,
+        "paths": resource.map(|resource| resource.paths.clone()).unwrap_or_default(),
+        "findings": findings,
+    })
+}
 /// Read retained transport/activation facts without enabling events or creating groups.
 pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
     let mut report = Report::default();
@@ -457,6 +535,12 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         module: Some(Module::Events),
         ..request.clone()
     })?;
+    let runner_service = runner_service_status(&converge(&Request {
+        check: true,
+        module: None,
+        conversations: true,
+        ..request.clone()
+    })?);
     let configured = Configuration::load_global(request.home)?
         .get(None, request.env)?
         .get("redis")
@@ -473,7 +557,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
     Ok(
-        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?}),
+        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
     )
 }
 

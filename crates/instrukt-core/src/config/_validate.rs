@@ -39,6 +39,11 @@ fn findings_in_scope(
     let mut found = judge(value, layer.kind(), global.as_ref());
     if let Layer::Company(name) = layer {
         found.extend(company_identity(name, value));
+        if let Some(profiles) = value.get("profiles") {
+            // An unreadable agents.yaml is the global layer's own finding.
+            let declared = super::Agents::load(&home.for_inspection()).ok();
+            super::_company::check_profiles(name, profiles, declared.as_ref(), &mut found);
+        }
         let effective = effective_value(global.as_ref(), None)?;
         found.extend(ingress_signing(
             home,

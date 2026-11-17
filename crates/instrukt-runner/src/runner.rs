@@ -35,6 +35,70 @@ use crate::transport::{EventScope, ScopedTransport, TransportError};
 /// How long `instrukt run` waits for a tick in progress to finish.
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 
+/// The argument the owned runner service passes to `instrukt run`.
+pub const SERVICE_FLAG: &str = "--service";
+
+/// Who holds the runner lock, as its holder records it beside the lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Holder {
+    Service,
+    Run,
+    Tick,
+}
+impl Holder {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Service => "service",
+            Self::Run => "run",
+            Self::Tick => "tick",
+        }
+    }
+}
+
+/// Records which invocation holds the runner lock it just acquired. The
+/// record is read only while the lock is held, so a stale one from an
+/// ended holder is never consulted.
+fn record_holder(home: &Home, holder: Holder) {
+    if let Err(error) = std::fs::write(home.runner_holder_file(), holder.name()) {
+        tracing::warn!(event = "runner_holder_unrecorded", error = %error);
+    }
+}
+
+/// The runner lock for `instrukt run`. The service waits for a run started
+/// by hand; a run started by hand is refused while the service holds it,
+/// and waits a bounded time for a tick in progress.
+fn run_lock(home: &Home, service: bool) -> Result<LockGuard, RunnerError> {
+    let path = home.runner_lock_file();
+    let guard = if service {
+        loop {
+            if let Some(guard) = LockGuard::try_acquire(&path)? {
+                break guard;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    } else {
+        match LockGuard::try_acquire(&path)? {
+            Some(guard) => guard,
+            None => {
+                let holder = std::fs::read_to_string(home.runner_holder_file()).ok();
+                if holder.as_deref() == Some(Holder::Service.name()) {
+                    return Err(RunnerError::ServiceRunning);
+                }
+                LockGuard::acquire(&path, RUN_LOCK_WAIT)?
+            }
+        }
+    };
+    record_holder(
+        home,
+        if service {
+            Holder::Service
+        } else {
+            Holder::Run
+        },
+    );
+    Ok(guard)
+}
+
 /// A runner invocation could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
@@ -44,6 +108,10 @@ pub enum RunnerError {
     History(#[from] crate::history::HistoryError),
     #[error("conversations: {0}")]
     Conversations(String),
+    #[error(
+        "instrukt's runner service is already running `instrukt run`, which serves every enabled module; no second run is started"
+    )]
+    ServiceRunning,
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
     #[error("the activation wake channel failed; accepted work remains pending")]
@@ -130,6 +198,7 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
     let Some(_runner) = LockGuard::try_acquire(&cx.home.runner_lock_file())? else {
         return Ok(TickOutcome::Busy);
     };
+    record_holder(cx.home, Holder::Tick);
     let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
         tracing::info!(event = "tick_runner_busy");
         return Ok(TickOutcome::Busy);
@@ -154,9 +223,10 @@ pub fn run(
     cx: &RunnerContext<'_>,
     clock: impl Fn() -> Timestamp + Send + Sync + 'static,
     interval: Duration,
+    service: bool,
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
-    let _runner = LockGuard::acquire(&cx.home.runner_lock_file(), RUN_LOCK_WAIT)?;
+    let _runner = run_lock(cx.home, service)?;
     // Initialize the shared schema before independent workers open connections.
     drop(instrukt_core::state_db::StateDb::open(cx.home).map_err(StateError::from)?);
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);

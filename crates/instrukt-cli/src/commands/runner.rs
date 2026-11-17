@@ -27,11 +27,16 @@ use crate::wiring;
 const RUN_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, clap::Args)]
-pub struct RunArgs {}
+pub struct RunArgs {
+    /// Run as instrukt's owned runner service: wait for a run started by
+    /// hand instead of failing. The service definition passes it.
+    #[arg(long, hide = true)]
+    service: bool,
+}
 
 /// Runs the runner until stopped: a wake-up every minute, holding the
 /// runner lock.
-pub fn run_run(_args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+pub fn run_run(args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     require_runner_modules(ctx, "run")?;
     let env = crate::wiring::environment(ctx)?;
     let tz = TimeZone::system();
@@ -43,7 +48,7 @@ pub fn run_run(_args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         wiring: &wiring,
     };
     let clock = ctx.clock;
-    runner::run(&cx, move || clock.now(), RUN_INTERVAL)?;
+    runner::run(&cx, move || clock.now(), RUN_INTERVAL, args.service)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -267,7 +272,7 @@ pub struct InstallArgs {
     #[arg(long)]
     check: bool,
     /// Limit convergence to an enabled module's dependencies. Full demand still protects shared resources.
-    #[arg(long, value_parser = ["todos", "events", "history", "blueprint"])]
+    #[arg(long, value_parser = ["todos", "events", "history", "blueprint", "conversations"])]
     module: Option<String>,
     /// Render per-resource results and findings as JSON.
     #[arg(long)]
@@ -278,12 +283,13 @@ pub struct InstallArgs {
 /// only unneeded owned units. Resolve reported prerequisites and rerun this command.
 pub fn run_install(args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let module = args.module.as_deref().and_then(Module::from_key);
-    let report = with_installation(
-        ctx,
-        args.check,
-        module,
-        instrukt_runner::installation::converge,
-    )?;
+    let conversations = args.module.as_deref() == Some("conversations");
+    let report = with_installation(ctx, args.check, module, |request| {
+        instrukt_runner::installation::converge(&instrukt_runner::installation::Request {
+            conversations,
+            ..request.clone()
+        })
+    })?;
     let healthy = report.healthy();
     if args.json {
         ctx.out.json(&report)?;
@@ -349,6 +355,7 @@ where
         },
         check,
         module,
+        conversations: false,
         github: ctx.github.as_ref(),
         now: ctx.clock.now(),
     })

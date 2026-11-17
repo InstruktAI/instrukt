@@ -31,12 +31,12 @@ profiles:
 #[test]
 fn role_mapping_falls_back_and_task_inputs_override_independently() {
     let agents = Agents::parse(CONFIG).unwrap();
-    let selected = agents.select(Some("builder"), None, None).unwrap();
+    let selected = agents.select(Some("builder"), None, None, None).unwrap();
     assert_eq!(selected[0].profile.as_str(), "work");
     assert_eq!(selected[0].instance.as_str(), "codex-work");
     assert_eq!(selected[0].model, "work-strong");
     assert_eq!(
-        agents.select(Some("unknown"), None, None).unwrap()[0].model,
+        agents.select(Some("unknown"), None, None, None).unwrap()[0].model,
         "new-standard"
     );
     assert_eq!(
@@ -44,12 +44,73 @@ fn role_mapping_falls_back_and_task_inputs_override_independently() {
             .select(
                 Some("builder"),
                 Some(&instrukt_core::ids::ProfileName::parse("personal").unwrap()),
-                Some(Tier::Light)
+                Some(Tier::Light),
+                None
             )
             .unwrap()[0]
             .model,
         "new-light"
     );
+    // A session in a company home that names `profiles` walks that list in
+    // place of its role's order; the tier is still the role's, and a task
+    // override still comes first.
+    let name = |name: &str| instrukt_core::ids::ProfileName::parse(name).unwrap();
+    let company = [name("personal")];
+    assert_eq!(
+        agents
+            .order(Some("builder"), None, None, Some(&company))
+            .unwrap(),
+        [(name("personal"), Tier::Strong)]
+    );
+    assert_eq!(
+        agents
+            .order(Some("builder"), Some(&name("work")), None, Some(&company))
+            .unwrap(),
+        [
+            (name("work"), Tier::Strong),
+            (name("personal"), Tier::Strong)
+        ]
+    );
+    // The machine's agents.yaml declares every profile a company names, and
+    // a company that names `profiles` names at least one.
+    let env = TestEnv::new();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    env.run(env.home(), ["config", "init", "--company", "acme"])
+        .success();
+    for (case, profiles) in [("undeclared", "[undeclared-profile]"), ("empty", "[]")] {
+        let revision = env
+            .run(
+                env.home(),
+                ["config", "get", "--company", "acme", "--revision"],
+            )
+            .success();
+        let revision = String::from_utf8_lossy(&revision.get_output().stdout)
+            .trim()
+            .to_owned();
+        let refused = env
+            .run(
+                env.home(),
+                [
+                    "config",
+                    "patch",
+                    "--company",
+                    "acme",
+                    "--revision",
+                    &revision,
+                    "--yaml",
+                    &format!("profiles: {profiles}"),
+                ],
+            )
+            .failure();
+        insta::assert_snapshot!(
+            format!("company-profiles-{case}"),
+            String::from_utf8_lossy(&refused.get_output().stderr).replace(
+                env.path("").to_str().unwrap().trim_end_matches('/'),
+                "[TMP]"
+            )
+        );
+    }
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3
@@ -132,7 +193,7 @@ fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_wr
     .success();
     let current: Agents = Agents::parse(&std::fs::read_to_string(file).unwrap()).unwrap();
     assert_eq!(
-        current.select(Some("builder"), None, None).unwrap()[0].effort,
+        current.select(Some("builder"), None, None, None).unwrap()[0].effort,
         Some(instrukt_core::config::Effort::High)
     );
     insta::assert_json_snapshot!(

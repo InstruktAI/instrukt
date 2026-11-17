@@ -2156,3 +2156,62 @@ fn blueprint_missing_uv_or_failed_uv_is_unmet_and_disable_retains_tool() {
     env.run(env.home(), ["install", "--check"]).success();
     assert_eq!(bytes, std::fs::read(binary).unwrap());
 }
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI13
+#[cfg(target_os = "macos")]
+#[test]
+fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
+    use crate::fixtures::conversing::{Company, wait};
+    let mut c = Company::new("");
+    let fixture = CachedLaunchd::new(&mut c.env);
+    let unit = "ai.instrukt.runner";
+    let service_state = |c: &Company| c.status()["runner_service"]["state"].clone();
+    // Demanded and not yet installed: inspection reports it unmet.
+    c.env.run(c.env.home(), ["install", "--check"]).failure();
+    insta::assert_json_snapshot!(service_state(&c), @r#""unmet""#);
+    // Installing the demanded infrastructure starts the runner as a service:
+    // it connects the company's connector without anyone starting it.
+    c.env.run(c.env.home(), ["install"]).success();
+    wait("the service's connector connection", || {
+        c.slack.connections() == 1
+    });
+    c.env.run(c.env.home(), ["install", "--check"]).success();
+    insta::assert_json_snapshot!(service_state(&c), @r#""running""#);
+    // While the service runs, a run started by hand is refused naming it.
+    let refused = c.env.run(c.env.home(), ["run"]).failure();
+    insta::assert_snapshot!(
+        "second-run-refused-while-the-service-runs",
+        String::from_utf8_lossy(&refused.get_output().stderr)
+    );
+    // The computer restarts: the service manager starts the runner again.
+    let before = fixture.request(&["inspect", unit])["pid"].clone();
+    fixture.request(&[
+        "reboot",
+        c.env.home().join("Library/LaunchAgents").to_str().unwrap(),
+    ]);
+    wait("the restarted service's connector connection", || {
+        c.slack.connections() == 2
+    });
+    assert_ne!(fixture.request(&["inspect", unit])["pid"], before);
+    // Switching conversations off ends the demand: the next install
+    // withdraws the service.
+    std::fs::write(
+        c.env.instrukt_home().join("instrukt.yaml"),
+        format!(
+            "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{conversations: false}}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    c.env.run(c.env.home(), ["install"]).success();
+    assert_eq!(fixture.request(&["list", unit])["ok"], false);
+    insta::assert_json_snapshot!(service_state(&c), @r#""no_demand""#);
+    // A computer with no service manager that keeps a process running: the
+    // prerequisite is reported and installation claims no success.
+    let bare = Company::new("");
+    let unmet = bare.env.run(bare.env.home(), ["install"]).failure();
+    insta::assert_snapshot!(
+        "runner-service-without-a-service-manager",
+        String::from_utf8_lossy(&unmet.get_output().stdout)
+    );
+}
