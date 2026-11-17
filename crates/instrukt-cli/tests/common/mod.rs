@@ -9,11 +9,14 @@
 //!   test sets with [`TestEnv::set_env`] — no live session variable leaks in;
 //! - every subprocess carries the write fence
 //!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home: an
-//!   instrukt process that tries to write there, directly or through a
-//!   symbolic link, stops before writing and records the refusal in the
-//!   test's temporary directory; on drop the test fails when a refusal was
-//!   recorded. What other processes on the computer do to the live home is
-//!   not the test's concern and is not looked at.
+//!   instrukt process whose own file operation would land there, directly or
+//!   through a symbolic link, refuses it before it happens and records the
+//!   refusal in a record this test owns and names in the fence; on drop the
+//!   test fails when a refusal was recorded, or when the record cannot be
+//!   read. What other processes on the computer do to the live home is not
+//!   the test's concern and is not looked at. The fence is not a sandbox:
+//!   the programs instrukt starts and the test's own fixtures stay inside the
+//!   temporary home by construction.
 //!
 //! [`github::FakeGitHub`] (or [`TestEnv::with_fake_github`]) stands in for
 //! GitHub's API at the network line for the work, workflow and runner
@@ -186,10 +189,20 @@ impl TestEnv {
         );
         vars.insert("GIT_CONFIG_NOSYSTEM".into(), "1".into());
         vars.insert("LANG".into(), "C.UTF-8".into());
-        let fence = std::env::join_paths(live_fence(&base)).unwrap();
+        // The record lives in the test's own directory, where no command's
+        // settings point; the fence names it, and instrukt only appends to it.
+        let record = base.join("fence");
+        std::fs::create_dir_all(&record).unwrap();
+        std::fs::write(record.join(instrukt_core::fsx::FENCE_RECORD), "").unwrap();
+        let mut fence = live_fence(&base);
+        fence.push(PathBuf::from(format!(
+            "{}{}",
+            instrukt_core::fsx::FENCE_RECORD_ENTRY,
+            record.display()
+        )));
         vars.insert(
             instrukt_core::fsx::FENCE_VARIABLE.into(),
-            fence.into_string().unwrap(),
+            std::env::join_paths(fence).unwrap().into_string().unwrap(),
         );
         Self {
             root,
@@ -250,13 +263,17 @@ impl TestEnv {
     }
 
     /// The writes instrukt processes of this test refused at the fence, one
-    /// line each; taking them clears the record.
+    /// line each; taking them empties the record. A record that cannot be
+    /// read fails the test: it is never taken for no refusal.
     pub fn refusals(&self) -> Vec<String> {
-        let record = self.path("tmp").join(instrukt_core::fsx::FENCE_RECORD);
-        let Ok(text) = std::fs::read_to_string(&record) else {
-            return Vec::new();
-        };
-        std::fs::remove_file(&record).unwrap();
+        let record = self.path("fence").join(instrukt_core::fsx::FENCE_RECORD);
+        let text = std::fs::read_to_string(&record).unwrap_or_else(|error| {
+            panic!(
+                "the write fence's record {} cannot be read: {error}",
+                record.display()
+            )
+        });
+        std::fs::write(&record, "").unwrap();
         text.lines().map(str::to_owned).collect()
     }
 

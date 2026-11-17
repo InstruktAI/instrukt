@@ -1,130 +1,341 @@
-//! The write fence: locations this process refuses to write.
+//! The write fence: real locations this process refuses to write.
 //!
 //! The launching process names them in `INSTRUKT_WRITE_FENCE`, read once at
-//! startup through the typed environment. A write whose target, with every
-//! symbolic link resolved, lies under one of them stops the process before
-//! anything is written: a distinctive error on stderr, a record of it in the
-//! launcher's temporary directory and exit status [`EXIT`]. The fence only
-//! refuses; it never redirects a write or permits one. Unset, it costs one
-//! check of an empty cell per write.
+//! startup through the typed environment, together with a place of its own
+//! where each refusal is recorded. A write whose target lies under a fenced
+//! location, as the file system stands when the write is checked, is refused
+//! before it happens: a [`Refusal`] error that travels through the operation's
+//! own error and rollback path, a line on stderr, a line in the record, and
+//! exit status [`EXIT`] when the binary ends. The fence only refuses; it never
+//! redirects a write or permits one. Unset, each write costs one check of an
+//! empty cell.
+//!
+//! It is not a sandbox. Programs this process starts do not read it, and a
+//! path that another process retargets between the check and the write is
+//! outside what it stops.
 
-use std::io::Write as _;
+use std::ffi::{OsStr, OsString};
+use std::io::{self, Write as _};
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
-/// The variable naming the fenced locations, separated as `PATH` is.
+/// The variable naming the fenced locations, separated as `PATH` is. One
+/// entry may instead be `record=<directory>`: the launcher's directory
+/// holding the [`RECORD`] file each refusal is appended to.
 pub const VARIABLE: &str = "INSTRUKT_WRITE_FENCE";
+/// The prefix of the entry naming the record's directory.
+pub const RECORD_ENTRY: &str = "record=";
+/// The record file in that directory. The launcher creates it; this process
+/// only appends to it.
+pub const RECORD: &str = "refusals";
 /// The exit status of a process that refused a write at its fence.
-pub const EXIT: i32 = 86;
-/// The file, in the launcher's temporary directory (`TMPDIR`), that keeps
-/// one line per refused write.
-pub const RECORD: &str = "instrukt-write-refusals";
+pub const EXIT: u8 = 86;
 
 /// How many symbolic links one path may pass through before it is taken
 /// as written; the operating system refuses deeper chains itself.
 const MAX_LINKS: usize = 40;
 
+/// What [`VARIABLE`] says: the fenced locations and where refusals go.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Setting {
+    pub roots: Vec<PathBuf>,
+    pub record: Option<PathBuf>,
+}
+
+impl Setting {
+    /// Reads the variable's value; a relative fenced entry is ignored, as
+    /// it names no real location.
+    pub fn parse(value: &str) -> Self {
+        let mut setting = Self::default();
+        for entry in std::env::split_paths(value) {
+            match entry
+                .to_str()
+                .and_then(|text| text.strip_prefix(RECORD_ENTRY))
+            {
+                Some(record) => setting.record = Some(PathBuf::from(record)),
+                None if entry.is_absolute() => setting.roots.push(entry),
+                None => {}
+            }
+        }
+        setting
+    }
+}
+
+/// A write the fence refused.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "write refused at the fence: {} resolves to {}, under {} which {VARIABLE} keeps off limits",
+    path.display(),
+    target.display(),
+    root.display()
+)]
+pub struct Refusal {
+    path: PathBuf,
+    target: PathBuf,
+    root: PathBuf,
+}
+
+/// The fence's record could not be opened, so nothing is run.
+#[derive(Debug, thiserror::Error)]
+#[error("the write fence's record {} cannot be used: {source}", path.display())]
+pub struct RecordUnavailable {
+    path: PathBuf,
+    source: io::Error,
+}
+
 struct Fence {
     roots: Vec<PathBuf>,
-    record: Option<PathBuf>,
+    record: Option<Mutex<std::fs::File>>,
 }
 
 static FENCE: OnceLock<Fence> = OnceLock::new();
+static REFUSED: AtomicBool = AtomicBool::new(false);
 
-/// Fences `roots` for the rest of this process, recording refusals under
-/// `temporary`. Empty `roots` install nothing; a second installation
-/// changes nothing.
-pub fn install(roots: &[PathBuf], temporary: Option<&Path>) {
-    if roots.is_empty() {
-        return;
+/// Fences `setting` for the rest of this process. No roots install
+/// nothing; a second installation changes nothing. A named record must
+/// already exist as a regular file in a directory outside every fenced
+/// location; it is opened here, once, without following a link, so a
+/// refusal never looks a path up again.
+pub fn install(setting: &Setting) -> Result<(), RecordUnavailable> {
+    if setting.roots.is_empty() {
+        return Ok(());
     }
-    let mut fenced = Vec::new();
-    for root in roots {
-        for form in [lexical(&absolute(root)), resolved(root)] {
-            if !fenced.contains(&form) {
-                fenced.push(form);
-            }
-        }
-    }
-    let record = temporary
-        .map(|dir| resolved(&dir.join(RECORD)))
-        .filter(|record| !fenced.iter().any(|root| record.starts_with(root)));
+    let record = match &setting.record {
+        Some(directory) => Some(Mutex::new(open_record(&setting.roots, directory)?)),
+        None => None,
+    };
     let _ = FENCE.set(Fence {
-        roots: fenced,
+        roots: setting.roots.clone(),
         record,
     });
+    Ok(())
 }
 
-/// Admits a write to `path`, or ends the process when the path itself or
-/// what it resolves to lies under a fenced location.
-pub fn admit(path: &Path) {
+fn open_record(roots: &[PathBuf], directory: &Path) -> Result<std::fs::File, RecordUnavailable> {
+    use rustix::fs::{Mode, OFlags};
+    let path = directory.join(RECORD);
+    let unavailable = |source: io::Error| RecordUnavailable {
+        path: path.clone(),
+        source,
+    };
+    let place = resolved(directory);
+    if let Some(root) = roots.iter().find(|root| fenced(&place, root)) {
+        return Err(unavailable(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("it lies under the fenced {}", root.display()),
+        )));
+    }
+    let dir = rustix::fs::open(
+        &place.path,
+        OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| unavailable(error.into()))?;
+    // Opened relative to the directory just checked, and never through a
+    // link, the record cannot lead a refusal into a fenced location.
+    let file = rustix::fs::openat(
+        &dir,
+        RECORD,
+        OFlags::WRONLY | OFlags::APPEND | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| unavailable(error.into()))?;
+    let file = std::fs::File::from(file);
+    let meta = file.metadata().map_err(unavailable)?;
+    if !meta.file_type().is_file() {
+        return Err(unavailable(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "it is not a regular file",
+        )));
+    }
+    Ok(file)
+}
+
+/// Whether this process refused a write at its fence.
+pub fn refused() -> bool {
+    REFUSED.load(Ordering::SeqCst)
+}
+
+/// Admits a write to `path`, or refuses it when the path itself or what
+/// it resolves to lies under a fenced location.
+pub fn admit(path: &Path) -> io::Result<()> {
     let Some(fence) = FENCE.get() else {
-        return;
+        return Ok(());
     };
     let absolute = absolute(path);
     // The entry itself (what a rename or removal changes) and, through a
     // final symbolic link, what a write into it changes.
     let entry = match (absolute.parent(), absolute.file_name()) {
-        (Some(parent), Some(name)) => resolved(parent).join(name),
+        (Some(parent), Some(name)) => {
+            let parent = resolved(parent);
+            Resolved {
+                existing: parent.existing,
+                path: parent.path.join(name),
+            }
+        }
         _ => resolved(&absolute),
     };
     for target in [entry, resolved(&absolute)] {
-        if let Some(root) = fence.roots.iter().find(|root| target.starts_with(root)) {
-            refuse(fence, path, &target, root);
+        if let Some(root) = fence.roots.iter().find(|root| fenced(&target, root)) {
+            return Err(refuse(fence, path, &target.path, root));
         }
     }
+    Ok(())
 }
 
-fn refuse(fence: &Fence, path: &Path, target: &Path, root: &Path) -> ! {
-    let line = format!(
-        "instrukt: write refused at the fence: {} resolves to {}, under {} which {VARIABLE} keeps off limits",
-        path.display(),
-        target.display(),
-        root.display()
-    );
-    let _ = writeln!(std::io::stderr(), "{line}");
-    if let Some(record) = &fence.record {
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "the record lies outside every fenced location"
-        )]
-        let opened = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(record);
-        if let Ok(mut file) = opened {
-            let _ = writeln!(file, "{line}");
-        }
+fn refuse(fence: &Fence, path: &Path, target: &Path, root: &Path) -> io::Error {
+    REFUSED.store(true, Ordering::SeqCst);
+    let refusal = Refusal {
+        path: path.to_path_buf(),
+        target: target.to_path_buf(),
+        root: root.to_path_buf(),
+    };
+    let line = format!("instrukt: {refusal}");
+    let _ = writeln!(io::stderr(), "{line}");
+    if let Some(record) = &fence.record
+        && let Ok(mut file) = record.lock()
+        && let Err(error) = writeln!(file, "{line}")
+    {
+        let _ = writeln!(
+            io::stderr(),
+            "instrukt: the write fence's record failed: {error}"
+        );
     }
-    std::process::exit(EXIT)
+    io::Error::new(io::ErrorKind::PermissionDenied, refusal)
+}
+
+/// Whether `error` is, or carries, a refusal at the fence.
+pub fn is_refusal(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if error.is::<Refusal>()
+            || error
+                .downcast_ref::<io::Error>()
+                .and_then(io::Error::get_ref)
+                .is_some_and(|inner| inner.is::<Refusal>())
+        {
+            return true;
+        }
+        current = error.source();
+    }
+    false
+}
+
+/// Whether `target` lies under the fenced `root`, both as the file system
+/// stands now: under where the root leads, or, for a fenced link, under the
+/// link itself.
+fn fenced(target: &Resolved, root: &Path) -> bool {
+    let fold = target.folds_case();
+    let leads = resolved(root);
+    let absolute = absolute(root);
+    let entry = match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = resolved(parent);
+            Resolved {
+                existing: parent.existing,
+                path: parent.path.join(name),
+            }
+        }
+        _ => leads.clone(),
+    };
+    under(target, &leads, fold) || under(target, &entry, fold)
 }
 
 fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// `path` with `.` and `..` applied as written.
-fn lexical(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-    out
+/// A path as the file system stands: its first `existing` components exist
+/// and carry the file system's own spelling, with every symbolic link in
+/// them resolved; the rest do not exist and are taken as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Resolved {
+    pub(super) path: PathBuf,
+    pub(super) existing: usize,
 }
 
-/// `path` made absolute with every symbolic link in it resolved, a dangling
-/// one included; parts that do not exist are taken as written.
-pub(super) fn resolved(path: &Path) -> PathBuf {
+impl Resolved {
+    /// Whether the volume holding its existing part treats differently
+    /// cased names as one, seen by looking an existing name up in another
+    /// case.
+    fn folds_case(&self) -> bool {
+        let existing: PathBuf = self.path.components().take(self.existing).collect();
+        for dir in existing.ancestors() {
+            let (Some(parent), Some(name)) = (dir.parent(), dir.file_name()) else {
+                continue;
+            };
+            let Some(other) = recase(name) else {
+                continue;
+            };
+            let (Ok(here), Ok(there)) = (
+                std::fs::symlink_metadata(dir),
+                std::fs::symlink_metadata(parent.join(&other)),
+            ) else {
+                return false;
+            };
+            return here.dev() == there.dev() && here.ino() == there.ino();
+        }
+        false
+    }
+}
+
+/// `name` with its first cased letter in the other case.
+fn recase(name: &OsStr) -> Option<OsString> {
+    let text = name.to_str()?;
+    let (at, letter) = text
+        .char_indices()
+        .find(|(_, c)| c.is_lowercase() || c.is_uppercase())?;
+    let other: String = if letter.is_lowercase() {
+        letter.to_uppercase().collect()
+    } else {
+        letter.to_lowercase().collect()
+    };
+    Some(OsString::from(format!(
+        "{}{other}{}",
+        &text[..at],
+        &text[at + letter.len_utf8()..]
+    )))
+}
+
+/// Whether `target` lies at or under `root`. Existing components compare as
+/// the file system spells them; where either side does not exist yet, a
+/// volume that folds case compares the names without regard to case.
+pub(super) fn under(target: &Resolved, root: &Resolved, fold: bool) -> bool {
+    let target_parts: Vec<Component<'_>> = target.path.components().collect();
+    let root_parts: Vec<Component<'_>> = root.path.components().collect();
+    root_parts.len() <= target_parts.len()
+        && root_parts
+            .iter()
+            .zip(&target_parts)
+            .enumerate()
+            .all(|(at, (r, t))| {
+                r == t
+                    || (fold
+                        && (at >= target.existing || at >= root.existing)
+                        && same_ignoring_case(r.as_os_str(), t.as_os_str()))
+            })
+}
+
+fn same_ignoring_case(a: &OsStr, b: &OsStr) -> bool {
+    match (a.to_str(), b.to_str()) {
+        (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
+        _ => a == b,
+    }
+}
+
+/// `path` made absolute and resolved as the file system stands: each
+/// existing component in the file system's own spelling, every symbolic
+/// link followed (a dangling one included), and parts that do not exist
+/// taken as written.
+pub(super) fn resolved(path: &Path) -> Resolved {
     let mut pending = absolute(path);
     let mut links = 0;
     loop {
         let mut out = PathBuf::new();
+        let mut existing = 0;
+        let mut exists = true;
         let mut through = None;
         let components: Vec<Component<'_>> = pending.components().collect();
         for (at, component) in components.iter().enumerate() {
@@ -132,23 +343,41 @@ pub(super) fn resolved(path: &Path) -> PathBuf {
                 Component::CurDir => {}
                 Component::ParentDir => {
                     out.pop();
+                    existing = existing.min(out.components().count());
                 }
                 Component::Normal(name) => {
-                    out.push(name);
-                    let is_link = std::fs::symlink_metadata(&out)
-                        .is_ok_and(|meta| meta.file_type().is_symlink());
-                    if is_link
-                        && links < MAX_LINKS
-                        && let Ok(target) = std::fs::read_link(&out)
-                    {
-                        out.pop();
-                        let mut next = out.join(target);
-                        next.extend(&components[at + 1..]);
-                        through = Some(next);
-                        break;
+                    let next = out.join(name);
+                    if !exists {
+                        out = next;
+                        continue;
+                    }
+                    match std::fs::symlink_metadata(&next) {
+                        Ok(meta) if meta.file_type().is_symlink() && links < MAX_LINKS => {
+                            if let Ok(target) = std::fs::read_link(&next) {
+                                let mut redirected = out.join(target);
+                                redirected.extend(&components[at + 1..]);
+                                through = Some(redirected);
+                                break;
+                            }
+                            out = next;
+                            exists = false;
+                        }
+                        Ok(_) => {
+                            out = std::fs::canonicalize(&next).unwrap_or(next);
+                            existing = out.components().count();
+                        }
+                        Err(_) => {
+                            out = next;
+                            exists = false;
+                        }
                     }
                 }
-                other => out.push(other),
+                other => {
+                    out.push(other);
+                    if exists {
+                        existing = out.components().count();
+                    }
+                }
             }
         }
         match through {
@@ -156,19 +385,26 @@ pub(super) fn resolved(path: &Path) -> PathBuf {
                 links += 1;
                 pending = next;
             }
-            None => return out,
+            None => {
+                return Resolved {
+                    path: out,
+                    existing,
+                };
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::unwrap_used,
-        reason = "pure path resolution over a scratch tree"
-    )]
-    #![allow(clippy::disallowed_methods, reason = "builds the scratch tree")]
     use super::*;
+
+    fn at(path: &str, existing: usize) -> Resolved {
+        Resolved {
+            path: PathBuf::from(path),
+            existing,
+        }
+    }
 
     #[test]
     fn links_resolve_wherever_they_sit_and_dangling_ones_too() {
@@ -179,14 +415,41 @@ mod tests {
         std::os::unix::fs::symlink(&fenced, base.join("to-live")).unwrap();
         std::os::unix::fs::symlink("live/missing", base.join("dir-link")).unwrap();
         assert_eq!(
-            resolved(&base.join("to-live/dir/new.yaml")),
+            resolved(&base.join("to-live/dir/new.yaml")).path,
             fenced.join("dir/new.yaml")
         );
-        assert_eq!(resolved(&base.join("dir-link")), fenced.join("missing"));
         assert_eq!(
-            resolved(&base.join("elsewhere/../to-live/./dir")),
+            resolved(&base.join("dir-link")).path,
+            fenced.join("missing")
+        );
+        assert_eq!(
+            resolved(&base.join("live/dir/../../to-live/./dir")).path,
             fenced.join("dir")
         );
-        assert_eq!(lexical(&base.join("a/../b")), base.join("b"));
+    }
+
+    #[test]
+    fn names_that_do_not_exist_yet_compare_without_case_only_where_the_volume_folds_it() {
+        let root = at("/home/person/.instrukt", 3);
+        let other_case = at("/home/person/.INSTRUKT/locks", 3);
+        assert!(under(&other_case, &root, true));
+        assert!(!under(&other_case, &root, false));
+        // Existing components carry the file system's own spelling, so they
+        // compare exactly.
+        assert!(!under(&at("/home/Person/.instrukt", 4), &root, true));
+        assert!(under(&at("/home/person/.instrukt/locks", 4), &root, false));
+        assert!(!under(&at("/home/person", 3), &root, true));
+    }
+
+    #[test]
+    fn the_setting_names_its_record_beside_the_fenced_locations() {
+        let setting = Setting::parse("/live/home:record=/test/fence:relative/entry:/live/.t3");
+        assert_eq!(
+            setting,
+            Setting {
+                roots: vec![PathBuf::from("/live/home"), PathBuf::from("/live/.t3")],
+                record: Some(PathBuf::from("/test/fence")),
+            }
+        );
     }
 }

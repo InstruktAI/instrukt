@@ -58,15 +58,12 @@ impl Env {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.vars.get(name).map(String::as_str)
     }
-    /// The locations [`crate::fsx::FENCE_VARIABLE`] keeps this process from
-    /// writing, separated as `PATH` is; none when it is unset.
-    pub fn write_fence(&self) -> Vec<std::path::PathBuf> {
+    /// What [`crate::fsx::FENCE_VARIABLE`] says: the locations it keeps this
+    /// process from writing and where refusals are recorded; nothing when it
+    /// is unset.
+    pub fn write_fence(&self) -> crate::fsx::FenceSetting {
         self.get(crate::fsx::FENCE_VARIABLE)
-            .map(|value| {
-                std::env::split_paths(value)
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .collect()
-            })
+            .map(crate::fsx::FenceSetting::parse)
             .unwrap_or_default()
     }
 }
