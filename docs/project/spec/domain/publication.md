@@ -89,9 +89,11 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 :  Removal of what a project published before and no longer owns.
 
 **Master**
-:  An `AGENTS.master.md` file in a project. The root master holds only the
+:  An `AGENTS.master.md` file in a project or a company home. A project's root master holds only the
    project's `## Purpose`; a nested master is the source of the `AGENTS.md`
-   beside it.
+   beside it. A company home's master is the company's own knowledge, rendered
+   into the home's `AGENTS.md`
+   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 **Rendering**
 :  Producing one self-contained instruction file from published or project
@@ -110,8 +112,9 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 **Written record**
 :  What publication state records about each user-scope instruction file it
-   wrote: its path and the content it left there. A file is one instrukt
-   wrote only while its content is the content recorded.
+   wrote, and about each company home's rendered `AGENTS.md`: its path and
+   the content it left there. A file is one instrukt wrote only while its
+   content is the content recorded.
 
 **Eval fingerprint**
 :  The digest of every published snippet that declares `eval: true`, recorded
@@ -128,9 +131,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   published-commit and checkout-path record and the no-op; the ownership
   record and its refusals (a second claimant, a reserved domain name);
   index patching by owner with its duplicate-id refusal; retraction;
-  rendering of the project's `AGENTS.md` files and of the global agent files;
-  the written record and the refusal to overwrite a user-scope instruction
-  file instrukt did not write; merging the entrypoint-loading keys; the editor
+  rendering of the project's `AGENTS.md` files, of the global agent files
+  and of each company home's `AGENTS.md`;
+  the written record and the refusal to overwrite or remove a user-scope
+  instruction file or a company home's `AGENTS.md` instrukt did not write; merging the entrypoint-loading keys; the editor
   schemas in a repository's `.instrukt/schemas/` and their modelines, which
   sync and `instrukt init` write; the eval
   fingerprint; owner-scoped publication and retraction of domain workflow
@@ -220,6 +224,24 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Lifecycle:** written by the `docs/general/` owner's sync; replaced on its
   next sync that publishes; retracted when that project stops publishing
   `docs/general/`.
+
+#### Company home rendering (aggregate)
+
+- **Root:** the rendered `AGENTS.md` of one company home.
+- **Contains:** the rendered file and its written record.
+- **Invariants:**
+  - Rendered from the home's master as it stands when a start renders it,
+    never from a project's committed main; it has no published commit, no
+    claim and no index entry, and belongs to no project's published part.
+  - Written, replaced or removed only while the file is absent or its
+    content is the content its written record holds.
+  - Written under the docs lock and replaced whole; a rendering that fails
+    leaves the previous file and its record as they were.
+- **Identifier:** the company's name.
+- **Lifecycle:** rendered before each session the runner starts in the home
+  and before a manual reservation for it; removed by the next such start
+  once the master is gone
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 ### Domain events emitted
 

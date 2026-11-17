@@ -1,5 +1,5 @@
 ---
-description: Rendered agent instructions — a project's root `AGENTS.md` is its master's purpose followed by the rendering of `docs/project/index.yaml`, nested masters render beside themselves, and the owner of `docs/general/` renders every supported agent CLI's global file from what is published on the computer, with per-CLI `agents` snippets, never over a file instrukt did not write, merging exactly the entrypoint-loading settings keys.
+description: Rendered agent instructions — a project's root `AGENTS.md` is its master's purpose followed by the rendering of `docs/project/index.yaml`, nested masters render beside themselves, a company home's master renders into its `AGENTS.md` before each session instrukt starts there, and the owner of `docs/general/` renders every supported agent CLI's global file from what is published on the computer, with per-CLI `agents` snippets, never over a file instrukt did not write, merging exactly the entrypoint-loading settings keys.
 ---
 # Agent Entrypoints — Spec
 
@@ -87,6 +87,42 @@ unresolved.
   finds it gone.
 - An `AGENTS.md` is a generated file; an edit to it is overwritten by the next
   sync that publishes.
+
+### Company home entrypoint
+
+A company home (`project/instrukt/spec/feature/configuration/company-homes`)
+holds the company's own knowledge in `AGENTS.master.md` at the home's root.
+It renders into the `AGENTS.md` beside it as a nested master does: its own
+content with its required reads inlined, no project selection and no
+procedure lines. A supported target that the global agent files' preparation
+sets to load project instruction files (Global agent files, below) loads it
+from the home it starts in, so a session of such a target in the home starts
+with it: conversation sessions and event-started work alike. instrukt writes
+no other instruction file in the home and leaves any other there as it is.
+
+- **When.** The runner renders it immediately before it starts a session in
+  the home, and `instrukt events bind <procedure> --reserve --company <name>`
+  renders it before it returns a reservation. A start renders from the master
+  as it stands when that start renders. The rendering is written under the
+  docs lock and replaces the file whole; a rendering that fails leaves the
+  previous file as it was.
+- **What it reads.** Required reads resolve from the documentation published
+  on the computer, and a pending snippet is never inlined. A company
+  master's rendered text admits no configured value: a `@config` directive in
+  the master, or in any document its required reads bring in, is a finding
+  naming that document. So are `@exec`, `@include` and a required read that
+  resolves to nothing.
+- **Never over a file instrukt did not write.** The rendering is written when
+  `AGENTS.md` is absent or its content is the content the home's written
+  record holds (`project/instrukt/spec/domain/publication`). Otherwise the start waits and
+  the cause names the file and the door: move its content into the master, or
+  the file out of the way.
+- **Without a master**, the home has no rendering; the next start removes an
+  `AGENTS.md` whose content is the content the written record holds, and
+  leaves any other as it is.
+- **A finding** in the master stops the start: the work it was for stays
+  pending, and the cause shows in `instrukt events status`.
+  `instrukt config validate --company <name>` reports the same findings.
 
 ### Checkout rendering
 
@@ -253,6 +289,18 @@ Then existing published state supplies the entrypoints and no publication runs a
 But a linked worktree with no publication reports the missing prerequisite without publishing
 ```
 
+### UC-AE8: An operator gives every agent working for a company the company's own knowledge
+
+```gherkin
+Given an operator keeps a company's shared knowledge in the master of its home, with a required read into published documentation
+When a member's conversation and an event for that company each start an agent in the home
+Then each agent starts with one instruction file holding the master's content and the snippet it requires
+When the operator changes the master
+Then the next agent started in the home starts with the changed knowledge
+But when the operator's master names a required read that resolves to nothing
+Then no agent starts there, the work waits and the cause names the master and the read
+```
+
 ## Known caveats
 
 - When the project stops publishing `docs/general/`, its next sync retracts
@@ -261,6 +309,17 @@ But a linked worktree with no publication reports the missing prerequisite witho
 - A global file the developer edits after instrukt wrote it stops the next
   rendering sync until the edit is moved into documentation or the file is
   moved away.
+- instrukt renders a company home's `AGENTS.md` only when a session starts
+  there. Whether an agent program reads it again during a session, or when
+  it resumes one, is that program's and not promised.
+- The rendering a start writes is replaced whole, so an agent program reads
+  either the previous complete text or the new one, never a mixture. Which
+  of the two a start that overlaps another start in the home, or an edit of
+  the master, reads is not promised.
+- How a target combines the rendering with other instruction files in the
+  home is that target's.
+- A company home's knowledge is its master alone. Nested masters and
+  documentation positions inside the home are not rendered or published.
 
 ## See Also
 

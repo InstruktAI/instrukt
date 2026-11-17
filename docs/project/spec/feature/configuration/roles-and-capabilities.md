@@ -36,6 +36,13 @@ validation errors, not missing fields. This read-time resolution preserves the
 edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
+The role of conversation sessions is `company-agent`. An agents file of schema
+version 2 converts to version 3 on the owned migration path
+(`project/instrukt/spec/feature/configuration/owned-files`): its
+`roles.conversation` entry becomes `roles.company-agent` with every field as
+it was, and nothing else changes. A version-2 file that holds both entries is
+refused with its source intact, naming both, until one is removed.
+
 Every effective entry has a class and grants; model inputs inherit from
 `default` as agent-selection specifies. The shipped `default` and
 `event-handler` are unrestricted, awareness-only entries. A role absent from
@@ -63,6 +70,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Publication | `publication` | `sync` and hook-triggered publication for the selected project and positions; position ownership remains mandatory. |
 | Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
 | Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
+| Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
@@ -121,11 +129,12 @@ composition is:
 | `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `session-recover`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
+| `tools` | `mcp-access` at `own`. |
 | `all` | Every catalog action at `any`. |
 
 These entries cover every role declared by instrukt's shipped procedures and
-the `conversation` role the runner gives a conversation session, which has no
-procedure (`project/instrukt/spec/feature/runner/conversations`).
+the `company-agent` role the runner gives a conversation session, declared by
+the company-assistance procedure (`project/instrukt/spec/feature/runner/conversations`).
 They share the model `order`/`tier` defaults of agent-selection; the table's App
 column names the identity reference, not another model/provider choice.
 
@@ -140,7 +149,7 @@ column names the identity reference, not another model/provider choice.
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
-| `conversation` | `standing` | `read` | project |
+| `company-agent` | `standing` | `read`, `tools` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
@@ -172,7 +181,7 @@ publication ownership and single-writer-on-main checks.
 Configuration validation rejects unknown classes, action names, bundle names,
 scopes and malformed grants; it reports configured role entries that no
 installed procedure declares. `default` and the implicit `event-handler` are
-reserved fallback entries and `conversation` is the runner-supplied role of
+reserved fallback entries and `company-agent` is the role the runner gives
 conversation sessions; none of the three is an undeclared-procedure finding. Configuration
 inspection shows the effective class, expanded grants, selection and App
 reference without secrets. Procedure names remain open: an unconfigured
