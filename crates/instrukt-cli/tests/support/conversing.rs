@@ -159,8 +159,9 @@ impl Company {
         Self::on(TestEnv::new(), "", "", extra)
     }
 
-    /// The company on a computer whose global layer also switches on
-    /// `modules` and holds `machine` settings.
+    /// The company on a computer whose global layer also sets `modules`
+    /// (entries each led by `, `; history keeps its default unless one sets
+    /// it) and holds `machine` settings.
     pub fn on(mut env: TestEnv, modules: &str, machine: &str, extra: &str) -> Self {
         let slack = FakeSlack::start();
         env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
@@ -169,8 +170,9 @@ impl Company {
         std::fs::write(
             env.instrukt_home().join("instrukt.yaml"),
             format!(
-                "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{history: true{modules}}}\n{machine}",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION
+                "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{{}}}\n{machine}",
+                instrukt_core::config::CURRENT_SCHEMA_VERSION,
+                modules.trim_start_matches(", ")
             ),
         )
         .unwrap();
