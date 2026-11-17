@@ -105,6 +105,19 @@ workspace.
 A message that does not tag the agent in a channel never reaches instrukt,
 whether or not the agent already takes part in that thread.
 
+Only a message a person newly wrote starts a turn, with its text, whatever
+else it carried. This rule decides which messages start a turn; it does not
+filter what accompanies an addressed message. A direct message starts a turn
+when Slack sends it with no subtype or with one of `file_share`, `me_message`
+(written with `/me`) and `thread_broadcast`. A message that carries a file
+starts a turn whether Slack sends it with no subtype or as `file_share`;
+Slack's pages disagree on which of the two it sends. An edit
+(`message_changed`), a deletion (`message_deleted`) and every other record
+that is not a newly written message start nothing. In a channel the tag
+addresses a message whether or not it carried a file, and an edit starts
+nothing. A file is never carried: a message that carried only a file starts a
+turn with empty text.
+
 ### Who is answered
 
 For each addressed message the connector reads Slack's record of the sender
@@ -193,8 +206,21 @@ sent again.
 ### Posting
 
 An answer is posted with the bot token into the conversation it answers: in
-the thread for a channel, in the direct-message channel otherwise. A long
-answer is split at Slack's message size limit and posted in order.
+the thread for a channel, in the direct-message channel otherwise. It is
+posted as the agent wrote it, as Markdown in the `markdown_text` argument of
+`chat.postMessage`, and Slack renders it: bold and italic, links, lists,
+headers, inline code, code blocks, quotes, dividers, tables and task lists.
+The connector changes nothing in the agent's text.
+
+An answer longer than 12,000 characters, Slack's limit for `markdown_text`, is
+split, and each part is posted as it is, in order. While more than 12,000
+characters remain to be posted, a part takes the first 12,000 of them and ends
+after the last line break among them when that line break lies after the
+first 6,000, and after the 12,000th character otherwise. Once at most 12,000
+characters remain, that remainder is posted unchanged as the last part and
+splitting ends, so an answer that is an exact multiple of the limit is
+followed by no empty part. Nothing is inserted, so no part is longer than
+12,000 characters.
 
 ## Use cases
 
@@ -215,8 +241,8 @@ Then that connector's failure is visible and the company's other work continues
 Given people talk in a channel thread where the agent has answered before
 When they write messages that do not tag the agent
 Then none of them reaches the agent
-When someone then tags the agent in that thread
-Then the agent receives that message with the most recent messages written there since the previous message that tagged it
+When someone then tags the agent in that thread in a message that carries a file
+Then the agent receives that message's text with the most recent messages written there since the previous message that tagged it
 ```
 
 ### UC-SL3: Bring the agent into a conversation that is already under way
@@ -231,8 +257,19 @@ Then the agent receives that message with the most recent messages before it
 
 ```gherkin
 Given a company member opens a direct message with the agent
-When they write to it
-Then each of their messages reaches the agent without a tag
+When they write to it, one message with `/me` and one with a file among them
+Then each of their messages reaches the agent with its text without a tag
+When they edit or delete one of those messages
+Then nothing more reaches the agent
+```
+
+### UC-SL5: Read the agent's answer as the agent formatted it
+
+```gherkin
+Given the agent answers a company member in Slack with bold text, a list, a link and a code block
+When the answer is posted
+Then the member sees them rendered, not the Markdown that writes them
+And an answer longer than Slack takes in one message arrives in parts, in order, with nothing added to what the agent wrote
 ```
 
 ## Known caveats
@@ -241,7 +278,17 @@ Then each of their messages reaches the agent without a tag
   Slack still delivers it after reconnection.
 - The agent reads no more of a conversation than what accompanies an addressed
   message.
-- Files, images and reactions are not carried; a message's text is.
+- Files, images and reactions are not carried; a message's text is. The
+  agent is not told that a message carried a file.
+- An image the agent writes in an answer shows as a link with its text, not as
+  an image.
+- Formatting of anything that crosses a split can be lost: a code block, a
+  table, a list, a quote, and inline formatting such as bold text, inline code
+  or a link. Nothing is repaired.
+- How Slack renders HTML, and its own mention syntax, inside an answer is not
+  documented; the connector passes them on unchanged.
+- The agent's earlier answers come back among the accompanying messages as
+  Slack returns their text, which can differ from what the agent wrote.
 - One Slack workspace serves one company home.
 - Two people with the same name look alike to the agent.
 - Slack does not promise the order in which it sends messages. A message that
@@ -258,5 +305,10 @@ Then each of their messages reaches the agent without a tag
 - https://docs.slack.dev/apis/events-api/using-socket-mode/ — Slack's Socket Mode: the app opens the connection and acknowledges each envelope.
 - https://docs.slack.dev/reference/events/app_mention/ — the mention event the app subscribes to.
 - https://docs.slack.dev/reference/events/message.im/ — the direct-message event the app subscribes to.
+- https://docs.slack.dev/reference/events/message/ — the message subtypes, among them `me_message`, `thread_broadcast`, `message_changed` and `message_deleted`.
+- https://docs.slack.dev/reference/events/message/file_share/ — says the subtype is no longer served, and shows a direct message that carries a file with `files` and its text and no subtype.
+- https://docs.slack.dev/changelog/2018-05-file-threads-soon-tread/ — says the Events API keeps sending the subtype `file_share`, with the files in a `files` array.
+- https://docs.slack.dev/reference/methods/chat.postMessage/ — `markdown_text`: Markdown Slack renders, at most 12,000 characters, never together with `text` or `blocks`; `thread_ts` for a reply in a thread.
+- https://docs.slack.dev/reference/block-kit/blocks/markdown-block/ — the Markdown Slack renders, and that an image shows as link text.
 - https://docs.slack.dev/reference/objects/user-object/ — the fields that tell a full member from a bot, a guest and a member of another workspace.
 - https://docs.slack.dev/reference/methods/assistant.threads.setStatus/ — the status line: its text, its two-minute limit and its removal when the app replies.
