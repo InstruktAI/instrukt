@@ -133,11 +133,9 @@ But an address listed by two members is refused naming both
 - A company home publishes no documentation of its own. An agent working
   there starts with the global agent files, the home's rendered `AGENTS.md`
   and the assignment it is given.
-- instrukt neither obtains nor updates a company home's files. A home folder
-  may be a checkout of the company's own repository; instrukt reads its files
-  as they stand and keeps no repository state for it. Such a repository keeps
-  the home's `secrets.env` and rendered `AGENTS.md` out of its history by its
-  own ignore rules.
+- instrukt reads a company home as it stands. Obtaining the home, keeping it
+  current, and keeping its `secrets.env` and rendered `AGENTS.md` out of its
+  repository are the operator's, outside this contract.
 - Company homes on one computer are separate folders of one operating-system
   user. A session working in one home is not prevented from reading another.
 - There are no person homes.

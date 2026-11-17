@@ -183,17 +183,7 @@ Then the conversation's own session answers
 And no subscribed procedure is activated by that message
 ```
 
-### UC-CV6: Be answered by an agent that knows its job in the conversation
-
-```gherkin
-Given the computer publishes the procedure that declares the conversation role
-When a member first addresses the company's agent in a conversation
-Then the conversation's session starts in the company's home with the role conversation
-And its opening input names that procedure and directs loading it in full before the member's message
-And the member's message follows as its own envelopes
-But when no published procedure declares the conversation role
-Then the message waits, no session starts and the cause is shown
-```
+### UC-CV6
 
 ## Known caveats
 
@@ -202,9 +192,10 @@ Then the message waits, no session starts and the cause is shown
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message.
 - A post whose acceptance was lost can be sent twice.
-- A conversation session keeps the procedure and the company knowledge it
-  loaded when it started. A later change to either reaches only conversations
-  whose session starts after it.
+- A conversation session loads its procedure, and instrukt renders the
+  company's knowledge, when the session starts. A later change to either
+  reaches a session already running only as far as its agent program reads
+  its instructions again.
 - That the agent acts on the addressed message for its writer, and reads the
   context as context, is what its procedure tells it. The agent is a language
   model and nothing beyond the procedure enforces that reading.
