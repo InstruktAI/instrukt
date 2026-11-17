@@ -1073,8 +1073,13 @@ fn harvest(
                 .contributions
                 .iter()
                 .filter(|contribution| contribution.author.kind == AuthorKind::Agent)
-                .map(|contribution| contribution.text.trim())
-                .filter(|text| !text.is_empty() && *text != "NOOP")
+                .map(|contribution| contribution.text.as_str())
+                // Only whether it says anything is judged on its trimmed
+                // form; what is posted is the text as the agent wrote it.
+                .filter(|text| {
+                    let said = text.trim();
+                    !said.is_empty() && said != "NOOP"
+                })
                 .collect::<Vec<_>>()
                 .join("\n\n");
             answers.push((
@@ -1465,39 +1470,42 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
 mod tests {
     use super::{ConnectionState, Stage, split};
 
+    /// The character count of each part, and whether the parts together
+    /// are the text unchanged.
+    fn cut(text: &str, limit: usize) -> (Vec<usize>, bool) {
+        let parts = split(text, limit);
+        let counts = parts.iter().map(|part| part.chars().count()).collect();
+        (counts, parts.concat() == text)
+    }
+
     #[test]
     fn a_part_ends_after_the_last_line_break_in_its_second_half() {
-        let first = format!("{}\n{}\n", "a".repeat(10), "b".repeat(15));
-        let rest = "c".repeat(30);
-        assert_eq!(split(&format!("{first}{rest}"), 40), [first, rest]);
+        // Line breaks at characters 23 and 29 both lie in the second half.
+        let text = format!("{}\n{}\n{}", "a".repeat(22), "b".repeat(5), "c".repeat(30));
+        assert_eq!(cut(&text, 40), (vec![29, 30], true));
     }
 
     #[test]
     fn a_line_break_in_the_first_half_does_not_end_a_part() {
         let text = format!("{}\n{}", "a".repeat(10), "b".repeat(50));
-        assert_eq!(
-            split(&text, 40),
-            [text[..40].to_owned(), text[40..].to_owned()]
-        );
+        assert_eq!(cut(&text, 40), (vec![40, 21], true));
     }
 
     #[test]
     fn the_remainder_is_the_last_part_and_no_empty_part_follows() {
-        assert_eq!(split(&"a".repeat(41), 40), ["a".repeat(40), "a".to_owned()]);
-        assert_eq!(split(&"a".repeat(80), 40), ["a".repeat(40), "a".repeat(40)]);
-        let spaced = format!("{}\n  ", "a".repeat(39));
+        assert_eq!(cut(&"a".repeat(41), 40), (vec![40, 1], true));
+        assert_eq!(cut(&"a".repeat(80), 40), (vec![40, 40], true));
         assert_eq!(
-            split(&spaced, 40),
-            [format!("{}\n", "a".repeat(39)), "  ".to_owned()]
+            cut(&format!("{}\n  ", "a".repeat(39)), 40),
+            (vec![40, 2], true)
         );
-        assert_eq!(split("short", 40), ["short"]);
-        assert!(split("", 40).is_empty());
+        assert_eq!(cut(&"a".repeat(5), 40), (vec![5], true));
+        assert_eq!(cut("", 40), (vec![], true));
     }
 
     #[test]
     fn the_limit_counts_characters_not_bytes() {
-        let text = "é".repeat(41);
-        assert_eq!(split(&text, 40), ["é".repeat(40), "é".to_owned()]);
+        assert_eq!(cut(&"é".repeat(41), 40), (vec![40, 1], true));
     }
 
     #[test]

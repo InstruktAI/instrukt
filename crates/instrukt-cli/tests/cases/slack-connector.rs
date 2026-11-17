@@ -310,18 +310,21 @@ fn the_agents_answer_is_posted_as_markdown_it_wrote_and_a_long_one_in_parts() {
     c.slack
         .direct(channel, "UANNA", "How do I renew the certificate?");
     let session = c.session();
-    let formatted = "**Renew it** in three steps:\n\n1. Open [the portal](https://portal.example.com).\n2. Run:\n\n```sh\ncertbot renew\n```\n3. Check the new date.";
+    // Its leading indentation and final line break are part of what it
+    // wrote.
+    let formatted = "    certbot renew --dry-run\n\n**Renew it** in three steps:\n\n1. Open [the portal](https://portal.example.com).\n2. Run:\n\n```sh\ncertbot renew\n```\n3. Check the new date.\n";
     c.finish_turn(&session, 0, formatted);
     wait("the formatted answer", || c.slack.posts().len() == 1);
     c.slack.direct(channel, "UANNA", "And the whole log?");
     wait("the second question", || {
         c.runtime.message_count(&session) == 2
     });
-    // Longer than Slack takes at once: the first part ends after the last
-    // line break within the limit, which lies in its second half, and the
-    // remainder follows unchanged.
-    let opening = format!("{}\n", "a".repeat(7_000));
-    let remainder = format!("{}\n{}", "b".repeat(7_000), "c".repeat(100));
+    // Longer than Slack takes at once: two line breaks lie in the second half
+    // of the first 12,000 characters, and the first part ends after the
+    // later one; the remainder follows unchanged, its final line break
+    // included.
+    let opening = format!("{}\n{}\n", "a".repeat(6_500), "b".repeat(3_000));
+    let remainder = format!("{}\n", "c".repeat(7_000));
     c.finish_turn(&session, 1, &format!("{opening}{remainder}"));
     wait("the long answer's parts", || c.slack.posts().len() == 3);
     let answer = |markdown: &str| Post {
