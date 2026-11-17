@@ -45,12 +45,30 @@ Apply these configured action values to the identified assignment and session.
    one shared workspace. Otherwise create the directory the spec names. Publish
    the material that collaboration or handoff needs; local working material
    keeps its own environment (`general/spec/scratchpad-workspaces`).
+   1a. **Resume from what was last agreed.** On joining a workspace that
+   records the human's intent, and on continuing in it after your own context
+   was summarized, read **Last agreed** in the index first. The records it
+   covers are the given basis of the work: work from them as they stand. The
+   entry check they had is the one check they get
+   (`general/policy/human-contract`). A record listed as open has that check
+   made once, by the first session that receives it for work and was not in
+   the conversation it records, as part of that session's own start on the
+   work; that session enters the result under **Last agreed**. No check of a
+   covered record, and no separate round for an open one, is started or put
+   to the human.
 2. **Write `index.md` first**, before any other file. Keep it a concise map to
    the subject and its useful material. Organize the information below where
    it exists; omit empty sections and link detailed findings rather than
    duplicating them. Apply the subject-knowledge boundary in
    `general/spec/scratchpad-workspaces` to both the index and its files:
    - **Status** — one line: `active`, `converged`, `closed`, or `abandoned`.
+   - **Last agreed** — in a workspace that records the human's intent, the
+     point up to which that record is settled: the last intent record whose
+     entry check is made (`general/policy/human-contract`), the session that
+     made it and the date, and the version of the written contract that
+     carries the recorded intent up to that record, as a commit with the
+     independent review that judged it against the record. Intent records
+     made after that point are listed there as open.
    - **Purpose** — the question the activity answers and the outcome it serves.
    - **Grounding** — the sources the activity rests on: what was read for
      current state, and how this class of problem is solved elsewhere, or that
@@ -161,6 +179,11 @@ Status: active
   participant row supplies provenance without a lifecycle log
   (`general/spec/scratchpad-workspaces`).
 
+- **A record that Last agreed covers is questioned again.** A session checks
+  it once more, asks the human to confirm it, or proposes a check of it. Stop
+  that act and work from the record as it stands. Words of the human that
+  contradict the record are new intent and become a new record
+  (`general/policy/human-contract`).
 - **Needed shared material is still in a local working directory.** Publish
   the material the collaborator or handoff recipient needs and index it, using
   the routing contract in `general/spec/scratchpad-workspaces`.
