@@ -582,6 +582,244 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
         native: row.payload,
     })
 }
+/// How often a scoped read reads one of its conversations again, rediscovering
+/// it first, when it changed while being read: a conversation that is being
+/// written settles between two reads far more often than not.
+const SCOPED_READS: usize = 3;
+
+/// One conversation read whole.
+enum Read {
+    /// Its rows matched the fingerprint it was discovered with.
+    Settled {
+        fingerprint: Fingerprint,
+        records: Vec<ConversationRecord>,
+        streaming: bool,
+        incomplete_runs: BTreeSet<String>,
+    },
+    /// It changed while it was read, so its rows may mix two states.
+    Unsettled,
+}
+
+impl T3Conversations {
+    fn read(&self, thread: &str, expected: &Fingerprint) -> Result<Read, SourceError> {
+        let mut fingerprint = Fingerprint::default();
+        let mut records = Vec::new();
+        let mut streaming = false;
+        let mut incomplete_runs = BTreeSet::new();
+        for projection in PROJECTIONS {
+            let mut after = String::new();
+            loop {
+                let rows = batch(&self.path, projection, thread, &after)?;
+                let Some(last) = rows.last() else {
+                    break;
+                };
+                after = last.native_id.clone();
+                for row in rows {
+                    fingerprint.add(&row.fingerprint);
+                    if row.streaming {
+                        streaming = true;
+                        incomplete_runs
+                            .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
+                    } else {
+                        records.push(normalized(projection, row)?);
+                    }
+                }
+            }
+        }
+        if &fingerprint != expected {
+            tracing::debug!(event = "conversation_source_unsettled", conversation = %thread);
+            return Ok(Read::Unsettled);
+        }
+        Ok(Read::Settled {
+            fingerprint,
+            records,
+            streaming,
+            incomplete_runs,
+        })
+    }
+
+    /// A scoped conversation read whole, discovering it again before each
+    /// further attempt while it keeps changing under the read.
+    fn read_scoped(&self, thread: &str, expected: Fingerprint) -> Result<Read, SourceError> {
+        let mut expected = expected;
+        for attempt in 1..=SCOPED_READS {
+            if let read @ Read::Settled { .. } = self.read(thread, &expected)? {
+                return Ok(read);
+            }
+            if attempt < SCOPED_READS {
+                let id = conversation(thread)?;
+                match discover(&self.path, Scope::Only(std::slice::from_ref(&id)))?.remove(thread) {
+                    Some(again) => expected = again,
+                    None => break,
+                }
+            }
+        }
+        Ok(Read::Unsettled)
+    }
+}
+
+/// What one settled conversation contributes to a batch; its fingerprint is
+/// loaded unless it is still streaming.
+fn contribute(
+    changes: &mut ConversationChanges,
+    state: &mut Position,
+    thread: &str,
+    read: Read,
+) -> Result<(), SourceError> {
+    let Read::Settled {
+        fingerprint,
+        records,
+        streaming,
+        incomplete_runs,
+    } = read
+    else {
+        changes.unsettled.push(conversation(thread)?);
+        return Ok(());
+    };
+    if !streaming {
+        state.loaded.insert(thread.to_owned(), fingerprint);
+    }
+    match super::_t3_completed::completed(
+        &records,
+        &incomplete_runs.into_iter().collect::<Vec<_>>(),
+    ) {
+        Ok(turns) => changes.completed_turns.extend(turns),
+        Err(error) => changes
+            .turn_failures
+            .push(super::conversations::TurnEvidenceFailure {
+                conversation: conversation(thread)?,
+                cause: error.to_string(),
+            }),
+    }
+    let mut named = false;
+    for record in records
+        .iter()
+        .filter(|record| matches!(record.kind, RecordKind::Conversation))
+    {
+        named = true;
+        changes
+            .conversations
+            .push(conversation(&record.conversation_id)?);
+    }
+    if !named {
+        changes.missing.push(conversation(thread)?);
+    }
+    changes.records.extend(records);
+    Ok(())
+}
+
+fn empty_changes(position: SourcePosition, has_more: bool) -> ConversationChanges {
+    ConversationChanges {
+        records: Vec::new(),
+        position,
+        has_more,
+        completed_turns: Vec::new(),
+        conversations: Vec::new(),
+        turn_failures: Vec::new(),
+        missing: Vec::new(),
+        unsettled: Vec::new(),
+    }
+}
+
+impl T3Conversations {
+    /// The next conversation of a pass over every conversation, one per
+    /// batch. The pass discovers them once and keeps that inventory while
+    /// its own positions come back; any other position starts a new pass
+    /// from the first conversation, so a position retained across a restart
+    /// is caught up whole.
+    fn all(
+        &self,
+        position: Option<&SourcePosition>,
+        mut state: Position,
+    ) -> Result<ConversationChanges, SourceError> {
+        let fingerprints = {
+            let mut cache = self.pass.borrow_mut();
+            if cache
+                .as_ref()
+                .is_none_or(|pass| pass.expected.as_ref() != position)
+            {
+                *cache = Some(Pass {
+                    fingerprints: discover(&self.path, Scope::All)?,
+                    expected: None,
+                });
+                state.after = None;
+            }
+            cache
+                .as_ref()
+                .map(|pass| pass.fingerprints.clone())
+                .ok_or_else(|| source_error("missing source fingerprint pass"))?
+        };
+        let next = fingerprints.iter().find(|(thread, fingerprint)| {
+            state.after.as_ref().is_none_or(|after| *thread > after)
+                && state.loaded.get(*thread) != Some(*fingerprint)
+        });
+        let Some((thread, expected)) = next else {
+            let missing = state
+                .observed
+                .iter()
+                .filter(|thread| !fingerprints.contains_key(*thread))
+                .map(|id| {
+                    SessionId::parse(id)
+                        .map_err(|_| source_error("invalid missing conversation reference"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            state.after = None;
+            *self.pass.borrow_mut() = None;
+            let mut changes = empty_changes(SourcePosition(serde_json::to_value(state)?), false);
+            changes.missing = missing;
+            return Ok(changes);
+        };
+        state.observed.insert(thread.clone());
+        state.after = Some(thread.clone());
+        let read = self.read(thread, expected)?;
+        let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), true);
+        contribute(&mut changes, &mut state, thread, read)?;
+        changes.position = SourcePosition(serde_json::to_value(state)?);
+        if let Some(pass) = self.pass.borrow_mut().as_mut() {
+            pass.expected = Some(changes.position.clone());
+        }
+        Ok(changes)
+    }
+
+    /// Every changed conversation of the scope in one batch: a scope names
+    /// one or two conversations, so a scoped read never leaves a pass half
+    /// done, and every scoped read compares the whole scope with what its
+    /// position loaded. Conversations outside the scope are not read and
+    /// leave the position.
+    fn only(
+        &self,
+        ids: &[SessionId],
+        mut state: Position,
+    ) -> Result<ConversationChanges, SourceError> {
+        let only = ids.iter().map(SessionId::as_str).collect::<BTreeSet<_>>();
+        state
+            .loaded
+            .retain(|thread, _| only.contains(thread.as_str()));
+        state
+            .observed
+            .retain(|thread| only.contains(thread.as_str()));
+        state.after = None;
+        let fingerprints = discover(&self.path, Scope::Only(ids))?;
+        let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), false);
+        changes.missing = state
+            .observed
+            .iter()
+            .filter(|thread| !fingerprints.contains_key(*thread))
+            .map(|id| conversation(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (thread, expected) in fingerprints {
+            if state.loaded.get(&thread) == Some(&expected) {
+                continue;
+            }
+            state.observed.insert(thread.clone());
+            let read = self.read_scoped(&thread, expected)?;
+            contribute(&mut changes, &mut state, &thread, read)?;
+        }
+        changes.position = SourcePosition(serde_json::to_value(state)?);
+        Ok(changes)
+    }
+}
+
 impl ConversationSource for T3Conversations {
     fn identity(&self) -> &str {
         &self.identity
@@ -594,168 +832,10 @@ impl ConversationSource for T3Conversations {
         validate(&self.path, &self.location)?;
         let mut state = migrate_position(position)?;
         state.observed.extend(state.loaded.keys().cloned());
-        // A pass over every conversation discovers them once and keeps that
-        // inventory for its continuation; a scoped pass discovers only its
-        // own conversations on each read and leaves that inventory alone.
-        let fingerprints = match scope {
-            Scope::All => {
-                let mut cache = self.pass.borrow_mut();
-                if cache
-                    .as_ref()
-                    .is_none_or(|pass| pass.expected.as_ref() != position)
-                {
-                    *cache = Some(Pass {
-                        fingerprints: discover(&self.path, scope)?,
-                        expected: None,
-                    });
-                    state.after = None;
-                }
-                cache
-                    .as_ref()
-                    .map(|pass| pass.fingerprints.clone())
-                    .ok_or_else(|| source_error("missing source fingerprint pass"))?
-            }
-            Scope::Only(ids) => {
-                let only = ids.iter().map(SessionId::as_str).collect::<BTreeSet<_>>();
-                state
-                    .loaded
-                    .retain(|thread, _| only.contains(thread.as_str()));
-                state
-                    .observed
-                    .retain(|thread| only.contains(thread.as_str()));
-                if state
-                    .after
-                    .as_ref()
-                    .is_some_and(|after| !only.contains(after.as_str()))
-                {
-                    state.after = None;
-                }
-                discover(&self.path, scope)?
-            }
-        };
-        let continued = |position: &SourcePosition| {
-            if matches!(scope, Scope::All)
-                && let Some(pass) = self.pass.borrow_mut().as_mut()
-            {
-                pass.expected = Some(position.clone());
-            }
-        };
-        let next = fingerprints
-            .iter()
-            .find(|(thread, fingerprint)| {
-                state.after.as_ref().is_none_or(|after| *thread > after)
-                    && state.loaded.get(*thread) != Some(*fingerprint)
-            })
-            .map(|(id, fp)| (id.clone(), fp.clone()));
-        if let Some((thread, expected)) = next {
-            state.observed.insert(thread.clone());
-            state.after = Some(thread.clone());
-            let mut fingerprint = Fingerprint::default();
-            let mut records = Vec::new();
-            let mut streaming = false;
-            let mut incomplete_runs = BTreeSet::new();
-            for projection in PROJECTIONS {
-                let mut after = String::new();
-                loop {
-                    let rows = batch(&self.path, projection, &thread, &after)?;
-                    let Some(last) = rows.last() else {
-                        break;
-                    };
-                    after = last.native_id.clone();
-                    for row in rows {
-                        fingerprint.add(&row.fingerprint);
-                        if row.streaming {
-                            streaming = true;
-                            incomplete_runs
-                                .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
-                        } else {
-                            records.push(normalized(projection, row)?);
-                        }
-                    }
-                }
-            }
-            if fingerprint != expected {
-                // The conversation changed while it was read, so its rows may
-                // mix two states: none are reported and it stays unloaded. Its
-                // change notifies, and a later pass takes it up again; this
-                // pass continues with the other conversations.
-                tracing::debug!(event = "conversation_source_unsettled", conversation = %thread);
-                let position = SourcePosition(serde_json::to_value(state)?);
-                continued(&position);
-                return Ok(ConversationChanges {
-                    records: Vec::new(),
-                    position,
-                    has_more: true,
-                    completed_turns: Vec::new(),
-                    conversations: Vec::new(),
-                    turn_failures: Vec::new(),
-                    missing: Vec::new(),
-                    unsettled: vec![conversation(&thread)?],
-                });
-            }
-            if !streaming {
-                state.loaded.insert(thread.clone(), fingerprint);
-            }
-            let position = SourcePosition(serde_json::to_value(state)?);
-            continued(&position);
-            let (completed_turns, turn_failures) = match super::_t3_completed::completed(
-                &records,
-                &incomplete_runs.into_iter().collect::<Vec<_>>(),
-            ) {
-                Ok(turns) => (turns, Vec::new()),
-                Err(error) => (
-                    Vec::new(),
-                    vec![super::conversations::TurnEvidenceFailure {
-                        conversation: conversation(&thread)?,
-                        cause: error.to_string(),
-                    }],
-                ),
-            };
-            return Ok(ConversationChanges {
-                position,
-                has_more: true,
-                completed_turns,
-                turn_failures,
-                conversations: records
-                    .iter()
-                    .filter(|record| matches!(record.kind, RecordKind::Conversation))
-                    .map(|record| conversation(&record.conversation_id))
-                    .collect::<Result<Vec<_>, _>>()?,
-                missing: if records
-                    .iter()
-                    .any(|record| matches!(record.kind, RecordKind::Conversation))
-                {
-                    Vec::new()
-                } else {
-                    vec![conversation(&thread)?]
-                },
-                unsettled: Vec::new(),
-                records,
-            });
+        match scope {
+            Scope::All => self.all(position, state),
+            Scope::Only(ids) => self.only(ids, state),
         }
-        let missing = state
-            .observed
-            .iter()
-            .filter(|thread| !fingerprints.contains_key(*thread))
-            .map(|id| {
-                SessionId::parse(id)
-                    .map_err(|_| source_error("invalid missing conversation reference"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        state.after = None;
-        if matches!(scope, Scope::All) {
-            *self.pass.borrow_mut() = None;
-        }
-        Ok(ConversationChanges {
-            records: Vec::new(),
-            position: SourcePosition(serde_json::to_value(state)?),
-            has_more: false,
-            completed_turns: Vec::new(),
-            conversations: Vec::new(),
-            turn_failures: Vec::new(),
-            missing,
-            unsettled: Vec::new(),
-        })
     }
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError> {
         super::_t3_notifications::subscribe(&self.path)

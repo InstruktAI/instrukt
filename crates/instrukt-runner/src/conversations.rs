@@ -909,6 +909,12 @@ fn harvest(
                 "the session's native conversation content is missing; restore it".into(),
             ));
         }
+        // Its answers stay unread, with this cause, until a read is coherent.
+        if batch.unsettled.iter().any(|id| id == &session.id) {
+            return Err(ConversationError::Refused(
+                "the session's native conversation kept changing while it was read; the next catch-up reads it again".into(),
+            ));
+        }
         if let Some(failure) = batch
             .turn_failures
             .iter()

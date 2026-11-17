@@ -44,6 +44,10 @@ pub enum HistoryError {
     ConversationSource(#[from] crate::runtime::conversations::SourceError),
     #[error(transparent)]
     Runtime(#[from] crate::sessions::SessionsError),
+    #[error(
+        "history catch-up is incomplete: {count} conversations changed while they were read; the next catch-up reads them again"
+    )]
+    Incomplete { count: usize },
 }
 
 impl HistoryError {
@@ -63,6 +67,9 @@ impl HistoryError {
             }
             Self::ConversationSource(crate::runtime::conversations::SourceError::Watch(_)) => {
                 "history source notifications are unavailable; inspect this computer's history logs"
+            }
+            Self::Incomplete { .. } => {
+                "history catch-up is incomplete: a conversation changed while it was read; the next catch-up reads it again"
             }
             _ => {
                 "history source or operation is unavailable or incompatible; inspect this computer's history logs"
@@ -135,11 +142,15 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
         instrukt_core::fsx::LockGuard::acquire(&home.history_lock_file(), Duration::from_secs(30))?;
     let mut position = _projection::position(home, source.identity())?;
     let mut report = Extraction::default();
+    // A conversation that changed while it was read is left for a later
+    // catch-up; the rest of the pass continues and the result says so.
+    let mut unsettled = std::collections::BTreeSet::new();
     loop {
         let started = std::time::Instant::now();
         let batch =
             source.changed_since(position.as_ref(), crate::runtime::conversations::Scope::All)?;
         let changed = position.as_ref() != Some(&batch.position);
+        unsettled.extend(batch.unsettled.iter().cloned());
         let loaded = _projection::apply(home, source.identity(), &batch)?;
         if changed || !batch.records.is_empty() {
             tracing::debug!(event="history_extract_completed",source=source.identity(),loaded,position=?batch.position,duration_ms=started.elapsed().as_millis() as u64);
@@ -150,6 +161,17 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
         if !batch.has_more {
             break;
         }
+    }
+    if !unsettled.is_empty() {
+        tracing::warn!(
+            event = "history_extract_incomplete",
+            source = source.identity(),
+            loaded = report.loaded,
+            unsettled = unsettled.len()
+        );
+        return Err(HistoryError::Incomplete {
+            count: unsettled.len(),
+        });
     }
     Ok(report)
 }

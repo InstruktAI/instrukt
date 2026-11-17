@@ -523,6 +523,12 @@ fn relay_direction(
                 "linked source conversation is missing; restore its native source content".into(),
             ));
         }
+        // Its turns stay unread, with this cause, until a read is coherent.
+        if batch.unsettled.iter().any(|id| id == &d.source.id) {
+            return Err(LinkError::Refused(
+                "linked source conversation kept changing while it was read; the next catch-up reads it again".into(),
+            ));
+        }
         if let Some(failure) = batch
             .turn_failures
             .iter()

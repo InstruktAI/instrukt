@@ -54,10 +54,19 @@ fn wait_for(condition: impl FnMut() -> bool) {
 fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     let env = common::TestEnv::new();
     let store = history::T3Store::new(&env);
-    // Other work on the computer throughout: many other threads, one of them
-    // streaming and rewritten while the link's threads are read.
-    let _elsewhere = store.elsewhere(200, "Elsewhere chatter.");
+    // History is off, so the link relay is the stand-in's only source
+    // reader while the runner runs.
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {history: false}\n",
+    )
+    .unwrap();
+    // Other work on the computer: many other threads, one of them streaming
+    // and rewritten while the link's threads are read.
+    let mut elsewhere = store.elsewhere(200, "Elsewhere chatter.");
+    elsewhere.stream();
     let fake = runtime::FakeT3::create(&env);
+    let gate = store.gate();
     fake.seed("parent", env.home(), "peer-a", "opening a");
     fake.seed("child", env.home(), "peer-b", "opening b");
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
@@ -126,7 +135,17 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
             .iter()
             .any(|d| matches!(d.receipts.get("empty-run"), Some(links::Disposition::Empty)))
     );
+    // With the other work settled, one more unrelated change wakes the
+    // relay; the runner dies as a source read begins, after the reads before
+    // it retained their positions with the child's run still unfinished. A
+    // turn finishes while it is down, and nothing else changes.
+    elsewhere.settle();
+    gate.hold();
+    elsewhere.nudge();
+    gate.admit();
+    gate.held();
     drop(runner);
+    gate.open();
     store.turn(
         "child",
         "fresh-after-restart",
