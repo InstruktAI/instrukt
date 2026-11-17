@@ -78,8 +78,9 @@ boundaries. The write fence stops what instrukt itself attempts against a real
 location, as the file system stands when it attempts it, so a test never fails
 because another program changed that location. It is not a sandbox: the
 programs instrukt starts and the test's own fixtures stay inside the temporary
-home by construction, and a path that another process retargets between
-instrukt's check and its write is outside what the fence stops. Independently authored use cases supply the expected outcomes;
+home by construction. A path that another process retargets between
+instrukt's check and its write, and a hard link inside the temporary home to
+a file in a real location, are outside what the fence stops. Independently authored use cases supply the expected outcomes;
 pure-logic units and property tests cover the Rust exception without replacing
 feature-level evidence.
 
