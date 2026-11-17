@@ -370,8 +370,11 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     // Conversations are `run`'s alone: a declared connector with the
-    // machine's switch on admits it; no tick or session hosts a connector.
-    if command == "run" && !instrukt_runner::conversations::demand(&ctx.home)?.is_empty() {
+    // machine's switch on admits it; no tick hosts a connector. The sessions
+    // conversations start are resolved through `sessions`.
+    if matches!(command, "run" | "sessions")
+        && !instrukt_runner::conversations::demand(&ctx.home)?.is_empty()
+    {
         return Ok(());
     }
     if config.module_enabled(Module::Todos)? || config.module_enabled(Module::Events)? {

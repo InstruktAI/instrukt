@@ -6,7 +6,9 @@
 use crate::common;
 use crate::fixtures::conversing::{Company, wait};
 use crate::fixtures::documented;
-use instrukt_runner::conversations::{SLACK_MESSAGE_LIMIT, TURN_AWAY};
+use instrukt_runner::connectors::SLACK;
+use instrukt_runner::conversations::{self, SLACK_MESSAGE_LIMIT, TURN_AWAY};
+use instrukt_runner::sessions::SessionsError;
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// Where each post went: its channel and thread.
@@ -24,10 +26,51 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let mut c = Company::new("");
     c.run();
     let channel = "C1";
+    // The runner dies before the runtime accepted the question's opening.
+    c.runtime.flag("die-before-start", true);
     let question = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
+    c.runner_ended();
+    assert!(c.sessions().is_empty());
+    // Restarted, the question stays pending with its cause: a start that
+    // remains unresolved, its key and the command that resolves it.
+    c.run();
+    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{question}"));
+    let unresolved = SessionsError::Unresolved { key: key.clone() }.to_string();
+    wait("the unresolved start's cause", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|pending| pending.failures.contains(&unresolved))
+    });
+    let pending = c.conversations().conversations;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].pending_messages, 1);
+    assert!(c.sessions().is_empty());
+    // Nothing was created: the start is resolved as such, and the retry dies
+    // after the runtime accepted the opening and before the runner bound it.
+    c.runtime.flag("die-after-start", true);
+    c.env
+        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
+        .success();
+    c.runner_ended();
     let session = c.session();
+    assert_eq!(c.runtime.message_count(&session), 1);
+    // Someone types in the session's thread directly, and both turns finish
+    // while the runner is down: the typed one is read before the answer's,
+    // and it is not posted. An answer longer than one Slack message arrives
+    // as its pieces.
+    c.store.turn(
+        &session,
+        "direct",
+        100,
+        "A note typed in the thread.",
+        "Noted.",
+    );
+    let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
+    c.finish_turn(&session, 0, &reply);
+    c.run();
     // A plain agent in the company's home under the runner-supplied role.
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
     let caller = instrukt_core::ids::SessionRef::parse(&format!(
@@ -51,18 +94,6 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     );
     assert_eq!(assignment.procedure, None);
     assert_eq!(assignment.company, Some(c.company()));
-    // Someone types in the session's thread directly: that turn is read
-    // before the answer's, and it is not posted.
-    c.store.turn(
-        &session,
-        "direct",
-        100,
-        "A note typed in the thread.",
-        "Noted.",
-    );
-    // An answer longer than one Slack message arrives as its pieces.
-    let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
-    c.finish_turn(&session, 0, &reply);
     wait("the answer's pieces", || c.slack.posts().len() >= 2);
     wait("nothing left to post", || {
         c.conversations().conversations.is_empty()
@@ -83,6 +114,9 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
             .sum::<usize>(),
         reply.chars().count()
     );
+    // One session, which received one opening input.
+    assert_eq!(c.sessions(), [session.as_str()]);
+    assert_eq!(c.runtime.message_count(&session), 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV3

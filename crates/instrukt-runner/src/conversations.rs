@@ -710,8 +710,13 @@ fn deliver_one(
         Some(session) => send(adapter, state, c, session, next, now),
     };
     // A runtime failure is retained through the adapter's safe diagnostic,
-    // never its raw native output.
+    // never its raw native output. An unresolved start says so, with its key
+    // and the command that resolves it.
     let failure = result.as_ref().err().map(|error| match error {
+        ConversationError::Sessions(
+            crate::sessions::SessionsError::Unresolved { key }
+            | crate::sessions::SessionsError::Uncertain { key, .. },
+        ) => crate::sessions::SessionsError::Unresolved { key: key.clone() }.to_string(),
         ConversationError::Sessions(native) => adapter
             .diagnostic("conversation delivery", native)
             .to_string(),

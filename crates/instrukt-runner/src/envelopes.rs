@@ -263,35 +263,6 @@ fn valid_minute(at: &str) -> bool {
             .as_deref()
             == Some(at)
 }
-/// Where the frame opened by `tag` closes: the start of its closing line and
-/// the start of the line after it. With `honour_inner`, a complete
-/// token-bearing frame met on the way is skipped whole, so no line inside it
-/// can close the outer frame.
-fn closing(text: &str, from: usize, tag: &str, honour_inner: bool) -> Option<(usize, usize)> {
-    let close = format!("[/{tag}]");
-    let mut scan = from;
-    while scan < text.len() {
-        let finish = text[scan..]
-            .find('\n')
-            .map(|n| scan + n)
-            .unwrap_or(text.len());
-        let line = text[scan..finish].trim_end_matches('\r');
-        let next = (finish + 1).min(text.len());
-        if line == close {
-            return Some((scan, next));
-        }
-        if honour_inner
-            && let Some((inner, Opened::Member(_) | Opened::Context(_))) = opening(line)
-            && let Some((_, after)) = closing(text, next, inner, false)
-        {
-            scan = after;
-            continue;
-        }
-        scan = next;
-    }
-    None
-}
-
 /// Only complete registered frames establish provenance. Bodies are opaque.
 pub fn segment(text: &str) -> Vec<Span<'_>> {
     let mut spans = Vec::new();
@@ -301,12 +272,22 @@ pub fn segment(text: &str) -> Vec<Span<'_>> {
         let end = text[at..].find('\n').map(|n| at + n).unwrap_or(text.len());
         let line = text[at..end].trim_end_matches('\r');
         if let Some((tag, opened)) = opening(line) {
+            let close = format!("[/{tag}]");
             let body_start = (end + 1).min(text.len());
-            // A frame without a boundary token keeps a complete token-bearing
-            // frame inside it as one opaque block; a token-bearing frame ends
-            // only at its own token's close.
-            let honour_inner = !matches!(opened, Opened::Member(_) | Opened::Context(_));
-            if let Some((body_end, next)) = closing(text, body_start, tag, honour_inner) {
+            let mut scan = body_start;
+            let mut closing = None;
+            while scan < text.len() {
+                let finish = text[scan..]
+                    .find('\n')
+                    .map(|n| scan + n)
+                    .unwrap_or(text.len());
+                if text[scan..finish].trim_end_matches('\r') == close {
+                    closing = Some((scan, (finish + 1).min(text.len())));
+                    break;
+                }
+                scan = (finish + 1).min(text.len());
+            }
+            if let Some((body_end, next)) = closing {
                 if ordinary < at {
                     spans.push(Span::Ordinary(&text[ordinary..at]));
                 }

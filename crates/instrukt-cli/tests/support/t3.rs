@@ -96,6 +96,8 @@ if command=='list':
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
     if (root/'empty-start').exists(): sys.exit(0)
+    if (root/'die-before-start').exists():
+        (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
     n=len(all_threads())+1
     id='s'+str(n)
     checkout=str(pathlib.Path(operands[0]).resolve())
