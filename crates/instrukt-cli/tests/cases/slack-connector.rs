@@ -1,10 +1,10 @@
 //! The Slack connector through the real runner and the Slack stand-in at the
 //! network line: an outward Socket Mode connection, what reaches the agent and
-//! what accompanies it, and where answers are posted.
+//! what accompanies it, and where and how answers are posted.
 #![allow(clippy::unwrap_used, reason = "isolated feature scenarios")]
 
 use crate::fixtures::conversing::{Company, company_home, slack_settings, wait};
-use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN};
+use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN, Post};
 use instrukt_core::ids::ProjectSlug;
 use instrukt_runner::connectors::{API_URL_SETTING, WORKING};
 use instrukt_runner::conversations::{ConnectionState, Status};
@@ -130,7 +130,7 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since
     insta::assert_snapshot!("first-tag-delivered", c.input(&session, 0));
     c.finish_turn(&session, 0, "Friday works.");
     wait("the answer's post", || !c.slack.posts().is_empty());
-    c.slack.say("C1", "UANNA", "Agreed.", Some(&root));
+    let agreed = c.slack.say("C1", "UANNA", "Agreed.", Some(&root));
     c.slack.say(
         "C1",
         "USTEVEN",
@@ -144,16 +144,24 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since
         "<@UBRAM> has joined the channel",
         Some(&root),
     );
+    // A tag an edit adds to an earlier message starts nothing.
     c.slack
-        .mention("C1", "UANNA", "<@UAGENT> Anything to add?", Some(&root));
+        .edit_into_mention("C1", "UANNA", &agreed, "Agreed, <@UAGENT>.", Some(&root));
+    // A tag in a message that carries a file reaches the agent with its text.
+    c.slack.mention_with_file(
+        "C1",
+        "UANNA",
+        "<@UAGENT> Anything to add to the attached plan?",
+        Some(&root),
+    );
     wait("the tagged message", || {
         c.runtime.message_count(&session) == 2
     });
-    // The untagged messages reached the agent only as what accompanies the
-    // tag. Since the previous tag there were three — the agent's own answer,
-    // then both — so the most recent two accompany it, read across more than
-    // one page, and the context says earlier ones were left out. The notice
-    // after them counts for nothing.
+    // The untagged messages, the edited one among them, reached the agent
+    // only as what accompanies the tag. Since the previous tag there were
+    // three — the agent's own answer, then both — so the most recent two
+    // accompany it, read across more than one page, and the context says
+    // earlier ones were left out. The notice after them counts for nothing.
     let delivered = c.delivered(&session, 1);
     assert_eq!(delivered.members, 1);
     assert_eq!(delivered.accompanying, 2);
@@ -215,30 +223,118 @@ fn every_direct_message_reaches_the_agent_without_a_tag() {
     wait("the status on the direct message", || {
         c.slack.status(channel, &first).as_deref() == Some(WORKING)
     });
-    let second = c.slack.direct(channel, "UANNA", "And the next one?");
+    // Written with `/me`.
+    let second = c.slack.direct_as(
+        channel,
+        "UANNA",
+        "is waiting for the invoice",
+        Some("me_message"),
+        false,
+    );
     wait("the status on the second direct message", || {
         c.slack.status(channel, &second).as_deref() == Some(WORKING)
     });
-    c.finish_turn(&session, 0, "The invoice is paid.");
+    let replies = [
+        "The invoice is paid.",
+        "Noted.",
+        "The receipt matches.",
+        "The file is here.",
+    ];
+    c.finish_turn(&session, 0, replies[0]);
     wait("the second direct message", || {
         c.runtime.message_count(&session) == 2
     });
-    for n in 0..2 {
-        assert_eq!(c.delivered(&session, n).empty, 0);
-    }
-    insta::assert_snapshot!(
-        "direct-messages-delivered",
-        format!("{}\n---\n{}", c.input(&session, 0), c.input(&session, 1))
-    );
-    wait("the answer's post", || !c.slack.posts().is_empty());
     wait("the finished message's status cleared", || {
         c.slack.status(channel, &first).is_none()
     });
-    let posts = c.slack.posts();
-    assert_eq!(posts.len(), 1);
-    assert_eq!(
-        (posts[0].channel.as_str(), posts[0].thread.as_deref()),
-        (channel, None)
+    // Each later message is written once the answers before it are posted,
+    // so what accompanies it is fixed.
+    wait("the first answer's post", || c.slack.posts().len() == 1);
+    // A file with text, which Slack sends without a subtype, and a file
+    // alone, which it sends as `file_share` with no text.
+    c.slack
+        .direct_as(channel, "UANNA", "Here is the receipt.", None, true);
+    c.slack
+        .direct_as(channel, "UANNA", "", Some("file_share"), true);
+    // An edit and a deletion of earlier messages start nothing.
+    c.slack
+        .edit_direct(channel, "UANNA", &first, "Can you check both invoices?");
+    c.slack.delete_direct(channel, &second);
+    c.finish_turn(&session, 1, replies[1]);
+    wait("the message with a file", || {
+        c.runtime.message_count(&session) == 3
+    });
+    c.finish_turn(&session, 2, replies[2]);
+    wait("the message with only a file", || {
+        c.runtime.message_count(&session) == 4
+    });
+    c.finish_turn(&session, 3, replies[3]);
+    wait("the answers' posts", || {
+        c.slack.posts().len() == replies.len()
+    });
+    // A message written after the edit and the deletion is the next turn.
+    c.slack.direct(channel, "UANNA", "Thanks.");
+    wait("the message after the edit and the deletion", || {
+        c.runtime.message_count(&session) == 5
+    });
+    let empty: Vec<usize> = (0..5).map(|n| c.delivered(&session, n).empty).collect();
+    assert_eq!(empty, [0, 0, 0, 1, 0]);
+    insta::assert_snapshot!(
+        "direct-messages-delivered",
+        (0..5)
+            .map(|n| c.input(&session, n))
+            .collect::<Vec<_>>()
+            .join("\n---\n")
     );
-    assert!(!posts[0].text.is_empty());
+    let answer = |reply: &str| Post {
+        channel: channel.to_owned(),
+        thread: None,
+        text: None,
+        markdown: Some(reply.to_owned()),
+    };
+    assert_eq!(
+        c.slack.posts(),
+        replies
+            .iter()
+            .map(|reply| answer(reply))
+            .collect::<Vec<_>>()
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/slack-connector UC-SL5
+#[test]
+fn the_agents_answer_is_posted_as_markdown_it_wrote_and_a_long_one_in_parts() {
+    let mut c = Company::new("");
+    c.run();
+    let channel = "D1";
+    c.slack
+        .direct(channel, "UANNA", "How do I renew the certificate?");
+    let session = c.session();
+    // Its leading indentation and final line break are part of what it
+    // wrote.
+    let formatted = "    certbot renew --dry-run\n\n**Renew it** in three steps:\n\n1. Open [the portal](https://portal.example.com).\n2. Run:\n\n```sh\ncertbot renew\n```\n3. Check the new date.\n";
+    c.finish_turn(&session, 0, formatted);
+    wait("the formatted answer", || c.slack.posts().len() == 1);
+    c.slack.direct(channel, "UANNA", "And the whole log?");
+    wait("the second question", || {
+        c.runtime.message_count(&session) == 2
+    });
+    // Longer than Slack takes at once: two line breaks lie in the second half
+    // of the first 12,000 characters, and the first part ends after the
+    // later one; the remainder follows unchanged, its final line break
+    // included.
+    let opening = format!("{}\n{}\n", "a".repeat(6_500), "b".repeat(3_000));
+    let remainder = format!("{}\n", "c".repeat(7_000));
+    c.finish_turn(&session, 1, &format!("{opening}{remainder}"));
+    wait("the long answer's parts", || c.slack.posts().len() == 3);
+    let answer = |markdown: &str| Post {
+        channel: channel.to_owned(),
+        thread: None,
+        text: None,
+        markdown: Some(markdown.to_owned()),
+    };
+    assert_eq!(
+        c.slack.posts(),
+        [answer(formatted), answer(&opening), answer(&remainder)]
+    );
 }

@@ -427,6 +427,18 @@ impl SlackApi {
         .map(drop)
     }
 
+    /// Post an answer into a conversation as the agent wrote it, as Markdown
+    /// Slack renders (`markdown_text`): its thread in a channel, or the
+    /// direct-message channel.
+    pub fn answer(&self, conversation: &str, markdown: &str) -> Result<(), SlackError> {
+        let (channel, thread) = split_conversation(conversation);
+        let mut form = vec![("channel", channel), ("markdown_text", markdown)];
+        if let Some(thread) = thread {
+            form.push(("thread_ts", thread));
+        }
+        self.call("chat.postMessage", false, &form).map(drop)
+    }
+
     /// Post `text` into a conversation: its thread in a channel, or the
     /// direct-message channel.
     pub fn post(&self, conversation: &str, text: &str) -> Result<(), SlackError> {
@@ -549,6 +561,20 @@ struct Me {
     bot: Option<String>,
     /// The workspace the app is installed in.
     team: String,
+}
+
+/// The subtypes of a message a person newly wrote, besides none: one that
+/// carried a file, one written with `/me`, and a thread reply also sent to
+/// the conversation.
+const NEWLY_WRITTEN: [&str; 3] = ["file_share", "me_message", "thread_broadcast"];
+
+/// Whether `event` is a message a person newly wrote, which can start a turn:
+/// no subtype or one of [`NEWLY_WRITTEN`], and not marked as an edit of an
+/// earlier message. An edit, a deletion and every other record start nothing.
+/// What accompanies an addressed message is not filtered by this.
+fn newly_written(event: &Value) -> bool {
+    let subtype = event.get("subtype").and_then(Value::as_str);
+    subtype.is_none_or(|subtype| NEWLY_WRITTEN.contains(&subtype)) && event.get("edited").is_none()
 }
 
 /// Whether `message` is one of Slack's own notices about a conversation.
@@ -1150,11 +1176,13 @@ fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Res
     else {
         return Ok(());
     };
+    if !newly_written(event) {
+        return Ok(());
+    }
     let thread = match text("type") {
         Some("app_mention") => Some(text("thread_ts").unwrap_or(ts)),
         Some("message")
             if text("channel_type") == Some("im")
-                && text("subtype").is_none()
                 && event.get("bot_id").is_none()
                 && sender != me.user =>
         {

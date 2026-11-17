@@ -147,14 +147,15 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
             (channel.to_owned(), Some(question.clone()))
         ]
     );
-    // Together the pieces carry the whole answer.
+    // Together the parts carry the whole answer, as Markdown.
+    let posts = c.slack.posts();
+    assert!(posts.iter().all(|post| post.text.is_none()));
     assert_eq!(
-        c.slack
-            .posts()
+        posts
             .iter()
-            .map(|post| post.text.chars().count())
-            .sum::<usize>(),
-        reply.chars().count()
+            .filter_map(|post| post.markdown.as_deref())
+            .collect::<String>(),
+        reply
     );
     // The session was started on the company's profile.
     assert_eq!(
@@ -316,8 +317,10 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
             (channel.to_owned(), Some(asked.clone()))
         ]
     );
+    // The fixed reply goes as plain text.
     for post in c.slack.posts() {
-        assert_eq!(post.text, TURN_AWAY);
+        assert_eq!(post.text.as_deref(), Some(TURN_AWAY));
+        assert_eq!(post.markdown, None);
     }
     let sessions = c.sessions();
     assert_eq!(sessions.len(), 2);
