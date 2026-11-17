@@ -47,6 +47,7 @@ mcp:
 | `login` | A `${NAME}` reference, never a literal value. In a company home it is the company's own login, references that home's secrets file, requires `credential` or `speaker_login: sign-in`, and is carried only by a call with no speaker; it is a stored value whatever `speaker_login` says. In the global layer it is the machine's own login and references the machine's secrets file. |
 | `sign_in.scopes` | With `speaker_login: sign-in`, optional: the scopes a sign-in asks for. Without it the scopes follow the MCP authorization specification's scope selection: those the server names when it refuses a call without a login, otherwise those its resource metadata lists, otherwise none. |
 | `sign_in.client.id`, `sign_in.client.secret` | With `speaker_login: sign-in`, optional: references into the company home's secrets file to a client registered with the authorization server beforehand. `id` is required when `client` is declared; `secret` only for a client that has one. Without them instrukt registers its own client (see Registrations). |
+| `sign_in.accept_return_without_issuer` | With `speaker_login: sign-in`, optional, `true` or `false` (the default): the operator's acceptance of a return that does not name its issuer, for a server whose authorization server does not announce that it names itself on the return (see The return path and the issuer). |
 | `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose authorization server is no OpenID Provider. `url` is an absolute `https` address without credentials or fragment, which the operator trusts to receive this server's tokens; instrukt sends a `GET` to it with the new access token and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
 
 A declaration that carries none of `credential`, `login` and `speaker_login:
@@ -62,7 +63,8 @@ These are validation findings naming the server and the field: an unknown
 field; a literal `login` or client value; `speaker_login`, `credential` or
 `sign_in` in the global layer; `speaker_login: stored` without `credential`;
 `speaker_login: sign-in` together with `credential`; `sign_in` without
-`speaker_login: sign-in`; `sign_in.client` without `id`; one of the two
+`speaker_login: sign-in`; `sign_in.client` without `id`; an
+`accept_return_without_issuer` that is not `true` or `false`; one of the two
 `sign_in.identity` fields without the other; an identity `url` that is not an
 absolute `https` address or carries credentials or a fragment; a `login`
 without `credential` or `speaker_login: sign-in` in a company home; and a
@@ -160,7 +162,8 @@ hexadecimal characters from 128 random bits. instrukt makes the return id when
 it registers a client dynamically, and when it first reads a declared client
 for that company home and server. The return address is `ingress.url`
 followed by that path. Each registration is kept in the state database with its
-issuer, client, return id and return address.
+issuer, client identifier, return id and return address, and for a declared
+client the SHA-256 digest of its secret.
 
 The client is the one declared under `sign_in.client` when there is one. It
 authenticates at the token and revocation endpoints with its secret by HTTP
@@ -168,7 +171,14 @@ Basic authentication, or in the request body when the authorization server
 lists only `client_secret_post`; a client declared without a secret sends only
 its identifier. The operator registers the declared client's return address
 with the authorization server; `instrukt mcp list --company <company>` shows
-it. When `ingress.url` changes, the operator updates it there.
+it. When `ingress.url` changes, the operator updates it there. When the
+declared client's identifier or secret no longer matches its registration,
+that registration is retired and a new one, with a new return id, is made for
+the declared client as it now is. The logins and open sign-ins of the retired
+registration become unusable: they are removed and cancelled without a
+revocation request, since their own client's credentials are no longer
+available, and the next call starts a sign-in. A code or refresh token issued
+to one client is never sent with another client's credentials.
 
 Without a declared client instrukt registers one where the authorization
 server offers registration: a public client (`token_endpoint_auth_method:
@@ -181,9 +191,10 @@ secret while none was issued. What the answer leaves out is no refusal. A
 refused registration refuses the call naming the server and the declared
 client it needs; a server that offers no registration and has no declared
 client refuses the call the same way. A server that issues no refresh token
-gives logins that cannot be renewed (see Keeping and renewing a login). A dynamic registration is made again when the return address changes or
-the authorization server no longer knows the client; a new registration has a
-new return id. A login and a pending sign-in keep the registration they began
+gives logins that cannot be renewed (see Keeping and renewing a login). A
+dynamic registration is made again when the return address changes or the
+authorization server no longer knows the client; a new registration has a new
+return id. A login and a pending sign-in keep the registration they began
 with.
 
 #### Discovery
@@ -234,6 +245,7 @@ passed, whichever comes first:
 | `completed` | Proceeds with the new login; the same turn answers. |
 | Still open, its link accepted | Fails saying that a sign-in to the server is pending and that a link was sent to the speaker by direct message. |
 | Still open, its link not yet accepted | Fails saying that a sign-in to the server is pending and that its link has not been delivered yet. |
+| Being exchanged | Fails saying that the sign-in to the server is being completed and that the person can ask again shortly; how it ends is decided as for a sign-in that completes while no call waits. |
 | `undelivered` | Fails saying that the sign-in link could not be delivered, with the provider's cause. |
 | `declined` | Fails saying that the authorization server did not complete the sign-in, with its error code. |
 | `refused` | Fails saying that the sign-in was not for the speaker's address and was not kept. |
@@ -313,6 +325,26 @@ Where the authorization server's metadata says it sends `iss`, a return
 without it is not accepted either. A return carrying an error closes the
 sign-in as `declined`.
 
+#### The return path and the issuer
+
+A return path of its own shows only which registration a return claims to
+belong to. It does not show which authorization server sent the return: an
+authorization server that knows its own return path can register that path
+for a client of its own at another authorization server. Only `iss` on the
+return names the authorization server that issued the code.
+
+A server whose authorization server announces in its metadata that it names
+itself on the return (`authorization_response_iss_parameter_supported: true`)
+is always checked by that: a return without `iss`, or with another one, is not
+accepted. A server whose authorization server does not announce it is signed
+in to only when its declaration has `sign_in.accept_return_without_issuer:
+true`; without it a call that needs a sign-in is refused naming the server and
+the missing acceptance, and once the server's metadata is known to the
+computer, `instrukt config validate --company <company>` reports the same.
+Declaring it means that the operator trusts that authorization server not to
+send a person's sign-in to another server of the same company home; a
+compromised one could capture such a sign-in.
+
 #### Exchange and who signed in
 
 The runner exchanges the code at the token endpoint with the code verifier,
@@ -329,8 +361,12 @@ It then asks who signed in:
 | Without it | The OpenID Connect ID token from the token answer, validated as OpenID Connect Core §3.1.3.7 requires (its signature by the provider's key set, `iss`, `aud`, expiry and the nonce), then the provider's UserInfo endpoint. | UserInfo's `email`, accepted only when its `sub` equals the ID token's and `email_verified` is `true`. A sign-in for such a server asks for the scopes `openid` and `email` as well. |
 
 Declaring `sign_in.identity` is the operator's statement that the named field
-holds the account's own login address at that server, unique there and not
-changeable by the person without the server's administration.
+holds the account's login identifier at that server, unique there at any
+moment, as the server reports it for the token presented, and that it is an
+email address. A person who changes their login identifier is recognised at
+the login's next renewal; until then the stored login acts under the address
+it was accepted for. Nothing stronger than what the server reports is
+proven.
 
 The login is kept only when that address equals the address stored with the
 speaker's message, exactly and without regard to case. The comparison proves
@@ -366,7 +402,7 @@ call that finds one under way waits for its result, within its own wait.
 
 | Renewal | Outcome |
 | --- | --- |
-| Succeeds | The new access token and lifetime are stored in one transaction. A new refresh token replaces the previous one, which is discarded and not revoked; an answer without one keeps the current refresh token. Who the login identifies as is then asked again. |
+| Succeeds | The new access token and lifetime are stored in one transaction, the access token marked unchecked. A new refresh token replaces the previous one, which is discarded and not revoked; an answer without one keeps the current refresh token. Who the login identifies as is then asked again. |
 | Refused with `invalid_grant` | The login is removed and the call starts a sign-in. |
 | Fails otherwise | The call fails naming the server; the login is kept. |
 | Not possible: the login has no refresh token | The login is unusable: it is removed and the call starts a sign-in. |
@@ -377,18 +413,23 @@ used until the server answers `401`.
 Each time a login is renewed, who it identifies as is asked again with the new
 access token, by the same identity source as at sign-in: the declared identity
 request, or the UserInfo endpoint, whose `sub` must equal the one recorded at
-sign-in and whose `email` must be verified. At some servers a person can
+sign-in and whose `email` must be verified. Until that check succeeds the new
+access token is unchecked: no call uses it, after a restart as well, and every
+call waiting on the renewal shares its outcome. At some servers a person can
 change their own login address, so a login is kept only while that answer
 equals the address it is stored under. When it no longer does, the login is
 removed and revoked where the authorization server offers revocation, and the
 call starts a sign-in. When the identity request fails, the call fails naming
-the server and the login is kept.
+the server; the login and its newest refresh token are kept, the access token
+stays unchecked, and a later call repeats the check, within its own wait,
+before it uses the login.
 
 #### Revocation
 
 A revocation request names the kind of token it carries (`token_type_hint`:
-`refresh_token` or `access_token`). A successful answer is not taken as proof
-that the token no longer works.
+`refresh_token` or `access_token`). A revocation request is best effort: a
+successful answer is not taken as proof that the token no longer works, and a
+failed one does not keep a removed login.
 
 #### Ending a login
 
@@ -398,13 +439,21 @@ that the token no longer works.
 | The local operator | Removes a person's logins for a company with `instrukt mcp sign-out --company <company> --email <address> [<name>]`, outside any session; inside a session this form is refused, and no caller selects another person that way. |
 | The authorization server | Refuses a renewal with `invalid_grant`. |
 
-A removal covers the login and every open sign-in of that company, person and
-server, or of every server: the open sign-ins close as `cancelled`, and their
-waiting calls learn so. It applies also when there is no login, only an open
-sign-in. Each company, person and server has a generation number that a
-removal raises; an exchange or a renewal that began before the removal stores
-nothing when it ends, and the tokens it received are revoked where the
-authorization server offers revocation. Removing a login revokes its refresh
+A removal covers the login and every sign-in of that company, person and
+server, or of every server, that is open or being exchanged: they close as
+`cancelled`, and their waiting calls learn so. It applies also when there is no
+login, only a sign-in. Each company, person and server has a generation number
+that a removal raises, and every operation captures it when it begins: the
+start of a sign-in before its discovery, a claim, an exchange, a renewal and
+its identity check, and a call before it sends a login to the server. An
+operation whose generation is no longer current when it would act stores
+nothing and touches no later login: a sign-in start records no pending
+sign-in and its call learns that it was cancelled, an exchange or renewal
+revokes the tokens it received where the authorization server offers
+revocation, an identity check's outcome changes nothing, and a call does not
+send the login and fails saying that it was removed. Network requests run
+outside the database's writer section; the generation is compared in the
+transaction that records each outcome. Removing a login revokes its refresh
 token, or its access token when it has none, at its own authorization server
 where it offers revocation, and removes it from the state database whether or
 not revocation succeeds. A call already carried out at the server is not
@@ -565,7 +614,8 @@ Then the login is removed and a new sign-in starts
 ```gherkin
 Given a member has signed in to a server
 When they ask the agent to sign them out of it
-Then their login is removed, and revoked at the server where the server offers revocation
+Then their login is removed from the computer
+And a request to revoke it is sent where the server offers revocation, whether or not that ends it at the server
 And the agent's next call for them starts a new sign-in
 ```
 
@@ -601,6 +651,10 @@ And a call for that person starts a new sign-in
   server without `S256`, a public client the authorization server registers
   differently than asked, or, without `sign_in.identity`, an authorization
   server that is no OpenID Provider. Each is refused with its reason.
+- A server whose authorization server does not announce that it names itself
+  on the return is signed in to only on the operator's acceptance; a
+  compromised authorization server could then capture a person's sign-in to
+  another server of the same company home.
 - The address comparison relies on what the server reports: with OpenID
   Connect a verified address, with a declared identity request what the
   operator's declaration asserts. It does not prove that one person holds the

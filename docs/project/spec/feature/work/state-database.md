@@ -505,8 +505,9 @@ credential.
 person alone, such as a sign-in link
 (`project/instrukt/spec/feature/runner/slack-connector`). Key: `(company,
 connector, channel, message)`, the provider's identity of the posted message.
-Column: `posted_at`. These messages are left out of every range of
-accompanying messages.
+Column: `posted_at`. These messages, and every message that carries the
+connector's private-message marker whether or not its identity was recorded,
+are left out of every range of accompanying messages.
 
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
@@ -519,8 +520,9 @@ status or recorded cause.
 | Column | Meaning |
 | --- | --- |
 | `company`, `server`, `issuer` | The company home, the server and the authorization server it was made for. |
-| `declared` | `1` for a client declared under `sign_in.client`, read from the home's secrets file and not stored here; `0` for a client instrukt registered. |
-| `client_id`, `client_secret` | A registered client's identifier and secret; `NULL` for a declared client, and the secret `NULL` for a public client. |
+| `declared` | `1` for a client declared under `sign_in.client`, whose secret is read from the home's secrets file; `0` for a client instrukt registered. |
+| `client_id` | The client's identifier, for a declared client as it was declared when the registration was made. |
+| `client_secret`, `secret_digest` | A registered client's secret, `NULL` for a public client and for a declared one; for a declared client the SHA-256 digest of its secret, `NULL` when it has none. |
 | `return_address` | The return address the client was registered with. |
 | `registered_at`, `retired_at` | When it was made, and when a newer registration replaced it; `NULL` while current. |
 
@@ -536,6 +538,7 @@ for that server.
 | `subject` | The OpenID Connect `sub` recorded at sign-in; `NULL` with a declared identity request. |
 | `return_id` | The registration it was issued to, which names its authorization server and client. |
 | `access_token`, `expires_at` | The access token and when it runs out; `expires_at` is `NULL` when the server gave no lifetime, which means unknown. |
+| `checked` | `1` once who the access token identifies as has been confirmed; `0` while a renewed access token waits for that check, during which it is not used. |
 | `refresh_token` | The refresh token; `NULL` when the server issued none. |
 | `scopes` | The scopes granted, as the server gave them. |
 | `signed_in_at`, `renewed_at` | When the person signed in, and when instrukt last renewed it. |
@@ -564,15 +567,15 @@ the state. At most one row per company, person and server is `open` or
 wait. A call removes only its own row when it stops waiting.
 
 A sign-in and the call that starts it, with its waiter row, are written in one
-transaction. Claiming a return moves the sign-in from `open` to `exchanging`
+transaction, only when the generation the start captured is still current. Claiming a return moves the sign-in from `open` to `exchanging`
 in one transaction before anything is sent to the authorization server. A
 sign-in's `completed` state and its login are written in one transaction,
 only when its generation is still current; it reads the waiter rows to decide
 whether waiting calls take the login or the person is told to ask again. A
 renewal writes its new access token, lifetime and refresh token in one
 transaction, only when the generation is unchanged. A removal raises the
-generation, deletes the login and cancels the open sign-ins in one
-transaction.
+generation, deletes the login and cancels the sign-ins that are open or being
+exchanged in one transaction.
 
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
