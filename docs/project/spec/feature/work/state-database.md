@@ -332,7 +332,8 @@ crash; no later event settles past unfinished parking. Raw malformed entries
 remain diagnosable at the transport boundary.
 
 Redis itself owns stream payloads, group pending entries, transport progress,
-source-scoped ingress claims and dead letters. These are not alternate work
+source-scoped ingress claims, dead letters and each computer's participant
+record (`project/instrukt/spec/feature/runner/module-installation`). These are not alternate work
 records or database tables. Redis and SQLite have no shared transaction.
 
 **`procedure_activations`** — durable acceptance keyed by `(event_id, procedure,

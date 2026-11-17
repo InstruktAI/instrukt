@@ -57,7 +57,7 @@ enable events. Installation and withdrawal are owned by
 | `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
 | `connectors.slack` (`app_token` and `bot_token` references, optional `context_messages`) | company home only | runner conversations |
 | `mcp.<name>` (`url`, `description`; in a company home `credential` and, with it, a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
-| `ingress.computer`, `ingress.port` | global only; stable existing machine ID and loopback port | runner intake |
+| `ingress.computer`, `ingress.port`, `ingress.reactions` | global only; stable existing machine ID of the ingress, loopback port, and stable existing machine ID of the computer that reacts to external facts (default: the ingress) | runner intake |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
@@ -88,17 +88,25 @@ is Unix-socket-only; absence uses cluster visibly. `max_connections` and
 the blocking read. Credentials remain references and expanded values are masked
 in reads and findings. An unavailable configured local endpoint is not absence.
 
-`ingress.computer` is the existing stable instrukt machine ID. All participating
-machine global layers agree on that ID and the logical cluster Redis/namespace;
+`ingress.computer` is the existing stable instrukt machine ID. `ingress.reactions`
+names, by the same kind of ID, the one computer that activates procedures for
+external facts; left out, the ingress reacts (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). All participating
+machine global layers agree on both IDs and the logical cluster Redis/namespace;
 URL spellings and ACL credentials may differ when they reach the same logical
 store with required permissions. `ingress.port` is a valid TCP port shared only
 by the ingress receiver and local edge. The bind host is fixed loopback. Local
 Redis socket paths, local credentials, runtime and ticks settings stay local.
-No shared configuration layer or new project-owner-machine routing key exists.
+`instrukt events status` shows each computer's own machine ID
+(`project/instrukt/spec/feature/runner/module-installation`). No shared
+configuration layer exists, and no key routes facts per project, per home or to
+a project's owner computer.
 
 Project identities and checkouts and company homes needed for activation must
-exist on the emitting computer, including ingress. A project source's signing
-values needed on ingress resolve from the one owner-only machine-local
+exist on the activating computer: the emitting computer for its own events, the
+reacting computer for external facts. The ingress needs each declaring home's
+source declaration; it needs a home's procedures only when it is also the
+reacting computer. A project source's signing values needed on ingress resolve
+from the one owner-only machine-local
 `~/.instrukt/secrets.env`; a company source's resolve from its home's own
 secrets file (`project/instrukt/spec/feature/configuration/company-homes`). Source secret fields
 are exact raw `${NAME}` references; the same file also supplies Redis and all
@@ -266,6 +274,7 @@ with `--global` answers from the global layer alone. Writes address one layer
 - a key in a layer that does not permit it, naming the key and its layer;
 - a value of the wrong type or outside its allowed values;
 - a missing `schema_version`;
+- `ingress.reactions` set while `ingress.computer` is not;
 - a feature switched on whose required capabilities the chosen adapter lacks,
   or switched on with no runtime chosen, naming each missing capability and
   the selected runtime

@@ -1,12 +1,13 @@
 ---
-description: Published subscriptions deterministically accept one activation per event, procedure and exact home on the emitting computer.
+description: Published subscriptions deterministically accept one activation per event, procedure and exact home on the activating computer — the emitting computer, or the reacting computer for external facts.
 ---
 # Procedure Subscription Routing — Spec
 
 ## What it is
 
 One independent procedure-activation consumer per computer reads known-origin
-events that computer emitted. It matches the current published subscription set
+events that computer emitted and, on the reacting computer, external facts
+(`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). It matches the current published subscription set
 and durably accepts each matched responsibility in the local SQLite store.
 Routing chooses no session and performs no runtime start, wake or domain effect.
 
@@ -63,15 +64,19 @@ need not emit repeated error reports; a repaired generation is read afresh.
 Clearing the set is not proof that a formerly matching responsibility executed.
 The contract supplies no historical replay of events matched against an empty set.
 
-Interest is every type, own emitting computer only and known origin. `unknown`
+Interest is every type and known origin, from events this computer emitted and, on the reacting computer, external facts. `unknown`
 activates nothing. `none` matches platform home only. A named origin matches its
 exact kind and identity within publication reach; a project is never converted
 to its owner and a company event never fans out to projects. Matching reads no
 data. No match is a normal outcome with no activation.
 
-External facts have ingress source, so only ingress activates procedures for
-them. A project or company home missing there, or a person home, fails visibly
-at the accepted activation's execution boundary; it is never rerouted. Patterns
+External facts have ingress source and activate only on the reacting computer:
+the computer `ingress.reactions` names, or the ingress when it names none. That
+computer is their activating computer; for every other event the activating
+computer is the emitting one. A project or company home missing on the
+activating computer, or a person home, fails visibly at the accepted
+activation's execution boundary; it is never rerouted to another home or
+computer. Patterns
 are membership only: overlapping patterns select one procedure once, while two
 procedures remain two responsibilities. Pattern edits never create a new standing
 identity.
@@ -177,7 +182,7 @@ Then ownership never converts the project into another kind and home keys keep t
 ### UC-PSR13: See an unavailable execution home as a failure
 
 ```gherkin
-Given a developer has an accepted activation for a missing ingress project checkout or company home, or an unsupported person home
+Given a developer has an accepted activation for a project checkout or company home missing on the activating computer, or an unsupported person home
 When the execution boundary resolves that home
 Then it records a visible failure and never substitutes another home or computer
 ```

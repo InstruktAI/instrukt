@@ -1,13 +1,14 @@
 ---
-description: "One loopback receiver verifies and unconditionally relays authenticated external events to cluster Redis."
+description: "One loopback receiver verifies and unconditionally relays authenticated external events to cluster Redis, and one computer reacts to them."
 ---
 # Single-Ingress Webhook Termination — Spec
 
 ## What it is
 
 Exactly one configured ingress computer accepts external requests for the
-cluster. Every other computer consumes cluster events without an inbound public
-listener. The receiver verifies and publishes facts; local reactions consume the
+cluster, and exactly one computer reacts to them: the ingress, or the computer
+`ingress.reactions` names. Every other computer consumes cluster events without
+an inbound public listener. The receiver verifies and publishes facts; local reactions consume the
 same stream as remote reactions, without a direct request-dispatch path.
 
 ## Canonical fields
@@ -62,10 +63,28 @@ second generic handler registry or postponed conversation adapters.
 
 ### Activation reach
 
-Each computer may read the cluster stream. The procedure-activation consumer
-acts only where source equals its own computer, so these external procedures
-activate on ingress. A missing project checkout or company home there fails
-visibly; another computer holding that home is not an implicit fallback. Other explicitly
+An external fact is an event the receiver publishes from a verified delivery;
+its subject is an inbound source (`inbound_source:…`). Each computer may read
+the cluster stream. Exactly one computer, the reacting computer, activates
+procedures for external facts. The global-only `ingress.reactions` names it by
+its stable instrukt machine ID; left out, the ingress computer reacts. All
+participating computers agree on it, as on `ingress.computer`. The reacting
+computer's procedure-activation consumer selects external facts by their
+inbound-source subject, and their source stays the ingress computer. Every
+other computer's consumer, the ingress's included when it is not the reacting
+computer, activates nothing for them. An event a computer emits itself
+activates only on that computer, whatever `ingress.reactions` names.
+
+When the ingress and the reacting computer differ, they need different things:
+
+| Computer | Needs | Does not need |
+| --- | --- | --- |
+| Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `instrukt.yaml`, and the signing values in the declaring home's owner-only secrets file | A runtime, or any procedure run for an external fact |
+| Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
+
+A home missing on the reacting computer fails visibly at the accepted
+activation's execution boundary. Another home or computer never substitutes
+for it, and no fact is routed per project or per home. Other explicitly
 admitted consumers retain their own source-selection contracts.
 
 ## Use cases
@@ -150,13 +169,24 @@ When their consumer inspects the events
 Then verification metadata keeps them distinguishable and their claims do not collide
 ```
 
+### UC-SIT-12: React to external facts on a computer other than the ingress
+
+```gherkin
+Given a developer's server is the ingress and names their other computer as the reacting computer
+And the other computer holds the project, its published procedure and a chosen runtime
+When a valid signed delivery for that project matches the procedure
+Then the procedure runs on the other computer in that project's checkout
+And the server publishes the fact and runs no procedure for it
+```
+
 ## Known caveats
 
 - UC-SIT-9's WhatsApp delivery is outside this port; its ID is not reused.
 - Ingress is a single intake point. Provider retry, provider timeout, cluster availability and bounded stream retention limit recovery.
 - Socket queuing survives receiver restart only within the provider timeout and an admitted service manager's support; it supplies no outage store-and-forward.
 - GitHub's delivery ID and event-type headers are not signed body fields. Source-scoped claim deduplication is bounded replay suppression, not independent authentication of those headers.
-- A scheduled-only ingress consumer activates on its next tick within retention even while the receiver continues accepting.
+- A scheduled-only reacting computer activates on its next tick within retention even while the receiver continues accepting.
+- Activation keys are kept per computer. While participating computers disagree on `ingress.reactions`, an external fact can activate on two computers or on none; installation reports the disagreement (`project/instrukt/spec/feature/runner/module-installation`).
 
 ## See Also
 
