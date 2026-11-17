@@ -75,6 +75,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "affected" | "path" | "query" | "explain" | "status",
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
+        ["mcp", "list" | "list-tools" | "call"] => McpAccess,
         ["ticks", "status"] => InstallationRead,
         ["install"] => InstallationWrite,
         ["run"]
@@ -126,6 +127,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["todo", "list" | "show"]
             | ["todo", "artifacts", "list" | "read" | "diff"]
             | ["specs", "coverage" | "trace"]
+            | ["mcp", "list" | "list-tools" | "call"]
             | [
                 "blueprint",
                 "status" | "query" | "path" | "explain" | "affected"
@@ -218,7 +220,8 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
-        SessionObserve | ConversationLink => true,
+        // A caller reaches only the servers of its own scope.
+        SessionObserve | ConversationLink | McpAccess => true,
         SessionRecover => raw("key") == Some(assignment.key.as_str()),
         StandingBind => {
             if let Some(procedure) = assignment

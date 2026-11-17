@@ -319,6 +319,15 @@ impl Configuration {
         Ok(Some(names))
     }
 
+    /// The MCP servers this document declares, judged as a document of
+    /// `layer` declares them: the global layer or a company home.
+    pub fn mcp_servers(
+        &self,
+        layer: LayerKind,
+    ) -> Result<std::collections::BTreeMap<ProjectSlug, super::McpServer>, ConfigError> {
+        super::_mcp::servers(self.value.get("mcp"), layer)
+    }
+
     /// A company document's Slack connector, if it declares one.
     pub fn slack_connector(&self) -> Result<Option<super::SlackConnector>, ConfigError> {
         super::_company::slack(self.value.get("connectors"))

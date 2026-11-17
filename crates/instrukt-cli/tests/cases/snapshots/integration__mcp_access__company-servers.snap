@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+assertion_line: 251
+expression: stdout(&listed)
+---
+erpnext: Operate the company's ERPNext records (declared for company acme)
+search: Search the web (declared for this computer)

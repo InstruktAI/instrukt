@@ -102,6 +102,7 @@ bundles:
     - {action: installation-read, scope: any}
     - {action: installation-write, scope: any}
     - {action: runner-execute, scope: any}
+    - {action: mcp-access, scope: any}
 profiles:
   codex:
     instance: codex

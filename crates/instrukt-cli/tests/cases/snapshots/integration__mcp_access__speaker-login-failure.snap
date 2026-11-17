@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+assertion_line: 189
+expression: stderr(&failed)
+---
+instrukt: MCP server `erpnext` reports a failure: the login ${STEVEN_ERP} may not do this

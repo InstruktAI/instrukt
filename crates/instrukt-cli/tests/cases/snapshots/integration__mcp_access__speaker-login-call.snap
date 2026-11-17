@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+assertion_line: 180
+expression: stdout(&called)
+---
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "called with ${STEVEN_ERP}"
+    }
+  ],
+  "isError": false
+}

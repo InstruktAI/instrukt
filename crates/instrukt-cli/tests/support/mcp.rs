@@ -1,0 +1,168 @@
+//! An MCP server stand-in at the network boundary: the Streamable HTTP
+//! transport on a loopback address, answering `initialize`, the initialized
+//! notification, a two-page `tools/list` as an event stream, `tools/call` and
+//! the closing DELETE. It records each request's JSON-RPC method and the
+//! `Authorization` header it carried.
+//!
+//! Its tools: `whoami` answers with the login the call carried, so a test
+//! sees what reaches the agent; `fail` reports a failure naming that login.
+#![allow(clippy::unwrap_used, reason = "test fixture")]
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde_json::{Value, json};
+
+/// One request the stand-in received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Received {
+    /// The JSON-RPC method, or `DELETE` for the session's end.
+    pub method: String,
+    /// The `Authorization` header it carried.
+    pub authorization: Option<String>,
+}
+
+pub struct FakeMcp {
+    /// The server's address, as a declaration names it.
+    pub url: String,
+    received: Arc<Mutex<Vec<Received>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+const SESSION: &str = "stand-in-session";
+
+impl FakeMcp {
+    pub fn start() -> Self {
+        let http = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", http.server_addr().to_ip().unwrap());
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let received = Arc::clone(&received);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    let Ok(Some(mut request)) = http.recv_timeout(Duration::from_millis(50)) else {
+                        continue;
+                    };
+                    let authorization = request
+                        .headers()
+                        .iter()
+                        .find(|h| h.field.equiv("Authorization"))
+                        .map(|h| h.value.as_str().to_owned());
+                    if *request.method() == tiny_http::Method::Delete {
+                        received.lock().unwrap().push(Received {
+                            method: "DELETE".into(),
+                            authorization,
+                        });
+                        request.respond(tiny_http::Response::empty(200)).unwrap();
+                        continue;
+                    }
+                    let mut body = String::new();
+                    request.as_reader().read_to_string(&mut body).unwrap();
+                    let message: Value = serde_json::from_str(&body).unwrap();
+                    let method = message["method"].as_str().unwrap_or_default().to_owned();
+                    received.lock().unwrap().push(Received {
+                        method: method.clone(),
+                        authorization: authorization.clone(),
+                    });
+                    let id = message["id"].clone();
+                    let header = |name: &str, value: &str| {
+                        tiny_http::Header::from_bytes(name, value).unwrap()
+                    };
+                    let json_answer = |result: Value| {
+                        tiny_http::Response::from_string(
+                            json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string(),
+                        )
+                        .with_header(header("Content-Type", "application/json"))
+                    };
+                    let login = authorization.unwrap_or_else(|| "no login".to_owned());
+                    let response = match method.as_str() {
+                        "initialize" => json_answer(json!({
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "stand-in", "version": "1"},
+                        }))
+                        .with_header(header("Mcp-Session-Id", SESSION)),
+                        "notifications/initialized" => {
+                            tiny_http::Response::from_string("").with_status_code(202)
+                        }
+                        "tools/list" => {
+                            let page = if message["params"]["cursor"] == "second" {
+                                json!({"tools": [tool("fail", "Report a failure")]})
+                            } else {
+                                json!({
+                                    "tools": [tool("whoami", "Say whose login reached the server")],
+                                    "nextCursor": "second",
+                                })
+                            };
+                            // As an event stream, with a notification ahead of the answer.
+                            let stream = format!(
+                                "event: message\ndata: {}\n\nevent: message\ndata: {}\n\n",
+                                json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progress": 1}}),
+                                json!({"jsonrpc": "2.0", "id": id, "result": page}),
+                            );
+                            tiny_http::Response::from_string(stream)
+                                .with_header(header("Content-Type", "text/event-stream"))
+                        }
+                        "tools/call" if message["params"]["name"] == "fail" => {
+                            tiny_http::Response::from_string(
+                                json!({"jsonrpc": "2.0", "id": id, "error": {
+                                    "code": -32000,
+                                    "message": format!("the login {login} may not do this"),
+                                }})
+                                .to_string(),
+                            )
+                            .with_header(header("Content-Type", "application/json"))
+                        }
+                        "tools/call" => json_answer(json!({
+                            "content": [{"type": "text", "text": format!("called with {login}")}],
+                            "isError": false,
+                        })),
+                        _ => tiny_http::Response::from_string("").with_status_code(400),
+                    };
+                    request.respond(response).unwrap();
+                }
+            })
+        };
+        Self {
+            url,
+            received,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// The requests received so far, in order.
+    pub fn received(&self) -> Vec<Received> {
+        self.received.lock().unwrap().clone()
+    }
+
+    /// The `Authorization` headers of the tool calls received so far.
+    pub fn call_logins(&self) -> Vec<Option<String>> {
+        self.received()
+            .into_iter()
+            .filter(|request| request.method == "tools/call")
+            .map(|request| request.authorization)
+            .collect()
+    }
+}
+
+fn tool(name: &str, description: &str) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": {"type": "object", "properties": {}},
+    })
+}
+
+impl Drop for FakeMcp {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            drop(thread.join());
+        }
+    }
+}
