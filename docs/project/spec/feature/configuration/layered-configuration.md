@@ -290,6 +290,11 @@ references are checked for unresolved keys and cycles without executing commands
   machine's layer on writing paths and a committed project layer only in a
   commit, follows `project/instrukt/spec/feature/configuration/owned-files`.
 - A document already at the current version is left untouched.
+- Conversion removes a machine's `modules.conversations` key, whatever its
+  value, and each company member's connector identity key. A member entry left
+  without an email address is the validation finding of
+  `project/instrukt/spec/feature/configuration/company-homes` until the
+  address is added; conversion derives none.
 
 ### Environment
 

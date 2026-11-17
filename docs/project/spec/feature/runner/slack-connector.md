@@ -102,22 +102,37 @@ whether or not the agent already takes part in that thread.
 
 ### Who is answered
 
-The connector asks Slack who a sender is the first time they write, and again
-when what it holds about them is older than a day. A sender is one of the
-company's own when Slack reports a full member of the workspace the app is
-installed in: not a bot, not deactivated, not a guest and not a member of
-another workspace. Their name and email address come from that same record.
-Anyone else gets the fixed reply `I only answer members of this workspace.`,
-in a channel and in a direct message alike.
+For each addressed message the connector reads Slack's record of the sender
+after the message was written. The sender is one of the company's own only
+when that record shows all of the following; a record that leaves one of them
+undecided admits no one.
+
+| Slack's record | Required |
+| --- | --- |
+| `deleted` | false: the account is not deactivated. |
+| `is_bot` | false, and the sender is not Slackbot. |
+| `is_restricted`, `is_ultra_restricted` | both false: the person is no guest. |
+| Workspace | The workspace the app is installed in, which the connector learns from Slack for its own bot token. The record's `team_id` equals it, or, in an Enterprise organization, the workspaces the record lists for the person include it. |
+
+The sender's name and email address come from that same record and are kept
+with the message. The name is the person's display name, their real name when
+that is empty, and their Slack id when Slack gives neither. Anyone who is not
+one of the company's own gets the fixed reply
+`I only answer members of this workspace.`, in a channel and in a direct
+message alike.
 
 ### While the agent works
 
-From the moment an addressed message is stored until its answer is posted or
-its turn fails, the connector keeps Slack's status line set on that
-conversation with the text `is working on your request`. Slack puts the app's
-name in front of it and removes it when the answer is posted. Slack drops a
-status after two minutes, so the connector sets it again before that while the
-turn runs. A status Slack refuses does not fail the conversation.
+From the admission of an addressed message until its turn ends, the connector
+keeps Slack's status line set for that message with the text
+`is working on your request`. Slack puts the app's name in front of it. In a
+channel the status is set on the conversation's thread; in a direct message it
+is set on the addressed message. Slack drops a status after two minutes and
+when the app posts, so the connector sets it again at least once a minute
+while a message of that conversation waits or is being answered, and clears it
+when the last such turn ends, whatever that turn posted. After a restart it
+sets the status again for every message still waiting or being answered. A
+status Slack refuses is logged and does not fail the conversation.
 
 ### What accompanies an addressed message
 
@@ -136,10 +151,12 @@ When its range holds more, the most recent ones accompany it and the
 conversation context says that earlier messages were left out.
 
 Each accompanying message carries its speaker and time; the agent's own posts
-are marked as its own. A speaker is named as Slack names the person, and a
-mention inside a message's text is written as that person's name. Slack's own
-notices in a conversation, such as a person joining a channel, accompany no
-message and do not count toward `context_messages`. The range does not depend on whether the agent posted an
+are marked as its own. A speaker is named as a sender is, and in every message
+the connector supplies, the addressed one included, a mention is written as
+`@` and that person's name; nothing else in a text changes. A name Slack
+cannot give at that moment is written as the Slack id and holds no message
+back. Slack's own notices in a conversation, such as a person joining a
+channel, accompany no message and do not count toward `context_messages`. The range does not depend on whether the agent posted an
 answer. Messages the agent was sent before stay in its session and are not
 sent again.
 
@@ -196,6 +213,7 @@ Then each of their messages reaches the agent without a tag
   message.
 - Files, images and reactions are not carried; a message's text is.
 - One Slack workspace serves one company home.
+- Two people with the same name look alike to the agent.
 
 ## See Also
 

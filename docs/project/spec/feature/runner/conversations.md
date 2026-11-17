@@ -59,9 +59,10 @@ each connector's own contract
 - Its role is `conversation`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
-- Resolution is serialized per conversation. The runner retains the binding,
-  each accepted message until it is delivered, and each answer until it is
-  posted.
+- Resolution is serialized per conversation. The runner keeps the binding,
+  each accepted message and each answer, so a message is not lost before it is
+  delivered and an answer is not lost before it is posted. What is stored and
+  kept is `project/instrukt/spec/feature/work/state-database`.
 
 ### One addressed message, one turn
 
@@ -73,22 +74,32 @@ each connector's own contract
   context envelope carrying the accompanying earlier messages as data, each
   with its speaker and time and with the agent's own earlier posts marked as
   its own, and saying so when the connector left earlier messages out,
-  followed by a member envelope carrying the addressed message's text
-  unchanged, with connector, conversation, member and time in its opening.
+  followed by a member envelope carrying the addressed message's text as the
+  connector supplies it, with connector, conversation, member and time in its
+  opening.
   Both carry the delivery's boundary token, so a line inside them that looks
   like an opening or a closing stays content.
-- The speaker of a turn is the person who wrote its addressed message. The
-  runner records their connector identity and email address for the turn;
-  `project/instrukt/spec/feature/runner/mcp-access` reads it.
+- The speaker of a turn is the person who wrote its addressed message. Their
+  connector identity, name and email address, as the provider gave them when
+  that message was admitted, are stored with the message and do not change
+  afterwards; `project/instrukt/spec/feature/runner/mcp-access` reads them.
 
 ### Who is answered
 
 The agent answers the company's own people, as the connector's provider knows
-them; nobody is listed for it. A sender who is not one of them gets one fixed
-reply in that conversation, worded by the connector; no session is started or
-woken and nothing is delivered. The reply is sent once per sender and
-conversation. Such a person still appears in a context envelope as a speaker,
-by the name the connector gives.
+them; nobody is listed for it. Whether a sender is one of them is decided for
+each addressed message, from what the provider says about the sender after
+that message was written. An earlier answer about the same person admits
+nothing. A message is delivered only once that is decided; while the provider
+cannot be asked, the message waits, nothing is delivered and nothing is
+replied, and the cause shows in `instrukt events status`. A message that was
+admitted is delivered, and a turn that has started runs to its end.
+
+A sender who is not one of the company's own gets one fixed reply in that
+conversation, worded by the connector; no session is started or woken and
+nothing is delivered. The reply is sent once per sender and conversation. Such
+a person still appears in a context envelope as a speaker, by the name the
+connector gives.
 
 ### The answer back
 
@@ -102,9 +113,10 @@ by the name the connector gives.
   the post; a failed post stays pending and is retried.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
-- While an addressed message waits for its answer, the connector shows in that
-  conversation that the agent is working, where its provider has a way to. The
-  indication ends when the answer is posted or the turn fails.
+- From the admission of an addressed message until its turn ends, the
+  connector shows in that conversation that the agent is working, where its
+  provider has a way to. The indication ends with the turn, whether the turn
+  posted an answer, posted nothing or failed.
 - `instrukt events status` shows each connector's connection state, the
   conversations with pending messages or answers, and failures with their
   cause, without conversation text or credentials. A connector that no running

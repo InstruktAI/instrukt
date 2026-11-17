@@ -101,6 +101,12 @@ Version 13 canonicalizes retained native assignments with an omitted dispatcher
 to explicit unknown evidence. Its admission semantics are owned by
 `project/instrukt/spec/feature/runner/session-continuity`.
 
+Version 18 gives each addressed message its sender's connector identity, name
+and email address. A message stored before it keeps the member key it was
+recorded with as its `sender_name` and has no `sender` and no `sender_email`:
+it is delivered as it was admitted, and a tool call during its turn finds no
+login of the speaker's own. No identity or address is derived for it.
+
 Persisted runtime requests and manual standing reservations enter domain code
 with a required captured title. Migration fills a missing or null title with
 the request's original key and preserves supplied titles. It covers unresolved
@@ -458,10 +464,10 @@ and `message`, the connector's identity of that message.
 
 | Column | Meaning |
 | --- | --- |
-| `sender` | The connector identity of the person who wrote it. |
+| `sender`, `sender_name`, `sender_email` | The connector identity of the person who wrote it, and the name and email address the provider gave for them when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `pending` once what accompanies it is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `state` | `received` once stored; `refused` once the provider's record showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
@@ -473,15 +479,9 @@ address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
 when the connector accepted its post, `NULL` while outstanding; `failure`, the
 cause of its last failed post, `NULL` once posted.
 
-**`conversation_refusals`** — the one fixed reply owed to a sender no member
-lists. Key: the address and `sender`. Columns: `received_at`; `replied_at`,
+**`conversation_refusals`** — the one fixed reply owed to a sender the agent
+does not answer (`project/instrukt/spec/feature/runner/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`.
-
-**`conversation_people`** — what a connector's provider said about a person
-who addressed an agent. Key: `(company, connector, identity)`. Columns: `name`;
-`email`, `NULL` when the provider gives none; `own`, whether the provider
-knows them as one of the company's own; `checked_at`, when the provider was
-last asked.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
@@ -609,8 +609,7 @@ after seven days. Local history does not backfill a newly created Redis group.
 Conversation bindings, addressed messages, answer pieces and refusal receipts
 are kept with their text, captured context and framed input after delivery and
 posting; a `failure` cause is the only value cleared, when its operation
-recovers. What a provider said about a person is kept and replaced in place
-when the provider is asked again.
+recovers.
 
 ### Agent capacity
 

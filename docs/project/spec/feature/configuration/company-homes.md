@@ -72,16 +72,13 @@ companies is a member entry in each, and nothing links the two.
 | `email` | The person's email address. Required. An address is listed by at most one member of the company. |
 | `credentials.<tool>` | A `${NAME}` reference into the home's secrets file: the person's own login for that tool. Never a literal value. |
 
-- A connector's sender is a member when the provider gives the same email
-  address for them, compared without regard to case, by lookup in that
-  company's list alone. Matching never compares names and never consults
-  another company. A sender whose provider gives no address, or an address no
-  member lists, has no member entry and no logins of their own.
-- An address listed by two members, a missing address, a literal credential
-  and an unknown field in a member entry are validation findings naming the
-  member and the field.
+- Two addresses that differ only in case are the same address. An address
+  listed by two members, a missing address, a literal credential and an
+  unknown field in a member entry are validation findings naming the member
+  and the field.
 - A member entry carries no role and grants nothing. It does not decide whom
-  the agent answers; it says which logins are a person's own.
+  the agent answers; it says which logins are a person's own. How a speaker's
+  entry is found is `project/instrukt/spec/feature/runner/mcp-access`.
 
 ### Agent profiles
 

@@ -56,11 +56,16 @@ runner's recorded assignment for that session.
 
 The speaker is the person the runner recorded as the sender of the addressed
 message that started the calling session's current turn
-(`project/instrukt/spec/feature/runner/conversations`). The speaker's own
-logins are those of the member entry that lists the speaker's email address
-(`project/instrukt/spec/feature/configuration/company-homes`). A session with
-no such record has no speaker. No argument and no value the agent passes
-selects a speaker or a member.
+(`project/instrukt/spec/feature/runner/conversations`). A session with no such
+record has no speaker. No argument and no value the agent passes selects a
+speaker or a member.
+
+The speaker's own logins are those of the one member entry of that company
+(`project/instrukt/spec/feature/configuration/company-homes`) whose email
+address equals the address recorded for the speaker with that message,
+compared without regard to case. The match never compares names and never
+consults another company. A speaker recorded without an address, or with an
+address no member lists, has no member entry.
 
 | Declaration | Speaker | Login |
 | --- | --- | --- |
@@ -155,6 +160,9 @@ Then each call reaches its own company's address
   a stored value.
 - The agent program's own MCP settings are untouched and unknown to instrukt:
   a server configured there is reached by that program, without these rules.
+- A speaker's logins are found by the email address the connector's provider
+  holds for them. Two accounts the provider gives one address reach the same
+  member entry.
 
 ## See Also
 

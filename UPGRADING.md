@@ -95,6 +95,24 @@ need App setup before remote work reflection and CI observation:
    integration. Local bot-attributed commits consume configured verified actor
    facts and require no installation access to the current repository.
 
+### Conversations without a switch, people known from Slack
+
+A company that declares a connector has conversations. The machine's
+`modules.conversations` key no longer exists and is removed from older
+settings, whatever its value: a company whose connector was declared while that
+switch was off is served once the runner runs.
+
+Nobody is listed for the agent any more. A full member of the company's Slack
+workspace is answered; guests, people from other organizations, bots and
+deactivated accounts are not. A company's `members` now hold only a person's
+own tool logins and are found by email address. Before upgrading, give each
+member entry that carries logins the person's `email`, and remove entries that
+only named a Slack identity. An entry without an address is a validation
+finding and its company is not served until the address is added.
+
+Name the company's Slack app and its bot `agent`; the status line Slack shows
+while the agent works starts with that name.
+
 ### Protected secrets and owned files
 
 Existing development installations need machine-local secret setup before using
