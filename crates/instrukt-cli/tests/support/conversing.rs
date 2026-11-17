@@ -161,6 +161,14 @@ impl Company {
         });
     }
 
+    /// Waits until the runner process has ended on its own.
+    pub fn runner_ended(&mut self) {
+        let runner = self.runner.as_mut().unwrap();
+        wait("the runner's end", || {
+            runner.0.try_wait().unwrap().is_some()
+        });
+    }
+
     /// The agent sessions started so far.
     pub fn sessions(&self) -> Vec<String> {
         self.runtime.threads()

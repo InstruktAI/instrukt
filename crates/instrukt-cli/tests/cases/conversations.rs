@@ -113,10 +113,23 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
     wait("all three messages acknowledged", || {
         c.slack.acknowledged().len() == 3
     });
+    // The runner dies right after the runtime accepted the second message
+    // and before it recorded that, and that turn finishes while it is down.
+    c.runtime.flag("die-after-send", true);
     c.finish_turn(&session, 0, "Green.");
-    wait("the second turn", || c.runtime.message_count(&session) == 2);
+    c.runner_ended();
+    assert_eq!(c.runtime.message_count(&session), 2);
     c.finish_turn(&session, 1, "Written.");
+    c.run();
+    // Restarted, it posts that answer once and the third message follows,
+    // with no second copy of the second.
     wait("the third turn", || c.runtime.message_count(&session) == 3);
+    assert_eq!(c.slack.posts().len(), 2);
+    c.finish_turn(&session, 2, "Done.");
+    wait("nothing left to post", || {
+        c.conversations().conversations.is_empty() && c.slack.posts().len() == 3
+    });
+    assert_eq!(c.runtime.message_count(&session), 3);
     let order = [c.member("USTEVEN"), c.member("UANNA"), c.member("USTEVEN")];
     for (n, member) in order.into_iter().enumerate() {
         let delivered = c.delivered(&session, n);

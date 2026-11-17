@@ -196,35 +196,46 @@ pub fn run(
     // The relay is demanded whenever a runtime is chosen. One that ended or
     // could not start stays supervised: its cause is kept where it serves,
     // and it is started again on every supervision pass until it runs.
-    let supervise_relay = |relay: &mut Option<crate::links::Worker>| {
+    // A failure is recorded when it starts or its cause changes; unchanged
+    // repetitions are counted and reported with the recovery.
+    let mut relay_failure: Option<(String, u64)> = None;
+    let mut supervise_relay = |relay: &mut Option<crate::links::Worker>| {
         if runtime.is_none() {
             return;
         }
+        let mut failed = |error: crate::links::LinkError| {
+            let cause = error.to_string();
+            match &mut relay_failure {
+                Some((current, repeated)) if *current == cause => *repeated += 1,
+                _ => {
+                    crate::links::record_failure(cx.home, &error);
+                    if demand {
+                        crate::conversations::relay_state(cx.home, Some(&cause));
+                    }
+                    relay_failure = Some((cause, 0));
+                }
+            }
+        };
         if let Some(current) = relay.as_mut() {
             match current.check() {
                 Ok(()) => return,
                 Err(error) => {
-                    crate::links::record_failure(cx.home, &error);
-                    if demand {
-                        crate::conversations::relay_state(cx.home, Some(&error.to_string()));
-                    }
+                    failed(error);
                     *relay = None;
                 }
             }
         }
         match serve() {
             Ok(worker) => {
+                if let Some((cause, repeated)) = relay_failure.take() {
+                    tracing::info!(event = "conversation_relay_recovered", cause = %cause, repeated);
+                }
                 if demand {
                     crate::conversations::relay_state(cx.home, None);
                 }
                 *relay = Some(worker);
             }
-            Err(error) => {
-                crate::links::record_failure(cx.home, &error);
-                if demand {
-                    crate::conversations::relay_state(cx.home, Some(&error.to_string()));
-                }
-            }
+            Err(error) => failed(error),
         }
     };
     let mut relay = None;

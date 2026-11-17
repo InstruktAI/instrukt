@@ -966,7 +966,9 @@ fn harvest(
                     .map_err(state::sql(&path))?;
                 }
                 tx.execute(
-                    "UPDATE conversation_messages SET state=?5,turn=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    // The finished turn proves the message was accepted: its
+                    // resolved delivery cause is retired with it.
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
                     params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn],
                 )
                 .map_err(state::sql(&path))?;
@@ -1080,18 +1082,8 @@ pub fn relay(
                 }
             }
         }
-        let read = harvest(&state, source, &c);
-        set_failure(
-            &state,
-            &c,
-            read.as_ref().err().map(ToString::to_string).as_deref(),
-        )?;
-        if let Err(error) = read {
-            tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+        if !answers(home, &state, source, endpoint, &c)? {
             continue;
-        }
-        if let Err(error) = post(home, &state, endpoint, &c) {
-            tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
         }
         let Some(c) = reread(&state, &c)? else {
             continue;
@@ -1106,8 +1098,43 @@ pub fn relay(
             // Its failure stays with the message it concerns.
             let _ = deliver_one(invocation, adapter, source, &state, &c, Timestamp::now());
         }
+        // A session bound just now may be one a recovery found with its
+        // opening turn already finished while the runner was down: its answer
+        // is read now, not left for an unrelated native change.
+        if c.session.is_none()
+            && let Some(bound) = reread(&state, &c)?
+            && bound.session.is_some()
+        {
+            answers(home, &state, source, endpoint, &bound)?;
+        }
     }
     Ok(())
+}
+
+/// Read the conversation's finished turns into answers and post what is
+/// retained. Returns whether the read succeeded; its cause is kept on the
+/// conversation until a later read recovers.
+fn answers(
+    home: &Home,
+    state: &RunnerState,
+    source: &dyn ConversationSource,
+    endpoint: &SlackEndpoint,
+    c: &Conversation,
+) -> Result<bool, ConversationError> {
+    let read = harvest(state, source, c);
+    set_failure(
+        state,
+        c,
+        read.as_ref().err().map(ToString::to_string).as_deref(),
+    )?;
+    if let Err(error) = read {
+        tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+        return Ok(false);
+    }
+    if let Err(error) = post(home, state, endpoint, c) {
+        tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+    }
+    Ok(true)
 }
 
 /// Whether any conversation work is outstanding: a message not yet
