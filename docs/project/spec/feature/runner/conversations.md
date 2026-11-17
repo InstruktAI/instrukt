@@ -68,7 +68,8 @@ each connector's own contract
 
 - Each addressed message is delivered as its own input and starts its own
   turn. Messages of one conversation are delivered in the order they were
-  written; a later one waits until the session's current turn has finished.
+  written, as far as they have arrived; a later one waits until the session's
+  current turn has finished.
 - The input is platform-framed with the registered envelopes of
   `project/instrukt/spec/feature/runner/conversation-links`: a conversation
   context envelope carrying the accompanying earlier messages as data, each
@@ -115,8 +116,9 @@ connector gives.
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until its turn ends, the
   connector shows in that conversation that the agent is working, where its
-  provider has a way to. The indication ends with the turn, whether the turn
-  posted an answer, posted nothing or failed.
+  provider has a way to. The indication belongs to the turn, whether the turn
+  posts an answer, posts nothing or fails; it is a courtesy, and each
+  connector states how closely it follows the turn.
 - `instrukt events status` shows each connector's connection state, the
   conversations with pending messages or answers, and failures with their
   cause, without conversation text or credentials. A connector that no running

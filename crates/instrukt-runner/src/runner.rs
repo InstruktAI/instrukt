@@ -39,6 +39,52 @@ mod _holder;
 mod _service;
 pub use _service::{ServiceRecord, published_service, service_identity};
 
+/// What a running `instrukt run` publishes about the connectors it hosts.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Hosting {
+    pid: u32,
+    started: String,
+    /// Each hosted connector, as its company and connector key.
+    connectors: Vec<(String, String)>,
+}
+
+/// Publishes the connectors this `instrukt run` hosts, with this process's
+/// incarnation, for `instrukt events status`.
+pub fn publish_hosted(home: &Home, connectors: &[(String, String)]) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let record = Hosting {
+        pid: std::process::id(),
+        started: _holder::own_incarnation()?,
+        connectors: connectors.to_vec(),
+    };
+    let bytes = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
+    instrukt_core::fsx::atomic_write_with_permissions(
+        &home.runner_hosts_file(),
+        &bytes,
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .map_err(std::io::Error::other)
+}
+
+/// The connectors the running `instrukt run` hosts now: what it published,
+/// believed only while that same process incarnation holds the runner lock
+/// as a run, the service's or one started by hand. Nothing is hosted
+/// otherwise.
+pub fn hosted(home: &Home) -> Vec<(String, String)> {
+    let Some((holder, pid, started)) = _holder::live_holder(&home.runner_lock_file()) else {
+        return Vec::new();
+    };
+    if !matches!(holder, _holder::Holder::Service | _holder::Holder::Run) {
+        return Vec::new();
+    }
+    std::fs::read(home.runner_hosts_file())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Hosting>(&bytes).ok())
+        .filter(|record| record.pid == pid && record.started == started)
+        .map(|record| record.connectors)
+        .unwrap_or_default()
+}
+
 /// The argument the owned runner service passes to `instrukt run`.
 pub const SERVICE_FLAG: &str = "--service";
 
@@ -204,7 +250,7 @@ pub fn run(
         ));
     }
     let slack = demand
-        .then(|| crate::connectors::SlackEndpoint::from_env(cx.env))
+        .then(|| crate::connectors::SlackEndpoint::from_env(cx.env, Arc::clone(&clock)))
         .transpose()
         .map_err(|e| RunnerError::Conversations(e.to_string()))?;
     let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);

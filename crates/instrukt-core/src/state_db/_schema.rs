@@ -2,10 +2,79 @@
 //! each moves the schema forward by one version and is never edited once
 //! shipped. Tables and columns are the `state-database` spec's.
 
+/// One migration: a script, or a step that looks at the database first.
+pub(super) enum Migration {
+    Sql(&'static str),
+    Step(fn(&rusqlite::Transaction<'_>) -> rusqlite::Result<()>),
+}
+use Migration::{Sql, Step};
+
 /// Every migration this build ships; the schema version is their count.
-pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
+pub(super) const MIGRATIONS: &[Migration] = &[
+    Sql(V1),
+    Sql(V2),
+    Sql(V3),
+    Sql(V4),
+    Sql(V5),
+    Sql(V6),
+    Sql(V7),
+    Sql(V8),
+    Sql(V9),
+    Sql(V10),
+    Sql(V11),
+    Sql(V12),
+    Sql(V13),
+    Sql(V14),
+    Sql(V15),
+    Sql(V16),
+    Sql(V17),
+    Step(v18),
 ];
+
+/// Version 18: each addressed message carries its sender's connector
+/// identity, name and email address, and a message can be refused. A message
+/// stored before keeps the member key it was recorded with as its sender's
+/// name and has no identity and no address. The table is rebuilt for its new
+/// columns and states only while it still has the earlier shape, so applying
+/// this again changes nothing.
+fn v18(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let earlier: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name='member')",
+        [],
+        |row| row.get(0),
+    )?;
+    if earlier {
+        tx.execute_batch(V18)?;
+    }
+    Ok(())
+}
+const V18: &str = r#"
+CREATE TABLE conversation_messages_v18 (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    sender       TEXT,
+    sender_name  TEXT,
+    sender_email TEXT,
+    written_us   INTEGER NOT NULL,
+    written_at   TEXT NOT NULL,
+    arrived_at   TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('received', 'refused', 'pending', 'sent', 'answered')),
+    text         TEXT NOT NULL,
+    context_json TEXT,
+    boundary     TEXT,
+    content      TEXT,
+    attempted_at TEXT,
+    turn         TEXT,
+    failure      TEXT,
+    PRIMARY KEY (company, connector, conversation, message)
+);
+INSERT INTO conversation_messages_v18 (company, connector, conversation, message, sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text, context_json, boundary, content, attempted_at, turn, failure)
+SELECT company, connector, conversation, message, NULL, member, NULL, written_us, written_at, arrived_at, state, text, context_json, boundary, content, attempted_at, turn, failure FROM conversation_messages;
+DROP TABLE conversation_messages;
+ALTER TABLE conversation_messages_v18 RENAME TO conversation_messages;
+"#;
 
 /// Version 7: retained conversations, search and transactional extraction positions.
 const V7: &str = r#"

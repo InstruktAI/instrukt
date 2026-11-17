@@ -368,19 +368,37 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
             .get("connectors")
             .and_then(Value::as_mapping)
             .is_some_and(|connectors| !connectors.is_empty())
-        && effective
-            .get("modules")
-            .and_then(|m| m.get(super::CONVERSATIONS))
-            .and_then(Value::as_bool)
-            != Some(true)
     {
-        found.push(KeyFinding::new(
-            "connectors",
-            FindingKind::ModuleSwitchedOff,
-            "a declared connector requires the machine's modules.conversations enabled",
-        ));
+        connector_capabilities(&effective, &mut found);
     }
     found
+}
+
+/// A declared connector gives its company conversations, whose verbs the
+/// machine's chosen runtime must carry (`session-continuity`, "Verb-gated
+/// features").
+fn connector_capabilities(effective: &Value, out: &mut Vec<KeyFinding>) {
+    let name = effective
+        .get("runner")
+        .and_then(|r| r.get("runtime"))
+        .and_then(Value::as_str);
+    let chosen = name.and_then(Runtime::named);
+    if name.is_some() && chosen.is_none() {
+        return;
+    }
+    let features = &[Feature::Conversations];
+    let Some(unavailable) = availability(chosen, features) else {
+        return;
+    };
+    let kind = match unavailable {
+        Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
+        Unavailable::MissingCapabilities { .. } => FindingKind::RuntimeCapabilityMissing,
+    };
+    out.push(KeyFinding::new(
+        "connectors",
+        kind,
+        unavailable.describe(features),
+    ));
 }
 
 /// A module switch this layer turns on whose features the chosen runtime
@@ -397,7 +415,7 @@ fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFindi
     if name.is_some() && chosen.is_none() {
         return;
     }
-    for module in ["events", "todos", super::CONVERSATIONS] {
+    for module in ["events", "todos"] {
         let on = value
             .get("modules")
             .and_then(|m| m.get(module))
@@ -607,34 +625,21 @@ mod tests {
         assert!(found.is_empty());
     }
     #[test]
-    fn conversations_need_a_chosen_runtime() {
-        let doc = current_document("modules: {conversations: true}");
-        assert_eq!(
-            judge(&doc, LayerKind::Global, None)
-                .iter()
-                .map(|f| (f.key.as_str(), f.kind))
-                .collect::<Vec<_>>(),
-            [("modules.conversations", FindingKind::NoRuntimeChosen)]
-        );
-        let chosen = current_document("runner: {runtime: t3}\nmodules: {conversations: true}");
-        assert!(judge(&chosen, LayerKind::Global, None).is_empty());
-    }
-    #[test]
-    fn a_declared_connector_needs_the_machines_conversations_switch() {
+    fn a_declared_connector_needs_a_chosen_runtime_that_carries_conversations() {
         let company = current_document(
             "company: acme\nconnectors: {slack: {app_token: '${A}', bot_token: '${B}'}}",
         );
-        let off = current_document("modules: {conversations: false}");
-        let on = current_document("modules: {conversations: true}");
-        let switched_off = |global: &Value| {
+        let found = |global: &Value| {
             judge(&company, LayerKind::Company, Some(global))
                 .iter()
-                .filter(|f| f.kind == FindingKind::ModuleSwitchedOff)
-                .map(|f| f.key.clone())
+                .map(|f| (f.key.clone(), f.kind))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(switched_off(&off), ["connectors"]);
-        assert!(switched_off(&on).is_empty());
+        assert_eq!(
+            found(&current_document("ticks: 'on'")),
+            [("connectors".to_owned(), FindingKind::NoRuntimeChosen)]
+        );
+        assert!(found(&current_document("runner: {runtime: t3}")).is_empty());
     }
     #[test]
     fn references_still_detect_cycles_and_missing_keys() {

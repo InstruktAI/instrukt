@@ -6,8 +6,8 @@
 use crate::common;
 use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
-use instrukt_runner::connectors::SLACK;
-use instrukt_runner::conversations::{self, SLACK_MESSAGE_LIMIT, TURN_AWAY};
+use instrukt_runner::connectors::{SLACK, TURN_AWAY, WORKING};
+use instrukt_runner::conversations::{self, SLACK_MESSAGE_LIMIT};
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// Where each post went: its channel and thread.
@@ -43,8 +43,12 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     c.runner_ended();
     assert!(c.sessions().is_empty());
     // Restarted, the question stays pending with its cause: a start that
-    // remains unresolved, its key and the command that resolves it.
+    // remains unresolved, its key and the command that resolves it. Its
+    // asker is admitted, so Slack shows the agent working on the thread.
     c.run();
+    wait("the working status on the thread", || {
+        c.slack.status(channel, &question).as_deref() == Some(WORKING)
+    });
     wait("the pending question's cause", || {
         c.conversations()
             .conversations
@@ -140,7 +144,7 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
         destinations(&c),
         [
             (channel.to_owned(), Some(question.clone())),
-            (channel.to_owned(), Some(question))
+            (channel.to_owned(), Some(question.clone()))
         ]
     );
     // Together the pieces carry the whole answer.
@@ -160,6 +164,22 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // One session, which received one opening input.
     assert_eq!(c.sessions(), [session.as_str()]);
     assert_eq!(c.runtime.message_count(&session), 1);
+    // The turn ended: the status is cleared.
+    wait("the status cleared", || {
+        c.slack.status(channel, &question).is_none()
+    });
+    // The database holding the conversation, and the files beside it, are
+    // its owner's alone.
+    use std::os::unix::fs::PermissionsExt as _;
+    for side in ["", "-wal", "-shm"] {
+        let file = c
+            .env
+            .instrukt_home()
+            .join(format!("state/instrukt.db{side}"));
+        if let Ok(meta) = std::fs::metadata(&file) {
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600, "{side}");
+        }
+    }
 }
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV3
@@ -172,7 +192,9 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         .mention("C1", "USTEVEN", "<@UAGENT> Is the build green?", None);
     let session = c.session();
     // While the first turn runs, two more arrive out of the order they were
-    // written in, within one second.
+    // written in, within one second. The later-written one is taken in
+    // before the earlier one arrives: its lookup waits until then.
+    c.slack.hold_lookups();
     c.slack.mention_at(
         "1700000500.000100",
         "C1",
@@ -180,6 +202,7 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         "<@UAGENT> And the changelog?",
         Some(&root),
     );
+    wait("the later message taken in", || c.slack.held_lookups() > 0);
     c.slack.mention_at(
         "1700000500.000000",
         "C1",
@@ -190,6 +213,7 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
     wait("all three messages acknowledged", || {
         c.slack.acknowledged().len() == 3
     });
+    c.slack.release_lookups();
     // The runner dies right after the runtime accepted the second message
     // and before it recorded that, and that turn finishes while it is down.
     c.runtime.flag("die-after-send", true);
@@ -207,10 +231,18 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         c.conversations().conversations.is_empty() && c.slack.posts().len() == 3
     });
     assert_eq!(c.runtime.message_count(&session), 3);
-    let order = [c.member("USTEVEN"), c.member("UANNA"), c.member("USTEVEN")];
-    for (n, member) in order.into_iter().enumerate() {
+    // Each names the person who wrote it, in written order. The third was
+    // taken in before the second arrived, so what accompanies it holds the
+    // second too.
+    insta::assert_snapshot!(
+        "three-turns-delivered",
+        (0..3)
+            .map(|n| c.input(&session, n))
+            .collect::<Vec<_>>()
+            .join("\n---\n")
+    );
+    for n in 0..3 {
         let delivered = c.delivered(&session, n);
-        assert_eq!(delivered.member, member, "input {n}");
         assert_eq!(delivered.members, 1, "input {n}");
         assert_eq!(delivered.empty, 0, "input {n}");
         // Each started its own turn: none arrived while a turn was running,
@@ -222,24 +254,80 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV4
 #[test]
-fn an_unlisted_person_receives_one_fixed_reply_and_no_session_starts() {
+fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_session_starts() {
     let mut c = Company::new("");
+    // The runner's clock stands still, so the wait Slack names does not pass
+    // while it runs.
+    c.env.set_env("INSTRUKT_NOW", "2030-01-01T09:00:00Z");
     c.run();
     let channel = "C1";
+    // Slack limits the lookup of who wrote it and names a wait: the message
+    // waits, nothing is delivered or replied, and the cause shows. No lookup
+    // is made for this workspace while the wait lasts, also not for a
+    // message that arrives meanwhile.
+    let waiting = |c: &Company| {
+        c.conversations()
+            .conversations
+            .iter()
+            .filter(|pending| pending.pending_messages == 1 && !pending.failures.is_empty())
+            .count()
+    };
+    c.slack.limit_lookup(30);
+    let asked = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Are you there?", None);
+    wait("the waiting message's cause", || waiting(&c) == 1);
+    let looked_up = c.slack.lookups();
+    c.slack.direct("D1", "UANNA", "Are you there too?");
+    wait("the second waiting message's cause", || waiting(&c) == 2);
+    assert_eq!(c.slack.lookups(), looked_up);
+    assert!(c.sessions().is_empty());
+    assert!(c.slack.posts().is_empty());
+    // Restarted, the runner learns any wait again from Slack, which now
+    // answers: both are answered.
+    c.kill_runner();
+    c.env.remove_env("INSTRUKT_NOW");
+    c.run();
+    wait("both conversations' sessions", || c.sessions().len() == 2);
+    let mut inputs: Vec<String> = c
+        .sessions()
+        .iter()
+        .map(|session| c.input(session, 0))
+        .collect();
+    inputs.sort();
+    insta::assert_snapshot!("waited-messages-delivered", inputs.join("\n---\n"));
+    // A guest gets one fixed reply in their conversation, however often
+    // they write.
     let first = c
         .slack
         .mention(channel, "USTRANGER", "<@UAGENT> Who are you?", None);
     c.slack
         .mention(channel, "USTRANGER", "<@UAGENT> Hello?", Some(&first));
-    // A member's direct message after both: once it reaches a session, the
-    // connector has handled everything before it.
-    c.slack.direct("D1", "USTEVEN", "Are you there?");
-    let session = c.session();
-    assert_eq!(c.delivered(&session, 0).member, c.member("USTEVEN"));
-    let posts = c.slack.posts();
-    assert_eq!(destinations(&c), [(channel.to_owned(), Some(first))]);
-    assert_eq!(posts[0].text, TURN_AWAY);
-    assert_eq!(c.sessions(), [session]);
+    // A person answered before is decided again for each message: deactivated
+    // since, they are not answered.
+    c.slack.change("USTEVEN", |person| person.deleted = true);
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Still there?", Some(&asked));
+    wait("both replies", || c.slack.posts().len() == 2);
+    assert_eq!(
+        destinations(&c),
+        [
+            (channel.to_owned(), Some(first)),
+            (channel.to_owned(), Some(asked.clone()))
+        ]
+    );
+    for post in c.slack.posts() {
+        assert_eq!(post.text, TURN_AWAY);
+    }
+    let sessions = c.sessions();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| c.runtime.message_count(session))
+            .sum::<usize>(),
+        2
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV5
@@ -281,7 +369,7 @@ fn a_conversation_message_activates_no_subscribed_procedure() {
     c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> Anything new?", None);
     let session = c.session();
-    assert_eq!(c.delivered(&session, 0).member, c.member("USTEVEN"));
+    insta::assert_snapshot!("conversation-delivered", c.input(&session, 0));
     c.finish_turn(&session, 0, "Nothing new.");
     wait("the answer's post", || !c.slack.posts().is_empty());
     // An event after the conversation: once the procedure answered it, the

@@ -36,10 +36,12 @@ pub(super) struct Demand {
     /// Company homes declaring a connector while conversations are on, as
     /// `company:<name>`: they demand the runner service.
     pub conversations: Vec<String>,
-    /// Why conversation demand cannot be served or read in full: a
-    /// connector's company whose runtime cannot carry conversations, or a
-    /// company document that cannot be read while conversations is on.
+    /// Why declared conversation demand cannot be served: a connector's
+    /// company whose runtime cannot carry conversations.
     pub conversation_blockers: Vec<String>,
+    /// Company homes that cannot be read, each with its cause: they leave
+    /// the demand unresolved, since each may declare a connector.
+    pub unreadable_homes: Vec<String>,
     pub complete: bool,
     pub redis_references: Vec<String>,
 }
@@ -67,6 +69,7 @@ pub(super) fn read(
         sources: vec![],
         conversations: vec![],
         conversation_blockers: vec![],
+        unreadable_homes: vec![],
         complete: true,
         redis_references: Vec::new(),
     };
@@ -190,29 +193,28 @@ pub(super) fn read(
 
 /// Company homes follow the machine's global switches: a nonempty valid
 /// source map demands events infrastructure and the receiver while events is
-/// on, and a declared connector demands the runner service while
-/// conversations is on. A company folder whose document cannot be read or is
-/// invalid makes demand incomplete, so shared resources are never withdrawn
-/// on its account.
+/// on, and a declared connector demands the runner service. A company folder
+/// whose document cannot be read or is invalid makes demand incomplete, so
+/// shared resources are never withdrawn on its account; where no readable
+/// home declares a connector, it keeps the runner service unmet, since it may
+/// declare one.
 fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::Result<()> {
     let global = Configuration::load_global(home)?;
-    let conversations = global.conversations_enabled()?;
     for (name, config) in instrukt_core::config::company_homes(home)? {
         let label = format!("company:{name}");
         let mut blocker = None;
+        let mut unreadable = None;
         let result = (|| -> anyhow::Result<()> {
             let config = match config {
                 Ok(config) => config,
                 // A folder without a settings document is no company.
                 Err(instrukt_core::config::ConfigError::NoLayer { .. }) => return Ok(()),
                 Err(error) => {
-                    if conversations {
-                        blocker = Some(error.to_string());
-                    }
+                    unreadable = Some(error.to_string());
                     return Err(error.into());
                 }
             };
-            if conversations && config.slack_connector()?.is_some() {
+            if config.slack_connector()?.is_some() {
                 demand.conversations.push(label.clone());
                 let features = [Feature::Conversations];
                 if let Some(unavailable) = global.unavailable(&features)? {
@@ -250,6 +252,11 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
             demand
                 .conversation_blockers
                 .push(format!("company {name}: {cause}"));
+        }
+        if let Some(cause) = unreadable {
+            demand
+                .unreadable_homes
+                .push(format!("company {name} cannot be read: {cause}"));
         }
     }
     Ok(())

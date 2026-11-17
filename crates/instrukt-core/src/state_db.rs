@@ -151,9 +151,13 @@ impl StateDb {
         }
         let mut conn = crate::fsx::open_database(&path, OpenFlags::default())
             .map_err(StateDbError::sqlite(&path))?;
+        // SQLite gives the files it keeps beside the database the database's
+        // own permissions; protecting the database first protects them too.
+        protect(&path)?;
         configure(&conn, &path)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(StateDbError::sqlite(&path))?;
+        protect(&path)?;
         migrate(&mut conn, &path)?;
         Ok(Self {
             conn,
@@ -246,6 +250,26 @@ impl StateRead {
     }
 }
 
+/// Makes the database and the files SQLite keeps beside it readable and
+/// writable by their owner only.
+fn protect(path: &Path) -> Result<(), StateDbError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut files = vec![path.to_path_buf()];
+    for side in ["-wal", "-shm", "-journal"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(side);
+        files.push(PathBuf::from(name));
+    }
+    for file in files {
+        match crate::fsx::set_permissions(&file, std::fs::Permissions::from_mode(0o600)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(FsError::Write { path: file, source }.into()),
+        }
+    }
+    Ok(())
+}
+
 fn configure(conn: &Connection, path: &Path) -> Result<(), StateDbError> {
     conn.busy_timeout(BUSY_TIMEOUT)
         .map_err(StateDbError::sqlite(path))?;
@@ -278,8 +302,11 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(StateDbError::sqlite(path))?;
-        tx.execute_batch(migration)
-            .map_err(StateDbError::sqlite(path))?;
+        match migration {
+            _schema::Migration::Sql(script) => tx.execute_batch(script),
+            _schema::Migration::Step(step) => step(&tx),
+        }
+        .map_err(StateDbError::sqlite(path))?;
         tx.pragma_update(None, "user_version", version)
             .map_err(StateDbError::sqlite(path))?;
         tx.commit().map_err(StateDbError::sqlite(path))?;
@@ -335,7 +362,13 @@ mod tests {
             let mut conn = Connection::open_in_memory().unwrap();
             conn.pragma_update(None, "foreign_keys", true).unwrap();
             for migration in _schema::MIGRATIONS.iter().take(earlier as usize) {
-                conn.execute_batch(migration).unwrap();
+                let tx = conn.transaction().unwrap();
+                match migration {
+                    _schema::Migration::Sql(script) => tx.execute_batch(script),
+                    _schema::Migration::Step(step) => step(&tx),
+                }
+                .unwrap();
+                tx.commit().unwrap();
             }
             conn.pragma_update(None, "user_version", earlier).unwrap();
             conn.execute("INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence) VALUES('retained','project','retained','bug','active','2026-11-03T10:00:00Z','{}',1,'once',1)", []).unwrap();
@@ -359,6 +392,56 @@ mod tests {
                 .unwrap();
             assert_eq!(rows, 0);
         }
+    }
+
+    #[test]
+    fn version_18_keeps_an_earlier_message_with_its_member_key_as_its_senders_name() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(17) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 17).unwrap();
+        conn.execute("INSERT INTO conversation_messages(company,connector,conversation,message,member,written_us,written_at,arrived_at,state,text) VALUES('acme','slack','C1/1.1','1.1','steven',1,'2026-11-01T10:00:00Z','2026-11-01T10:00:00Z','pending','a question')", []).unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let kept = |conn: &Connection| -> (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+        ) {
+            conn.query_row(
+                "SELECT sender,sender_name,sender_email,state,text FROM conversation_messages WHERE message='1.1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap()
+        };
+        let before = kept(&conn);
+        assert_eq!(before.0, None);
+        assert_eq!(before.1.as_deref(), Some("steven"));
+        assert_eq!(before.2, None);
+        // A message can be refused now.
+        conn.execute("INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text) VALUES('acme','slack','C1/1.1','1.2','U1',2,'2026-11-01T10:01:00Z','2026-11-01T10:01:00Z','refused','hello')", []).unwrap();
+        // Applied again, it changes nothing.
+        let tx = conn.transaction().unwrap();
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(17) {
+            step(&tx).unwrap();
+        }
+        tx.commit().unwrap();
+        assert_eq!(kept(&conn), before);
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM conversation_messages", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 2);
     }
 
     #[test]

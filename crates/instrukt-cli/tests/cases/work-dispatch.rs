@@ -155,17 +155,12 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
     }
     assert!(rt.calls().is_empty(), "{:?}", rt.calls());
 
-    // Conversations on and a company declaring a connector: the runner runs
-    // with work tracking and event responses off; a tick still serves only
-    // those two and keeps refusing.
+    // A company declaring a connector: the runner runs with work tracking
+    // and event responses off; a tick still serves only those two and keeps
+    // refusing.
     let slack = crate::fixtures::slack::FakeSlack::start();
     env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
     let _source = crate::fixtures::history::T3Store::new(&env);
-    global_layer(
-        &env,
-        "todos: false, events: false, history: false, conversations: true",
-        &[&rt],
-    );
     crate::fixtures::conversing::company_home(
         &env,
         "acme",

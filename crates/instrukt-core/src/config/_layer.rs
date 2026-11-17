@@ -509,11 +509,31 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
     }
 }
 
-/// Remove retired project settings and stamp the current owned schema version.
+/// Remove retired settings and stamp the current owned schema version.
 fn migrate_value(mut value: Value, from: u64, layer: LayerKind) -> Value {
     if let Value::Mapping(map) = &mut value {
         if from < 3 && layer == LayerKind::Project {
             map.remove("actions");
+        }
+        if from < 6 && layer == LayerKind::Global {
+            // A declared connector gives a company conversations; the
+            // machine's switch is gone, whatever its value.
+            if let Some(Value::Mapping(modules)) = map.get_mut("modules") {
+                modules.remove(super::_schema::CONVERSATIONS);
+            }
+        }
+        if from < 6 && layer == LayerKind::Company {
+            // A member entry no longer names a connector identity; an entry
+            // left without an email address stays a finding.
+            if let Some(Value::Mapping(members)) = map.get_mut("members") {
+                for (_, entry) in members.iter_mut() {
+                    if let Value::Mapping(fields) = entry {
+                        for connector in super::_company::CONNECTORS {
+                            fields.remove(connector);
+                        }
+                    }
+                }
+            }
         }
         map.insert(
             Value::String("schema_version".to_owned()),

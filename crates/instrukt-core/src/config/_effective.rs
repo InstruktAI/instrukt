@@ -324,19 +324,6 @@ impl Configuration {
         super::_company::slack(self.value.get("connectors"))
     }
 
-    /// The global-only `modules.conversations` switch; off when unset.
-    pub fn conversations_enabled(&self) -> Result<bool, ConfigError> {
-        match self
-            .value
-            .get("modules")
-            .and_then(|m| m.get(super::CONVERSATIONS))
-        {
-            None => Ok(false),
-            Some(Value::Bool(on)) => Ok(*on),
-            Some(_) => Err(invalid("modules.conversations", "expected boolean")),
-        }
-    }
-
     pub fn webhooks(&self) -> Result<super::WebhookSources, ConfigError> {
         super::_webhooks::parse(self.value.get("webhooks"))
     }

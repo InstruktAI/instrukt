@@ -134,7 +134,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stdout), @"peer");
     let notice = String::from_utf8_lossy(&read.get_output().stderr)
         .replace(&repo.path().display().to_string(), "[REPO]");
-    insta::assert_snapshot!(notice, @"instrukt: [REPO]/instrukt.yaml: schema_version 2 inspected as 5; file migrates on the next writing command");
+    insta::assert_snapshot!(notice, @"instrukt: [REPO]/instrukt.yaml: schema_version 2 inspected as 6; file migrates on the next writing command");
     assert_eq!(repo.read("instrukt.yaml"), project);
 
     // A tick persists the machine migration before its refusal.
@@ -164,7 +164,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     wait_for_post_commit_sync(&env, repo.head());
     insta::assert_snapshot!(repo.git(["show", "HEAD:instrukt.yaml"]), @r"
     # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
-    schema_version: 5
+    schema_version: 6
     project: migrating
     # who approves
     approvals: {prd: peer}
@@ -184,7 +184,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     insta::assert_snapshot!(
         String::from_utf8_lossy(&validated.get_output().stdout)
             .replace(&repo.path().display().to_string(), "[REPO]"),
-        @"[REPO]/instrukt.yaml: schema_version: this instrukt writes schema_version 5"
+        @"[REPO]/instrukt.yaml: schema_version: this instrukt writes schema_version 6"
     );
 
     // An edit of the layer the developer staged stays staged through a
@@ -209,7 +209,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     wait_for_post_commit_sync(&env, repo.head());
     insta::assert_snapshot!(repo.git(["show", "HEAD:instrukt.yaml"]), @r"
     # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
-    schema_version: 5
+    schema_version: 6
     project: migrating
     # staged by the developer
     # who approves

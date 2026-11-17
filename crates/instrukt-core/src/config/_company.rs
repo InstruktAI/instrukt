@@ -10,8 +10,8 @@ use super::_interpolate::{join, key_text};
 use super::_schema::KeyFinding;
 use crate::ids::ProjectSlug;
 
-/// The connectors this instrukt supports, by their key under `connectors`
-/// and in a member entry.
+/// The connectors this instrukt supports, by their key under `connectors`.
+/// Older member entries named a person's identity under the same keys.
 pub const CONNECTORS: [&str; 1] = ["slack"];
 
 /// Why an empty `profiles` list is a finding.
@@ -80,8 +80,8 @@ pub struct Member {
     pub key: ProjectSlug,
     /// The display name; the key when omitted.
     pub name: String,
-    /// The person's identity per connector.
-    pub identities: BTreeMap<String, String>,
+    /// The person's email address, by which a speaker finds their entry.
+    pub email: String,
     /// `${NAME}` references to the person's own tool logins.
     pub credentials: BTreeMap<String, String>,
 }
@@ -95,12 +95,12 @@ impl Members {
         self.0.iter()
     }
 
-    /// The one member that lists `identity` on `connector`, by lookup in
-    /// this company's list alone.
-    pub fn resolve(&self, connector: &str, identity: &str) -> Option<&Member> {
+    /// The one member whose email address equals `email`, compared without
+    /// regard to case, by lookup in this company's list alone.
+    pub fn by_email(&self, email: &str) -> Option<&Member> {
         self.0
             .iter()
-            .find(|member| member.identities.get(connector).map(String::as_str) == Some(identity))
+            .find(|member| member.email.to_lowercase() == email.to_lowercase())
     }
 }
 
@@ -160,7 +160,7 @@ pub(super) fn check_members(value: &Value, path: &str, out: &mut Vec<KeyFinding>
         ));
         return;
     };
-    let mut listed: BTreeMap<(String, String), String> = BTreeMap::new();
+    let mut listed: BTreeMap<String, String> = BTreeMap::new();
     for (key, entry) in members {
         let key = key_text(key);
         let at = join(path, &key);
@@ -179,6 +179,13 @@ pub(super) fn check_members(value: &Value, path: &str, out: &mut Vec<KeyFinding>
             ));
             continue;
         };
+        if !fields.contains_key("email") {
+            out.push(finding(
+                &join(&at, "email"),
+                FindingKind::Missing,
+                "missing; the person's email address, by which their own logins are found",
+            ));
+        }
         for (field, value) in fields {
             let field = key_text(field);
             let field_at = join(&at, &field);
@@ -189,37 +196,37 @@ pub(super) fn check_members(value: &Value, path: &str, out: &mut Vec<KeyFinding>
                     FindingKind::InvalidValue,
                     "expected a nonempty display name",
                 )),
-                "credentials" => check_credentials(value, &field_at, out),
-                connector if CONNECTORS.contains(&connector) => {
-                    match value.as_str().filter(|text| !text.trim().is_empty()) {
-                        Some(identity) => {
-                            let slot = (connector.to_owned(), identity.to_owned());
-                            if let Some(other) = listed.get(&slot) {
-                                out.push(finding(
-                                    &field_at,
-                                    FindingKind::InvalidValue,
-                                    format!(
-                                        "this {connector} identity is also listed by member `{other}`; a value is listed by at most one member"
-                                    ),
-                                ));
-                            } else {
-                                listed.insert(slot, key.clone());
-                            }
+                "email" => match value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|email| email.contains('@'))
+                {
+                    Some(email) => {
+                        // Two addresses that differ only in case are one.
+                        let address = email.to_lowercase();
+                        if let Some(other) = listed.get(&address) {
+                            out.push(finding(
+                                &field_at,
+                                FindingKind::InvalidValue,
+                                format!(
+                                    "this email address is also listed by member `{other}`; an address is listed by at most one member"
+                                ),
+                            ));
+                        } else {
+                            listed.insert(address, key.clone());
                         }
-                        None => out.push(finding(
-                            &field_at,
-                            FindingKind::InvalidValue,
-                            "expected the person's identity on this connector",
-                        )),
                     }
-                }
+                    None => out.push(finding(
+                        &field_at,
+                        FindingKind::InvalidValue,
+                        "expected the person's email address",
+                    )),
+                },
+                "credentials" => check_credentials(value, &field_at, out),
                 _ => out.push(finding(
                     &field_at,
                     FindingKind::UnknownKey,
-                    format!(
-                        "unknown member field; a member has name, credentials and an identity per supported connector ({})",
-                        CONNECTORS.join(", ")
-                    ),
+                    "unknown member field; a member has name, email and credentials",
                 )),
             }
         }
@@ -343,7 +350,7 @@ pub(super) fn members(raw: Option<&Value>) -> Result<Members, ConfigError> {
         let mut member = Member {
             name: key.to_string(),
             key,
-            identities: BTreeMap::new(),
+            email: String::new(),
             credentials: BTreeMap::new(),
         };
         for (field, value) in entry.as_mapping().into_iter().flatten() {
@@ -357,12 +364,8 @@ pub(super) fn members(raw: Option<&Value>) -> Result<Members, ConfigError> {
                         );
                     }
                 }
-                connector => {
-                    member.identities.insert(
-                        connector.to_owned(),
-                        value.as_str().unwrap_or_default().to_owned(),
-                    );
-                }
+                "email" => member.email = value.as_str().unwrap_or_default().trim().to_owned(),
+                _ => {}
             }
         }
         members.push(member);
@@ -419,32 +422,33 @@ mod tests {
     }
 
     #[test]
-    fn an_identity_resolves_to_the_one_member_listing_it_and_nobody_else() {
+    fn an_email_address_finds_the_one_member_listing_it_regardless_of_case() {
         let members = members(Some(&yaml(
-            "steven: {name: Steven, slack: U1, credentials: {erp: '${STEVEN_ERP}'}}\nanna: {slack: U2}\n",
+            "alex: {name: Alex, email: Alex@Example.com, credentials: {erp: '${ALEX_ERP}'}}\nsam: {email: sam@example.com}\n",
         )))
         .unwrap();
-        let steven = members.resolve("slack", "U1").unwrap();
-        assert_eq!(steven.key, ProjectSlug::parse("steven").unwrap());
+        let alex = members.by_email("alex@example.com").unwrap();
+        assert_eq!(alex.key, ProjectSlug::parse("alex").unwrap());
         // Without a display name, the member is named by their key.
-        let anna = members.resolve("slack", "U2").unwrap();
-        assert_eq!(ProjectSlug::parse(&anna.name).as_ref(), Ok(&anna.key));
-        assert_eq!(members.resolve("slack", "U3"), None);
+        let sam = members.by_email("SAM@example.com").unwrap();
+        assert_eq!(ProjectSlug::parse(&sam.name).as_ref(), Ok(&sam.key));
+        assert_eq!(members.by_email("other@example.com"), None);
     }
 
     #[test]
-    fn duplicate_identities_literal_credentials_and_unknown_fields_are_findings() {
-        use FindingKind::{InvalidValue, UnknownKey};
+    fn missing_or_shared_addresses_literal_credentials_and_unknown_fields_are_findings() {
+        use FindingKind::{InvalidValue, Missing, UnknownKey};
         assert_eq!(
             judged(
-                "a: {slack: U1, credentials: {erp: plain}, teams: x}\nb: {slack: U1}\n",
+                "a: {email: a@example.com, credentials: {erp: plain}, slack: U1}\nb: {email: A@EXAMPLE.COM}\nc: {name: C}\n",
                 check_members,
                 "members"
             ),
             [
                 ("members.a.credentials.erp".to_owned(), InvalidValue),
-                ("members.a.teams".to_owned(), UnknownKey),
-                ("members.b.slack".to_owned(), InvalidValue),
+                ("members.a.slack".to_owned(), UnknownKey),
+                ("members.b.email".to_owned(), InvalidValue),
+                ("members.c.email".to_owned(), Missing),
             ]
         );
     }

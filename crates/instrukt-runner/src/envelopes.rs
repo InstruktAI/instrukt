@@ -153,6 +153,8 @@ pub struct ContextLine<'a> {
     pub own: bool,
     /// How many characters the entry's text holds.
     pub chars: usize,
+    /// The entry's text.
+    pub text: String,
 }
 
 /// A conversation-context body as [`context`] writes it: whether earlier
@@ -186,14 +188,18 @@ pub fn context_body(body: &str) -> Option<ContextBody<'_>> {
             _ => return None,
         };
         let mut chars = 0;
+        let mut text = Vec::new();
         for _ in 0..count.parse::<usize>().ok()? {
-            chars += lines.next()?.chars().count();
+            let line = lines.next()?;
+            chars += line.chars().count();
+            text.push(line);
         }
         entries.push(ContextLine {
             speaker,
             at,
             own,
             chars,
+            text: text.join("\n"),
         });
     }
     Some(ContextBody { left_out, entries })

@@ -84,7 +84,12 @@ installed. The agent hears a channel only once it has been invited to it.
 outward, with the app token. It acknowledges what it receives as Slack
 requires and reconnects after a drop. A connection that cannot be established,
 or whose tokens Slack refuses, is a visible failure for that company's
-connector; other connectors, event readers and local work continue.
+connector; other connectors, event readers and local work continue. Where
+Slack limits a method and names a wait, the connector does not call that
+method for that workspace again before the wait is over, for as long as the
+runner runs; after a restart it learns the wait again from Slack's answer.
+The runner reads the declared connectors when it starts: a connector declared
+or removed while it runs takes effect when the runner next starts.
 
 The Slack app is subscribed to exactly two kinds of message: mentions of the
 agent and direct messages to it. Slack sends instrukt nothing else from the
@@ -105,7 +110,11 @@ whether or not the agent already takes part in that thread.
 For each addressed message the connector reads Slack's record of the sender
 after the message was written. The sender is one of the company's own only
 when that record shows all of the following; a record that leaves one of them
-undecided admits no one.
+undecided admits no one. When Slack answers that it shows the app no such
+user (`user_not_found`, `user_not_visible`), the sender is not one of the
+company's own. When Slack gives no answer about the sender, because the
+request fails, is limited or Slack refuses the app's own token, nothing is
+decided and the message waits.
 
 | Slack's record | Required |
 | --- | --- |
@@ -124,7 +133,7 @@ message alike.
 ### While the agent works
 
 From the admission of an addressed message until its turn ends, the connector
-keeps Slack's status line set for it with the text
+shows Slack's status line for it with the text
 `is working on your request`. Slack puts the app's name in front of it.
 
 | Where | The status sits on | It stays while |
@@ -132,11 +141,20 @@ keeps Slack's status line set for it with the text
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
 
-Slack drops a status after two minutes and when the app posts, so the
-connector sets each status again at least once a minute for as long as it
-stays, and clears it when it no longer does, whatever the turn posted. After a
-restart the same rule holds for every message still unfinished. A status Slack
-refuses is logged and does not fail the conversation.
+Admitting a message wakes the connector's status pass, so the person normally
+sees at once that the request was taken on; that first setting can wait behind
+status calls already under way. The status is a courtesy, kept on a best-effort
+basis; no timing of it is promised. Slack drops a status after two minutes and
+when the app posts, so
+while a status stays the connector sets it again about every half minute, and
+after a post of the app's own it can be missing until the next setting. When a
+status no longer stays the connector clears it once; where that does not
+happen, Slack drops it within two minutes. After a restart the connector sets
+the status again for every message still unfinished and clears nothing it set
+before. A status call falls under Slack's named wait like any other call and
+is skipped while the wait lasts; nothing skipped is made up for. Setting a
+status never delays a message, and a status Slack refuses or the connector
+skips does not fail the conversation.
 
 ### What accompanies an addressed message
 
@@ -159,8 +177,16 @@ are marked as its own. A speaker is named as a sender is, and in every message
 the connector supplies, the addressed one included, a mention is written as
 `@` and that person's name; nothing else in a text changes. A name Slack
 cannot give at that moment is written as the Slack id and holds no message
-back. Slack's own notices in a conversation, such as a person joining a
-channel, accompany no message and do not count toward `context_messages`. The range does not depend on whether the agent posted an
+back. Slack's own notices in a conversation accompany no message and do not
+count toward `context_messages`. A notice is what Slack itself writes about a
+conversation, and Slack marks it with one of these subtypes: the `channel_`
+and `group_` forms of `join`, `leave`, `topic`, `purpose`, `name`, `archive`
+and `unarchive`, `channel_convert_to_private`, `channel_convert_to_public`,
+`channel_posting_permissions`, `pinned_item`, `unpinned_item` and
+`reminder_add`. Everything else is a message, in whatever form Slack records
+it: what a person or an integration wrote, and a form the connector does not
+know. The range is bounded by the previous addressed message whether or not
+that one was answered, and does not depend on whether the agent posted an
 answer. Messages the agent was sent before stay in its session and are not
 sent again.
 
@@ -218,6 +244,12 @@ Then each of their messages reaches the agent without a tag
 - Files, images and reactions are not carried; a message's text is.
 - One Slack workspace serves one company home.
 - Two people with the same name look alike to the agent.
+- Slack does not promise the order in which it sends messages. A message that
+  reaches instrukt after a later-written one of its conversation keeps its own
+  turn: before the later one when that has not been delivered yet, after it
+  otherwise. What accompanies the later one was read when it arrived and is
+  not read again, so it can hold the earlier message, which the agent then
+  sees there and as its own turn.
 
 ## See Also
 

@@ -51,7 +51,7 @@ fn policy(title: &str, rule: &str) -> String {
 
 /// A project layer declaring `slug`, with `extra` lines.
 fn layer(slug: &str, extra: &str) -> String {
-    format!("schema_version: 5\nproject: {slug}\n{extra}")
+    format!("schema_version: 6\nproject: {slug}\n{extra}")
 }
 
 /// A docs repository `name` on its remote, publishing each of `domains`

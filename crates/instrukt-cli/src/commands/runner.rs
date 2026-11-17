@@ -376,9 +376,9 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
     if command == "run" && instrukt_runner::history::enabled(&ctx.home)? {
         return Ok(());
     }
-    // Conversations are `run`'s alone: a declared connector with the
-    // machine's switch on admits it; no tick hosts a connector. The sessions
-    // conversations start are resolved through `sessions`.
+    // Conversations are `run`'s alone: a company home's declared connector
+    // admits it; no tick hosts a connector. The sessions conversations start
+    // are resolved through `sessions`.
     if matches!(command, "run" | "sessions")
         && !instrukt_runner::conversations::demand(&ctx.home)?.is_empty()
     {
@@ -396,12 +396,12 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
     }
     if command == "run" {
         bail!(
-            "`instrukt run` serves the todos, events and history modules and conversations, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`, or switch on `modules.conversations` with a company's declared connector"
+            "`instrukt run` serves the todos, events and history modules and conversations, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`, or declare a connector in a company home"
         );
     }
     if command == "sessions" {
         bail!(
-            "`instrukt sessions` serves the todos and events modules and the sessions conversations start, and all are off; switch on `modules.todos` or `modules.events`, or switch on `modules.conversations` with a company's declared connector"
+            "`instrukt sessions` serves the todos and events modules and the sessions conversations start, and all are off; switch on `modules.todos` or `modules.events`, or declare a connector in a company home"
         );
     }
     bail!(

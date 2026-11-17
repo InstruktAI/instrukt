@@ -523,7 +523,7 @@ fn checkout_project(env: &TestEnv) -> Repo {
     let repo = env.git_repo("checkout");
     repo.write(
         "instrukt.yaml",
-        "schema_version: 5\nproject: checkout\nmodules: {history: false}\n",
+        "schema_version: 6\nproject: checkout\nmodules: {history: false}\n",
     )
     .write("AGENTS.master.md", "## Purpose\n\nPublished purpose.\n")
     .write(

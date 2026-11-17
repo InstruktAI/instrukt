@@ -5,8 +5,8 @@ expression: "stdout(&env.run(&here,\n[\"config\", \"get\", \"--company\", \"acme
 ---
 steven:
   name: Steven Sonneveld
-  slack: U04ABC123
+  email: steven@example.com
   credentials:
     erpnext: ${STEVEN_ERPNEXT_LOGIN}
 anna:
-  slack: U04DEF456
+  email: anna@example.com
