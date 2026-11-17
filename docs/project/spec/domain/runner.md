@@ -279,7 +279,7 @@ subscribe to them, and standing agents answer in the home the event names.
 Conversations carry a person talking to a company's agent: a connector delivers
 each addressed message to the one session bound to that conversation and posts
 its answer back. A connector emits no event and activates no subscribed
-procedure: the conversation's session starts from the conversation procedure
+procedure: the conversation's session starts from the company-assistance procedure
 (`project/instrukt/spec/feature/runner/conversations`), and an event never
 reaches a conversation session.
 

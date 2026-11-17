@@ -1,5 +1,5 @@
 ---
-description: Conversations — a person addresses a company's agent in a connected channel; each conversation is bound to one agent session in the company's home, started from the conversation procedure, every addressed message is its own turn naming its sender, and the session's answer is posted back, never through event subscriptions.
+description: Conversations — a person addresses a company's agent in a connected channel; each conversation is bound to one agent session in the company's home, started from the company-assistance procedure, every addressed message is its own turn naming its sender, and the session's answer is posted back, never through event subscriptions.
 ---
 # Conversations — Spec
 
@@ -56,12 +56,12 @@ each connector's own contract
   starts with the company's own knowledge
   (`project/instrukt/spec/feature/publication/agent-entrypoints`). It answers
   no event subscription.
-- It starts from the conversation procedure: the published procedure that
-  declares the role `conversation`. One procedure on a computer declares a
+- It starts from the company-assistance procedure: the published procedure that
+  declares the role `company-agent`. One procedure on a computer declares a
   role, so every company's conversations start from the same one. It comes
   from the docs repository that publishes it
   (`project/instrukt/spec/feature/publication/docs-repositories`); instrukt's
-  own publishes it as `general/procedure/conversation`. The procedure is
+  own publishes it as `general/procedure/company-assistance`. The procedure is
   instrukt's and the knowledge is the company's; neither repeats the other.
 - The session's opening input is the runner-authored assignment envelope,
   followed by the first addressed message's input. The assignment is the
@@ -71,10 +71,13 @@ each connector's own contract
   `instrukt docs get <procedure-id> --closure` before the message is handled.
   The procedure is read from current publication when the session starts; a
   woken session keeps the assignment it started with.
-- While no published procedure declares the role `conversation`, a
+- The conversation's agent works only through the company's declared MCP
+  servers (`project/instrukt/spec/feature/runner/mcp-access`) and declines
+  anything else. Its procedure instructs it so.
+- While no published procedure declares the role `company-agent`, a
   conversation's first message waits: no session is started, nothing is
   delivered or replied, and the cause shows in `instrukt events status`.
-- Its role is `conversation`; model selection, class and grants follow that
+- Its role is `company-agent`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
 - Resolution is serialized per conversation. The runner keeps the binding,
@@ -196,9 +199,10 @@ And no subscribed procedure is activated by that message
   company's knowledge, when the session starts. A later change to either
   reaches a session already running only as far as its agent program reads
   its instructions again.
-- That the agent acts on the addressed message for its writer, and reads the
-  context as context, is what its procedure tells it. The agent is a language
-  model and nothing beyond the procedure enforces that reading.
+- That the agent acts on the addressed message for its writer, reads the
+  context as context and works only through the company's declared servers
+  is an instruction to the agent in its procedure, not confinement, which
+  this contract does not provide.
 - Everyone the connector's provider knows as one of the company's own is
   served alike.
 - A conversation session reads what its home and the computer let it read,

@@ -36,6 +36,13 @@ validation errors, not missing fields. This read-time resolution preserves the
 edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
+The role of conversation sessions is `company-agent`. An agents file of schema
+version 2 converts to version 3 on the owned migration path
+(`project/instrukt/spec/feature/configuration/owned-files`): its
+`roles.conversation` entry becomes `roles.company-agent` with every field as
+it was, and nothing else changes. A version-2 file that holds both entries is
+refused with its source intact, naming both, until one is removed.
+
 Every effective entry has a class and grants; model inputs inherit from
 `default` as agent-selection specifies. The shipped `default` and
 `event-handler` are unrestricted, awareness-only entries. A role absent from
@@ -126,8 +133,8 @@ composition is:
 | `all` | Every catalog action at `any`. |
 
 These entries cover every role declared by instrukt's shipped procedures and
-the `conversation` role the runner gives a conversation session, declared by
-the conversation procedure (`project/instrukt/spec/feature/runner/conversations`).
+the `company-agent` role the runner gives a conversation session, declared by
+the company-assistance procedure (`project/instrukt/spec/feature/runner/conversations`).
 They share the model `order`/`tier` defaults of agent-selection; the table's App
 column names the identity reference, not another model/provider choice.
 
@@ -142,7 +149,7 @@ column names the identity reference, not another model/provider choice.
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
-| `conversation` | `standing` | `read`, `tools` | project |
+| `company-agent` | `standing` | `read`, `tools` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
@@ -174,7 +181,7 @@ publication ownership and single-writer-on-main checks.
 Configuration validation rejects unknown classes, action names, bundle names,
 scopes and malformed grants; it reports configured role entries that no
 installed procedure declares. `default` and the implicit `event-handler` are
-reserved fallback entries and `conversation` is the role the runner gives
+reserved fallback entries and `company-agent` is the role the runner gives
 conversation sessions; none of the three is an undeclared-procedure finding. Configuration
 inspection shows the effective class, expanded grants, selection and App
 reference without secrets. Procedure names remain open: an unconfigured
