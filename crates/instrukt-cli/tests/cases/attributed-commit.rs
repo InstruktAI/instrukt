@@ -10,7 +10,7 @@ use std::io::{Read, Write as _};
 use std::os::fd::AsFd as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
-use std::process::{Child, Output, Stdio};
+use std::process::{Child, ExitStatus, Output, Stdio};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -79,13 +79,49 @@ const STEP_BOUND: Duration = Duration::from_secs(30);
 /// The pause between two looks at instrukt while a step is awaited.
 const LOOK: Duration = Duration::from_millis(20);
 
-/// The held commit's instrukt. Left running when the test fails, it is
-/// interrupted, which stops the groups it owns, git and the hook among
-/// them, and reaped.
+/// One of instrukt's output pipes, read to its end on a thread of its own.
+/// The thread is joined only once it has finished, so looking at it never
+/// waits.
+struct Reader {
+    thread: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    read: Option<Result<Vec<u8>, String>>,
+}
+
+impl Reader {
+    fn start(mut pipe: impl Read + Send + 'static) -> Self {
+        let thread = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes).map(|_| bytes)
+        });
+        Self {
+            thread: Some(thread),
+            read: None,
+        }
+    }
+
+    /// Whether the reader has finished, joining it when it has.
+    fn finished(&mut self) -> bool {
+        if let Some(thread) = self.thread.take_if(|thread| thread.is_finished()) {
+            self.read = Some(match thread.join() {
+                Ok(read) => read.map_err(|error| format!("cannot read instrukt's output: {error}")),
+                Err(_) => Err("the reader of instrukt's output panicked".to_owned()),
+            });
+        }
+        self.read.is_some()
+    }
+}
+
+/// The held commit's instrukt and the readers of its output. Its status is
+/// kept apart from its output, so looking for its end collects nothing.
+/// Left running when the test fails, it is interrupted, which stops the
+/// groups it owns, git and the hook among them, then reaped, and its
+/// readers are retired; what cannot be done is reported, and the test's own
+/// failure stands.
 struct Running {
     child: Child,
-    stdout: Option<JoinHandle<Vec<u8>>>,
-    stderr: Option<JoinHandle<Vec<u8>>>,
+    status: Option<ExitStatus>,
+    stdout: Reader,
+    stderr: Reader,
 }
 
 impl Running {
@@ -95,51 +131,80 @@ impl Running {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let drain = |mut pipe: Box<dyn Read + Send>| {
-            std::thread::spawn(move || {
-                let mut bytes = Vec::new();
-                pipe.read_to_end(&mut bytes).unwrap();
-                bytes
-            })
-        };
-        let stdout = drain(Box::new(child.stdout.take().unwrap()));
-        let stderr = drain(Box::new(child.stderr.take().unwrap()));
+        let stdout = Reader::start(child.stdout.take().unwrap());
+        let stderr = Reader::start(child.stderr.take().unwrap());
         Self {
             child,
-            stdout: Some(stdout),
-            stderr: Some(stderr),
+            status: None,
+            stdout,
+            stderr,
         }
     }
 
-    /// What instrukt left, once it has ended.
-    fn ended(&mut self) -> Option<Output> {
-        let status = self.child.try_wait().unwrap()?;
-        Some(Output {
-            status,
-            stdout: self.stdout.take().unwrap().join().unwrap(),
-            stderr: self.stderr.take().unwrap().join().unwrap(),
+    /// instrukt's status, once it has ended.
+    fn exited(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        if self.status.is_none() {
+            self.status = self.child.try_wait()?;
+        }
+        Ok(self.status)
+    }
+
+    /// Whether instrukt has ended and both its readers have finished.
+    fn retired(&mut self) -> std::io::Result<bool> {
+        let exited = self.exited()?.is_some();
+        let stdout = self.stdout.finished();
+        let stderr = self.stderr.finished();
+        Ok(exited && stdout && stderr)
+    }
+
+    /// What instrukt left, once it has ended and its output is read, looked
+    /// for until `deadline`; otherwise what had not happened by then.
+    fn output_by(&mut self, deadline: Instant) -> Result<Output, String> {
+        while !self.retired().map_err(|error| error.to_string())? {
+            if Instant::now() >= deadline {
+                return Err(match self.status {
+                    None => "instrukt had not ended".to_owned(),
+                    Some(_) => {
+                        "instrukt had ended, but its output was not read to its end".to_owned()
+                    }
+                });
+            }
+            std::thread::sleep(LOOK);
+        }
+        let read = |reader: &Reader| {
+            reader
+                .read
+                .clone()
+                .unwrap_or_else(|| Err("instrukt's output was not read".to_owned()))
+        };
+        Ok(Output {
+            status: self.status.unwrap_or_default(),
+            stdout: read(&self.stdout)?,
+            stderr: read(&self.stderr)?,
         })
     }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if matches!(self.child.try_wait(), Ok(Some(_))) {
-            return;
-        }
-        let pid = rustix::process::Pid::from_child(&self.child);
-        if let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
-            eprintln!("cannot interrupt the held commit's instrukt: {error}");
-        }
         let deadline = Instant::now() + STEP_BOUND;
-        while Instant::now() < deadline {
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
-                return;
+        if matches!(self.exited(), Ok(None)) {
+            let pid = rustix::process::Pid::from_child(&self.child);
+            if let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
+                eprintln!("cannot interrupt the held commit's instrukt: {error}");
             }
-            std::thread::sleep(LOOK);
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Err(missing) = self.output_by(deadline) {
+            eprintln!("cleanup of the held commit: {missing}");
+        }
+        if matches!(self.exited(), Ok(None)) {
+            if let Err(error) = self.child.kill() {
+                eprintln!("cannot kill the held commit's instrukt: {error}");
+            }
+            if let Err(missing) = self.output_by(Instant::now() + STEP_BOUND) {
+                eprintln!("cleanup of the held commit after killing it: {missing}");
+            }
+        }
     }
 }
 
@@ -192,13 +257,13 @@ fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> 
         if poll(&mut look, PollTimeout::try_from(LOOK).unwrap()).unwrap() > 0 {
             break;
         }
-        let early = running.ended().map(|output| {
-            format!(
-                "{}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            )
-        });
+        let early = running
+            .exited()
+            .unwrap()
+            .map(|status| match running.output_by(deadline) {
+                Ok(output) => format!("{status}: {}", String::from_utf8_lossy(&output.stderr)),
+                Err(missing) => format!("{status}; {missing}"),
+            });
         assert!(
             early.is_none(),
             "instrukt ended before the hook was entered ({early:?})"
@@ -219,17 +284,10 @@ fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> 
     std::fs::rename(&moved, &clock).unwrap();
     let mut released = open(&release);
     released.write_all(b"go\n").unwrap();
-    let deadline = Instant::now() + STEP_BOUND;
-    let output = loop {
-        if let Some(output) = running.ended() {
-            break output;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "instrukt did not end within {STEP_BOUND:?} after the hook was released"
-        );
-        std::thread::sleep(LOOK);
-    };
+    let output = running
+        .output_by(Instant::now() + STEP_BOUND)
+        .map_err(|missing| format!("{STEP_BOUND:?} after the hook was released, {missing}"))
+        .unwrap();
     std::fs::remove_file(&hook).unwrap();
     Assert::new(output)
 }
