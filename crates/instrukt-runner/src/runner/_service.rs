@@ -16,8 +16,9 @@ use super::RunnerError;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceRecord {
     pub pid: u32,
-    /// When that process started, as the operating system records it, so a
-    /// reused process id never makes an old record look current.
+    /// That process's incarnation: its start as the operating system's
+    /// process information records it, to its finest unit, so an old
+    /// record does not describe a process that reuses its id.
     pub started: String,
     pub identity: String,
 }

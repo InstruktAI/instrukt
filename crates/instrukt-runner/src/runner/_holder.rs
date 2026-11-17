@@ -3,9 +3,10 @@
 //! file itself while it holds the lock and clears it when it lets go. A
 //! contender reads that record again on every attempt and believes it only
 //! when the process it names is that same live incarnation: the same id and
-//! the same start time. A missing, partial or mismatching record, one left
-//! by a holder that died, or one not yet replaced by a new holder, names no
-//! holder; the contender keeps waiting.
+//! the same start as the operating system records it, to its finest unit. A
+//! missing, partial or mismatching record, one left by a holder that died,
+//! one whose incarnation cannot be read, or one not yet replaced by a new
+//! holder, names no holder; the contender keeps waiting.
 use std::os::unix::fs::FileExt as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -41,33 +42,45 @@ impl Holder {
     }
 }
 
-/// The start identity of the live process `pid`, as the operating system
-/// records when it started. `None` when no such process runs: it is gone,
-/// or it ended and has not been reaped.
+/// The start identity of the live process `pid`: when it started, as the
+/// operating system's process information records it numerically, to its
+/// finest unit. `None` when no such live process can be read: it is gone,
+/// it ended and has not been reaped, or its information is unavailable.
+#[cfg(target_os = "linux")]
 pub(crate) fn incarnation(pid: u32) -> Option<String> {
-    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        // The fields after the command name: state is the first, the start
-        // time the twentieth.
-        let fields = stat
-            .rsplit_once(')')?
-            .1
-            .split_whitespace()
-            .collect::<Vec<_>>();
-        if matches!(fields.first(), None | Some(&"Z") | Some(&"X")) {
-            return None;
-        }
-        return fields.get(19).map(|start| (*start).to_owned());
-    }
-    let output = std::process::Command::new("/bin/ps")
-        .args(["-o", "stat=,lstart=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    if !output.status.success() {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The fields after the command name: state is the first, the start time
+    // in clock ticks since boot the twentieth.
+    let fields = stat
+        .rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    if matches!(fields.first(), None | Some(&"Z") | Some(&"X")) {
         return None;
     }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let (state, start) = text.trim().split_once(char::is_whitespace)?;
-    (!state.starts_with('Z')).then(|| start.trim().to_owned())
+    let ticks = fields.get(19)?.parse::<u64>().ok()?;
+    Some(format!("ticks:{ticks}"))
+}
+
+/// The start identity of the live process `pid`: when it started, as the
+/// operating system's process information records it numerically, to its
+/// finest unit. `None` when no such live process can be read: it is gone,
+/// it ended and has not been reaped, or its information is unavailable.
+#[cfg(target_os = "macos")]
+pub(crate) fn incarnation(pid: u32) -> Option<String> {
+    /// `p_stat` of a process that ended and has not been reaped.
+    const SZOMB: u32 = 5;
+    let info = darwin_libproc::task_all_info(i32::try_from(pid).ok()?).ok()?;
+    let bsd = info.pbsd;
+    (bsd.pbi_pid == pid && bsd.pbi_status != SZOMB)
+        .then(|| format!("start:{}.{:06}", bsd.pbi_start_tvsec, bsd.pbi_start_tvusec))
+}
+
+/// No process information is read on other systems: no holder is known.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn incarnation(_pid: u32) -> Option<String> {
+    None
 }
 
 /// This process's start identity.

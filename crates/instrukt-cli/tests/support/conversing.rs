@@ -37,10 +37,37 @@ pub struct Delivered {
     pub left_out: bool,
 }
 
+/// A child process the test owns: ended and reaped when dropped, also when
+/// the test fails.
 pub struct Running(std::process::Child);
 impl Running {
     pub fn spawn(command: &mut std::process::Command) -> Self {
         Self(command.spawn().unwrap())
+    }
+    pub fn id(&self) -> u32 {
+        self.0.id()
+    }
+    /// How it ended, once it has.
+    pub fn exited(&mut self) -> Option<std::process::ExitStatus> {
+        self.0.try_wait().unwrap()
+    }
+    /// Sends it `signal` (`STOP`, `CONT`).
+    pub fn signal(&self, signal: &str) {
+        let sent = std::process::Command::new("kill")
+            .args([format!("-{signal}"), self.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(sent.success());
+    }
+    /// Whether the operating system has it stopped.
+    pub fn stopped(&self) -> bool {
+        let state = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &self.id().to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&state.stdout)
+            .trim()
+            .starts_with('T')
     }
 }
 impl Drop for Running {

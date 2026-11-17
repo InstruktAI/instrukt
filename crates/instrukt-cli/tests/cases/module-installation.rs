@@ -2451,14 +2451,13 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         c.slack.connections() == 7
     });
     let said = c.env.path("waiting-run.stderr");
-    let mut waiting = c
-        .env
-        .command(&installed, c.env.home())
-        .arg("run")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::fs::File::create(&said).unwrap())
-        .spawn()
-        .unwrap();
+    let mut waiting = Running::spawn(
+        c.env
+            .command(&installed, c.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::fs::File::create(&said).unwrap()),
+    );
     wait("the second run waiting", || {
         std::fs::read_to_string(&said).is_ok_and(|text| !text.is_empty())
     });
@@ -2466,14 +2465,16 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     manager.start();
     wait("the waiting service", || state(&c) == ServiceState::Running);
     assert_eq!(c.slack.connections(), 7);
-    // The holder dies without letting go: the service takes the lock, and
-    // the run that was waiting by hand is refused naming the service.
+    // The holder dies without letting go while the run waiting by hand is
+    // held still: the service takes the lock. Resumed, that run is refused
+    // naming the service.
+    waiting.signal("STOP");
+    wait("the waiting run held still", || waiting.stopped());
     drop(by_hand);
     wait("the service taking over", || c.slack.connections() == 8);
-    wait("the waiting run's end", || {
-        waiting.try_wait().unwrap().is_some()
-    });
-    assert!(!waiting.wait().unwrap().success());
+    waiting.signal("CONT");
+    wait("the waiting run's end", || waiting.exited().is_some());
+    assert!(!waiting.exited().unwrap().success());
     insta::assert_snapshot!(
         "a-waiting-run-refused-when-the-service-takes-the-lock",
         std::fs::read_to_string(&said).unwrap()
