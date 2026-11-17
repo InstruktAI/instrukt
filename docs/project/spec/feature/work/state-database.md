@@ -464,7 +464,8 @@ and `message`, the connector's identity of that message.
 
 | Column | Meaning |
 | --- | --- |
-| `sender`, `sender_name`, `sender_email` | The connector identity of the person who wrote it, and the name and email address the provider gave for them when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
+| `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
+| `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
 | `state` | `received` once stored; `refused` once the provider's record showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
@@ -490,7 +491,10 @@ when the connector accepted the reply, `NULL` while outstanding; `failure`.
 **`conversation_relay`** — one row: `failure`, the cause while the relay that
 serves conversations is not running, `NULL` while it runs; `updated_at`.
 
-A message is stored before the connector acknowledges it to its provider.
+A message is stored, with its sender's connector identity, before the
+connector acknowledges it to its provider, so admission is taken up again
+after a restart. A message's `refused` state and the reply owed to its sender
+are written in one transaction.
 Reading a finished turn and the connector accepting a post are separate
 boundaries: an answer's pieces are stored in the same transaction as the
 position that read them and the message's `answered` state, and `posted_at`

@@ -124,15 +124,19 @@ message alike.
 ### While the agent works
 
 From the admission of an addressed message until its turn ends, the connector
-keeps Slack's status line set for that message with the text
-`is working on your request`. Slack puts the app's name in front of it. In a
-channel the status is set on the conversation's thread; in a direct message it
-is set on the addressed message. Slack drops a status after two minutes and
-when the app posts, so the connector sets it again at least once a minute
-while a message of that conversation waits or is being answered, and clears it
-when the last such turn ends, whatever that turn posted. After a restart it
-sets the status again for every message still waiting or being answered. A
-status Slack refuses is logged and does not fail the conversation.
+keeps Slack's status line set for it with the text
+`is working on your request`. Slack puts the app's name in front of it.
+
+| Where | The status sits on | It stays while |
+| --- | --- | --- |
+| A channel | the conversation's thread | any admitted message of that thread is unfinished |
+| A direct message | the addressed message itself | that one message is unfinished |
+
+Slack drops a status after two minutes and when the app posts, so the
+connector sets each status again at least once a minute for as long as it
+stays, and clears it when it no longer does, whatever the turn posted. After a
+restart the same rule holds for every message still unfinished. A status Slack
+refuses is logged and does not fail the conversation.
 
 ### What accompanies an addressed message
 
