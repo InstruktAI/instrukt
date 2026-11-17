@@ -40,14 +40,14 @@ pub struct Delivered {
 /// A child process the test owns: ended and reaped when dropped, also when
 /// the test fails.
 pub struct Running {
-    child: crate::common::fenced::Child,
+    child: std::process::Child,
     /// How it ended, when a native wait already reaped it.
     reaped: Option<std::process::ExitStatus>,
 }
 impl Running {
-    pub fn spawn(command: &mut impl crate::common::fenced::SpawnChild) -> Self {
+    pub fn spawn(command: &mut std::process::Command) -> Self {
         Self {
-            child: command.spawn_child().unwrap(),
+            child: command.spawn().unwrap(),
             reaped: None,
         }
     }
@@ -76,9 +76,7 @@ impl Running {
             Some((_, status)) if status.stopped() => true,
             Some((_, status)) => {
                 use std::os::unix::process::ExitStatusExt as _;
-                let status = std::process::ExitStatus::from_raw(status.as_raw());
-                self.child.reaped(status);
-                self.reaped = Some(status);
+                self.reaped = Some(std::process::ExitStatus::from_raw(status.as_raw()));
                 false
             }
             None => false,

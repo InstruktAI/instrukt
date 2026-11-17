@@ -34,7 +34,7 @@ fn either_member_closes_the_whole_link_and_retains_progress() {
 }
 use std::time::Duration;
 
-struct Running(common::fenced::Child);
+struct Running(std::process::Child);
 impl Drop for Running {
     fn drop(&mut self) {
         if self.0.try_wait().unwrap().is_none() {

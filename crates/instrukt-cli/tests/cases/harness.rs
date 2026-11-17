@@ -133,7 +133,6 @@ fn initialize(env: &TestEnv, live: &Live) -> (Option<i32>, String) {
     let output = env
         .instrukt(env.home())
         .args(["config", "init", "--global"])
-        .refusal_expected()
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr)
@@ -192,46 +191,71 @@ fn the_loggers_own_files_are_refused_before_they_land() {
     assert_eq!(env.refusals().len(), 1);
 }
 
-#[test]
-fn a_read_that_would_write_beside_a_live_database_is_refused_before_it_lands() {
-    let live = Live::new();
-    // A database that keeps a write-ahead log; closed, it has no sidecars.
+/// A live database that keeps a write-ahead log; closed, it has no sidecars.
+fn live_database(live: &Live) -> std::path::PathBuf {
     let database = live.path().join("mirrors.db");
     let db = instrukt_core::state_db::rusqlite::Connection::open(&database).unwrap();
     db.pragma_update(None, "journal_mode", "WAL").unwrap();
     db.execute_batch("CREATE TABLE kept(id INTEGER)").unwrap();
     drop(db);
-    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
-    let mut env = TestEnv::new();
-    env.fence(&live.path());
-    // Named directly, and through a link in the test's own directory that
-    // SQLite follows to the live file.
-    let link = env.path("source.db");
-    std::os::unix::fs::symlink(&database, &link).unwrap();
-    for source in [&database, &link] {
-        let output = env
-            .instrukt(env.home())
-            .args(["history", "import-teleclaude", "--source"])
-            .arg(source)
-            .refusal_expected()
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
-        assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
-        assert_eq!(env.refusals().len(), 1);
-    }
+    database
+}
+
+/// Imports the legacy store at `source` and returns the exit status.
+fn import(env: &TestEnv, source: &std::path::Path) -> Option<i32> {
+    env.instrukt(env.home())
+        .args(["history", "import-teleclaude", "--source"])
+        .arg(source)
+        .output()
+        .unwrap()
+        .status
+        .code()
 }
 
 #[test]
-fn a_publication_refused_part_way_keeps_the_previous_one() {
+fn a_read_that_would_write_beside_a_live_database_is_refused_before_it_lands() {
+    let live = Live::new();
+    let database = live_database(&live);
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
     let mut env = TestEnv::new();
-    // The Claude CLI is installed, so publication ends with its entrypoint,
-    // after the home's own publication has been written.
+    env.fence(&live.path());
+    assert_eq!(import(&env, &database), Some(i32::from(FENCE_EXIT)));
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_read_through_a_link_to_a_live_database_is_refused_before_it_lands() {
+    let live = Live::new();
+    let database = live_database(&live);
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    // A link in the test's own directory, which SQLite follows to the live
+    // file and keeps its side files beside.
+    let link = env.path("source.db");
+    std::os::unix::fs::symlink(&database, &link).unwrap();
+    assert_eq!(import(&env, &link), Some(i32::from(FENCE_EXIT)));
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+/// A project published once while the Claude CLI is installed, then
+/// changed, with the CLI's entrypoint fenced: publishing it again writes the
+/// home's own publication before it reaches the entrypoint, and is refused
+/// there.
+struct Republication {
+    repo: common::Repo,
+    roots: Vec<std::path::PathBuf>,
+    previous: BTreeMap<std::path::PathBuf, Vec<u8>>,
+}
+
+fn republication(env: &mut TestEnv) -> Republication {
     let claude = env.home().join(".claude");
     std::fs::create_dir_all(&claude).unwrap();
     let care = |body: &str| documented::snippet("policy", "Care", "Care.", "", &[], body);
     let repo = documented::project(
-        &env,
+        env,
         "platform",
         &[
             (
@@ -241,31 +265,79 @@ fn a_publication_refused_part_way_keeps_the_previous_one() {
             ("docs/general/policy/care.md", care("First.\n")),
         ],
     );
-    documented::sync(&env, &repo);
+    documented::sync(env, &repo);
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
-    let published = || {
-        published_files(&[
-            home.index_file(),
-            home.docs_dir(),
-            home.claims_dir(),
-            home.publication_state_dir(),
-            home.publication_outputs_dir(),
-            claude.clone(),
-        ])
-    };
-    let previous = published();
+    let roots = vec![
+        home.index_file(),
+        home.docs_dir(),
+        home.claims_dir(),
+        home.publication_state_dir(),
+        home.publication_outputs_dir(),
+        claude.clone(),
+    ];
+    let previous = published_files(&roots);
     repo.write("docs/general/policy/care.md", &care("Second.\n"));
     repo.commit("docs: change the care policy");
     env.fence(&claude);
+    Republication {
+        repo,
+        roots,
+        previous,
+    }
+}
+
+#[test]
+fn a_publication_refused_part_way_keeps_the_previous_one() {
+    let mut env = TestEnv::new();
+    let republication = republication(&mut env);
     let output = env
-        .instrukt(repo.path())
+        .instrukt(republication.repo.path())
         .arg("sync")
-        .refusal_expected()
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
-    assert_eq!(published(), previous);
+    assert_eq!(
+        published_files(&republication.roots),
+        republication.previous
+    );
     assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_refusal_the_record_cannot_keep_fails_the_test_and_is_rolled_back() {
+    let mut env = TestEnv::new();
+    let republication = republication(&mut env);
+    // The record cannot grow: it is a sparse file as large as its volume
+    // holds, so an append to it fails.
+    let record = env.path("fence").join(instrukt_core::fsx::FENCE_RECORD);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&record)
+        .unwrap();
+    let largest = (20..64_u32)
+        .rev()
+        .map(|bits| (1_u64 << bits) - 1)
+        .find(|size| file.set_len(*size).is_ok())
+        .unwrap();
+    drop(file);
+    assert!(largest > 0);
+    let output = env
+        .instrukt(republication.repo.path())
+        .arg("sync")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
+    assert_eq!(
+        published_files(&republication.roots),
+        republication.previous
+    );
+    // The refusal removed the record it could not append to, which fails
+    // the test as an unreadable record does.
+    assert!(!record.exists());
+    let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| env.refusals()));
+    assert!(verdict.is_err());
+    // This test of the fence lets its own verdict pass.
+    std::fs::write(&record, "").unwrap();
 }
 
 /// Every file under `roots`, with its content.
@@ -282,36 +354,4 @@ fn published_files(roots: &[std::path::PathBuf]) -> BTreeMap<std::path::PathBuf,
             )
         })
         .collect()
-}
-
-#[test]
-fn a_fence_exit_fails_the_test_before_an_expected_failure_accepts_it() {
-    let live = Live::new();
-    let mut env = TestEnv::new();
-    env.fence(&live.path());
-    env.set_env(
-        "INSTRUKT_HOME",
-        &live.path().join(".instrukt").display().to_string(),
-    );
-    let quiet = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    // Run to completion, and asserted to fail.
-    let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        env.run(env.home(), ["config", "init", "--global"])
-            .failure();
-    }));
-    // In the background, ended on its own and reaped by its owner.
-    let background = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut child = env
-            .instrukt_process(env.home())
-            .args(["config", "init", "--global"])
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        child.wait().unwrap();
-    }));
-    std::panic::set_hook(quiet);
-    assert!(completed.is_err());
-    assert!(background.is_err());
-    assert_eq!(env.refusals().len(), 2);
 }

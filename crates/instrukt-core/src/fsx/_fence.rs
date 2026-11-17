@@ -4,11 +4,13 @@
 //! startup through the typed environment, together with a place of its own
 //! where each refusal is recorded. A write whose target lies under a fenced
 //! location, as the file system stands when the write is checked, is refused
-//! before it happens: a [`Refusal`] error that travels through the operation's
-//! own error and rollback path, a line on stderr, a line in the record, and
-//! exit status [`EXIT`] when the binary ends. The fence only refuses; it never
-//! redirects a write or permits one. Unset, each write costs one check of an
-//! empty cell.
+//! before it happens: a line in the record, a line on stderr, a [`Refusal`]
+//! error that travels through the operation's own error and rollback path,
+//! and exit status [`EXIT`] when the binary ends. The record is the one way a
+//! refusal reaches the launcher: a refusal the record cannot keep removes the
+//! record instead, which the launcher reads as a failure just the same. The
+//! fence only refuses; it never redirects a write or permits one. Unset, each
+//! write costs one check of an empty cell.
 //!
 //! It is not a sandbox. Programs this process starts do not read it, and a
 //! path that another process retargets between the check and the write is
@@ -87,7 +89,13 @@ pub struct RecordUnavailable {
 
 struct Fence {
     roots: Vec<PathBuf>,
-    record: Option<Mutex<std::fs::File>>,
+    record: Option<Record>,
+}
+
+/// The record, open for appending, and the directory it was reached in.
+struct Record {
+    directory: rustix::fd::OwnedFd,
+    file: Mutex<std::fs::File>,
 }
 
 static FENCE: OnceLock<Fence> = OnceLock::new();
@@ -103,7 +111,7 @@ pub fn install(setting: &Setting) -> Result<(), RecordUnavailable> {
         return Ok(());
     }
     let record = match &setting.record {
-        Some(directory) => Some(Mutex::new(open_record(&setting.roots, directory)?)),
+        Some(directory) => Some(open_record(&setting.roots, directory)?),
         None => None,
     };
     let _ = FENCE.set(Fence {
@@ -113,7 +121,7 @@ pub fn install(setting: &Setting) -> Result<(), RecordUnavailable> {
     Ok(())
 }
 
-fn open_record(roots: &[PathBuf], directory: &Path) -> Result<std::fs::File, RecordUnavailable> {
+fn open_record(roots: &[PathBuf], directory: &Path) -> Result<Record, RecordUnavailable> {
     use rustix::fs::{Mode, OFlags};
     let path = directory.join(RECORD);
     let unavailable = |source: io::Error| RecordUnavailable {
@@ -165,7 +173,10 @@ fn open_record(roots: &[PathBuf], directory: &Path) -> Result<std::fs::File, Rec
             "it is not a regular file",
         )));
     }
-    Ok(file)
+    Ok(Record {
+        directory: dir,
+        file: Mutex::new(file),
+    })
 }
 
 /// Whether a fence is installed in this process.
@@ -213,21 +224,32 @@ fn refuse(fence: &Fence, path: &Path, target: &Path, root: &Path) -> io::Error {
         root: root.to_path_buf(),
     };
     let line = format!("instrukt: {refusal}");
-    let _ = writeln!(io::stderr(), "{line}");
-    if let Some(record) = &fence.record {
+    // The record first, before any diagnostic. A refusal it cannot keep
+    // removes it, by its name in the directory reached at startup and never
+    // through a link, so the launcher finds no record and fails just the
+    // same; the refusal still returns through the refused operation.
+    let unrecorded = fence.record.as_ref().and_then(|record| {
         let appended = record
+            .file
             .lock()
             .map_err(|_| io::Error::other("the record's lock is poisoned"))
             .and_then(|mut file| writeln!(file, "{line}"));
-        // A refusal the record cannot keep ends the process at once with the
-        // fence's status, so the launcher sees it whatever else happens.
-        if let Err(error) = appended {
-            let _ = writeln!(
-                io::stderr(),
-                "instrukt: the write fence's record failed: {error}"
-            );
-            std::process::exit(i32::from(EXIT));
-        }
+        appended.err().map(|error| {
+            let removed =
+                rustix::fs::unlinkat(&record.directory, RECORD, rustix::fs::AtFlags::empty());
+            (error, removed)
+        })
+    });
+    let _ = writeln!(io::stderr(), "{line}");
+    if let Some((error, removed)) = unrecorded {
+        let outcome = match removed {
+            Ok(()) => "the record was removed".to_owned(),
+            Err(removal) => format!("the record could not be removed either: {removal}"),
+        };
+        let _ = writeln!(
+            io::stderr(),
+            "instrukt: the write fence's record could not keep this refusal: {error}; {outcome}"
+        );
     }
     io::Error::new(io::ErrorKind::PermissionDenied, refusal)
 }
