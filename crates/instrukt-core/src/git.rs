@@ -63,7 +63,7 @@ where
 }
 
 /// Runs `git <args>` in `dir` for a command that runs the repository's
-/// hooks (`commit`, `merge`): as plain git, it waits for the hooks however
+/// hooks, such as `commit`: as plain git, it waits for the hooks however
 /// long they take, so no limit meant for git's own reads applies. Returns
 /// stdout with one trailing newline removed; a non-zero exit is an error
 /// carrying stderr.

@@ -6,7 +6,9 @@
 )]
 
 use crate::common;
+use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt as _;
+use std::process::Stdio;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -58,6 +60,70 @@ fn staged(repo: &Repo) -> String {
     repo.git(["diff", "--cached", "--name-only"])
 }
 
+/// The clock when a held commit starts, and the time it is moved to while
+/// the hook holds the commit: past the 120 seconds instrukt gives git's own
+/// commands.
+const STARTED: &str = "2026-11-03T12:00:00Z";
+const PAST_GIT_LIMIT: &str = "2026-11-03T12:05:00Z";
+
+/// Runs `instrukt repo commit <args>` in `repo` while the project's
+/// pre-commit hook holds the commit: once the hook says it was entered, the
+/// clock instrukt reads (`INSTRUKT_NOW=@<file>`) moves past git's limit, and
+/// only then is the hook released to end.
+fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> Assert {
+    let held = env.path("held");
+    std::fs::create_dir_all(&held).unwrap();
+    let entered = held.join("entered");
+    let release = held.join("release");
+    for fifo in [&entered, &release] {
+        nix::unistd::mkfifo(fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    }
+    let hook = repo.path().join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\necho entered > {}\nread -r _ < {}\n",
+            instrukt_core::process::shell_quote(&entered.display().to_string()),
+            instrukt_core::process::shell_quote(&release.display().to_string()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let clock = held.join("now");
+    std::fs::write(&clock, STARTED).unwrap();
+
+    let child = env
+        .instrukt_process(repo.path())
+        .args(["repo", "commit"])
+        .args(args)
+        .env("INSTRUKT_NOW", format!("@{}", clock.display()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::fs::File::open(&entered)
+        .unwrap()
+        .read_to_string(&mut said)
+        .unwrap();
+    assert_eq!(said, "entered\n", "the hook holds the commit");
+    let moved = held.join("now.moved");
+    std::fs::write(&moved, PAST_GIT_LIMIT).unwrap();
+    std::fs::rename(&moved, &clock).unwrap();
+    // Opened for reading as well, the release waits for no reader, and its
+    // line stays in the pipe until the hook reads it.
+    let mut released = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&release)
+        .unwrap();
+    released.write_all(b"go\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    drop(released);
+    std::fs::remove_file(&hook).unwrap();
+    Assert::new(output)
+}
+
 const MESSAGE: &str =
     "Teach the parser nested lists\n\nNested lists were flattened; they now keep their depth.";
 
@@ -80,23 +146,21 @@ fn a_native_session_commits_with_its_session_without_guessing_an_agent_author() 
     repo.write("parser.rs", "fn parse() {}\n");
     let staged_before = staged(&repo);
 
-    let committed = env
-        .run(
-            repo.path(),
-            [
-                "repo",
-                "commit",
-                "--message",
-                MESSAGE,
-                "--human-involved",
-                "true",
-                "--todo",
-                "nested-lists",
-                "--only",
-                "parser.rs",
-            ],
-        )
-        .success();
+    let committed = commit_held_past_the_git_limit(
+        &env,
+        &repo,
+        &[
+            "--message",
+            MESSAGE,
+            "--human-involved",
+            "true",
+            "--todo",
+            "nested-lists",
+            "--only",
+            "parser.rs",
+        ],
+    )
+    .success();
     let printed = String::from_utf8(committed.get_output().stdout.clone()).unwrap();
     assert_eq!(printed.trim_end(), repo.head(), "prints the commit's id");
     insta::assert_snapshot!("agent-commit", last_commit(&repo));
@@ -159,8 +223,7 @@ fn a_developer_outside_any_session_commits_as_themselves() {
     std::fs::remove_file(&refusing).unwrap();
 
     repo.git(["add", "notes.md"]);
-    env.run(repo.path(), ["repo", "commit", "--message", MESSAGE])
-        .success();
+    commit_held_past_the_git_limit(&env, &repo, &["--message", MESSAGE]).success();
     insta::assert_snapshot!("developer-commit", last_commit(&repo));
     insta::assert_snapshot!(commit_paths(&repo), @"notes.md");
 }

@@ -1,11 +1,16 @@
 //! The clock of one invocation: the system clock, or the operator's
-//! override `INSTRUKT_NOW=<RFC 3339>` (layered-configuration § Environment).
+//! override `INSTRUKT_NOW=<RFC 3339>`, or `INSTRUKT_NOW=@<path>` for the
+//! time in a file (layered-configuration § Environment).
 //!
-//! The override is read once, here, and every command takes its time from
-//! this clock. It is never silent: while it is set, every command says so on
+//! The override is read here, and every command takes its time from this
+//! clock. It is never silent: while it is set, every command says so on
 //! stderr. An unparseable value refuses the command rather than falling back
-//! to the system clock.
+//! to the system clock. A file is read again on each request for the time,
+//! and the limits on the programs instrukt starts are measured on it; a file
+//! that is missing or holds no RFC 3339 time refuses the command at that
+//! moment.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -14,10 +19,12 @@ use jiff::Timestamp;
 /// The environment variable that overrides the clock.
 pub const OVERRIDE_VAR: &str = "INSTRUKT_NOW";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Clock {
     System,
     Fixed(Timestamp),
+    /// The time in this file, read on each request.
+    File(Arc<Path>),
 }
 
 impl Clock {
@@ -29,6 +36,19 @@ impl Clock {
                 let text = raw
                     .to_str()
                     .with_context(|| format!("{OVERRIDE_VAR} is not valid UTF-8"))?;
+                if let Some(path) = text.strip_prefix('@') {
+                    let path: Arc<Path> = Arc::from(Path::new(path));
+                    read_file(&path)?;
+                    eprintln!(
+                        "instrukt: clock overridden to the time in {}",
+                        path.display()
+                    );
+                    let limits = Arc::clone(&path);
+                    instrukt_core::process::measure_limits_on(Box::new(move || {
+                        read_file(&limits).map_err(|error| format!("{error:#}"))
+                    }));
+                    return Ok(Clock::File(path));
+                }
                 let at = parse_rfc3339(text).with_context(|| {
                     format!("{OVERRIDE_VAR}={text:?} is not an RFC 3339 time; unset it or give one")
                 })?;
@@ -38,17 +58,35 @@ impl Clock {
         }
     }
 
-    pub fn now(self) -> Timestamp {
+    /// The time now; a clock file without a time ends the command here.
+    pub fn now(&self) -> Timestamp {
         match self {
             Clock::System => Timestamp::now(),
-            Clock::Fixed(at) => at,
+            Clock::Fixed(at) => *at,
+            Clock::File(path) => read_file(path).unwrap_or_else(|error| {
+                eprintln!("instrukt: {error:#}");
+                std::process::exit(1)
+            }),
         }
     }
 
     /// This clock as the shared function the work record takes.
-    pub fn shared(self) -> Arc<dyn Fn() -> Timestamp + Send + Sync> {
-        Arc::new(move || self.now())
+    pub fn shared(&self) -> Arc<dyn Fn() -> Timestamp + Send + Sync> {
+        let clock = self.clone();
+        Arc::new(move || clock.now())
     }
+}
+
+/// The RFC 3339 time `path` holds, with or without a final newline.
+fn read_file(path: &Path) -> anyhow::Result<Timestamp> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("{OVERRIDE_VAR}=@{}: cannot read the time", path.display()))?;
+    parse_rfc3339(text.strip_suffix('\n').unwrap_or(&text)).with_context(|| {
+        format!(
+            "{OVERRIDE_VAR}=@{} holds no RFC 3339 time; unset it or give one",
+            path.display()
+        )
+    })
 }
 
 /// Parses an RFC 3339 `date-time` and nothing broader: `YYYY-MM-DDTHH:MM:SS`,

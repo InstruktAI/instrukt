@@ -9,13 +9,14 @@
 //! `session-continuity` requires. Every wait is bounded, except for a command
 //! that runs another party's code for as long as that code takes — git
 //! running the repository's hooks — which is waited for to its end, as the
-//! plain command is ([`output_to_end`]).
+//! plain command is ([`output_to_end`]). A limit is measured in real time,
+//! or on the operator's file clock when one is given ([`measure_limits_on`]).
 
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -42,6 +43,54 @@ pub enum ProcessError {
         program: String,
         source: std::io::Error,
     },
+    #[error("cannot measure the limit of `{program}`: {reason}")]
+    Clock { program: String, reason: String },
+}
+
+/// The clock the operator measures limits on (`INSTRUKT_NOW=@<path>`,
+/// layered-configuration § Environment): the current time, or why there is
+/// none.
+pub type LimitClock = Box<dyn Fn() -> Result<jiff::Timestamp, String> + Send + Sync>;
+
+// The operator's clock is process-wide, as the environment that names it.
+static LIMIT_CLOCK: OnceLock<LimitClock> = OnceLock::new();
+
+/// Measures the limit of every command started after this on `clock`
+/// instead of in real time. The first clock given holds for the process.
+pub fn measure_limits_on(clock: LimitClock) {
+    if LIMIT_CLOCK.set(clock).is_err() {
+        tracing::debug!(event = "limit_clock_already_set");
+    }
+}
+
+/// The longest pause between two looks at a running command.
+const LONGEST_PAUSE: Duration = Duration::from_millis(50);
+
+/// A command's limit and where it is measured from.
+#[derive(Clone, Copy)]
+struct Limit {
+    limit: Duration,
+    start: Start,
+}
+
+#[derive(Clone, Copy)]
+enum Start {
+    /// Real time: the limit passes at this instant.
+    Real(Instant),
+    /// The operator's clock, and its time when the command started.
+    Clock(&'static LimitClock, jiff::Timestamp),
+}
+
+impl Limit {
+    /// Whether the operator's clock has passed the limit; real time is
+    /// asked by its own waits.
+    fn passed_on_clock(&self) -> Result<bool, String> {
+        let Start::Clock(clock, started) = self.start else {
+            return Ok(false);
+        };
+        let elapsed = clock()?.duration_since(started);
+        Ok(jiff::SignedDuration::try_from(self.limit).is_ok_and(|limit| elapsed >= limit))
+    }
 }
 
 /// One command to run.
@@ -128,7 +177,9 @@ impl<'a> Invocation<'a> {
         timeout: Option<Duration>,
     ) -> Result<std::process::Output, ProcessError> {
         let started = Instant::now();
-        let deadline = timeout.map(|timeout| (started + timeout, timeout));
+        let limit = timeout
+            .map(|timeout| self.limit(timeout, started))
+            .transpose()?;
         command
             .stdin(if self.input.is_some() {
                 Stdio::piped()
@@ -148,7 +199,7 @@ impl<'a> Invocation<'a> {
         };
         let stdout = drain(child.stdout.take());
         let stderr = drain(child.stderr.take());
-        let status = match self.wait(&mut child, deadline) {
+        let status = match self.wait(&mut child, limit) {
             Ok(status) => status,
             Err(err) => {
                 group.stop().map_err(|source| self.io(source))?;
@@ -160,16 +211,10 @@ impl<'a> Invocation<'a> {
         group.stop().map_err(|source| self.io(source))?;
         let outcome = (|| {
             if let Some(writer) = writer {
-                receive(&writer, deadline)
-                    .map_err(|limit| self.unreceived(limit))?
-                    .map_err(|source| self.io(source))?;
+                self.receive(&writer, limit)?;
             }
-            let out = receive(&stdout, deadline)
-                .map_err(|limit| self.unreceived(limit))?
-                .map_err(|source| self.io(source))?;
-            let err = receive(&stderr, deadline)
-                .map_err(|limit| self.unreceived(limit))?
-                .map_err(|source| self.io(source))?;
+            let out = self.receive(&stdout, limit)?;
+            let err = self.receive(&stderr, limit)?;
             Ok((out, err))
         })();
         let (out, err) = match outcome {
@@ -188,38 +233,108 @@ impl<'a> Invocation<'a> {
         })
     }
 
-    /// Waits for `child` to end, or until `deadline`; the timeout reported
-    /// is the limit the command was given.
+    /// The limit `timeout` of a command started at `started`, on the
+    /// operator's clock when one is given; a clock without a time refuses
+    /// the command.
+    fn limit(&self, timeout: Duration, started: Instant) -> Result<Limit, ProcessError> {
+        let start = match LIMIT_CLOCK.get() {
+            None => Start::Real(started + timeout),
+            Some(clock) => Start::Clock(clock, clock().map_err(|reason| self.clock(reason))?),
+        };
+        Ok(Limit {
+            limit: timeout,
+            start,
+        })
+    }
+
+    /// Waits for `child` to end, or until its limit passes; the timeout
+    /// reported is the limit the command was given.
     fn wait(
         &self,
         child: &mut Child,
-        deadline: Option<(Instant, Duration)>,
+        limit: Option<Limit>,
     ) -> Result<std::process::ExitStatus, ProcessError> {
-        let Some((deadline, limit)) = deadline else {
+        let Some(limit) = limit else {
             return child.wait().map_err(|source| self.io(source));
         };
         let mut pause = Duration::from_millis(2);
         loop {
-            if let Some(status) = child.try_wait().map_err(|source| self.io(source))? {
-                return Ok(status);
+            match limit.start {
+                Start::Real(deadline) => {
+                    if let Some(status) = child.try_wait().map_err(|source| self.io(source))? {
+                        return Ok(status);
+                    }
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return Err(self.timeout(limit.limit));
+                    }
+                    std::thread::sleep(pause.min(deadline - now));
+                }
+                Start::Clock(..) => {
+                    // An end counts only when the clock, read after it, is
+                    // still within the limit: a clock moved past the limit
+                    // while the command ran stops it, however soon the
+                    // command ended after the move.
+                    let ended = child.try_wait().map_err(|source| self.io(source))?;
+                    if limit
+                        .passed_on_clock()
+                        .map_err(|reason| self.clock(reason))?
+                    {
+                        return Err(self.timeout(limit.limit));
+                    }
+                    if let Some(status) = ended {
+                        return Ok(status);
+                    }
+                    std::thread::sleep(pause);
+                }
             }
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(self.timeout(limit));
-            }
-            std::thread::sleep(pause.min(deadline - now));
-            pause = (pause * 2).min(Duration::from_millis(50));
+            pause = (pause * 2).min(LONGEST_PAUSE);
         }
     }
 
-    /// Why a reader or writer of the command delivered nothing: its limit
-    /// passed, or it ended without its result.
-    fn unreceived(&self, limit: Option<Duration>) -> ProcessError {
-        match limit {
-            Some(limit) => self.timeout(limit),
-            None => self.io(std::io::Error::other(
-                "its input or output ended without a result",
-            )),
+    /// What a reader or writer of the command delivers within its limit.
+    fn receive<T>(
+        &self,
+        receiver: &Receiver<std::io::Result<T>>,
+        limit: Option<Limit>,
+    ) -> Result<T, ProcessError> {
+        let delivered = match limit {
+            None => receiver.recv().map_err(|_| self.ended()),
+            Some(Limit {
+                limit,
+                start: Start::Real(deadline),
+            }) => receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| self.timeout(limit)),
+            Some(clocked) => loop {
+                match receiver.recv_timeout(LONGEST_PAUSE) {
+                    Ok(delivered) => break Ok(delivered),
+                    Err(RecvTimeoutError::Disconnected) => break Err(self.ended()),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if clocked
+                            .passed_on_clock()
+                            .map_err(|reason| self.clock(reason))?
+                        {
+                            break Err(self.timeout(clocked.limit));
+                        }
+                    }
+                }
+            },
+        };
+        delivered?.map_err(|source| self.io(source))
+    }
+
+    /// A reader or writer of the command that ended without its result.
+    fn ended(&self) -> ProcessError {
+        self.io(std::io::Error::other(
+            "its input or output ended without a result",
+        ))
+    }
+
+    fn clock(&self, reason: String) -> ProcessError {
+        ProcessError::Clock {
+            program: self.program.clone(),
+            reason,
         }
     }
 
@@ -273,19 +388,6 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<std::io::Result<
     receive
 }
 
-/// What `receiver` delivers, before `deadline` when there is one: the limit
-/// that passed, or no limit when its sender ended without delivering.
-fn receive<T>(
-    receiver: &Receiver<T>,
-    deadline: Option<(Instant, Duration)>,
-) -> Result<T, Option<Duration>> {
-    match deadline {
-        Some((deadline, limit)) => receiver
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| Some(limit)),
-        None => receiver.recv().map_err(|_| None),
-    }
-}
 pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
