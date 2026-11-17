@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+assertion_line: 80
+expression: "stdout(&env.run(&here, [\"config\", \"get\", \"--company\", \"acme\"]).success())"
+---
+schema_version: 5
+company: acme
+webhooks:
+  erp:
+    secret: ${ACME_HOOK}

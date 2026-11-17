@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+assertion_line: 129
+expression: refusal
+---
+instrukt: [INSTRUKT_HOME]/companies/misnamed is not a company: company: names company `acme`, but the home folder is `misnamed`

@@ -82,6 +82,7 @@ pub fn recorded_assignment(
             ),
             todo: Some(todo),
             platform: false,
+            company: None,
             dispatcher,
         };
         if found

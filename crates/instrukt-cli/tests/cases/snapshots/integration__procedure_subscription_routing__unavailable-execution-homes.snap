@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-subscription-routing.rs
+assertion_line: 862
+expression: "failures.join(\"\\n\")"
+---
+"homeless" ["pending"]: "execution home `company:absent` has no company home on this computer"
+"misnamed" ["pending"]: "execution home `company:misnamed` has no company home on this computer (company: names company `acme`, but the home folder is `misnamed`)"
+"person" ["pending"]: "execution home `person:fork` is unsupported"
+"unregistered" ["pending"]: "execution home `project:absent` has no registered checkout"
+"unversioned" ["pending"]: "execution home `company:unversioned` has no company home on this computer (schema_version: missing)"

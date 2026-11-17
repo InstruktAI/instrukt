@@ -53,6 +53,20 @@ impl Responsibility {
     fn tick(&self) {
         self.computer.tick();
     }
+    /// The session instrukt handed the event `id` to, as its delivery
+    /// record names it.
+    fn delivered_to(&self, id: &str) -> instrukt_core::ids::SessionRef {
+        let target: String = self
+            .computer
+            .db()
+            .query_row(
+                "SELECT target FROM standing_deliveries WHERE event_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        instrukt_core::ids::SessionRef::parse(&target).unwrap()
+    }
     fn conversation(&self) -> String {
         work::redact(&self.runtime.input_log("s1"))
     }
@@ -720,27 +734,105 @@ fn home_identity_supplies_different_subjects_to_one_agent() {
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA13
 #[test]
-fn platform_work_executes_in_its_registered_home_and_project_work_stays_in_the_project() {
+fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_company_context() {
     let r = Responsibility::new("");
     let platform = documented::project(&r.computer.env, "instrukt", &[]);
     documented::sync(&r.computer.env, &platform);
     r.computer.project.write("docs/domain/reactions/procedure/platform.md",&documented::snippet("procedure","Platform response","Handle platform facts.","role: platform-responder\nsubscription_home: platform\nsubscriptions: [example.changed]\n",&[],"Reconcile platform facts.\n"));
+    r.computer.project.write("docs/domain/reactions/procedure/company.md",&documented::snippet("procedure","Company response","Handle company facts.","role: company-responder\nsubscription_home: company\nsubscriptions: [example.changed]\n",&[],"Reconcile company facts.\n"));
     r.computer
         .project
-        .commit("docs: declare platform responsibility");
+        .commit("docs: declare platform and company responsibilities");
     documented::sync(&r.computer.env, &r.computer.project);
+    r.computer
+        .env
+        .run(
+            &r.computer.env.path(""),
+            ["config", "init", "--company", "acme"],
+        )
+        .success();
+    let company = r
+        .computer
+        .env
+        .instrukt_home()
+        .join("companies/acme")
+        .canonicalize()
+        .unwrap();
+    // The home's document was written by an older instrukt.
+    let document = company.join("instrukt.yaml");
+    let older = instrukt_core::config::CURRENT_SCHEMA_VERSION - 1;
+    std::fs::write(
+        &document,
+        format!("schema_version: {older}\ncompany: acme\n"),
+    )
+    .unwrap();
     r.scoped("platform", "configuration:global", "none");
+    r.scoped("company", "inbound_source:erp:company:acme", "company:acme");
     r.append("project");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
-    for root in [platform.path(), r.computer.project.path()] {
-        let listed = r
-            .computer
-            .env
-            .run(root, ["sessions", "list", "--all", "--json"])
-            .success();
-        let rows: serde_json::Value = serde_json::from_slice(&listed.get_output().stdout).unwrap();
-        assert_eq!(rows.as_array().unwrap().len(), 1);
+    let threads = r.runtime.threads();
+    assert_eq!(threads.len(), 3);
+    let mut folders: Vec<_> = threads
+        .iter()
+        .map(|id| r.runtime.folder(id).canonicalize().unwrap())
+        .collect();
+    folders.sort();
+    let mut expected: Vec<_> = [platform.path(), r.computer.project.path()]
+        .iter()
+        .map(|path| path.canonicalize().unwrap())
+        .chain([company.clone()])
+        .collect();
+    expected.sort();
+    assert_eq!(folders, expected);
+    // The writing tick persisted the company document at the current
+    // schema before work ran there.
+    let stored: serde_yaml_ng::Value =
+        serde_yaml_ng::from_slice(&std::fs::read(&document).unwrap()).unwrap();
+    assert_eq!(
+        stored["schema_version"].as_u64(),
+        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+    );
+    // Each agent's assignment, as instrukt resolves it for that session,
+    // names the home it works in; only the company agent's names a company.
+    let acme =
+        instrukt_core::ids::ProjectSlug::parse(company.file_name().unwrap().to_str().unwrap())
+            .unwrap();
+    let fork = instrukt_core::config::project_slug(r.computer.project.path())
+        .unwrap()
+        .unwrap();
+    for (event, folder) in [
+        ("company", company.clone()),
+        ("project", r.computer.project.path().canonicalize().unwrap()),
+        ("platform", platform.path().canonicalize().unwrap()),
+    ] {
+        let session = r.delivered_to(event);
+        assert_eq!(
+            r.runtime
+                .folder(session.id.as_str())
+                .canonicalize()
+                .unwrap(),
+            folder
+        );
+        let assignment = instrukt_runner::assignments::resolve(
+            &instrukt_core::home::Home::at_user_home(r.computer.env.home().into()),
+            &session,
+            instrukt_todos::work::recorded_assignment,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            assignment.workspace.map(|w| w.canonicalize().unwrap()),
+            Some(folder)
+        );
+        assert_eq!(
+            assignment.company,
+            (event == "company").then(|| acme.clone())
+        );
+        assert_eq!(assignment.platform, event == "platform");
+        assert_eq!(
+            assignment.project,
+            (event == "project").then(|| fork.clone())
+        );
     }
 }
 
@@ -924,4 +1016,57 @@ fn bound_standing_delivery_keeps_a_relabelled_threads_event_pending() {
     r.runtime.change("s1", "title", title.into());
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA25
+#[test]
+fn an_open_unattended_agent_receives_a_later_event_like_an_attended_one() {
+    let r = Responsibility::new("subscription_attendance: unattended\n");
+    r.append("initial");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    r.append("second");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    r.append("third");
+    r.tick();
+    assert_eq!(
+        r.runtime.message_count("s1"),
+        2,
+        "a busy agent takes one message"
+    );
+    r.runtime.consume("s1");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 3);
+    // Every later event reached the one open unattended agent.
+    let agent = r.delivered_to("initial");
+    for event in ["second", "third"] {
+        assert_eq!(r.delivered_to(event), agent);
+    }
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA27
+#[test]
+fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human_settle_still_wakes()
+ {
+    let r = Responsibility::new("subscription_attendance: unattended\n");
+    r.append("initial");
+    r.tick();
+    r.runtime.finish("s1", "completed", "Reconciled.");
+    r.tick();
+    r.tick();
+    let shown = r.runtime.state_dir().join("s1.json");
+    let thread: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&shown).unwrap()).unwrap();
+    assert_eq!(thread["settled"], false);
+    assert_eq!(thread["archived"], false);
+    r.runtime.change("s1", "settled", true.into());
+    let before = r.runtime.message_count("s1");
+    r.append("later");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), before + 1);
+    // The later event reached the same, human-settled thread.
+    assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
 }

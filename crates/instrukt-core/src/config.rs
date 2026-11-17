@@ -56,7 +56,10 @@ pub use _webhooks::{
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
-pub use _secrets::{generate_secret, resolve_secret, set_secret};
+pub use _secrets::{
+    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
+    set_secret, set_secret_in,
+};
 
 /// The project slug the repository rooted at `repo_root` declares in its
 /// project layer; `None` when it has no project layer or declares none.
@@ -93,6 +96,46 @@ pub fn module_enabled(
     module: Module,
 ) -> Result<bool, ConfigError> {
     Configuration::load(home, repo_root)?.module_enabled(module)
+}
+
+/// One folder below `~/.instrukt/companies/`: its name and its document as
+/// read, or why it is not a company.
+pub type CompanyHome = (ProjectSlug, Result<Configuration, ConfigError>);
+
+/// The company homes on this computer: every folder below
+/// `~/.instrukt/companies/` whose name is a valid company name, with its
+/// document read as [`Configuration::load_company`] reads it. A folder
+/// without a valid settings document is listed with the reason it is not a
+/// company; nothing is served or run for it.
+pub fn company_homes(home: &Home) -> Result<Vec<CompanyHome>, ConfigError> {
+    let dir = home.companies_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(ConfigError::Read { path: dir, source }),
+    };
+    let mut homes = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| ConfigError::Read {
+            path: dir.clone(),
+            source,
+        })?;
+        let folder = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        let config = match std::fs::metadata(&path) {
+            Ok(metadata) if !metadata.is_dir() => continue,
+            Ok(_) => None,
+            Err(source) => Some(Err(ConfigError::Read { path, source })),
+        };
+        let Ok(name) = ProjectSlug::parse(&folder) else {
+            tracing::warn!(event = "company_home_invalid", folder = %folder, "not a valid company name");
+            continue;
+        };
+        let config = config.unwrap_or_else(|| Configuration::load_company(home, &name));
+        homes.push((name, config));
+    }
+    homes.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+    Ok(homes)
 }
 
 /// Whether text is an exact protected machine-local secret reference.

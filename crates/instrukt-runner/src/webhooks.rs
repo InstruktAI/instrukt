@@ -1,4 +1,5 @@
-//! Signed, project-scoped loopback intake. Acceptance ends at cluster append.
+//! Signed, project- and company-scoped loopback intake. Acceptance ends at
+//! cluster append.
 mod _github;
 mod _protocol;
 
@@ -7,7 +8,9 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
-use instrukt_core::config::{Configuration, Env, Module, WebhookProtocol, webhook_domain};
+use instrukt_core::config::{
+    Configuration, Env, Module, SecretSource, WebhookProtocol, company_homes, webhook_domain,
+};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
 use instrukt_core::machine::machine_id;
@@ -34,15 +37,12 @@ pub enum WebhookError {
     Machine(#[from] instrukt_core::machine::MachineError),
     #[error("this computer is not the configured ingress")]
     Placement,
-    #[error("no enabled registered project declares a readable webhook source")]
+    #[error("no enabled registered project or company home declares a readable webhook source")]
     NoSources,
     #[error(transparent)]
     Registration(#[from] instrukt_core::publication::PublicationStateError),
-    #[error("project {project}: {detail}")]
-    Declaration {
-        project: ProjectSlug,
-        detail: String,
-    },
+    #[error("{home}: {detail}")]
+    Declaration { home: String, detail: String },
     #[error("webhook listener failed: {0}")]
     Listen(std::io::Error),
 }
@@ -109,7 +109,9 @@ pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
                 return Ok(false);
             }
             for source in sources.values() {
-                source.resolve(home).map_err(|error| error.to_string())?;
+                source
+                    .resolve(home, &SecretSource::Machine)
+                    .map_err(|error| error.to_string())?;
             }
             Ok(!sources.is_empty())
         })();
@@ -118,9 +120,35 @@ pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
             Err(detail) => {
                 tracing::warn!(event = "webhook_declaration_unreadable", project = %record.project, error = %detail);
                 invalid = Some(WebhookError::Declaration {
-                    project: record.project,
+                    home: format!("project {}", record.project),
                     detail,
                 });
+            }
+        }
+    }
+    // A company home's sources add demand only while the machine's events
+    // switch is on.
+    if Configuration::load_global(&inspection)?.module_enabled(Module::Events)? {
+        for (name, config) in company_homes(&inspection)? {
+            let declaration = (|| -> Result<bool, String> {
+                let config = config.map_err(|error| error.to_string())?;
+                let sources = config.webhooks().map_err(|error| error.to_string())?;
+                for source in sources.values() {
+                    source
+                        .resolve(home, &SecretSource::Company(name.clone()))
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(!sources.is_empty())
+            })();
+            match declaration {
+                Ok(enabled) => demand |= enabled,
+                Err(detail) => {
+                    tracing::warn!(event = "webhook_declaration_unreadable", company = %name, error = %detail);
+                    invalid = Some(WebhookError::Declaration {
+                        home: format!("company {name}"),
+                        detail,
+                    });
+                }
             }
         }
     }
@@ -264,14 +292,155 @@ fn managed_listener() -> Result<TcpListener, WebhookError> {
     }
 }
 
-fn route(url: &str) -> Option<(ProjectSlug, String)> {
-    let (slug, domain) = url
-        .strip_prefix("/hooks/inbound/project/")?
-        .split_once('/')?;
+/// The kind of home a source path names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HomeKind {
+    Project,
+    Company,
+}
+
+impl HomeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            HomeKind::Project => "project",
+            HomeKind::Company => "company",
+        }
+    }
+}
+
+/// `/hooks/inbound/<kind>/<slug>/<domain>` for a project or a company home.
+fn route(url: &str) -> Option<(HomeKind, ProjectSlug, String)> {
+    let rest = url.strip_prefix("/hooks/inbound/")?;
+    let (kind, rest) = rest.split_once('/')?;
+    let kind = match kind {
+        "project" => HomeKind::Project,
+        "company" => HomeKind::Company,
+        _ => return None,
+    };
+    let (slug, domain) = rest.split_once('/')?;
     if !webhook_domain(domain) {
         return None;
     }
-    Some((ProjectSlug::parse(slug).ok()?, domain.to_owned()))
+    Some((kind, ProjectSlug::parse(slug).ok()?, domain.to_owned()))
+}
+
+/// The declaring home of one request, as read for it.
+struct Declaring {
+    kind: HomeKind,
+    slug: ProjectSlug,
+    /// The configuration holding the home's `webhooks:` declarations.
+    sources: Configuration,
+    /// The configuration supplying the events switch and cluster transport.
+    transport: Configuration,
+    secrets: SecretSource,
+    /// The checkout of a project home, re-read on the writing path.
+    checkout: Option<std::path::PathBuf>,
+}
+
+impl Declaring {
+    fn label(&self) -> String {
+        format!("{} {}", self.kind.as_str(), self.slug)
+    }
+
+    fn origin(&self) -> EventHome {
+        match self.kind {
+            HomeKind::Project => EventHome::Project(self.slug.clone()),
+            HomeKind::Company => EventHome::Company(self.slug.clone()),
+        }
+    }
+
+    fn owner(&self) -> EventHomeOwner {
+        match self.kind {
+            HomeKind::Project => EventHomeOwner::Unresolved,
+            HomeKind::Company => EventHomeOwner::None,
+        }
+    }
+
+    /// Persist a pending conversion of the declaring home's documents
+    /// before publication; only a verified, valid delivery reaches it.
+    fn migrate(&self, writing: &Home) -> Result<Configuration, instrukt_core::config::ConfigError> {
+        match self.kind {
+            HomeKind::Project => Configuration::load(writing, self.checkout.as_deref()),
+            HomeKind::Company => {
+                Configuration::load_company(writing, &self.slug)?;
+                Configuration::load_global(writing)
+            }
+        }
+    }
+}
+
+/// The declaring home of `slug`: `Err` carries the response for a home
+/// that has no endpoint (404) or cannot be read (500).
+fn declaring(home: &Home, kind: HomeKind, slug: ProjectSlug) -> Result<Declaring, (u16, String)> {
+    let absent = || (404, "endpoint absent\n".to_owned());
+    let unreadable = || {
+        (
+            500,
+            format!(
+                "{} {slug}: cannot read webhook configuration or signing reference\n",
+                kind.as_str()
+            ),
+        )
+    };
+    let inspection = home.for_inspection();
+    match kind {
+        HomeKind::Project => {
+            let records = PublishedRecord::load_all(home).map_err(|_| unreadable())?;
+            let record = records
+                .iter()
+                .find(|record| record.project == slug)
+                .ok_or_else(absent)?;
+            if !record.checkout.join("instrukt.yaml").is_file() {
+                return Err(unreadable());
+            }
+            let config = Configuration::load(&inspection, Some(&record.checkout))
+                .map_err(|_| unreadable())?;
+            if !config
+                .project()
+                .is_ok_and(|declared| declared.as_ref() == Some(&slug))
+            {
+                return Err(unreadable());
+            }
+            Ok(Declaring {
+                kind,
+                transport: config.clone(),
+                sources: config,
+                secrets: SecretSource::Machine,
+                checkout: Some(record.checkout.clone()),
+                slug,
+            })
+        }
+        HomeKind::Company => {
+            // A company without a home, or a folder whose document names
+            // another company, is no company: it has no endpoint.
+            let document = home.company_dir(&slug).join("instrukt.yaml");
+            match std::fs::metadata(&document) {
+                Ok(metadata) if metadata.is_file() => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(absent());
+                }
+                // Anything else is an existing home this computer cannot
+                // inspect: a failure, never absence.
+                Ok(_) | Err(_) => return Err(unreadable()),
+            }
+            let sources = match Configuration::load_company(&inspection, &slug) {
+                Ok(config) => config,
+                Err(instrukt_core::config::ConfigError::NotACompany { .. }) => {
+                    return Err(absent());
+                }
+                Err(_) => return Err(unreadable()),
+            };
+            let transport = Configuration::load_global(&inspection).map_err(|_| unreadable())?;
+            Ok(Declaring {
+                kind,
+                sources,
+                transport,
+                secrets: SecretSource::Company(slug.clone()),
+                checkout: None,
+                slug,
+            })
+        }
+    }
 }
 
 fn header(request: &Request, name: &str) -> Option<String> {
@@ -290,42 +459,28 @@ fn receive(
     request: &mut Request,
     now: Timestamp,
 ) -> (u16, String) {
-    let Some((project, domain)) = route(request.url()) else {
+    let Some((kind, slug, domain)) = route(request.url()) else {
         return (404, "endpoint absent\n".into());
     };
+    let declaring = match declaring(home, kind, slug) {
+        Ok(declaring) => declaring,
+        Err(response) => return response,
+    };
+    let label = declaring.label();
     let fail_config = || {
         (
             500,
-            format!("project {project}: cannot read webhook configuration or signing reference\n"),
+            format!("{label}: cannot read webhook configuration or signing reference\n"),
         )
     };
-    let Ok(records) = PublishedRecord::load_all(home) else {
-        return fail_config();
-    };
-    let Some(record) = records.iter().find(|record| record.project == project) else {
-        return (404, "endpoint absent\n".into());
-    };
-    if !record.checkout.join("instrukt.yaml").is_file() {
-        return fail_config();
-    }
-    let inspection = home.for_inspection();
-    let Ok(config) = Configuration::load(&inspection, Some(&record.checkout)) else {
-        return fail_config();
-    };
-    if !config
-        .project()
-        .is_ok_and(|declared| declared.as_ref() == Some(&project))
-    {
-        return fail_config();
-    }
-    let sources = match config.webhooks() {
+    let sources = match declaring.sources.webhooks() {
         Ok(sources) => sources,
         Err(_) => return fail_config(),
     };
     let Some(source) = sources.get(&domain) else {
         return (404, "endpoint absent\n".into());
     };
-    match config.module_enabled(Module::Events) {
+    match declaring.transport.module_enabled(Module::Events) {
         Ok(true) => {}
         Ok(false) => return (404, "source requires modules.events enabled\n".into()),
         Err(_) => return fail_config(),
@@ -333,9 +488,9 @@ fn receive(
     if request.method() != &Method::Post {
         return (405, "POST required; no handshake\n".into());
     }
-    let secrets = match source.resolve(home) {
+    let secrets = match source.resolve(home, &declaring.secrets) {
         Ok(secrets) => secrets,
-        Err(error) => return (500, format!("project {project}: {error}\n")),
+        Err(error) => return (500, format!("{label}: {error}\n")),
     };
     let Ok(protocol) = source.protocol() else {
         return fail_config();
@@ -367,11 +522,12 @@ fn receive(
     let claim = occurrence_id(&[
         &domain,
         protocol.as_str(),
-        "project",
-        project.as_str(),
+        declaring.kind.as_str(),
+        declaring.slug.as_str(),
         &identity,
         "0",
     ]);
+    let qualified = format!("{domain}:{}:{}", declaring.kind.as_str(), declaring.slug);
     let event = (|| -> Result<EventEnvelope, crate::events::EnvelopeError> {
         let kind = source.delivery_kind(
             event_type
@@ -396,12 +552,9 @@ fn receive(
                     ));
                 }
             };
-            format!(
-                "{domain}:project:{project}/{}",
-                crate::keyed::encode(&identity)
-            )
+            format!("{qualified}/{}", crate::keyed::encode(&identity))
         } else {
-            format!("{domain}:project:{project}")
+            qualified.clone()
         };
         let mut extensions = BTreeMap::from([("inbound_verify".into(), protocol.as_str().into())]);
         if kind == instrukt_core::event_type::DeliveryKind::State {
@@ -414,8 +567,8 @@ fn receive(
             subject: EventRef::new(ReferenceKind::InboundSource, &subject)?,
             time: now.try_into()?,
             data,
-            home: EventHome::Project(project),
-            home_owner: EventHomeOwner::Unresolved,
+            home: declaring.origin(),
+            home_owner: declaring.owner(),
             related: Vec::new(),
             causationid: None,
             extensions,
@@ -431,8 +584,9 @@ fn receive(
     let result = (|| -> Result<(), crate::transport::TransportError> {
         let writing = home.for_writing();
         // Only a verified, valid delivery reaches the writing migration boundary.
-        Configuration::load(&writing, Some(&record.checkout))?;
-        let transport = ScopedTransport::from_config(&config, env, &RunnerState::new(&writing))?;
+        declaring.migrate(&writing)?;
+        let transport =
+            ScopedTransport::from_config(&declaring.transport, env, &RunnerState::new(&writing))?;
         transport.publish_claimed(&event, &claim, CLAIM_TTL)?;
         Ok(())
     })();

@@ -7,6 +7,8 @@ use crate::fixtures::event_transport as support;
 use crate::fixtures::webhooks as hooks;
 use common::redis::RedisServer;
 use hooks::{BODY, GITHUB, NATIVE, OLD, Receiver, SECRET, declare, events};
+use instrukt_core::ids::ProjectSlug;
+use instrukt_runner::events::{EventHome, EventHomeOwner, EventRef, ReferenceKind};
 use support::Computer;
 
 fn setup() -> (Computer, RedisServer, Receiver) {
@@ -60,6 +62,78 @@ fn native_wrapper_fields_cannot_be_duplicated() {
     rejects_native(br#"{"name":"paid","name":"other","payload":{}}"#);
 }
 
+/// A company home `name` holding `document` after its `company` line, its
+/// `ACME_HOOK` reference recorded in its own secrets file.
+fn company_home(computer: &Computer, name: &str, document: &str) {
+    let dir = computer.env.instrukt_home().join("companies").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("instrukt.yaml"),
+        format!(
+            "schema_version: {}\n{document}",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    computer
+        .env
+        .instrukt(&computer.env.path(""))
+        .args(["secrets", "set", "ACME_HOOK", "--company", name])
+        .write_stdin(SECRET)
+        .assert()
+        .success();
+}
+
+/// A company folder holding exactly `document`, which `instrukt` refuses
+/// to treat as a company, with a signing value for `ACME_HOOK` beside it.
+fn invalid_company_home(computer: &Computer, name: &str, document: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = computer.env.instrukt_home().join("companies").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("instrukt.yaml"), document).unwrap();
+    std::fs::write(dir.join("secrets.env"), format!("ACME_HOOK={SECRET}\n")).unwrap();
+    std::fs::set_permissions(
+        dir.join("secrets.env"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+}
+
+// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF16
+#[test]
+fn a_company_source_relays_its_event_with_the_company_origin_and_subject() {
+    let (computer, redis, receiver) = setup();
+    company_home(
+        &computer,
+        "acme",
+        "company: acme\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    assert_eq!(
+        receiver
+            .signed("/hooks/inbound/company/acme/erp", BODY, SECRET, &[])
+            .0,
+        202
+    );
+    let relayed = events(&redis);
+    assert_eq!(relayed.len(), 1);
+    let event = &relayed[0];
+    // The declared home and domain are the identity the event carries.
+    let origin = EventHome::Company(ProjectSlug::parse("acme").unwrap());
+    let source = EventRef::new(
+        ReferenceKind::InboundSource,
+        &format!("erp:{}", String::from(origin.clone())),
+    )
+    .unwrap();
+    assert_eq!(event.home, origin);
+    assert_eq!(event.home_owner, EventHomeOwner::None);
+    assert_eq!(event.subject, source);
+    assert_eq!(event.source, computer.computer());
+    assert_eq!(
+        serde_json::Value::Object(event.data.clone()),
+        serde_json::json!({"invoice": 42})
+    );
+}
+
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF17
 #[test]
 fn registration_and_the_source_are_both_required_for_a_route() {
@@ -70,6 +144,45 @@ fn registration_and_the_source_are_both_required_for_a_route() {
             .0,
         404
     );
+    // No home for the named company, a folder whose settings name another
+    // company, and a company home that declares no such source.
+    invalid_company_home(
+        &computer,
+        "misnamed",
+        &format!(
+            "schema_version: {}\ncompany: acme\nwebhooks: {{erp: {{secret: '${{ACME_HOOK}}'}}}}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    );
+    company_home(
+        &computer,
+        "acme",
+        "company: acme\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    // Folders whose settings document is invalid: a non-name identity, and
+    // no schema version.
+    invalid_company_home(
+        &computer,
+        "numbered",
+        &format!(
+            "schema_version: {}\ncompany: 17\nwebhooks: {{erp: {{secret: '${{ACME_HOOK}}'}}}}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    );
+    invalid_company_home(
+        &computer,
+        "unversioned",
+        "company: unversioned\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    for route in [
+        "/hooks/inbound/company/absent/erp",
+        "/hooks/inbound/company/misnamed/erp",
+        "/hooks/inbound/company/numbered/erp",
+        "/hooks/inbound/company/unversioned/erp",
+        "/hooks/inbound/company/acme/billing",
+    ] {
+        assert_eq!(receiver.signed(route, BODY, SECRET, &[]).0, 404, "{route}");
+    }
     declare(&computer, "{}");
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 404);
     assert_eq!(
@@ -260,6 +373,28 @@ fn missing_project_configuration_is_a_server_error() {
     let (computer, redis, receiver) = setup();
     std::fs::remove_file(computer.project.path().join("instrukt.yaml")).unwrap();
     assert_eq!(receiver.signed(NATIVE, BODY, SECRET, &[]).0, 500);
+    // An existing company home that cannot be inspected is a failure, never
+    // an absent endpoint.
+    company_home(
+        &computer,
+        "acme",
+        "company: acme\nwebhooks: {erp: {secret: '${ACME_HOOK}'}}\n",
+    );
+    let home = computer.env.instrukt_home().join("companies/acme");
+    std::fs::set_permissions(
+        &home,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o000),
+    )
+    .unwrap();
+    let status = receiver
+        .signed("/hooks/inbound/company/acme/erp", BODY, SECRET, &[])
+        .0;
+    std::fs::set_permissions(
+        &home,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+    )
+    .unwrap();
+    assert_eq!(status, 500);
     assert!(events(&redis).is_empty());
 }
 
@@ -696,12 +831,6 @@ fn a_missing_domain_has_no_endpoint() {
 #[test]
 fn the_old_github_path_has_no_endpoint() {
     absent_route("/hooks/inbound/github/project/fork");
-}
-
-// spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31
-#[test]
-fn company_intake_is_unavailable() {
-    absent_route("/hooks/inbound/company/fork/erp");
 }
 
 // spec: project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework UC-IF31

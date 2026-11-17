@@ -23,47 +23,92 @@ pub const SHIPPED_BLUEPRINT_ENGINES: [&str; 1] = ["graphify"];
 /// The default `github.api_url`.
 pub(crate) const DEFAULT_GITHUB_API_URL: &str = "https://api.github.com";
 
-/// One of the two layers of configuration.
+/// One kind of configuration document: the two layers, and a company
+/// home's own document beside them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayerKind {
     /// `~/.instrukt/instrukt.yaml`: the machine.
     Global,
     /// `instrukt.yaml` at a repository root: the project.
     Project,
+    /// `~/.instrukt/companies/<name>/instrukt.yaml`: a company home's own
+    /// document, read on its own and combined with no layer.
+    Company,
 }
 
 impl LayerKind {
-    fn name(self) -> &'static str {
+    /// The document as a finding names it.
+    fn described(self) -> &'static str {
         match self {
-            LayerKind::Global => "global",
-            LayerKind::Project => "project",
+            LayerKind::Global => "the global layer",
+            LayerKind::Project => "the project layer",
+            LayerKind::Company => "a company home",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Rule {
+    /// Every document (`schema_version`).
+    Every,
     GlobalOnly,
     ProjectOnly,
+    /// The global and the project layer, the project overriding.
     Both,
     /// Both layers may name a shipped adapter; the command form is global
     /// only (`blueprint.engine`).
     ShippedAdapterInProject,
+    /// A project layer or a company home (`webhooks`).
+    ProjectOrCompany,
+    /// A company home only (`company`).
+    CompanyOnly,
+    /// A key this instrukt does not support yet in any document.
+    NotYetSupported,
 }
 
 impl Rule {
     fn permits(self, layer: LayerKind, value: &Value) -> bool {
         match (self, layer) {
-            (Rule::Both, _)
-            | (Rule::GlobalOnly, LayerKind::Global)
-            | (Rule::ProjectOnly, LayerKind::Project)
-            | (Rule::ShippedAdapterInProject, LayerKind::Global) => true,
             (Rule::ShippedAdapterInProject, LayerKind::Project) => value
                 .as_str()
                 .is_some_and(|name| SHIPPED_BLUEPRINT_ENGINES.contains(&name.trim())),
-            (Rule::GlobalOnly, LayerKind::Project) | (Rule::ProjectOnly, LayerKind::Global) => {
-                false
-            }
+            _ => self.admits(layer),
+        }
+    }
+
+    /// Whether `layer` may hold the key at all, whatever its value.
+    fn admits(self, layer: LayerKind) -> bool {
+        matches!(
+            (self, layer),
+            (Rule::Every, _)
+                | (
+                    Rule::Both | Rule::GlobalOnly | Rule::ShippedAdapterInProject,
+                    LayerKind::Global
+                )
+                | (
+                    Rule::Both
+                        | Rule::ProjectOnly
+                        | Rule::ProjectOrCompany
+                        | Rule::ShippedAdapterInProject,
+                    LayerKind::Project
+                )
+                | (
+                    Rule::ProjectOrCompany | Rule::CompanyOnly,
+                    LayerKind::Company
+                )
+        )
+    }
+
+    /// Where the key may live, as a finding names it.
+    fn places(self) -> &'static str {
+        match self {
+            Rule::Every => "every document",
+            Rule::GlobalOnly | Rule::ShippedAdapterInProject => "global layer only",
+            Rule::ProjectOnly => "project layer only",
+            Rule::Both => "global or project layer only",
+            Rule::ProjectOrCompany => "project layer or company home only",
+            Rule::CompanyOnly => "company home only",
+            Rule::NotYetSupported => "not supported yet by this instrukt",
         }
     }
 }
@@ -115,8 +160,14 @@ fn schema() -> Node {
     use Node::Leaf;
     use Rule::{Both, GlobalOnly, ProjectOnly, ShippedAdapterInProject};
     map(vec![
-        ("schema_version", Leaf(Both, Shape::Version)),
+        ("schema_version", Leaf(Rule::Every, Shape::Version)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
+        ("company", Leaf(Rule::CompanyOnly, Shape::Slug)),
+        // Later company-home keys: refused until this instrukt supports them.
+        ("members", Leaf(Rule::NotYetSupported, Shape::Str)),
+        ("profiles", Leaf(Rule::NotYetSupported, Shape::Str)),
+        ("mcp", Leaf(Rule::NotYetSupported, Shape::Str)),
+        ("connectors", Leaf(Rule::NotYetSupported, Shape::Str)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
         (
@@ -158,7 +209,7 @@ fn schema() -> Node {
                 ("local", redis_scope(true)),
             ]),
         ),
-        ("webhooks", Leaf(ProjectOnly, Shape::Webhooks)),
+        ("webhooks", Leaf(Rule::ProjectOrCompany, Shape::Webhooks)),
         ("runtimes", Leaf(GlobalOnly, Shape::Runtimes)),
         (
             "ingress",
@@ -282,22 +333,19 @@ fn check_node(node: &Node, value: &Value, path: &str, layer: LayerKind, out: &mu
                 ));
             }
         }
+        Node::Leaf(Rule::NotYetSupported, _) => out.push(KeyFinding::new(
+            path,
+            FindingKind::NotPermittedInLayer,
+            "not supported yet by this instrukt",
+        )),
         Node::Leaf(rule, shape) => {
             if rule.permits(layer, value) {
                 check_shape(*shape, value, path, out);
             } else {
-                let other = match layer {
-                    LayerKind::Global => LayerKind::Project,
-                    LayerKind::Project => LayerKind::Global,
-                };
                 out.push(KeyFinding::new(
                     path,
                     FindingKind::NotPermittedInLayer,
-                    format!(
-                        "not permitted in the {} layer ({} layer only)",
-                        layer.name(),
-                        other.name()
-                    ),
+                    format!("not permitted in {} ({})", layer.described(), rule.places()),
                 ));
             }
         }
@@ -674,13 +722,7 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
         Node::Leaf(Rule::ShippedAdapterInProject, _) if layer == LayerKind::Project => {
             Some(json!({ "enum": SHIPPED_BLUEPRINT_ENGINES }))
         }
-        Node::Leaf(rule, shape) => {
-            let permitted = !matches!(
-                (rule, layer),
-                (Rule::GlobalOnly, LayerKind::Project) | (Rule::ProjectOnly, LayerKind::Global)
-            );
-            permitted.then(|| json_shape(*shape))
-        }
+        Node::Leaf(rule, shape) => rule.admits(layer).then(|| json_shape(*shape)),
         Node::Map { children, open } => {
             let properties: serde_json::Map<String, serde_json::Value> = children
                 .iter()
@@ -788,6 +830,8 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 Value::Sequence(vec![text(DEFAULT_DEPENDENCY_BRANCH_PREFIX)]),
             );
         }
+        // A company home's document is read alone, without defaults.
+        LayerKind::Company => {}
     }
     Value::Mapping(root)
 }
@@ -933,6 +977,50 @@ mod tests {
             check(&yaml(&format!("{BOTH}{PROJECT_ONLY}")), LayerKind::Project),
             []
         );
+    }
+
+    #[test]
+    fn a_company_home_holds_only_its_identity_and_sources() {
+        use FindingKind::NotPermittedInLayer as N;
+        let company = "schema_version: 1\ncompany: acme\n\
+            webhooks: {erp: {secret: '${ERP_HOOK}'}}\n";
+        assert_eq!(check(&yaml(company), LayerKind::Company), []);
+        assert_eq!(permitted(&yaml(company), LayerKind::Company), yaml(company));
+        let layered = yaml(&format!("{BOTH}{PROJECT_ONLY}ticks: 'off'\n"));
+        let refused = check(&layered, LayerKind::Company);
+        assert!(!refused.is_empty());
+        assert!(refused.iter().all(|f| f.kind == N), "{refused:?}");
+        assert_eq!(
+            permitted(&layered, LayerKind::Company),
+            yaml("schema_version: 1\n")
+        );
+        for layer in [LayerKind::Global, LayerKind::Project] {
+            assert_eq!(
+                judged(&check(&yaml("schema_version: 1\ncompany: acme\n"), layer)),
+                [("company", N)]
+            );
+        }
+        assert_eq!(
+            judged(&check(
+                &yaml("schema_version: 1\nwebhooks: {}\n"),
+                LayerKind::Global
+            )),
+            [("webhooks", N)]
+        );
+        // Keys of a later company-home slice are refused in every document.
+        for layer in [LayerKind::Global, LayerKind::Project, LayerKind::Company] {
+            let later =
+                yaml("schema_version: 1\nmembers: {}\nprofiles: []\nmcp: {}\nconnectors: {}\n");
+            assert_eq!(
+                judged(&check(&later, layer)),
+                [
+                    ("members", N),
+                    ("profiles", N),
+                    ("mcp", N),
+                    ("connectors", N)
+                ]
+            );
+        }
     }
 
     #[test]

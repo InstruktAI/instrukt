@@ -120,6 +120,9 @@ pub struct Assignment {
     pub workspace: Option<PathBuf>,
     pub key: String,
     pub platform: bool,
+    /// The company home a company-home standing assignment works in.
+    #[serde(default)]
+    pub company: Option<crate::ids::ProjectSlug>,
     pub dispatcher: Option<crate::ids::SessionRef>,
 }
 

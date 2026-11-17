@@ -112,7 +112,30 @@ fn key(procedure: &str, home: &str, subject: Option<&str>) -> String {
         None => base,
     }
 }
+/// The folder an exact home executes in on this computer: a project's
+/// registered checkout, the platform's registered instrukt checkout, or a
+/// company's home. An absent home fails visibly; nothing substitutes.
 fn checkout(state: &RunnerState, home: &str) -> Result<(PathBuf, Option<String>), SessionsError> {
+    if let Some(company) = home.strip_prefix("company:") {
+        let name =
+            ProjectSlug::parse(company).map_err(|e| SessionsError::Refused(e.to_string()))?;
+        // The runner's own home: a writing tick persists an older company
+        // document at the current schema before work runs there, while an
+        // inspecting home converts it in memory only.
+        Configuration::load_company(state.home(), &name).map_err(|e| {
+            let reason = match e {
+                instrukt_core::config::ConfigError::NotACompany { finding, .. } => {
+                    format!(" ({finding})")
+                }
+                instrukt_core::config::ConfigError::NoLayer { .. } => String::new(),
+                other => format!(" ({other})"),
+            };
+            SessionsError::Refused(format!(
+                "execution home `{home}` has no company home on this computer{reason}"
+            ))
+        })?;
+        return Ok((state.home().company_dir(&name), None));
+    }
     let project = if let Some(project) = home.strip_prefix("project:") {
         project
     } else if home == "platform" {
@@ -132,6 +155,20 @@ fn checkout(state: &RunnerState, home: &str) -> Result<(PathBuf, Option<String>)
             ))
         })?;
     Ok((record.checkout, Some(project.into())))
+}
+/// The configuration governing a responsibility executing in `root`: the
+/// machine's for the platform and company homes, the project's own for a
+/// project home.
+fn execution_config(
+    home: &instrukt_core::home::Home,
+    exact_home: &str,
+    root: &std::path::Path,
+) -> Result<Configuration, SessionsError> {
+    Ok(if exact_home.starts_with("project:") {
+        Configuration::load(home, Some(root))?
+    } else {
+        Configuration::load_global(home)?
+    })
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct AssignmentFacts {
@@ -237,11 +274,7 @@ fn deliver_group(
 ) -> Result<(), SessionsError> {
     let first = &items[0];
     let (root, project) = checkout(state, &first.home)?;
-    let config = if first.home == "platform" {
-        Configuration::load_global(state.home())?
-    } else {
-        Configuration::load(state.home(), Some(&root))?
-    };
+    let config = execution_config(state.home(), &first.home, &root)?;
     if !config.module_enabled(instrukt_core::config::Module::Events)? {
         return Ok(());
     }
@@ -349,12 +382,6 @@ fn deliver_group(
         .transpose()
         .map_err(|e| SessionsError::Refused(e.to_string()))?
         .unwrap_or_else(|| first.declaration.clone());
-    if fixed.subscription_attendance == SubscriptionAttendance::Unattended {
-        return Err(SessionsError::Refused(format!(
-            "runtime `{}` lacks attendance-aware visibility",
-            selected_runtime.name()
-        )));
-    }
     let mut session = existing
         .as_ref()
         .and_then(|r| r.2.as_ref())
@@ -400,12 +427,6 @@ fn deliver_group(
                         "successor needs the currently published procedure".into(),
                     )
                 })?;
-            if current.subscription_attendance == SubscriptionAttendance::Unattended {
-                return Err(SessionsError::Refused(format!(
-                    "runtime `{}` lacks attendance-aware visibility",
-                    selected_runtime.name()
-                )));
-            }
             let known=state.read(|conn,path|{let mut q=conn.prepare("SELECT semantic_key FROM procedure_generations WHERE responsibility=?1 UNION SELECT semantic_key FROM procedure_responsibilities WHERE responsibility=?1").map_err(state::sql(path))?;q.query_map([responsibility],|r|r.get::<_,String>(0)).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))})?.unwrap_or_default();
             if listed
                 .iter()
@@ -422,6 +443,7 @@ fn deliver_group(
                 state,
                 Successor {
                     responsibility,
+                    home: &first.home,
                     root: &root,
                     project: project.as_deref(),
                     old_session: target,
@@ -575,11 +597,17 @@ pub(crate) fn settle(state: &RunnerState) -> Result<(), StateError> {
 pub enum BindingHome {
     Project(ProjectSlug),
     Platform,
+    Company(ProjectSlug),
 }
 impl BindingHome {
     fn from_key(value: &str) -> Result<Self, SessionsError> {
         if value == "platform" {
             return Ok(Self::Platform);
+        }
+        if let Some(company) = value.strip_prefix("company:") {
+            return Ok(Self::Company(
+                ProjectSlug::parse(company).map_err(|e| SessionsError::Refused(e.to_string()))?,
+            ));
         }
         let project = value.strip_prefix("project:").ok_or_else(|| {
             SessionsError::Refused("standing reservation has an unsupported home".into())
@@ -592,17 +620,35 @@ impl BindingHome {
         match self {
             Self::Project(project) => format!("project:{project}"),
             Self::Platform => "platform".into(),
+            Self::Company(company) => format!("company:{company}"),
         }
     }
 }
-fn manual_home(config: &Configuration, entry: &IndexEntry) -> Result<BindingHome, SessionsError> {
-    match entry.subscription_home {
-        Some(instrukt_core::subscription::SubscriptionHome::Project) => {
+/// The procedure's declared home: the caller's project, the platform, or
+/// the company named with `--company`, which only a company-home
+/// procedure takes.
+fn manual_home(
+    config: &Configuration,
+    entry: &IndexEntry,
+    company: Option<&ProjectSlug>,
+) -> Result<BindingHome, SessionsError> {
+    use instrukt_core::subscription::SubscriptionHome;
+    match (entry.subscription_home, company) {
+        (Some(SubscriptionHome::Company), Some(company)) => {
+            Ok(BindingHome::Company(company.clone()))
+        }
+        (Some(SubscriptionHome::Company), None) => Err(SessionsError::Refused(
+            "a company-home standing entry names its company with --company <name>".into(),
+        )),
+        (_, Some(_)) => Err(SessionsError::Refused(
+            "--company addresses only a procedure declaring company home".into(),
+        )),
+        (Some(SubscriptionHome::Project), None) => {
             Ok(BindingHome::Project(config.project()?.ok_or_else(
                 || SessionsError::Refused("standing entry needs a project".into()),
             )?))
         }
-        Some(instrukt_core::subscription::SubscriptionHome::Platform) => Ok(BindingHome::Platform),
+        (Some(SubscriptionHome::Platform), None) => Ok(BindingHome::Platform),
         _ => Err(SessionsError::Refused(
             "this standing home cannot execute here".into(),
         )),
@@ -613,6 +659,7 @@ pub fn binding_home(
     config: &Configuration,
     procedure: &instrukt_core::ids::SnippetId,
     reservation: Option<&str>,
+    company: Option<&ProjectSlug>,
 ) -> Result<BindingHome, SessionsError> {
     if let Some(token) = reservation {
         let value = RunnerState::new(home)
@@ -635,7 +682,7 @@ pub fn binding_home(
     }
     let entry = crate::launch::procedure(home, procedure)
         .map_err(|e| SessionsError::Refused(e.to_string()))?;
-    manual_home(config, &entry)
+    manual_home(config, &entry, company)
 }
 
 /// Record-only deliberate entry, serialized with automatic responsibility delivery.
@@ -664,6 +711,8 @@ pub struct ManualEntry<'a> {
     pub config: &'a Configuration,
     pub env: &'a instrukt_core::config::Env,
     pub entry: &'a IndexEntry,
+    /// The company home a company-home procedure is entered in.
+    pub company: Option<&'a ProjectSlug>,
     pub args: Option<&'a str>,
     pub brief: Option<&'a str>,
 }
@@ -676,6 +725,7 @@ pub fn reserve_manual(
         config,
         env,
         entry,
+        company,
         args,
         brief,
     } = *request;
@@ -688,7 +738,7 @@ pub fn reserve_manual(
             "manual entry requires a subscribed home-identity procedure".into(),
         ));
     }
-    let home = manual_home(config, entry)?.key();
+    let home = manual_home(config, entry, company)?.key();
     if !config.module_enabled(instrukt_core::config::Module::Events)? {
         return Err(SessionsError::Refused(
             "standing entry requires modules.events".into(),
@@ -806,6 +856,7 @@ pub fn bind_manual(
 
 struct Successor<'a> {
     responsibility: &'a str,
+    home: &'a str,
     root: &'a std::path::Path,
     project: Option<&'a str>,
     old_session: &'a SessionRef,
@@ -819,26 +870,12 @@ fn prepare_successor(
     state: &RunnerState,
     cx: Successor<'_>,
 ) -> Result<(String, Vec<Pending>), SessionsError> {
-    let mut prefix = loader(
-        state.home(),
-        cx.current,
-        &state
-            .read(|conn, path| {
-                conn.query_row(
-                    "SELECT exact_home FROM procedure_responsibilities WHERE responsibility=?1",
-                    [cx.responsibility],
-                    |r| r.get::<_, String>(0),
-                )
-                .map_err(state::sql(path))
-            })?
-            .ok_or_else(|| SessionsError::Refused("missing responsibility".into()))?,
-        cx.subject,
-    )?;
+    let mut prefix = loader(state.home(), cx.current, cx.home, cx.subject)?;
     if let Some(opening) = cx.opening {
         prefix.push('\n');
         prefix.push_str(opening);
     }
-    let config = Configuration::load_at(state.home(), cx.root)?;
+    let config = execution_config(state.home(), cx.home, cx.root)?;
     let order = crate::agents::role_order(&config, None, cx.current.role.as_deref())?;
     let selection = crate::agents::selections(&config, state.home(), &order, cx.now)?
         .into_iter()
