@@ -952,17 +952,16 @@ fn intake_worker(
 /// addressed message.
 type Place = (String, String);
 
-/// Slack's status line for one company, kept apart from intake and the
-/// relay, so no status call holds a message. A message's admission wakes
-/// the pass, which sets the status of newly admitted places before any other
-/// call, so the person sees at once that the request was taken on. Beyond
-/// that first setting the status is a courtesy kept on a best-effort basis:
-/// a plain periodic pass reads the places with unfinished admitted messages,
-/// sets each whose last attempt is [`STATUS_INTERVAL`] old or more, and
-/// clears once each place this process set that has no unfinished work
-/// left. A call that fails or is skipped is left to the next regular
-/// setting, and a clear that does not happen to Slack's own two minutes;
-/// nothing is made up for and nothing set by an earlier run is cleared.
+/// Slack's status line for one company, a courtesy kept on a best-effort
+/// basis apart from intake and the relay, so no status call holds a
+/// message. A plain periodic pass reads the places with unfinished admitted
+/// messages, sets each whose last attempt is [`STATUS_INTERVAL`] old or
+/// more, and clears once each place this process set that has no unfinished
+/// work left. A message's admission wakes the pass, so its first status
+/// comes promptly. A call that fails or is skipped is left to the next
+/// regular setting, and a clear that does not happen to Slack's own two
+/// minutes; nothing is made up for and nothing set by an earlier run is
+/// cleared.
 fn status_worker(
     home: &Home,
     endpoint: &SlackEndpoint,
@@ -972,7 +971,6 @@ fn status_worker(
     admitted: &std::sync::mpsc::Receiver<()>,
 ) {
     let mut attempted: HashMap<Place, Instant> = HashMap::new();
-    let mut seen: std::collections::HashSet<(String, String)> = Default::default();
     let mut failing: Option<String> = None;
     while !stop() {
         let pass = SlackApi::with(home, company, declared, endpoint)
@@ -982,13 +980,12 @@ fn status_worker(
                     conversations::working(home, company, SLACK).map_err(|e| e.to_string())?;
                 Ok((api, working))
             });
-        let mut woken = false;
         match pass {
             Ok((api, working)) => {
                 if let Some(cause) = failing.take() {
                     tracing::info!(event = "connector_status_recovered", company = %company, cause = %cause);
                 }
-                woken = keep(&api, &working, &mut seen, &mut attempted, admitted);
+                keep(&api, &working, &mut attempted);
             }
             // A continuing cause is logged once, when it starts or changes.
             Err(cause) => {
@@ -998,9 +995,8 @@ fn status_worker(
                 }
             }
         }
-        // A pass an admission cut short starts again at once.
         let until = Instant::now() + STATUS_TICK;
-        while !woken && Instant::now() < until && !stop() {
+        while Instant::now() < until && !stop() {
             if admitted.recv_timeout(Duration::from_millis(100)).is_ok() {
                 break;
             }
@@ -1014,43 +1010,18 @@ fn place(conversation: &str, message: &str) -> Place {
     (channel.to_owned(), thread.unwrap_or(message).to_owned())
 }
 
-/// One status pass: first set the places of messages admitted since the
-/// last pass, however recently each place was set; then set what stays and
-/// is due, and clear once what no longer stays. An admission that arrives during the pass ends it before
-/// the next renewal or clear and reports `true`, so its place is set first
-/// in the next pass; what this pass left is still due then. Each call's
-/// outcome is only logged.
-fn keep(
-    api: &SlackApi,
-    working: &[(String, String)],
-    seen: &mut std::collections::HashSet<(String, String)>,
-    attempted: &mut HashMap<Place, Instant>,
-    admitted: &std::sync::mpsc::Receiver<()>,
-) -> bool {
+/// One status pass: set what stays and is due, clear once what no longer
+/// stays. Each call's outcome is only logged.
+fn keep(api: &SlackApi, working: &[(String, String)], attempted: &mut HashMap<Place, Instant>) {
     let wanted: std::collections::HashSet<Place> = working
         .iter()
         .map(|(conversation, message)| place(conversation, message))
         .collect();
-    let fresh: std::collections::HashSet<Place> = working
-        .iter()
-        .filter(|message| !seen.contains(*message))
-        .map(|(conversation, message)| place(conversation, message))
-        .collect();
-    *seen = working.iter().cloned().collect();
-    let (new, known): (Vec<&Place>, Vec<&Place>) =
-        wanted.iter().partition(|target| fresh.contains(*target));
-    for target in new {
-        attempted.insert(target.clone(), Instant::now());
-        call(api, target, WORKING);
-    }
-    for target in known {
+    for target in &wanted {
         let due = attempted
             .get(target)
             .is_none_or(|at| at.elapsed() >= STATUS_INTERVAL);
         if due {
-            if admitted.try_recv().is_ok() {
-                return true;
-            }
             attempted.insert(target.clone(), Instant::now());
             call(api, target, WORKING);
         }
@@ -1061,13 +1032,9 @@ fn keep(
         .cloned()
         .collect();
     for target in ended {
-        if admitted.try_recv().is_ok() {
-            return true;
-        }
         attempted.remove(&target);
         call(api, &target, "");
     }
-    false
 }
 
 fn call(api: &SlackApi, target: &Place, status: &str) {
