@@ -66,11 +66,22 @@ pub fn measure_limits_on(clock: LimitClock) {
 /// The longest pause between two looks at a running command.
 const LONGEST_PAUSE: Duration = Duration::from_millis(50);
 
-/// A command's limit and where it is measured from.
+/// A program's limit, measured from its start in real time, or on the
+/// operator's clock when one is given ([`measure_limits_on`]).
 #[derive(Clone, Copy)]
-struct Limit {
+pub struct Limit {
     limit: Duration,
     start: Start,
+}
+
+/// What a look at a running program finds against its limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Look<T> {
+    /// The program ended within its limit.
+    Ended(T),
+    Running,
+    /// The limit passed.
+    Passed,
 }
 
 #[derive(Clone, Copy)]
@@ -82,6 +93,44 @@ enum Start {
 }
 
 impl Limit {
+    /// `limit`, measured from now; a clock without a time is the error.
+    pub fn start(limit: Duration) -> Result<Self, String> {
+        Self::from(limit, Instant::now())
+    }
+
+    /// `limit`, measured from `started`, read on the operator's clock now
+    /// when one is given.
+    fn from(limit: Duration, started: Instant) -> Result<Self, String> {
+        let start = match LIMIT_CLOCK.get() {
+            None => Start::Real(started + limit),
+            Some(clock) => Start::Clock(clock, clock()?),
+        };
+        Ok(Self { limit, start })
+    }
+
+    /// The limit the program was given.
+    pub fn limit(&self) -> Duration {
+        self.limit
+    }
+
+    /// Judges `ended`, what a look at the program found just before. In
+    /// real time an end always counts. On the operator's clock an end counts
+    /// only when the clock, read after it, is still within the limit: a
+    /// clock moved past the limit while the program ran stops it, however
+    /// soon the program ended after the move.
+    pub fn judge<T>(&self, ended: Option<T>) -> Result<Look<T>, String> {
+        let passed = match self.start {
+            Start::Real(_) if ended.is_some() => false,
+            Start::Real(deadline) => Instant::now() >= deadline,
+            Start::Clock(..) => self.passed_on_clock()?,
+        };
+        Ok(match ended {
+            _ if passed => Look::Passed,
+            Some(ended) => Look::Ended(ended),
+            None => Look::Running,
+        })
+    }
+
     /// Whether the operator's clock has passed the limit; real time is
     /// asked by its own waits.
     fn passed_on_clock(&self) -> Result<bool, String> {
@@ -237,14 +286,7 @@ impl<'a> Invocation<'a> {
     /// operator's clock when one is given; a clock without a time refuses
     /// the command.
     fn limit(&self, timeout: Duration, started: Instant) -> Result<Limit, ProcessError> {
-        let start = match LIMIT_CLOCK.get() {
-            None => Start::Real(started + timeout),
-            Some(clock) => Start::Clock(clock, clock().map_err(|reason| self.clock(reason))?),
-        };
-        Ok(Limit {
-            limit: timeout,
-            start,
-        })
+        Limit::from(timeout, started).map_err(|reason| self.clock(reason))
     }
 
     /// Waits for `child` to end, or until its limit passes; the timeout
@@ -271,21 +313,12 @@ impl<'a> Invocation<'a> {
                     std::thread::sleep(pause.min(deadline - now));
                 }
                 Start::Clock(..) => {
-                    // An end counts only when the clock, read after it, is
-                    // still within the limit: a clock moved past the limit
-                    // while the command ran stops it, however soon the
-                    // command ended after the move.
                     let ended = child.try_wait().map_err(|source| self.io(source))?;
-                    if limit
-                        .passed_on_clock()
-                        .map_err(|reason| self.clock(reason))?
-                    {
-                        return Err(self.timeout(limit.limit));
+                    match limit.judge(ended).map_err(|reason| self.clock(reason))? {
+                        Look::Ended(status) => return Ok(status),
+                        Look::Passed => return Err(self.timeout(limit.limit)),
+                        Look::Running => std::thread::sleep(pause),
                     }
-                    if let Some(status) = ended {
-                        return Ok(status);
-                    }
-                    std::thread::sleep(pause);
                 }
             }
             pause = (pause * 2).min(LONGEST_PAUSE);
@@ -308,7 +341,17 @@ impl<'a> Invocation<'a> {
                 .map_err(|_| self.timeout(limit)),
             Some(clocked) => loop {
                 match receiver.recv_timeout(LONGEST_PAUSE) {
-                    Ok(delivered) => break Ok(delivered),
+                    // Delivered counts only when the clock, read after it,
+                    // is still within the limit.
+                    Ok(delivered) => {
+                        if clocked
+                            .passed_on_clock()
+                            .map_err(|reason| self.clock(reason))?
+                        {
+                            break Err(self.timeout(clocked.limit));
+                        }
+                        break Ok(delivered);
+                    }
                     Err(RecvTimeoutError::Disconnected) => break Err(self.ended()),
                     Err(RecvTimeoutError::Timeout) => {
                         if clocked
@@ -422,6 +465,20 @@ fn install_signals() -> std::io::Result<()> {
         Ok(())
     }).as_ref().map(|_|()).map_err(|e|std::io::Error::other(e.clone()))
 }
+/// Ends this process with `code` after stopping every command group it
+/// owns, as an interruption does: a refusal that ends the whole process
+/// leaves none of its commands running, whichever thread started them.
+pub fn exit_stopping_owned(code: i32) -> ! {
+    // Held to the end: no command starts after the groups were stopped.
+    let registry = groups();
+    for pid in registry.iter().copied() {
+        if let Err(error) = kill_group(pid) {
+            tracing::error!(event="exit_group_cleanup_failed",pid=pid.as_raw_nonzero().get(),error=%error);
+        }
+    }
+    std::process::exit(code)
+}
+
 fn kill_group(pid: rustix::process::Pid) -> std::io::Result<()> {
     match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
         Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),

@@ -58,14 +58,15 @@ impl Clock {
         }
     }
 
-    /// The time now; a clock file without a time ends the command here.
+    /// The time now; a clock file without a time ends the command here,
+    /// stopping the commands it started.
     pub fn now(&self) -> Timestamp {
         match self {
             Clock::System => Timestamp::now(),
             Clock::Fixed(at) => *at,
             Clock::File(path) => read_file(path).unwrap_or_else(|error| {
                 eprintln!("instrukt: {error:#}");
-                std::process::exit(1)
+                instrukt_core::process::exit_stopping_owned(1)
             }),
         }
     }

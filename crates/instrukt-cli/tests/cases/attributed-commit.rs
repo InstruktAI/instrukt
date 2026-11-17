@@ -6,9 +6,15 @@
 )]
 
 use crate::common;
-use std::io::{Read as _, Write as _};
+use std::io::{Read, Write as _};
+use std::os::fd::AsFd as _;
 use std::os::unix::fs::PermissionsExt as _;
-use std::process::Stdio;
+use std::path::Path;
+use std::process::{Child, Output, Stdio};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -66,8 +72,79 @@ fn staged(repo: &Repo) -> String {
 const STARTED: &str = "2026-11-03T12:00:00Z";
 const PAST_GIT_LIMIT: &str = "2026-11-03T12:05:00Z";
 
+/// How long, in real time, each step of a held commit may take before the
+/// test fails. The commit's own limit runs on the file clock, which only the
+/// test moves, so this bound never races it.
+const STEP_BOUND: Duration = Duration::from_secs(30);
+/// The pause between two looks at instrukt while a step is awaited.
+const LOOK: Duration = Duration::from_millis(20);
+
+/// The held commit's instrukt. Left running when the test fails, it is
+/// interrupted, which stops the groups it owns, git and the hook among
+/// them, and reaped.
+struct Running {
+    child: Child,
+    stdout: Option<JoinHandle<Vec<u8>>>,
+    stderr: Option<JoinHandle<Vec<u8>>>,
+}
+
+impl Running {
+    fn spawn(mut command: std::process::Command) -> Self {
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let drain = |mut pipe: Box<dyn Read + Send>| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                pipe.read_to_end(&mut bytes).unwrap();
+                bytes
+            })
+        };
+        let stdout = drain(Box::new(child.stdout.take().unwrap()));
+        let stderr = drain(Box::new(child.stderr.take().unwrap()));
+        Self {
+            child,
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+        }
+    }
+
+    /// What instrukt left, once it has ended.
+    fn ended(&mut self) -> Option<Output> {
+        let status = self.child.try_wait().unwrap()?;
+        Some(Output {
+            status,
+            stdout: self.stdout.take().unwrap().join().unwrap(),
+            stderr: self.stderr.take().unwrap().join().unwrap(),
+        })
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        let pid = rustix::process::Pid::from_child(&self.child);
+        if let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
+            eprintln!("cannot interrupt the held commit's instrukt: {error}");
+        }
+        let deadline = Instant::now() + STEP_BOUND;
+        while Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(LOOK);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Runs `instrukt repo commit <args>` in `repo` while the project's
-/// pre-commit hook holds the commit: once the hook says it was entered, the
+/// pre-commit hook holds the commit: once the hook's entry arrives, the
 /// clock instrukt reads (`INSTRUKT_NOW=@<file>`) moves past git's limit, and
 /// only then is the hook released to end.
 fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> Assert {
@@ -91,35 +168,68 @@ fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> 
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     let clock = held.join("now");
     std::fs::write(&clock, STARTED).unwrap();
+    // Each pipe is opened for reading and writing: opening waits for no
+    // one, reading the entry sees no end before the hook writes, and the
+    // release line stays in its pipe until the hook reads it.
+    let open = |fifo: &Path| {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(fifo)
+            .unwrap()
+    };
+    let mut entry = open(&entered);
 
-    let child = env
-        .instrukt_process(repo.path())
+    let mut command = env.instrukt_process(repo.path());
+    command
         .args(["repo", "commit"])
         .args(args)
-        .env("INSTRUKT_NOW", format!("@{}", clock.display()))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut said = String::new();
-    std::fs::File::open(&entered)
-        .unwrap()
-        .read_to_string(&mut said)
-        .unwrap();
-    assert_eq!(said, "entered\n", "the hook holds the commit");
+        .env("INSTRUKT_NOW", format!("@{}", clock.display()));
+    let mut running = Running::spawn(command);
+    let deadline = Instant::now() + STEP_BOUND;
+    loop {
+        let mut look = [PollFd::new(entry.as_fd(), PollFlags::POLLIN)];
+        if poll(&mut look, PollTimeout::try_from(LOOK).unwrap()).unwrap() > 0 {
+            break;
+        }
+        let early = running.ended().map(|output| {
+            format!(
+                "{}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        assert!(
+            early.is_none(),
+            "instrukt ended before the hook was entered ({early:?})"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the hook was not entered within {STEP_BOUND:?}"
+        );
+    }
+    let mut arrival = [0_u8; 64];
+    assert!(
+        entry.read(&mut arrival).unwrap() > 0,
+        "the hook's entry arrived"
+    );
+
     let moved = held.join("now.moved");
     std::fs::write(&moved, PAST_GIT_LIMIT).unwrap();
     std::fs::rename(&moved, &clock).unwrap();
-    // Opened for reading as well, the release waits for no reader, and its
-    // line stays in the pipe until the hook reads it.
-    let mut released = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&release)
-        .unwrap();
+    let mut released = open(&release);
     released.write_all(b"go\n").unwrap();
-    let output = child.wait_with_output().unwrap();
-    drop(released);
+    let deadline = Instant::now() + STEP_BOUND;
+    let output = loop {
+        if let Some(output) = running.ended() {
+            break output;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "instrukt did not end within {STEP_BOUND:?} after the hook was released"
+        );
+        std::thread::sleep(LOOK);
+    };
     std::fs::remove_file(&hook).unwrap();
     Assert::new(output)
 }
