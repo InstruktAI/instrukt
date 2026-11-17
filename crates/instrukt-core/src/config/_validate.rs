@@ -356,6 +356,23 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
             "webhook sources require modules.events enabled",
         ));
     }
+    if kind == LayerKind::Company
+        && value
+            .get("connectors")
+            .and_then(Value::as_mapping)
+            .is_some_and(|connectors| !connectors.is_empty())
+        && effective
+            .get("modules")
+            .and_then(|m| m.get(super::CONVERSATIONS))
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        found.push(KeyFinding::new(
+            "connectors",
+            FindingKind::ModuleSwitchedOff,
+            "a declared connector requires the machine's modules.conversations enabled",
+        ));
+    }
     found
 }
 
@@ -373,7 +390,7 @@ fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFindi
     if name.is_some() && chosen.is_none() {
         return;
     }
-    for module in ["events", "todos"] {
+    for module in ["events", "todos", super::CONVERSATIONS] {
         let on = value
             .get("modules")
             .and_then(|m| m.get(module))
@@ -444,7 +461,10 @@ fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<K
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
-        if path == "webhooks" || path.starts_with("webhooks.") || path.starts_with("github.apps.") {
+        if ["webhooks", "github.apps", "members", "connectors"]
+            .iter()
+            .any(|root| path == *root || path.starts_with(&format!("{root}.")))
+        {
             continue;
         }
         let error = Interpolator::new(effective, Mode::Check)
@@ -578,6 +598,36 @@ mod tests {
         let doc = current_document("runner: {runtime: t3}\nmodules: {todos: true, events: true}");
         let found = judge(&doc, LayerKind::Global, None);
         assert!(found.is_empty());
+    }
+    #[test]
+    fn conversations_need_a_chosen_runtime() {
+        let doc = current_document("modules: {conversations: true}");
+        assert_eq!(
+            judge(&doc, LayerKind::Global, None)
+                .iter()
+                .map(|f| (f.key.as_str(), f.kind))
+                .collect::<Vec<_>>(),
+            [("modules.conversations", FindingKind::NoRuntimeChosen)]
+        );
+        let chosen = current_document("runner: {runtime: t3}\nmodules: {conversations: true}");
+        assert!(judge(&chosen, LayerKind::Global, None).is_empty());
+    }
+    #[test]
+    fn a_declared_connector_needs_the_machines_conversations_switch() {
+        let company = current_document(
+            "company: acme\nconnectors: {slack: {app_token: '${A}', bot_token: '${B}'}}",
+        );
+        let off = current_document("modules: {conversations: false}");
+        let on = current_document("modules: {conversations: true}");
+        let switched_off = |global: &Value| {
+            judge(&company, LayerKind::Company, Some(global))
+                .iter()
+                .filter(|f| f.kind == FindingKind::ModuleSwitchedOff)
+                .map(|f| f.key.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(switched_off(&off), ["connectors"]);
+        assert!(switched_off(&on).is_empty());
     }
     #[test]
     fn references_still_detect_cycles_and_missing_keys() {

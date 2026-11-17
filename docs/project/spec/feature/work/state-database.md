@@ -437,6 +437,58 @@ These tables realize the runner's contract in
 migration and writer boundary, not the relay decision. Native stream and send
 operations run outside local writer transactions.
 
+**Conversation tables** — what conversations through connectors keep, under
+`project/instrukt/spec/feature/runner/conversations`. A conversation's address
+is `(company, connector, conversation)`.
+
+**`connected_conversations`** — one row per conversation. Key: the address.
+
+| Column | Meaning |
+| --- | --- |
+| `semantic_key` | The key its one session is started and woken by. |
+| `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
+| `session` | The bound session; `NULL` until a start is bound. |
+| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
+| `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
+
+**`conversation_messages`** — one row per addressed message. Key: the address
+and `message`, the connector's identity of that message.
+
+| Column | Meaning |
+| --- | --- |
+| `member` | The member who wrote it, by key in the company's member list. |
+| `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
+| `arrived_at` | When it was stored. |
+| `state` | `received` once stored; `pending` once what accompanies it is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `text` | The message's text as written. |
+| `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
+| `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
+| `turn` | The native turn that answered it; `NULL` until then. |
+| `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
+
+**`conversation_answers`** — the pieces of an answer, in order. Key: the
+address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
+when the connector accepted its post, `NULL` while outstanding; `failure`, the
+cause of its last failed post, `NULL` once posted.
+
+**`conversation_refusals`** — the one fixed reply owed to a sender no member
+lists. Key: the address and `sender`. Columns: `received_at`; `replied_at`,
+when the connector accepted the reply, `NULL` while outstanding; `failure`.
+
+**`connector_states`** — one row per declared connector. Key:
+`(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
+`failed` or `stopped`; `failure`, its cause; `updated_at`.
+
+**`conversation_relay`** — one row: `failure`, the cause while the relay that
+serves conversations is not running, `NULL` while it runs; `updated_at`.
+
+A message is stored before the connector acknowledges it to its provider.
+Reading a finished turn and the connector accepting a post are separate
+boundaries: an answer's pieces are stored in the same transaction as the
+position that read them and the message's `answered` state, and `posted_at`
+is set only when the connector accepted that piece. These tables hold no
+credential.
+
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
 unchanged `304` reuses).
@@ -546,6 +598,10 @@ remain as identity caches, including completed occurrences and standalone runs.
 Local events and settled cursors are retained as operational accounting. Redis
 stream retention separately bounds replay; occurrence duplicate marks expire
 after seven days. Local history does not backfill a newly created Redis group.
+Conversation bindings, addressed messages, answer pieces and refusal receipts
+are kept with their text, captured context and framed input after delivery and
+posting; a `failure` cause is the only value cleared, when its operation
+recovers.
 
 ### Agent capacity
 
@@ -573,6 +629,8 @@ agents use `instrukt agents availability|status`, never direct database queries.
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
+- Conversation text is kept without a limit: addressed messages, what
+  accompanied them, their framed input and the answers stay in the database.
 - Work recorded only in an earlier build's file store is not read. Reflect
   it to GitHub with that build before upgrading; after the upgrade it enters
   the database again by pull-through.

@@ -194,3 +194,51 @@ fn each_company_resolves_its_own_secret_and_never_the_machines_or_anothers() {
         output.replace(&home, "[INSTRUKT_HOME]")
     );
 }
+
+// spec: project/instrukt/spec/feature/configuration/company-homes UC-CH3
+#[test]
+fn members_are_listed_once_with_their_logins_as_references_and_a_shared_identity_is_refused() {
+    let env = TestEnv::new();
+    let here = env.path("");
+    company(
+        &env,
+        "acme",
+        Some(
+            "{members: {steven: {name: Steven Sonneveld, slack: U04ABC123, credentials: {erpnext: '${STEVEN_ERPNEXT_LOGIN}'}}, anna: {slack: U04DEF456}}}",
+        ),
+    );
+    env.run(&here, ["config", "validate", "--company", "acme"])
+        .success();
+    insta::assert_snapshot!(
+        "company-members",
+        stdout(
+            &env.run(&here, ["config", "get", "--company", "acme", "members"])
+                .success()
+        )
+    );
+    // A second member listing the same Slack identity is refused, naming both.
+    let revision = stdout(
+        &env.run(&here, ["config", "get", "--company", "acme", "--revision"])
+            .success(),
+    );
+    let refused = env
+        .run(
+            &here,
+            [
+                "config",
+                "patch",
+                "--company",
+                "acme",
+                "--revision",
+                revision.trim(),
+                "--yaml",
+                "{members: {bram: {slack: U04ABC123, credentials: {erpnext: plain-password}}}}",
+            ],
+        )
+        .failure();
+    let home = env.instrukt_home().display().to_string();
+    insta::assert_snapshot!(
+        "company-members-refused",
+        String::from_utf8_lossy(&refused.get_output().stderr).replace(&home, "[INSTRUKT_HOME]")
+    );
+}

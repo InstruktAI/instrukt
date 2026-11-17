@@ -8,7 +8,7 @@ use crate::runtime::{
     conversations::{ConversationSource, SourcePosition},
 };
 pub use _management::{Discussion, Operation, manage};
-pub(crate) use _watch::{Worker, record as record_failure};
+pub(crate) use _watch::{Destinations, Worker, record as record_failure};
 use instrukt_core::{
     capabilities::RoleClass,
     config::Agents,
@@ -504,7 +504,7 @@ fn relay_direction(
                 d.source.id.as_str(),
                 &format!("{}:{}", source.identity(), d.source.id),
                 &format!("{}:{}", source.identity(), d.target.id),
-            );
+            )?;
             for (id, content) in turns {
                 if d.seen.insert(id.clone()) {
                     d.pending.push(Pending {

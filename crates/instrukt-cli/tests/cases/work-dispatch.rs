@@ -134,7 +134,7 @@ fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD2
 #[test]
 fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both() {
-    let env = TestEnv::new();
+    let mut env = TestEnv::new();
     let rt = FakeRuntime::new(&env, "rt", false);
     global_layer(&env, "todos: false, events: false, history: false", &[&rt]);
     let repo = env.git_repo("demo");
@@ -154,6 +154,39 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
         );
     }
     assert!(rt.calls().is_empty(), "{:?}", rt.calls());
+
+    // Conversations on and a company declaring a connector: the runner runs
+    // with work tracking and event responses off; a tick still serves only
+    // those two and keeps refusing.
+    let slack = crate::fixtures::slack::FakeSlack::start();
+    env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
+    let _source = crate::fixtures::history::T3Store::new(&env);
+    global_layer(
+        &env,
+        "todos: false, events: false, history: false, conversations: true",
+        &[&rt],
+    );
+    crate::fixtures::conversing::company_home(
+        &env,
+        "acme",
+        crate::fixtures::slack::APP_TOKEN,
+        crate::fixtures::slack::BOT_TOKEN,
+        &crate::fixtures::conversing::slack_settings("{}", ""),
+    );
+    let refused = env.run(repo.path(), ["tick"]).failure();
+    insta::assert_snapshot!(
+        "refused-tick",
+        String::from_utf8_lossy(&refused.get_output().stderr)
+    );
+    let _runner = crate::fixtures::conversing::Running::spawn(
+        env.instrukt_process(repo.path())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
+    crate::fixtures::conversing::wait("the runner's connector connection", || {
+        slack.connections() > 0
+    });
 }
 
 fn selection_config(project: &Tracked, settings: &str) {

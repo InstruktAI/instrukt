@@ -96,6 +96,8 @@ if command=='list':
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
     if (root/'empty-start').exists(): sys.exit(0)
+    if (root/'die-before-start').exists():
+        (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
     n=len(all_threads())+1
     id='s'+str(n)
     checkout=str(pathlib.Path(operands[0]).resolve())
@@ -121,7 +123,7 @@ elif command=='send':
     run='run:'+t['threadId']+':'+str(len(t['messages'])+2)
     if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
         queued=False; t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
-    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued}); save(t)
+    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued}); save(t)
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
 elif command=='show':

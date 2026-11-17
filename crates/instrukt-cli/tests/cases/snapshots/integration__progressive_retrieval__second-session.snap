@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
+assertion_line: 657
 expression: "stdout(&env, &second)"
 ---
 # instrukt docs get: acme/procedure/report
@@ -29,6 +30,7 @@ blueprint: false
 todos: false
 events: false
 history: true
+conversations: false
 ```
 
 Then report.

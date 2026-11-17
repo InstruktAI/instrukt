@@ -1,4 +1,6 @@
 //! Boundary fixtures shared by every CLI scenario.
+#[path = "support/conversing.rs"]
+pub mod conversing;
 #[path = "support/documented.rs"]
 pub mod documented;
 #[path = "support/event_transport.rs"]
@@ -13,6 +15,8 @@ pub mod history;
 pub mod mapped;
 #[path = "support/runtime.rs"]
 pub mod runtime;
+#[path = "support/slack.rs"]
+pub mod slack;
 #[path = "support/t3.rs"]
 pub mod t3;
 #[path = "support/webhooks.rs"]

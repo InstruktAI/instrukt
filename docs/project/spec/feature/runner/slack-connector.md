@@ -29,7 +29,7 @@ connectors:
 | `connectors.slack` | Company home only; one Slack workspace per company home. |
 | `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
-| `context_messages` | How many earlier messages accompany the first tag in a conversation. A positive whole number; 30 when omitted. |
+| `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
 
 A literal token, a missing token and an unknown field are validation findings
 naming the company and the field. A member's Slack identity is
@@ -67,8 +67,12 @@ exactly its own range.
 
 | Addressed message | Accompanied by |
 | --- | --- |
-| The first in a conversation | The most recent `context_messages` messages before it: of the thread, or of the channel when the tag starts the thread. |
-| A later one | Every message written in that conversation after the previous addressed message and before this one. |
+| The first in a conversation | The messages before it: of the thread, or of the channel when the tag starts the thread. |
+| A later one | The messages written in that conversation after the previous addressed message and before this one. |
+
+An addressed message is accompanied by at most `context_messages` messages.
+When its range holds more, the most recent ones accompany it and the
+conversation context says that earlier messages were left out.
 
 Each accompanying message carries its speaker and time; the agent's own posts
 are marked as its own. The range does not depend on whether the agent posted an
@@ -101,7 +105,7 @@ Given people talk in a channel thread where the agent has answered before
 When they write messages that do not tag the agent
 Then none of them reaches the agent
 When someone then tags the agent in that thread
-Then the agent receives that message with everything said there since the previous message that tagged it
+Then the agent receives that message with the most recent messages written there since the previous message that tagged it
 ```
 
 ### UC-SL3: Bring the agent into a conversation that is already under way

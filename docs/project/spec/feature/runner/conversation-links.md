@@ -79,8 +79,11 @@ Nothing in this path depends on an agent invoking a relay tool or remembering
 to forward a message.
 
 A native human entry is segmented into complete identity/control envelopes and
-ordinary spans using the vocabulary below. An inherited identity envelope keeps
-its original source, author and occurrence time. Ordinary spans are the human
+ordinary spans using the vocabulary below. An inherited peer envelope keeps
+its original source, author and occurrence time. A member envelope is a
+contribution of the source thread authored by that member: it crosses in a
+peer envelope naming that thread and member, with the member envelope as its
+body. Ordinary spans are the human
 in the source thread; the source agent's reply is that agent's contribution.
 An assistant's quotation of a delimiter remains assistant content. Classification
 does not inspect an envelope's body or reinterpret its author from account
@@ -102,7 +105,7 @@ neither blocks neighboring content nor establishes platform provenance.
 
 | Opening | Kind | Closure | Meaning |
 | --- | --- | --- | --- |
-| `[Peer (source-thread · author-token · utc-minute)]` | identity | paired, `[/Peer (source-thread · author-token · utc-minute)]` | A contribution authored in another thread. |
+| `[Peer (source-thread · author-token · utc-minute · boundary)]` | identity | paired, `[/Peer (source-thread · author-token · utc-minute · boundary)]` | A contribution authored in another thread. |
 | `[Instrukt Assignment]` | control | paired, `[/Instrukt Assignment]` | Runner-authored procedure/assignment input. |
 | `[Instrukt Notification]` | control | paired, `[/Instrukt Notification]` | Runner-authored event, approval or recovery delivery to the agent's loop. |
 | `[Member (connector · conversation · member · utc-minute · boundary)]` | identity | paired, `[/Member (connector · conversation · member · utc-minute · boundary)]` | A message a company member addressed to the agent in a connected conversation. |
@@ -121,13 +124,17 @@ not recomputed from a thread's later configuration. In a member envelope,
 identity, and `member` is the member's key in the company's list; their use is
 `project/instrukt/spec/feature/runner/conversations`.
 
-`boundary` is a token the runner generates for each conversation delivery and
-writes into the opening and closing lines of that delivery's member and
-conversation-context envelopes. It is chosen so that it occurs nowhere in the
-content those envelopes frame. Such an envelope ends only at the closing line
-that carries its opening's token. Every line before it is content of the
-contribution it arrived in, lines that look like registered openings or
-closings among them, so text a person wrote never opens or closes an envelope.
+`boundary` is a token the runner generates and writes into the opening and
+closing lines of the envelopes that carry one: one token for each conversation
+delivery, shared by that delivery's member and conversation-context envelopes,
+and one for each peer envelope the relay writes. It is chosen so that it
+occurs nowhere in the content the envelope frames. Such an envelope ends only
+at the closing line that carries its opening's token. Every line before it is
+content of the contribution it arrived in, lines that look like registered
+openings or closings among them, so text a person or an agent wrote never
+opens or closes an envelope. The relay writes every peer envelope with a
+boundary; a peer envelope without one stays recognized and ends at its first
+matching closing line.
 
 The `Instrukt` prefix belongs to runner-authored envelopes, which are not
 authored conversation content; identity contributions use the peer or the

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+assertion_line: 151
 expression: "String::from_utf8_lossy(&refused.get_output().stderr)"
 ---
-instrukt: `instrukt sessions` serves the todos and events modules, and both are off; switch on `modules.todos` or `modules.events`
+instrukt: `instrukt sessions` serves the todos and events modules and the sessions conversations start, and all are off; switch on `modules.todos` or `modules.events`, or switch on `modules.conversations` with a company's declared connector

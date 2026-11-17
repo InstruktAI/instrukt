@@ -176,11 +176,14 @@ keeps its own task execution placement.
 A command of a switched-off module refuses and names the door: `todo` names
 `modules.todos`; `sessions` and `tick` refuse only
 when both `modules.todos` and `modules.events` are off, and then name both;
-with either on, they serve that module's work. `run` serves those two modules
-and conversations: it refuses only when todos and events are off and there is
-no conversation demand, `modules.conversations` on with a declared connector
-(`project/instrukt/spec/feature/runner/conversations`), and then names the
-three switches. `install` and `ticks status` always
+with either on, they serve that module's work. Conversation demand,
+`modules.conversations` on with a company's declared connector
+(`project/instrukt/spec/feature/runner/conversations`), admits `sessions` as
+well, to list the sessions conversations start and resolve their starts, and
+its refusal then names that condition too; it does not admit `tick`. `run`
+serves those two modules, history and conversations: it refuses only when
+todos, events and history are off and there is no conversation demand, and
+then names the four switches and the connector condition. `install` and `ticks status` always
 work; `eval report` needs no switch and reports only the record it can access.
 
 ## Use cases
@@ -203,7 +206,7 @@ Scenario Outline: Choose how development work is picked up
 ### UC-RD2: A developer is told how to enable the runner
 
 ```gherkin
-Given a developer has work tracking, event responses and conversations all switched off
+Given a developer has work tracking, event responses, history and conversations all switched off
 When they ask the runner to run, to wake up, or to start a session
 Then the command refuses and names the switches that would enable it
 But when conversations are switched on and a company declares a connector

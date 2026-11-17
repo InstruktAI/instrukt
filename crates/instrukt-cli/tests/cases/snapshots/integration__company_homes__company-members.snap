@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+assertion_line: 212
+expression: "stdout(&env.run(&here,\n[\"config\", \"get\", \"--company\", \"acme\", \"members\"]).success())"
+---
+steven:
+  name: Steven Sonneveld
+  slack: U04ABC123
+  credentials:
+    erpnext: ${STEVEN_ERPNEXT_LOGIN}
+anna:
+  slack: U04DEF456

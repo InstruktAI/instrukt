@@ -22,6 +22,8 @@ mod company_homes;
 mod configuration_editing;
 #[path = "cases/conversation-links.rs"]
 mod conversation_links;
+#[path = "cases/conversations.rs"]
+mod conversations;
 #[path = "cases/delivery-cycle.rs"]
 mod delivery_cycle;
 #[path = "cases/dependencies-and-holds.rs"]
@@ -98,6 +100,8 @@ mod roles_and_capabilities;
 mod session_continuity;
 #[path = "cases/single-ingress-webhook-termination.rs"]
 mod single_ingress_webhook_termination;
+#[path = "cases/slack-connector.rs"]
+mod slack_connector;
 #[path = "cases/snippet-schema.rs"]
 mod snippet_schema;
 #[path = "cases/snippet-validation.rs"]

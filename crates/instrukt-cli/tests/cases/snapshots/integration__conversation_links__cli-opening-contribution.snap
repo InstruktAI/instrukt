@@ -1,7 +1,8 @@
 ---
 source: crates/instrukt-cli/tests/cases/conversation-links.rs
-expression: "fake.message(\"child\", 1).replace(source.identity(), \"t3:[SOURCE]\")"
+assertion_line: 455
+expression: "boundaries(&fake.message(\"child\",\n1).replace(source.identity(), \"t3:[SOURCE]\"))"
 ---
-[Peer (t3:[SOURCE]:parent · agent:codex/native-model · 2030-01-01 12:00 UTC)]
+[Peer (t3:[SOURCE]:parent · agent:codex/native-model · 2030-01-01 12:00 UTC · [BOUNDARY-1])]
 Discuss the parser with me.
-[/Peer (t3:[SOURCE]:parent · agent:codex/native-model · 2030-01-01 12:00 UTC)]
+[/Peer (t3:[SOURCE]:parent · agent:codex/native-model · 2030-01-01 12:00 UTC · [BOUNDARY-1])]

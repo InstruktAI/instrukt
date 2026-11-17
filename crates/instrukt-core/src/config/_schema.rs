@@ -14,6 +14,10 @@ pub const CURRENT_SCHEMA_VERSION: u64 = 5;
 
 pub(super) const DEFAULT_DEPENDENCY_BRANCH_PREFIX: &str = "renovate/";
 
+/// The global-only switch below `modules` for conversations through
+/// connectors; it is no project module.
+pub const CONVERSATIONS: &str = "conversations";
+
 /// The `blueprint.engine` values that name a shipped adapter: the only
 /// values a project layer may give it. Any other value is a command, which
 /// only the global layer may configure — a cloned repository does not
@@ -118,6 +122,8 @@ enum Shape {
     Version,
     RedisTimeout,
     Webhooks,
+    Members,
+    Connectors,
     Runtimes,
     MachineId,
     Port,
@@ -164,10 +170,10 @@ fn schema() -> Node {
         ("project", Leaf(ProjectOnly, Shape::Slug)),
         ("company", Leaf(Rule::CompanyOnly, Shape::Slug)),
         // Later company-home keys: refused until this instrukt supports them.
-        ("members", Leaf(Rule::NotYetSupported, Shape::Str)),
+        ("members", Leaf(Rule::CompanyOnly, Shape::Members)),
+        ("connectors", Leaf(Rule::CompanyOnly, Shape::Connectors)),
         ("profiles", Leaf(Rule::NotYetSupported, Shape::Str)),
         ("mcp", Leaf(Rule::NotYetSupported, Shape::Str)),
-        ("connectors", Leaf(Rule::NotYetSupported, Shape::Str)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
         (
@@ -196,6 +202,7 @@ fn schema() -> Node {
             map(Module::ALL
                 .iter()
                 .map(|module| (module.key(), Leaf(Both, Shape::Bool)))
+                .chain([(CONVERSATIONS, Leaf(GlobalOnly, Shape::Bool))])
                 .collect()),
         ),
         (
@@ -425,6 +432,8 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
                 out.push(invalid(&error.to_string()));
             }
         }
+        Shape::Members => super::_company::check_members(value, path, out),
+        Shape::Connectors => super::_company::check_connectors(value, path, out),
         Shape::MachineId => {
             if value
                 .as_str()
@@ -765,6 +774,8 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
         }
         Shape::Webhooks => super::_webhooks::editor_schema(),
+        Shape::Members => json!({ "type": "object" }),
+        Shape::Connectors => super::_company::connectors_schema(),
         Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
         Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),
         Shape::Credential | Shape::LocalRedisUrl => json!({ "type": "string" }),
@@ -811,6 +822,7 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                     Value::Bool(module == Module::History),
                 );
             }
+            insert_at(&mut root, &["modules", CONVERSATIONS], Value::Bool(false));
             insert_at(&mut root, &["ticks"], text("on"));
             insert_at(
                 &mut root,
@@ -1009,18 +1021,23 @@ mod tests {
         );
         // Keys of a later company-home slice are refused in every document.
         for layer in [LayerKind::Global, LayerKind::Project, LayerKind::Company] {
-            let later =
-                yaml("schema_version: 1\nmembers: {}\nprofiles: []\nmcp: {}\nconnectors: {}\n");
+            let later = yaml("schema_version: 1\nprofiles: []\nmcp: {}\n");
+            assert_eq!(judged(&check(&later, layer)), [("profiles", N), ("mcp", N)]);
+        }
+        let people = yaml("schema_version: 1\nmembers: {}\nconnectors: {}\n");
+        assert_eq!(check(&people, LayerKind::Company), []);
+        for layer in [LayerKind::Global, LayerKind::Project] {
             assert_eq!(
-                judged(&check(&later, layer)),
-                [
-                    ("members", N),
-                    ("profiles", N),
-                    ("mcp", N),
-                    ("connectors", N)
-                ]
+                judged(&check(&people, layer)),
+                [("members", N), ("connectors", N)]
             );
         }
+        let switch = yaml("schema_version: 1\nmodules: {conversations: true}\n");
+        assert_eq!(check(&switch, LayerKind::Global), []);
+        assert_eq!(
+            judged(&check(&switch, LayerKind::Project)),
+            [("modules.conversations", N)]
+        );
     }
 
     #[test]
