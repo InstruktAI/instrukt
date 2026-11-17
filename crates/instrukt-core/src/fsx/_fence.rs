@@ -127,14 +127,29 @@ fn open_record(roots: &[PathBuf], directory: &Path) -> Result<std::fs::File, Rec
             format!("it lies under the fenced {}", root.display()),
         )));
     }
-    let dir = rustix::fs::open(
-        &place.path,
-        OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|error| unavailable(error.into()))?;
-    // Opened relative to the directory just checked, and never through a
-    // link, the record cannot lead a refusal into a fenced location.
+    // The directory checked is reached again from the root one component at
+    // a time, none of them followed through a link: the directory held open
+    // is the one admitted, or the record is unavailable.
+    let walk = OFlags::DIRECTORY | OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut dir =
+        rustix::fs::open("/", walk, Mode::empty()).map_err(|error| unavailable(error.into()))?;
+    for component in place.path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                dir = rustix::fs::openat(&dir, name, walk, Mode::empty())
+                    .map_err(|error| unavailable(error.into()))?;
+            }
+            _ => {
+                return Err(unavailable(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "its directory is not a plain absolute path",
+                )));
+            }
+        }
+    }
+    // Opened relative to that directory, and never through a link, the
+    // record cannot lead a refusal into a fenced location.
     let file = rustix::fs::openat(
         &dir,
         RECORD,
@@ -151,6 +166,11 @@ fn open_record(roots: &[PathBuf], directory: &Path) -> Result<std::fs::File, Rec
         )));
     }
     Ok(file)
+}
+
+/// Whether a fence is installed in this process.
+pub fn active() -> bool {
+    FENCE.get().is_some()
 }
 
 /// Whether this process refused a write at its fence.
@@ -194,14 +214,20 @@ fn refuse(fence: &Fence, path: &Path, target: &Path, root: &Path) -> io::Error {
     };
     let line = format!("instrukt: {refusal}");
     let _ = writeln!(io::stderr(), "{line}");
-    if let Some(record) = &fence.record
-        && let Ok(mut file) = record.lock()
-        && let Err(error) = writeln!(file, "{line}")
-    {
-        let _ = writeln!(
-            io::stderr(),
-            "instrukt: the write fence's record failed: {error}"
-        );
+    if let Some(record) = &fence.record {
+        let appended = record
+            .lock()
+            .map_err(|_| io::Error::other("the record's lock is poisoned"))
+            .and_then(|mut file| writeln!(file, "{line}"));
+        // A refusal the record cannot keep ends the process at once with the
+        // fence's status, so the launcher sees it whatever else happens.
+        if let Err(error) = appended {
+            let _ = writeln!(
+                io::stderr(),
+                "instrukt: the write fence's record failed: {error}"
+            );
+            std::process::exit(i32::from(EXIT));
+        }
     }
     io::Error::new(io::ErrorKind::PermissionDenied, refusal)
 }

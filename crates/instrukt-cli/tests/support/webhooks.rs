@@ -5,9 +5,10 @@
     clippy::panic,
     reason = "shared test setup"
 )]
+use crate::common::fenced::Child;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
-use std::process::{Child, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use hmac::{Hmac, Mac};

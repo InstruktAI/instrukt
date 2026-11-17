@@ -67,7 +67,7 @@ impl Handler {
             agents_before,
         }
     }
-    pub fn call(&self, args: &[&str]) -> assert_cmd::Command {
+    pub fn call(&self, args: &[&str]) -> crate::common::fenced::Instrukt {
         let mut command = self.computer.env.instrukt(self.computer.project.path());
         command.env("T3CODE_THREAD_ID", "s1").args(args);
         command

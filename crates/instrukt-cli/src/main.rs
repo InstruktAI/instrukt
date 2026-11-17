@@ -277,13 +277,15 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Sessions(_) => "sessions",
         Command::Install(_) => "install",
     };
-    // The logger creates its directory and file itself: both are admitted
-    // where the library names them, before it does.
-    instrukt_core::fsx::admit(&instrukt_ai_logging::resolve_log_dir("instrukt")?)?;
-    instrukt_core::fsx::admit(&instrukt_ai_logging::resolve_log_file(
-        "instrukt",
-        Some(source),
-    )?)?;
+    // The logger creates its directory and file itself: under a fence, both
+    // are admitted where the library names them, before it does.
+    if instrukt_core::fsx::fence_active() {
+        instrukt_core::fsx::admit(&instrukt_ai_logging::resolve_log_dir("instrukt")?)?;
+        instrukt_core::fsx::admit(&instrukt_ai_logging::resolve_log_file(
+            "instrukt",
+            Some(source),
+        )?)?;
+    }
     instrukt_ai_logging::Builder::new("instrukt")
         .source(source)
         .app_prefix("instrukt_cli")

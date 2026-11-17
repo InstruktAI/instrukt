@@ -7,6 +7,9 @@
 //! - subprocesses (instrukt and git) run with a cleared environment: `PATH`,
 //!   the temporary `HOME`, an isolated git configuration and whatever the
 //!   test sets with [`TestEnv::set_env`] — no live session variable leaks in;
+//! - an instrukt process either launcher starts that ends with the fence's
+//!   own status fails the test before an assertion expecting a failure can
+//!   accept it ([`fenced`]);
 //! - every subprocess carries the write fence
 //!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home: an
 //!   instrukt process whose own file operation would land there, directly or
@@ -36,6 +39,7 @@
 mod polling;
 pub use polling::wait_until;
 
+pub mod fenced;
 pub mod github;
 pub mod redis;
 pub mod redis_proxy;
@@ -347,20 +351,20 @@ impl TestEnv {
 
     /// The built `instrukt` binary, ready to run in `cwd` with this test's
     /// environment.
-    pub fn instrukt(&self, cwd: &Path) -> Command {
+    pub fn instrukt(&self, cwd: &Path) -> fenced::Instrukt {
         github::sync_auth_clock(self.home(), self.injected("INSTRUKT_NOW"));
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_instrukt"));
         cmd.env_clear().envs(&self.vars).current_dir(cwd);
-        cmd
+        fenced::Instrukt::new(cmd)
     }
 
     /// The built `instrukt` binary as a plain process, for a test that
     /// runs it in the background and stops it part-way.
-    pub fn instrukt_process(&self, cwd: &Path) -> StdCommand {
+    pub fn instrukt_process(&self, cwd: &Path) -> fenced::InstruktProcess {
         github::sync_auth_clock(self.home(), self.injected("INSTRUKT_NOW"));
         let mut cmd = StdCommand::new(env!("CARGO_BIN_EXE_instrukt"));
         cmd.env_clear().envs(&self.vars).current_dir(cwd);
-        cmd
+        fenced::InstruktProcess::new(cmd)
     }
 
     /// `git` ready to run in `dir` with this test's environment, for a test

@@ -48,6 +48,12 @@ pub fn admit(path: &Path) -> io::Result<()> {
     _fence::admit(path)
 }
 
+/// Whether a fence is installed: without one, admission does nothing, so
+/// a caller need not even work out what it would admit.
+pub fn fence_active() -> bool {
+    _fence::active()
+}
+
 /// [`std::fs::write`], admitted at the fence.
 #[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
@@ -161,7 +167,9 @@ pub fn temp_dir_in(
 /// directory, admitted at the fence.
 #[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
 pub fn temp_dir(builder: &tempfile::Builder<'_, '_>) -> io::Result<tempfile::TempDir> {
-    _fence::admit(&std::env::temp_dir())?;
+    if _fence::active() {
+        _fence::admit(&std::env::temp_dir())?;
+    }
     builder.tempdir()
 }
 
@@ -199,9 +207,17 @@ pub fn open_database_uri(
     )
 }
 
+/// Admits what opening the database at `path` with `flags` can write.
+/// SQLite follows a final symbolic link and keeps its side files beside the
+/// file it reaches, so their names are derived from the resolved path.
+/// Without a fence installed, nothing is resolved or read.
 fn admit_database(path: &Path, flags: rusqlite::OpenFlags) -> rusqlite::Result<()> {
+    if !_fence::active() {
+        return Ok(());
+    }
+    let real = _fence::resolved(path).path;
     let sidecar = |suffix: &str| {
-        let mut name = path.as_os_str().to_owned();
+        let mut name = real.as_os_str().to_owned();
         name.push(suffix);
         PathBuf::from(name)
     };
@@ -212,7 +228,7 @@ fn admit_database(path: &Path, flags: rusqlite::OpenFlags) -> rusqlite::Result<(
     if writes {
         touched.extend([path.to_path_buf(), sidecar("-journal")]);
     }
-    if writes || keeps_write_ahead_log(path, &sidecar("-wal")) {
+    if writes || keeps_write_ahead_log(&real, &sidecar("-wal")) {
         touched.extend([sidecar("-wal"), sidecar("-shm")]);
     }
     for file in touched {

@@ -111,7 +111,7 @@ impl Computer {
     }
 }
 
-pub struct Running(std::process::Child);
+pub struct Running(crate::common::fenced::Child);
 
 impl Running {
     pub fn start(computer: &Computer) -> Self {

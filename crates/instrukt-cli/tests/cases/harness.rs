@@ -133,6 +133,7 @@ fn initialize(env: &TestEnv, live: &Live) -> (Option<i32>, String) {
     let output = env
         .instrukt(env.home())
         .args(["config", "init", "--global"])
+        .refusal_expected()
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr)
@@ -203,15 +204,22 @@ fn a_read_that_would_write_beside_a_live_database_is_refused_before_it_lands() {
     let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
     let mut env = TestEnv::new();
     env.fence(&live.path());
-    let output = env
-        .instrukt(env.home())
-        .args(["history", "import-teleclaude", "--source"])
-        .arg(&database)
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
-    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
-    assert_eq!(env.refusals().len(), 1);
+    // Named directly, and through a link in the test's own directory that
+    // SQLite follows to the live file.
+    let link = env.path("source.db");
+    std::os::unix::fs::symlink(&database, &link).unwrap();
+    for source in [&database, &link] {
+        let output = env
+            .instrukt(env.home())
+            .args(["history", "import-teleclaude", "--source"])
+            .arg(source)
+            .refusal_expected()
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
+        assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+        assert_eq!(env.refusals().len(), 1);
+    }
 }
 
 #[test]
@@ -249,7 +257,12 @@ fn a_publication_refused_part_way_keeps_the_previous_one() {
     repo.write("docs/general/policy/care.md", &care("Second.\n"));
     repo.commit("docs: change the care policy");
     env.fence(&claude);
-    let output = env.instrukt(repo.path()).arg("sync").output().unwrap();
+    let output = env
+        .instrukt(repo.path())
+        .arg("sync")
+        .refusal_expected()
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
     assert_eq!(published(), previous);
     assert_eq!(env.refusals().len(), 1);
@@ -269,4 +282,36 @@ fn published_files(roots: &[std::path::PathBuf]) -> BTreeMap<std::path::PathBuf,
             )
         })
         .collect()
+}
+
+#[test]
+fn a_fence_exit_fails_the_test_before_an_expected_failure_accepts_it() {
+    let live = Live::new();
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    env.set_env(
+        "INSTRUKT_HOME",
+        &live.path().join(".instrukt").display().to_string(),
+    );
+    let quiet = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    // Run to completion, and asserted to fail.
+    let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.run(env.home(), ["config", "init", "--global"])
+            .failure();
+    }));
+    // In the background, ended on its own and reaped by its owner.
+    let background = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut child = env
+            .instrukt_process(env.home())
+            .args(["config", "init", "--global"])
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+    }));
+    std::panic::set_hook(quiet);
+    assert!(completed.is_err());
+    assert!(background.is_err());
+    assert_eq!(env.refusals().len(), 2);
 }
