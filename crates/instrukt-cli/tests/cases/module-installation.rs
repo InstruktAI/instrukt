@@ -2468,11 +2468,11 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     // The holder dies without letting go while the run waiting by hand is
     // held still: the service takes the lock. Resumed, that run is refused
     // naming the service.
-    waiting.signal("STOP");
+    waiting.signal(rustix::process::Signal::STOP);
     wait("the waiting run held still", || waiting.stopped());
     drop(by_hand);
     wait("the service taking over", || c.slack.connections() == 8);
-    waiting.signal("CONT");
+    waiting.signal(rustix::process::Signal::CONT);
     wait("the waiting run's end", || waiting.exited().is_some());
     assert!(!waiting.exited().unwrap().success());
     insta::assert_snapshot!(
