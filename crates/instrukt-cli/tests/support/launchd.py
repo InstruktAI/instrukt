@@ -8,6 +8,7 @@ import select
 import signal
 import socket
 import sys
+import time
 from typing import TypedDict, cast
 
 
@@ -18,6 +19,7 @@ class Definition(TypedDict, total=False):
     Sockets: dict[str, dict[str, str | int]]
     RunAtLoad: bool
     KeepAlive: bool
+    ThrottleInterval: int
 
 
 class JobRow(TypedDict):
@@ -30,6 +32,7 @@ class Reply(TypedDict, total=False):
     pid: int | None
     definition: Definition
     custody: int
+    starts: int
     queued: bool
     jobs: list[JobRow]
 
@@ -46,6 +49,8 @@ class Operation(StrEnum):
     IGNORE_DEBUG = "ignore-debug"
     STOP_PROCESS = "stop-process"
     REBOOT = "reboot"
+    KILL_PROCESS = "kill-process"
+    HOLD = "hold"
 
 
 @dataclass
@@ -55,6 +60,12 @@ class Job:
     listener: socket.socket | None = None
     override: Definition | None = None
     custody: int = 0
+    # A KeepAlive job whose process exited is launched again at `due`.
+    due: float | None = None
+    # A held job stays loaded without a process until it is started.
+    held: bool = False
+    # How many times its process was launched.
+    starts: int = 0
 
 
 def rpc(address: str, args: list[str]) -> Reply:
@@ -65,19 +76,40 @@ def rpc(address: str, args: list[str]) -> Reply:
 
 
 def stop(job: Job) -> None:
+    job.due = None
     if job.pid is not None:
         try:
             os.kill(job.pid, signal.SIGKILL)
             os.waitpid(job.pid, 0)
-        except ProcessLookupError:
-            job.pid = None
+        except (ProcessLookupError, ChildProcessError):
+            pass
         job.pid = None
+
+
+def supervise(jobs: dict[str, "Job"]) -> None:
+    """Reap exited processes and launch KeepAlive jobs again, at most once
+    per ThrottleInterval, as launchd does."""
+    now = time.monotonic()
+    for job in jobs.values():
+        if job.pid is not None:
+            try:
+                finished, _ = os.waitpid(job.pid, os.WNOHANG)
+            except ChildProcessError:
+                finished = job.pid
+            if finished:
+                job.pid = None
+                if job.definition.get("KeepAlive") and not job.held:
+                    job.due = now + job.definition.get("ThrottleInterval", 10)
+        elif job.due is not None and now >= job.due:
+            launch(job)
 
 
 def launch(job: Job) -> None:
     stop(job)
+    job.held = False
     definition = job.override or job.definition
     job.override = None  # launchctl debug applies to the next invocation only.
+    job.starts += 1
     pid = os.fork()
     if pid == 0:
         listener = job.listener
@@ -115,9 +147,15 @@ def serve(address: str) -> None:
     with socket.socket(socket.AF_UNIX) as control:
         control.bind(address)
         control.listen()
+        control.settimeout(0.1)
         try:
             while True:
-                connection, _ = control.accept()
+                supervise(jobs)
+                try:
+                    connection, _ = control.accept()
+                except TimeoutError:
+                    continue
+                connection.settimeout(None)
                 with connection:
                     args = cast(list[str], json.loads(connection.makefile().readline()))
                     operation = Operation(args[0])
@@ -166,6 +204,16 @@ def serve(address: str) -> None:
                         ignore_debug = args[-1] == "on"
                     elif operation == Operation.STOP_PROCESS:
                         stop(jobs[args[-1]])
+                    elif operation == Operation.KILL_PROCESS:
+                        # The process dies; its KeepAlive brings it back.
+                        job = jobs[args[-1]]
+                        if job.pid is not None:
+                            os.kill(job.pid, signal.SIGKILL)
+                    elif operation == Operation.HOLD:
+                        # The job stays loaded with no process.
+                        job = jobs[args[-1]]
+                        stop(job)
+                        job.held = True
                     elif operation == Operation.LIST:
                         if len(args) == 1:
                             result["jobs"] = [JobRow(unit=name, pid=job.pid) for name, job in jobs.items()]
@@ -182,7 +230,7 @@ def serve(address: str) -> None:
                                 previous.listener.close()
                     elif operation == Operation.INSPECT:
                         job = jobs[args[-1]]
-                        result.update(pid=job.pid, definition=job.definition, custody=job.custody,
+                        result.update(pid=job.pid, definition=job.definition, custody=job.custody, starts=job.starts,
                             queued=bool(job.listener and select.select([job.listener], [], [], 0)[0]))
                     connection.sendall(json.dumps(result).encode() + b"\n")
         finally:

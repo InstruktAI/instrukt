@@ -590,6 +590,126 @@ impl Owned {
         }
         Ok(())
     }
+    /// Whether an owned registration of `kind` remains, or a transition of
+    /// it is unfinished.
+    pub fn registered(&self, kind: ResourceKind) -> bool {
+        self.updates.contains_key(&kind) || self.resources.get(&kind).is_some_and(|d| d.registered)
+    }
+
+    /// Reconcile the runner service: its definition and registration, and a
+    /// live service process that runs the desired executable and
+    /// configuration. A service that cannot be shown to run them is
+    /// restarted, and the result is verified before it counts. Returns
+    /// why the service is unmet, `None` when it runs as desired.
+    pub fn runner_service(
+        &mut self,
+        request: &Request<'_>,
+        desired: &Definition,
+        projects: &[String],
+        report: &mut Report,
+    ) -> anyhow::Result<Option<String>> {
+        if let Some(previous) = self.resources.get(&desired.name) {
+            anyhow::ensure!(
+                previous.scheduler == desired.scheduler,
+                "{} manager changed; restore the recorded manager before reconciling",
+                desired.name
+            );
+        }
+        let mut changed = false;
+        for (file, content) in &desired.files {
+            match read(file)? {
+                None => changed = true,
+                Some(current) => {
+                    anyhow::ensure!(
+                        self.proven(desired.name, file, &current),
+                        "ownership conflict at {}; restore the recorded owned definition or move the foreign file, then rerun instrukt install",
+                        file.display()
+                    );
+                    changed |= current != *content;
+                }
+            }
+        }
+        let identified = self
+            .proofs(desired.name)
+            .into_iter()
+            .any(|record| record.scheduler == desired.scheduler && record.unit == desired.unit);
+        let (loaded, _) = service_process(desired)?;
+        anyhow::ensure!(
+            identified || !loaded,
+            "ownership conflict: {} is already loaded without an installation record; move the foreign unit before running instrukt install",
+            desired.unit
+        );
+        let registered = self.registered(desired.name) && !self.updates.contains_key(&desired.name);
+        let identity = crate::runner::service_identity(request.home, request.wake.executable)?;
+        let stale = runner_stale(request.home, desired, &identity)?;
+        let paths = desired.files.keys().cloned().collect::<Vec<_>>();
+        let cause = if changed {
+            Some("its definition is missing or stale".to_owned())
+        } else if !registered {
+            Some("it is not registered".to_owned())
+        } else {
+            stale
+        };
+        if request.check || cause.is_none() {
+            report.resource(
+                desired.name,
+                if cause.is_some() {
+                    Disposition::Unmet
+                } else {
+                    Disposition::Reused
+                },
+                paths,
+                projects,
+                format!(
+                    "{}: checked definition, registration and its live process",
+                    desired.label()
+                ),
+            );
+            if let Some(cause) = &cause {
+                report.finding(desired.name, format!("{cause}; run instrukt install"));
+            }
+            return Ok(cause);
+        }
+        let repaired = self.resources.contains_key(&desired.name);
+        self.begin(request.home, desired)?;
+        self.write_files(desired)?;
+        if loaded {
+            stop(desired)?;
+        }
+        start(desired)?;
+        let started = std::time::Instant::now();
+        let mut stale = runner_stale(request.home, desired, &identity)?;
+        while stale.is_some() && started.elapsed() < RUNNER_START_WAIT {
+            std::thread::sleep(Duration::from_millis(250));
+            stale = runner_stale(request.home, desired, &identity)?;
+        }
+        let mut recorded = desired.clone();
+        recorded.registered = true;
+        self.resources.insert(desired.name, recorded);
+        self.updates.remove(&desired.name);
+        self.save(request.home)?;
+        if let Some(stale) = stale {
+            anyhow::bail!(
+                "the restarted runner service is not running the installed executable and configuration: {stale}; inspect the service manager's log and rerun instrukt install"
+            );
+        }
+        report.resource(
+            desired.name,
+            if repaired {
+                Disposition::Repaired
+            } else {
+                Disposition::Installed
+            },
+            paths,
+            projects,
+            format!(
+                "{}: started and running the installed executable",
+                desired.label()
+            ),
+        );
+        Ok(None)
+    }
+
     pub fn withdraw_named(
         &mut self,
         request: &Request<'_>,
@@ -874,7 +994,16 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
             .iter()
             .map(|s| format!("<string>{}</string>", xml(s)))
             .collect::<String>();
-        let sockets=socket.map_or("<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>".into(),|port|format!("<key>Sockets</key><dict><key>instrukt</key><dict><key>SockNodeName</key><string>127.0.0.1</string><key>SockServiceName</key><string>{port}</string><key>SockType</key><string>stream</string></dict></dict>"));
+        // The runner is started again after every exit, at most once per
+        // RETRY_SECONDS; launchd never gives up on a KeepAlive job.
+        let keep = if name == RUNNER {
+            format!(
+                "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>{RETRY_SECONDS}</integer>"
+            )
+        } else {
+            "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>".into()
+        };
+        let sockets=socket.map_or(keep,|port|format!("<key>Sockets</key><dict><key>instrukt</key><dict><key>SockNodeName</key><string>127.0.0.1</string><key>SockServiceName</key><string>{port}</string><key>SockType</key><string>stream</string></dict></dict>"));
         files.insert(request.home.user_home().join(format!("Library/LaunchAgents/{label}.plist")),format!("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>{label}</string><key>ProgramArguments</key><array>{program}</array><key>EnvironmentVariables</key><dict><key>HOME</key><string>{}</string><key>INSTRUKT_HOME</key><string>{}</string><key>INSTRUKT_DEVELOPMENT</key><string>{}</string><key>PATH</key><string>{}</string></dict><key>Umask</key><integer>63</integer>{sockets}</dict></plist>\n",xml(&request.home.machine_user_home().display().to_string()),xml(&request.home.root().display().to_string()),u8::from(request.home.is_development()),xml(request.wake.path_env)));
     } else {
         let stem = format!("instrukt-{name}");
@@ -886,15 +1015,18 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
             .join("systemd/user");
         let extra = if socket.is_some() {
             format!("Requires={stem}.socket\nAfter={stem}.socket\n")
+        } else if name == RUNNER {
+            // No start limit: the runner is retried for as long as it takes.
+            "StartLimitIntervalSec=0\n".into()
         } else {
             String::new()
         };
-        // The runner is kept running whenever it exits; other services
-        // restart after a failure.
+        // The runner is started again after every exit, RETRY_SECONDS
+        // apart; other services restart after a failure.
         let restart = if name == RUNNER {
-            "always"
+            format!("always\nRestartSec={RETRY_SECONDS}")
         } else {
-            "on-failure"
+            "on-failure".into()
         };
         files.insert(dir.join(format!("{stem}.service")),format!("[Unit]\nDescription=instrukt {name}\n{extra}\n[Service]\nExecStart={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nUMask=0077\nRestart={restart}\n\n[Install]\nWantedBy=default.target\n",args.iter().map(|s|quote(s)).collect::<Vec<_>>().join(" "),quote(&format!("HOME={}",request.home.machine_user_home().display())),quote(&format!("PATH={}",request.wake.path_env)),quote(&format!("INSTRUKT_HOME={}",request.home.root().display())),quote(&format!("INSTRUKT_DEVELOPMENT={}",u8::from(request.home.is_development())))));
         unit = if let Some(port) = socket {
@@ -922,6 +1054,74 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
 /// The runner service's name in its unit: `ai.instrukt.runner` under
 /// launchd, `instrukt-runner.service` under systemd.
 const RUNNER: &str = "runner";
+
+/// The seconds between two starts of a runner service that exited.
+const RETRY_SECONDS: u32 = 5;
+
+/// How long installation waits for a started runner service to publish
+/// that it runs the desired executable and configuration.
+const RUNNER_START_WAIT: Duration = Duration::from_secs(30);
+
+/// The process id the service manager reports for `d`'s service, if it
+/// runs one, and whether the manager has the service loaded and enabled.
+fn service_process(d: &Definition) -> anyhow::Result<(bool, Option<u32>)> {
+    match d.scheduler {
+        Scheduler::Launchd => {
+            let result =
+                Invocation::program("launchctl", &["list"]).run(Duration::from_secs(10))?;
+            anyhow::ensure!(result.success, "cannot inspect launchd jobs");
+            let row = result.stdout.lines().find_map(|line| {
+                let mut fields = line.split_whitespace();
+                let pid = fields.next()?;
+                fields.next()?;
+                (fields.next()? == d.unit).then(|| pid.parse::<u32>().ok())
+            });
+            Ok((row.is_some(), row.flatten()))
+        }
+        Scheduler::SystemdUser => {
+            let enabled = command(&["systemctl", "--user", "is-enabled", "--quiet", &d.unit])?;
+            let result = Invocation::program(
+                "systemctl",
+                &["--user", "show", &d.unit, "--property=MainPID", "--value"],
+            )
+            .run(Duration::from_secs(10))?;
+            anyhow::ensure!(result.success, "cannot inspect systemd unit {}", d.unit);
+            Ok((
+                enabled,
+                result
+                    .stdout
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|pid| *pid != 0),
+            ))
+        }
+        Scheduler::Crontab => Ok((false, None)),
+    }
+}
+
+/// Why the runner service is not current: no live process, or one that
+/// does not run the desired executable and configuration. `None` when the
+/// manager's live process published `identity`.
+fn runner_stale(home: &Home, d: &Definition, identity: &str) -> anyhow::Result<Option<String>> {
+    let (enabled, pid) = service_process(d)?;
+    if !enabled {
+        return Ok(Some(
+            "the service manager does not have it loaded and enabled".into(),
+        ));
+    }
+    let Some(pid) = pid else {
+        return Ok(Some("no live service process".into()));
+    };
+    let published = crate::runner::published_service(home);
+    Ok(match published {
+        Some(record) if record.pid == pid && record.identity == identity => None,
+        Some(record) if record.pid == pid => Some(
+            "its process runs another executable or configuration than the installed ones".into(),
+        ),
+        _ => Some("its process has not published what it runs".into()),
+    })
+}
 
 /// The owned service that runs the installed binary's `instrukt run` as the
 /// runner service.

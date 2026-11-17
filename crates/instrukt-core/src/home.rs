@@ -218,10 +218,10 @@ impl Home {
         self.state_dir().join("runner.lock")
     }
 
-    /// `~/.instrukt/state/runner.holder` — which invocation holds the
-    /// runner lock: the runner service, a run or a tick.
-    pub fn runner_holder_file(&self) -> PathBuf {
-        self.state_dir().join("runner.holder")
+    /// `~/.instrukt/state/runner-service.json` — what the runner service
+    /// executes, published by the service when it starts.
+    pub fn runner_service_file(&self) -> PathBuf {
+        self.state_dir().join("runner-service.json")
     }
 
     /// Serializes history catch-up and legacy imports without holding the database writer lock.

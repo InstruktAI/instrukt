@@ -104,6 +104,11 @@ impl LockGuard {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// The open lock file, for a holder that records itself in it.
+    pub fn file(&self) -> &File {
+        &self._file
+    }
 }
 
 /// A shared advisory lock on a lock file, held until dropped. Any number

@@ -111,6 +111,20 @@ fn role_mapping_falls_back_and_task_inputs_override_independently() {
             )
         );
     }
+    // With profiles named, a catalogue that cannot be read leaves them
+    // unchecked: that is the company's finding.
+    crate::fixtures::conversing::patch_company(&env, "acme", "profiles: [claude]");
+    std::fs::write(env.instrukt_home().join("agents.yaml"), "default: [").unwrap();
+    let unchecked = env
+        .run(env.home(), ["config", "validate", "--company", "acme"])
+        .failure();
+    insta::assert_snapshot!(
+        "company-profiles-unreadable-catalogue",
+        String::from_utf8_lossy(&unchecked.get_output().stdout).replace(
+            env.path("").to_str().unwrap().trim_end_matches('/'),
+            "[TMP]"
+        )
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3

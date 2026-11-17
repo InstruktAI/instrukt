@@ -758,12 +758,24 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         .join("companies/acme")
         .canonicalize()
         .unwrap();
-    // The home's document was written by an older instrukt.
+    // The home's document was written by an older instrukt, and it orders
+    // its sessions' profiles.
     let document = company.join("instrukt.yaml");
     let older = instrukt_core::config::CURRENT_SCHEMA_VERSION - 1;
+    let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     std::fs::write(
         &document,
-        format!("schema_version: {older}\ncompany: acme\n"),
+        format!("schema_version: {older}\ncompany: acme\nprofiles: [{profile}]\n"),
+    )
+    .unwrap();
+    // The company role's tier is not the machine default's.
+    std::fs::write(
+        r.computer.env.instrukt_home().join("agents.yaml"),
+        instrukt_core::config::SHIPPED_AGENTS.replacen(
+            "roles:\n",
+            "roles:\n  company-responder: {class: agent, can: [all], order: [claude, codex], tier: strong}\n",
+            1,
+        ),
     )
     .unwrap();
     r.scoped("platform", "configuration:global", "none");
@@ -833,6 +845,24 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
             assignment.project,
             (event == "project").then(|| fork.clone())
         );
+    }
+    // The company agent starts on the company's profile with its role's
+    // tier; the project agent on the machine's order for its role.
+    let agents = instrukt_core::config::Agents::load(&instrukt_core::home::Home::at_user_home(
+        r.computer.env.home().into(),
+    ))
+    .unwrap();
+    for (event, role, order) in [
+        ("company", "company-responder", Some(vec![profile.clone()])),
+        ("project", "responder", None),
+    ] {
+        let expected = agents
+            .select(Some(role), None, None, order.as_deref())
+            .unwrap()
+            .remove(0);
+        let session = r.delivered_to(event);
+        assert_eq!(r.runtime.provider(session.id.as_str()), expected.instance);
+        assert_eq!(r.runtime.model(session.id.as_str()), expected.model);
     }
 }
 

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-selection.rs
+assertion_line: 121
+expression: "String::from_utf8_lossy(&unchecked.get_output().stdout).replace(env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\")"
+---
+[TMP]/home/.instrukt/companies/acme/instrukt.yaml: profiles: company acme names profiles, and the machine's agents.yaml that declares them cannot be read: `agents.yaml migration` did not find expected node content at line 2 column 1, while parsing a flow node

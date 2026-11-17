@@ -206,6 +206,10 @@ impl FakeT3 {
         ids.sort();
         ids
     }
+    /// The model a thread was started on.
+    pub fn model(&self, id: &str) -> String {
+        self.read(id)["model"].as_str().unwrap().to_owned()
+    }
     /// The provider instance a thread was started on.
     pub fn provider(&self, id: &str) -> instrukt_core::ids::ProviderInstanceId {
         instrukt_core::ids::ProviderInstanceId::parse(

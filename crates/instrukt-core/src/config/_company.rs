@@ -23,7 +23,7 @@ pub(super) const EMPTY_PROFILES: &str = "lists no profile; name the profiles its
 pub(super) fn check_profiles(
     company: &ProjectSlug,
     value: &Value,
-    declared: Option<&super::Agents>,
+    declared: &Result<super::Agents, ConfigError>,
     out: &mut Vec<KeyFinding>,
 ) {
     let Some(names) = value.as_sequence() else {
@@ -37,8 +37,18 @@ pub(super) fn check_profiles(
         ));
         return;
     }
-    let Some(declared) = declared else {
-        return;
+    let declared = match declared {
+        Ok(declared) => declared,
+        Err(error) => {
+            out.push(finding(
+                "profiles",
+                FindingKind::InvalidValue,
+                format!(
+                    "company {company} names profiles, and the machine's agents.yaml that declares them cannot be read: {error}"
+                ),
+            ));
+            return;
+        }
     };
     for (i, name) in names.iter().enumerate() {
         let Some(name) = name.as_str() else {
