@@ -41,7 +41,7 @@ unused; withdrawal waits for a complete demand read.
 | A company home's declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
-| Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
+| Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers, the reacting computer included, retain consumers without listeners. |
 
 The local database is created/migrated on commands that need it under its own
 contract. Todos may record finalize-ready events locally while events are off;
@@ -64,7 +64,7 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt install [--module todos\|events\|history\|blueprint\|conversations]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
 | `instrukt install --check [--module todos\|events\|history\|blueprint\|conversations]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
-| `instrukt events status` | Show enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state and each connector's connection; masks credentials. |
+| `instrukt events status` | Show this computer's machine ID and its `ingress.computer` and `ingress.reactions` as it reads them, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state and each connector's connection; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
 | `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress or with no enabled valid source. |
 
@@ -139,10 +139,9 @@ service that runs
 service manager starts it at login or boot and restarts it when it exits. The
 unit executes the installed instrukt binary with its configuration scope. Cron
 cannot keep a process running; a computer with no supported service manager
-has an unmet prerequisite naming it. On Linux the user's service manager has
-to start at boot, without a login: where it does not, installation and
-`install --check` report that as an unmet prerequisite naming
-`loginctl enable-linger`, and installation does not change it.
+has an unmet prerequisite naming it. On Linux it needs the user's service
+manager to start at boot, as every owned unit does (Owned units without a
+login, below).
 
 The service's run is an ordinary `instrukt run`: it performs every enabled
 module's work, and the runner lock still admits one runner per machine. While
@@ -228,9 +227,13 @@ material resolves only on the ingress computer, from its owner-only
 `~/.instrukt/secrets.env` for a project source and from the company home's own
 secrets file for a company source; other computers need no signing values. Ticks and interactive paths use that same
 file for their required signing, Redis and other instrukt secrets.
-All participants agree on ingress ID and cluster Redis endpoint plus database;
-local sockets, runtime and tick policy remain local. Configuration management
-distributes those facts; instrukt has no shared configuration layer.
+All participants agree on ingress ID, reacting computer ID and cluster Redis
+endpoint plus database; local sockets, runtime and tick policy remain local.
+Configuration management distributes those facts; instrukt has no shared
+configuration layer. The reacting computer, when it is not the ingress,
+installs no receiver and needs no signing values; procedures for external facts
+need the homes they run in and the chosen runtime there, and the ingress needs
+neither (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`).
 
 On Linux use a systemd socket/service pair; on macOS use a launchd job with its
 named listening socket. Both retain the loopback socket across receiver process
@@ -270,6 +273,16 @@ The operator owns TLS, edge filtering/abuse protection and provider registration
 Socket custody is bounded by the provider timeout; it is not a durable HTTP queue.
 While cluster Redis cannot publish, requests fail rather than being accepted
 into a new local store-and-forward service.
+
+### Owned units without a login
+
+On Linux every owned unit is a systemd user unit that has to run without a
+login: the runner service, the receiver's socket and service, the private local
+Redis service and the minute timer. They need the user's service manager to
+start at boot. Where it does not, installation and `install --check` report
+one unmet prerequisite naming `loginctl enable-linger` and the owned units that
+need it, and installation does not change it. A wake-up registered with cron
+needs no such setting.
 
 ### Withdrawal and ownership
 
@@ -334,7 +347,7 @@ And no wake-up or receiver is installed solely for history
 Given a developer enables events and configures a valid project source on the designated ingress
 When the configuration agent installs its dependencies on participating computers
 Then only ingress receives a loopback socket and receiver service with its declaring-project signing material
-And other computers receive no listener
+And other computers, the reacting computer included, receive no listener
 And sources with events off are reported without enabling events or installing their receiver
 ```
 
@@ -386,6 +399,9 @@ Given a computer is not ingress or lacks a supported socket-holding service mana
 When receiver serving or required receiver installation is requested
 Then it refuses the unsupported operation before binding and names the placement or manager prerequisite
 And cron scheduling is not reported as receiver socket support
+But when a Linux computer's user service manager does not start at boot
+Then installation and its check report that prerequisite naming loginctl enable-linger for each owned unit that needs it
+And installation does not change it
 ```
 
 ### UC-MI10: Supply wake-ups through an operator scheduler
@@ -448,6 +464,10 @@ Then installation reports that prerequisite and claims no success
   convergence; successful parts are reported separately and reruns reuse them.
 - No release-pointer, daemon lifecycle, fleet update or legacy Redis config
   migration is imported from TeleClaude.
+- Installation and `install --check` judge this computer's own settings
+  only: computers that disagree on the ingress or the reacting computer each
+  pass, and what follows is the owner's caveat
+  (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`).
 
 ## See Also
 

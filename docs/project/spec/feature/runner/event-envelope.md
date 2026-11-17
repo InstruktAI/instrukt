@@ -71,7 +71,9 @@ readers retain unfamiliar kinds and identities unchanged.
 
 Vocabulary support creates no subsystem for signals, companies, people,
 operations, channels or memory. A relayed subject names its declaring source,
-including domain. Ingress retains the verification scheme in the
+including domain. The `inbound_source` kind is reserved to facts the ingress
+receiver verified and published, qualified subjects included; no other producer
+uses it, and a declaration that admits any reference kind does not admit it. Ingress retains the verification scheme in the
 `inbound_verify` extension, even when its type resembles another protocol's types.
 
 ### Typed declarations and evolution

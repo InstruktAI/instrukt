@@ -173,8 +173,19 @@ adapter verb templates.
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/runner/conversations`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
+Receiving and publishing external facts need no agent runtime. A computer that
+is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
+enabled for a declaring home and no runtime chosen: the project's effective
+switch for a project source, the machine's global switch for a company source.
+Its receiver installs and serves as on any ingress. The standing-agent row
+applies where activation happens: on the reacting computer, and for the events
+a computer emits itself; a procedure activation the ingress accepts for an event
+of its own fails visibly at its execution boundary while no runtime is chosen.
+Every other feature in the table keeps its requirement.
+
 Enabling a module without a selected runtime, or with its native/adapter path
-lacking a required capability, is refused without changing configuration. The refusal and
+lacking a required capability, is refused without changing configuration, with
+the ingress exception above. The refusal and
 `config validate` name the runtime and missing capability, or state that no
 runtime is chosen. A temporarily unreachable runtime is an execution failure,
 never a reason to select another adapter or create a replacement session.

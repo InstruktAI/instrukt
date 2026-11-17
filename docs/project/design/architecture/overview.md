@@ -348,7 +348,7 @@ flowchart LR
   H --> R[Redis selected by scope]
   C --> Q[Independent retained consumer groups]
   R --> Q
-  Q --> A[One procedure matcher per emitting computer]
+  Q --> A[One procedure matcher per computer: its own facts, and external facts on the reacting computer]
   X[Published index: declarations and reach] --> A
   A --> D[SQLite keyed activation acceptance]
   D --> T[A3 runtime handoff: bounded queued input]
@@ -372,8 +372,10 @@ is a business-effect completion. Ordered retries park persistently failing event
 with evidence and announcement before ACK, independently of other consumers.
 
 Subscription validation belongs to docs, registration/index replacement to
-publication, selection and acceptance to runner. Only the emitting computer
-activates; external procedures run on ingress and unavailable homes fail there.
+publication, selection and acceptance to runner. A computer's own events
+activate only where they are emitted; external facts activate only on the
+reacting computer, the ingress unless `ingress.reactions` names another, and
+unavailable homes fail there.
 Runtime delivery retains procedure-first briefing, untrusted event provenance and
 session-fixed timing through A3's bounded batch log.
 

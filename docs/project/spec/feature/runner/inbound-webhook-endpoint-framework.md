@@ -28,7 +28,8 @@ project and each company home
 (`project/instrukt/spec/feature/configuration/company-homes`) can declare
 several domains, each selecting its own verification scheme, secret references
 and event-name source. The declaring home's configuration and its secrets must
-exist on ingress.
+exist on ingress. The homes the procedures for its facts run in must exist on
+the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`).
 
 | Source | Derived POST path | Origin and subject |
 | --- | --- | --- |
@@ -326,7 +327,7 @@ But a missing subject value is refused without relay
 
 - A person home declares no source and has no endpoint.
 - WhatsApp handshakes and multi-message delivery (UC-IF3, UC-IF4, UC-IF12) are outside this port and their IDs are not repurposed.
-- Ingress needs the declaring home's declaration and secret values locally. Producer registration, TLS and edge abuse protection are operator prerequisites.
+- Ingress needs the declaring home's declaration and secret values locally; the reacting computer needs the home its procedures run in. Producer registration, TLS and edge abuse protection are operator prerequisites.
 - Retransmission is protected only within the three-day ingress claim window; consumers own business idempotency.
 
 ## See Also

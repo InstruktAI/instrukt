@@ -1,5 +1,5 @@
 ---
-description: One continuing procedure responsibility per exact home and optional subject, resolved through the keyed runtime adapter on the emitting computer.
+description: One continuing procedure responsibility per exact home and optional subject, resolved through the keyed runtime adapter on the activating computer.
 visibility: public
 ---
 # Procedure Standing Agent — Spec
@@ -24,7 +24,9 @@ Overlapping patterns never merge procedures; edits to patterns never fork an
 agent. A change of identity mode selects a different responsibility, without
 moving already accepted work out of its original responsibility.
 
-Only the emitting computer resolves the activation. A project home uses that
+Only the activating computer resolves the activation: the emitting computer,
+or for an external fact the reacting computer
+(`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). A project home uses that
 computer's registered project checkout; a company home uses that computer's
 `~/.instrukt/companies/<name>/`
 (`project/instrukt/spec/feature/configuration/company-homes`); platform uses its
@@ -160,7 +162,7 @@ responsibility identity. No failure silently disposes of retained work.
 
 ```gherkin
 Given a developer has enabled a published project responsibility with no standing agent
-When its first matching event arrives on the emitting computer
+When its first matching event arrives on the activating computer
 Then one agent starts in that project's registered checkout with its procedure assignment
 And its event was durably retained before startup
 ```
@@ -256,14 +258,14 @@ Then that human conversation is not adopted as the standing assignment
 ```gherkin
 Given a developer enables responsibilities answering project, company and platform homes
 When events with project, company and none origins activate them
-Then each agent works in the home its event names on the emitting computer
+Then each agent works in the home its event names on the activating computer
 And a project or platform agent gains no company context from its location
 ```
 
 ### UC-PSA14: Report a missing home without moving the work
 
 ```gherkin
-Given an external event's project checkout is absent on ingress
+Given an external event's project checkout is absent on the reacting computer
 When its accepted activation resolves the home
 Then the missing home fails visibly and no other checkout or computer substitutes
 ```

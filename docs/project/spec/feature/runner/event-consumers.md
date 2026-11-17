@@ -14,7 +14,10 @@ The shared consumer runtime owns selection, replay protection, retries and parki
 ### Interest and one matcher
 
 Interest consists only of type patterns, an own-emitting-computer filter, and
-optional subject/origin kinds. Selection never inspects data. Each declaration
+optional subject/origin kinds. The procedure-activation consumer applies the
+own-emitting-computer filter only to events that are not external facts; an
+external fact it selects by its inbound-source subject on the reacting computer
+alone (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). Selection never inspects data. Each declaration
 uses the same validated matcher: an exact type; a whole-segment prefix followed
 by `.*`, selecting at least one further segment; or `*`. Thus `erp.invoice.*`
 selects `erp.invoice.paid` and `erp.invoice.overdue.reminded`, but neither

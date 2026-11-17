@@ -40,6 +40,18 @@ and stamps; workflow owns authorization and derived workflow state.
 : A capability that obtains an outside or runtime occurrence and translates
   it into instrukt's event vocabulary.
 
+**External fact**
+: An event the ingress receiver publishes from a verified signed delivery;
+  its source is the ingress computer and its subject an inbound source.
+
+**Reacting computer**
+: The one computer that activates procedures for external facts: the computer
+  `ingress.reactions` names, or the ingress when it names none.
+
+**Activating computer**
+: Where an event's procedures activate: the emitting computer for its own
+  events, the reacting computer for external facts.
+
 **Session binding**
 : Work’s runtime and session id per todo and role, read and written by the
   runner through work’s interface; standing-agent bindings belong to runner.
@@ -276,9 +288,10 @@ vocabulary. Executable homes are registered projects, company homes
 (`project/instrukt/spec/feature/configuration/company-homes`) and the platform;
 person resolution is an explicit unsupported capability, never a conversion to
 another home. Unknown origin activates nothing. None selects a platform
-responsibility. Only the emitting computer activates a matching procedure:
-external events therefore activate on ingress, and a missing project checkout
-or company home there fails visibly without forwarding.
+responsibility. Only the activating computer activates a matching procedure:
+a computer's own events activate where they are emitted, external facts on the
+reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). A missing project checkout or company home on
+the activating computer fails visibly without forwarding.
 
 Published general/domain procedures reach every home of their declared kind:
 one published procedure runs in each company's own home, wherever its publishing
