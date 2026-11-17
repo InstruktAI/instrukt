@@ -77,8 +77,10 @@ tick is caught by the next tick reading current state.
 A project's declared native or GitHub endpoint verifies and relays a signed
 request as a cluster event. The request is an event fact in its own right;
 repository polling remains an independent source-reconciliation mechanism.
-External events carry the ingress computer as source. Only that computer
-activates matching procedures, and a missing local home is a visible failure.
+External events carry the ingress computer as source. They activate matching
+procedures only on the reacting computer, which is the ingress unless
+`ingress.reactions` names another computer, and a home missing there is a
+visible failure.
 
 Polling checks only active subjects: a waiting integrate candidate, remote
 canonical main's head commit, dependency-update heads, local items on this computer and configured

@@ -41,7 +41,9 @@ instrukt distributes agreed facts, including any operator-managed dotfiles.
 | `redis.cluster.url` | All event participants reach the same logical Redis database and stream namespace. URL spellings may differ when they resolve to that same store. |
 | `redis.cluster.username`, `redis.cluster.password` | Machine-local credential references grant the required access to that common store; credentials and reference spellings need not match. |
 | Project identity and placement | The coordination brief records which computer holds each participating project and its local checkout. Project `project` identity and source declarations identify the same project wherever needed. This is a configuration-management fact, not a new YAML key or a replacement for todo claims. |
-| Ingress project homes | Every project declaring inbound sources has its adopted checkout on ingress; its signing references resolve in the ingress computer's owner-only `~/.instrukt/secrets.env`. External procedure activation remains on ingress under the intake contract. |
+| `ingress.reactions` | All participants use the same existing stable instrukt machine ID for the one computer that reacts to external facts, or all leave it out so the ingress reacts. |
+| Ingress source homes | Every project declaring inbound sources has its adopted checkout on ingress, and every company home declaring them has its `instrukt.yaml` there; their signing references resolve in the owner-only secrets file of the declaring home on the ingress computer. |
+| Reacting homes | The homes external procedures run in exist on the reacting computer: the project checkouts and company homes the facts' origins name, with their published procedures and a chosen runtime. They need not exist on the ingress when it is not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). |
 | `ingress.port` | The receiver and its local edge agree on this port; other computers need not share it. |
 
 These are the cross-computer and edge-local agreements in
@@ -55,7 +57,7 @@ coordination carries references and verification findings.
 
 The skill reads configuration before asking questions and asks the developer
 only for unresolved intent or facts instrukt cannot answer: participating
-computers, desired module enablement (blueprint, todos, events and default-on history), ingress choice, operator-supplied cluster
+computers, desired module enablement (blueprint, todos, events and default-on history), ingress and reacting computer choice, operator-supplied cluster
 endpoint, project placement and an unset runtime choice. Existing choices are
 kept unless the requested outcome changes them. An unset runtime means no
 runtime; the agent's host does not select one.
@@ -133,7 +135,15 @@ project paths, the skill package and a report destination. Each performs its
 own computer's configuration and verification and returns completed changes and
 unmet prerequisites. The coordinator compares reports for agreement and retains
 partial success; inaccessible computers stay incomplete. Runtime environment
-addresses and instrukt machine IDs remain separate observed facts.
+addresses and instrukt machine IDs remain separate observed facts; each
+computer's machine ID is read from its `instrukt events status`.
+
+The rule that retained readers are prepared before their producers
+(`project/instrukt/spec/feature/runner/module-installation`) includes the
+reacting computer when it is another computer than the ingress: it is
+configured and installed, with its consumer prepared, before the ingress starts
+receiving. A consumer prepared later starts at the stream's end and misses the
+facts published before it.
 
 ## Use cases
 
@@ -141,11 +151,11 @@ addresses and instrukt machine IDs remain separate observed facts.
 
 ```gherkin
 Given a developer wants two linked computers to use instrukt events
-And has selected one ingress and supplied the cluster connection and project placement
+And has selected one ingress and one reacting computer and supplied the cluster connection and project placement
 When the developer runs the configuration skill using T3's configured action values
 Then one local configuration task per computer records and verifies its intended settings
-And both computers agree on ingress identity, the logical cluster store and project placement
-And only ingress installs the demanded receiver with its declaring project homes
+And both computers agree on ingress identity, reacting computer identity, the logical cluster store and project placement
+And only ingress installs the demanded receiver with its declaring source homes
 And the developer receives each computer's configuration and infrastructure verification results
 ```
 
