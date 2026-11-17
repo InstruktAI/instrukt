@@ -65,9 +65,12 @@ a role or a login.
 
 The speaker is the person the runner recorded as the sender of the addressed
 message that started the calling session's current turn
-(`project/instrukt/spec/feature/runner/conversations`). A session with no such
-record has no speaker. No argument and no value the agent passes selects a
-speaker or a member.
+(`project/instrukt/spec/feature/runner/conversations`). The current turn is the
+one the session has in progress when the command runs: a command an agent
+leaves running beyond its turn is judged by the turn then in progress, and is
+refused when the session has none or the runtime cannot say. A session with no
+such record has no speaker. No argument and no value the agent passes selects
+a speaker or a member.
 
 The speaker's own logins are those of the one member entry of that company
 (`project/instrukt/spec/feature/configuration/company-homes`) whose email
@@ -116,12 +119,15 @@ is the local operator's.
   sent, or that lacks what the method requires, is a failure, never an empty
   result. An answer that arrives as an event completes the request without
   waiting for the stream to end.
-- A connection is given ten seconds to open and each request two minutes. A
-  catalog ends as a failure when the server repeats a cursor or after one
-  hundred pages.
+- Opening a connection, each request, the size of a reply and the number of
+  pages of a catalog each have a limit; the limits are the client's own, in
+  `crates/instrukt-runner/src/mcp/_client.rs`. A request that outlasts its
+  limit, a reply that exceeds its size and a catalog that repeats a cursor or
+  exceeds its pages each end as a failure.
 - No connection outlives the command. When the server opened a session,
   instrukt asks it once to end that session on every path, a failed one
-  included; a server that does not end it is logged and changes no outcome.
+  included; a server that does not end it, or answers that it cannot, is logged
+  and changes no outcome.
 - An unknown server name is refused naming the servers the caller sees. An
   unreachable server fails naming the server and its address. A failure the
   server reports reaches the caller with the server's cause and a non-zero
