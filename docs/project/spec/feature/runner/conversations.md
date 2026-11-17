@@ -36,8 +36,9 @@ provider knows the sender as one of the company's own people, the sender's
 name and, where the provider gives one, email address, the time the message
 was written, its text, the conversation's earlier messages its provider
 contract says accompany it, and whether that contract left earlier messages
-out. It posts text to a conversation it carries, and shows there that the
-agent is working where its provider has a way to. Which messages count as
+out. It posts the agent's answer to a conversation it carries, rendered as its
+provider contract says, and shows there that the agent is working where its
+provider has a way to. Which messages count as
 addressed, who counts as the company's own, and what accompanies a message is
 each connector's own contract
 (`project/instrukt/spec/feature/runner/slack-connector`).
@@ -105,8 +106,9 @@ connector gives.
 ### The answer back
 
 - When a turn started by an addressed message finishes, the agent's
-  conversational output of that turn is posted to the conversation, in order,
-  split to the connector's message size limit. Tool calls, tool results,
+  conversational output of that turn is posted to the conversation as the
+  agent wrote it, in parts where the connector's message size limit requires,
+  in order. Tool calls, tool results,
   thinking and control input are not posted. A bare `NOOP` posts nothing.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
