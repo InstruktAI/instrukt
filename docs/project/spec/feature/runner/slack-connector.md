@@ -141,8 +141,11 @@ shows Slack's status line for it with the text
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
 
-The status is a courtesy, kept on a best-effort basis; no timing of it is
-promised. Slack drops a status after two minutes and when the app posts, so
+The connector sets the status when it admits the message, without waiting for
+its regular pass, so the person sees at once that the request was taken on.
+Beyond that first setting the status is a courtesy, kept on a best-effort
+basis; no timing of it is promised. Slack drops a status after two minutes and
+when the app posts, so
 while a status stays the connector sets it again about every half minute, and
 after a post of the app's own it can be missing until the next setting. When a
 status no longer stays the connector clears it once; where that does not
