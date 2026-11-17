@@ -213,11 +213,14 @@ headers, inline code, code blocks, quotes, dividers, tables and task lists.
 The connector changes nothing in the agent's text.
 
 An answer longer than 12,000 characters, Slack's limit for `markdown_text`, is
-split, and each part is posted as it is, in order. Of what remains to be
-posted, a part takes the first 12,000 characters and ends after the last line
-break among them when that line break lies after the first 6,000, and after
-the 12,000th character otherwise. Nothing is inserted, so no part is longer
-than 12,000 characters.
+split, and each part is posted as it is, in order. While more than 12,000
+characters remain to be posted, a part takes the first 12,000 of them and ends
+after the last line break among them when that line break lies after the
+first 6,000, and after the 12,000th character otherwise. Once at most 12,000
+characters remain, that remainder is posted unchanged as the last part and
+splitting ends, so an answer that is an exact multiple of the limit is
+followed by no empty part. Nothing is inserted, so no part is longer than
+12,000 characters.
 
 ## Use cases
 
