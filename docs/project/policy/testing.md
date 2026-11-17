@@ -83,9 +83,10 @@ instrukt's check and its write, and a hard link inside the temporary home to
 a file in a real location, are outside what the fence stops. A refusal reaches
 the test through a record the test owns: instrukt appends to it before it does
 anything else about the refusal, and removes the record when it cannot append,
-so a missing record fails the test as a written one does. A process stopped
-between refusing a write and recording it leaves no trace; the write it
-attempted did not land. Independently authored use cases supply the expected outcomes;
+so a missing record fails the test as a written one does. Two refusals leave
+no trace in the record: one by a process stopped between refusing a write and
+recording it, and one whose record can be neither appended to nor removed. In
+both the write that was attempted did not land. Independently authored use cases supply the expected outcomes;
 pure-logic units and property tests cover the Rust exception without replacing
 feature-level evidence.
 
