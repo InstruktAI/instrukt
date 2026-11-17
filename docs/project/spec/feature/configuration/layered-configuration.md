@@ -95,8 +95,8 @@ machine global layers agree on both IDs and the logical cluster Redis/namespace;
 URL spellings and ACL credentials may differ when they reach the same logical
 store with required permissions. `ingress.port` is a valid TCP port shared only
 by the ingress receiver and local edge. The bind host is fixed loopback.
-`ingress.url` is an `https` address with a host, an optional port and no path,
-query or fragment; the edge forwards `/hooks/inbound` below it to the
+`ingress.url` is an `https` address with a host, an optional port and no
+credentials, path, query or fragment; the edge forwards `/hooks/inbound` below it to the
 receiver, and a sign-in's return address is built from it
 (`project/instrukt/spec/feature/runner/mcp-access`). All participating
 computers agree on it as on `ingress.computer`. Local

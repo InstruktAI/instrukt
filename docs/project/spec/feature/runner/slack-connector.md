@@ -60,7 +60,6 @@ oauth_config:
       - channels:history
       - groups:history
       - im:history
-      - im:write
       - users:read
       - users:read.email
 settings:
@@ -101,7 +100,7 @@ workspace.
 | Where | A message is addressed when | The conversation is |
 | --- | --- | --- |
 | A channel | it tags the agent | the thread the tag is in; a tag outside a thread starts the thread under itself |
-| A direct message to the agent | always | that direct-message channel |
+| A direct message to the agent | always | that direct-message channel, which the connector supplies as a direct message |
 
 A message that does not tag the agent in a channel never reaches instrukt,
 whether or not the agent already takes part in that thread.
@@ -226,12 +225,20 @@ followed by no empty part. Nothing is inserted, so no part is longer than
 ### Direct messages from instrukt
 
 When instrukt has something for one person alone, such as a sign-in link
-(`project/instrukt/spec/feature/runner/mcp-access`), the connector sends it
-to that person's direct-message channel with the agent, which it opens with
-`conversations.open` for the person's Slack id, and posts it with the bot
-token. It is never posted in a channel or a thread, whichever conversation
-the person was in. Such a message is no answer: it starts no turn and is not
-delivered to the agent.
+(`project/instrukt/spec/feature/runner/mcp-access`), the connector posts it
+with `chat.postMessage` and the bot token to that person's Slack id, which
+Slack delivers in the person's direct messages with the agent. It is never
+posted in a channel or a thread, whichever conversation the person was in.
+Slack's `ratelimited`, a server error and a failed connection are retried;
+every other error Slack answers for that call fails the delivery, and the
+connector never posts the message anywhere else. Such a message is no answer:
+it starts no turn and is not delivered to the agent.
+
+The connector keeps the channel and the time Slack gives each such message it
+posted. Those messages accompany no addressed message: they are left out of
+every range the connector reads, the first of a conversation, a later one and
+one read again after a restart, before what accompanies a message is captured
+and framed.
 
 ## Use cases
 
@@ -322,5 +329,5 @@ And an answer longer than Slack takes in one message arrives in parts, in order,
 - https://docs.slack.dev/reference/methods/chat.postMessage/ — `markdown_text`: Markdown Slack renders, at most 12,000 characters, never together with `text` or `blocks`; `thread_ts` for a reply in a thread.
 - https://docs.slack.dev/reference/block-kit/blocks/markdown-block/ — the Markdown Slack renders, and that an image shows as link text.
 - https://docs.slack.dev/reference/objects/user-object/ — the fields that tell a full member from a bot, a guest and a member of another workspace.
-- https://docs.slack.dev/reference/methods/conversations.open/ — opening a direct message with a person; a bot needs `im:write`.
+- https://docs.slack.dev/reference/methods/chat.postMessage/#post-to-a-direct-message-channel — a bot posts in its direct messages with a person by passing the person's user id as the channel, with `chat:write`.
 - https://docs.slack.dev/reference/methods/assistant.threads.setStatus/ — the status line: its text, its two-minute limit and its removal when the app replies.

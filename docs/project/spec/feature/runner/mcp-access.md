@@ -46,8 +46,8 @@ mcp:
 | `credential` | Company home only, with `speaker_login: stored`: the name under `members.<member>.credentials` whose value a speaker's call carries (`project/instrukt/spec/feature/configuration/company-homes`). |
 | `login` | A `${NAME}` reference, never a literal value. In a company home it is the company's own login, references that home's secrets file, requires `credential` or `speaker_login: sign-in`, and is carried only by a call with no speaker; it is a stored value whatever `speaker_login` says. In the global layer it is the machine's own login and references the machine's secrets file. |
 | `sign_in.scopes` | With `speaker_login: sign-in`, optional: the scopes a sign-in asks for. Without it the scopes follow the MCP authorization specification's scope selection: those the server names when it refuses a call without a login, otherwise those its resource metadata lists, otherwise none. |
-| `sign_in.client.id`, `sign_in.client.secret` | With `speaker_login: sign-in`, optional: references into the company home's secrets file to a client registered with the server beforehand; `secret` only for a client that has one. Without them instrukt registers its own client with the server. |
-| `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose standard identity endpoint does not. instrukt sends a `GET` to `url` with the new login and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
+| `sign_in.client.id`, `sign_in.client.secret` | With `speaker_login: sign-in`, optional: references into the company home's secrets file to a client registered with the authorization server beforehand. `id` is required when `client` is declared; `secret` only for a client that has one. Without them instrukt registers its own client (see Registrations). |
+| `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose authorization server is no OpenID Provider. `url` is an absolute `https` address without credentials or fragment, which the operator trusts to receive this server's tokens; instrukt sends a `GET` to it with the new access token and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
 
 A declaration that carries none of `credential`, `login` and `speaker_login:
 sign-in` is an open server: its calls carry no login. A company home's
@@ -62,9 +62,11 @@ These are validation findings naming the server and the field: an unknown
 field; a literal `login` or client value; `speaker_login`, `credential` or
 `sign_in` in the global layer; `speaker_login: stored` without `credential`;
 `speaker_login: sign-in` together with `credential`; `sign_in` without
-`speaker_login: sign-in`; one of the two `sign_in.identity` fields without the
-other; a `login` without `credential` or `speaker_login: sign-in` in a company
-home; and a missing `url` or `description`.
+`speaker_login: sign-in`; `sign_in.client` without `id`; one of the two
+`sign_in.identity` fields without the other; an identity `url` that is not an
+absolute `https` address or carries credentials or a fragment; a `login`
+without `credential` or `speaker_login: sign-in` in a company home; and a
+missing `url` or `description`.
 
 ### Whose declarations a call sees
 
@@ -113,8 +115,8 @@ needed for it.
 | Open, machine-wide or a company's | Any, or none | None. |
 | A company's, `stored` | A speaker whose member entry holds that credential | That member's credential. |
 | A company's, `stored` | A speaker with no member entry, or whose entry lacks it | The call is refused naming the speaker and the missing credential. |
-| A company's, `sign-in` | A speaker with a login for the server | That login, renewed first when it has run out. |
-| A company's, `sign-in` | A speaker with no login for the server | A sign-in starts, and the call waits for it. |
+| A company's, `sign-in` | A speaker with a usable login for the server | That login, renewed first when it runs out; a tool that changes something only when the turn came by direct message (see Calls that change something). |
+| A company's, `sign-in` | A speaker with no usable login for the server | A sign-in starts, and the call waits for it. |
 | A company's, `sign-in` | A speaker recorded without an email address | The call is refused naming the speaker and the missing address. |
 | A company's, with `login` | None | The company's `login`. |
 | A company's, without `login` | None | The call is refused naming the server and the missing company login. |
@@ -124,157 +126,294 @@ A call that has a speaker never carries a company's or the machine's login. A
 stored value is sent as the request's `Authorization` header; a signed-in login
 is sent as `Authorization: Bearer <access token>`.
 
+### Calls that change something
+
+Under a speaker's own login obtained by sign-in, a call to a tool that changes
+something is carried out only when the turn's addressed message came by direct
+message. In a channel conversation such a call is refused, saying that a tool
+that changes something is called under the person's own login only when they
+ask in a direct message, and that they can ask there. A call to a tool that
+only reads is carried out in both.
+
+A tool only reads when the server's tool catalog, as the call reads it, marks
+it with the MCP read-only annotation (`readOnlyHint: true`). A tool without
+that mark counts as changing. Whether a conversation is a direct message is
+what the connector supplied for it
+(`project/instrukt/spec/feature/runner/conversations`). This rule concerns only
+calls that carry a speaker's signed-in login; a call with the company's own
+login or with a stored value is carried out as before.
+
 ### Sign-in
 
 A sign-in follows the MCP authorization specification: the authorization code
 flow with a code challenge (PKCE, `S256`), resource indicators, and discovery
 through the server's protected resource metadata and its authorization
-server's metadata.
+server's metadata. Logins, registrations and pending sign-ins are kept in the
+state database of the computer whose call started the sign-in; they are never
+shared with another computer.
 
-#### When a sign-in starts
+#### Destinations
 
-A call with a speaker to a server declared with `speaker_login: sign-in`, for
-which the speaker has no login, starts a sign-in. instrukt records a pending
-sign-in in the state database and the runner sends the speaker a one-time link
-as a direct message through the connector the turn came from
-(`project/instrukt/spec/feature/runner/conversations`). The link is never
-posted in a channel and never passes through the agent. The call then waits
-for the sign-in, at most 90 seconds:
+instrukt sends a code, a token or a client secret only to an `https` address:
+the declared `sign_in.identity.url`, and the authorization, token,
+registration, revocation, UserInfo and key-set endpoints named in the metadata
+of the authorization server it selected for the server. It follows no
+redirect of a request that carries one of them; such a redirect fails the
+request. It derives no other destination from what a server returns. A
+declared or discovered address may be a private one.
 
-| Outcome | The call |
-| --- | --- |
-| The sign-in completes while the call waits | Proceeds with the new login; the same turn answers. |
-| The wait ends first | Ends with a failure saying that a sign-in to the server is pending and that a link was sent to the speaker by direct message. It carries no link, code or other secret value. |
+#### Registrations
 
-When a sign-in completes after its call stopped waiting, the runner tells the
-speaker by direct message that they are signed in and can ask again. No turn
-is started for it. Whether a completed sign-in reaches a waiting call or a
-direct message is decided once, in one transaction.
+A registration is the client instrukt signs in with for a company home, a
+server and an authorization server, together with its own return path:
+`/hooks/inbound/sign-in/<return id>`, where `<return id>` is 32 lowercase
+hexadecimal characters from 128 random bits. instrukt makes the return id when
+it registers a client dynamically, and when it first reads a declared client
+for that company home and server. The return address is `ingress.url`
+followed by that path. Each registration is kept in the state database with its
+issuer, client, return id and return address.
 
-A company, person and server have at most one pending sign-in. A call that
-finds one still open waits for it and sends no second link. A pending sign-in
-that is not completed within its ten minutes expires, and the next call starts
-a new one.
+The client is the one declared under `sign_in.client` when there is one. It
+authenticates at the token and revocation endpoints with its secret by HTTP
+Basic authentication, or in the request body when the authorization server
+lists only `client_secret_post`; a client declared without a secret sends only
+its identifier. The operator registers the declared client's return address
+with the authorization server; `instrukt mcp list --company <company>` shows
+it. When `ingress.url` changes, the operator updates it there.
 
-#### Discovery and the client
+Without a declared client instrukt registers one where the authorization
+server offers registration: a public client (`token_endpoint_auth_method:
+none`) whose one redirect address is the return address, for the authorization
+code and refresh token grants, named `instrukt <company>`. The registration is
+used only when the authorization server's answer shows `none`, that exact
+redirect address and the authorization code grant; otherwise the call is
+refused naming the server and the declared client it needs. A server that
+offers no registration and has no declared client refuses the call the same
+way. A dynamic registration is made again when the return address changes or
+the authorization server no longer knows the client; a new registration has a
+new return id. A login and a pending sign-in keep the registration they began
+with.
+
+#### Discovery
 
 Before its first sign-in to a server, instrukt finds the server's
 authorization server: from the `resource_metadata` the server names when it
 refuses a call without a login, otherwise from the server's protected resource
-metadata at its well-known addresses, then the authorization server's metadata
-at its well-known addresses, OAuth's first and OpenID Connect's next. Metadata
-whose `resource` or `issuer` differs from the address it was fetched for is
-not used. An authorization server whose metadata does not list `S256` among
-its code challenge methods is not used; a call that needs it is refused naming
-the server.
+metadata at its well-known addresses. Resource metadata whose `resource`
+differs from the server's `url` is not used. When it lists several
+authorization servers, the first is selected and recorded with the
+registration. The authorization server's metadata is read at its well-known
+addresses, OAuth's first and OpenID Connect's next; metadata whose `issuer`
+differs from the issuer identifier its address was built from is not used. An
+authorization server whose metadata does not list `S256` among its code
+challenge methods is not used; a call that needs it is refused naming the
+server and the missing `S256`.
 
-The client instrukt signs in with is the one declared under `sign_in.client`
-when there is one. Otherwise instrukt registers a client dynamically where the
-authorization server offers registration, once per company home and server: a
-public client (`token_endpoint_auth_method: none`) whose one redirect address
-is the sign-in return, for the authorization code and refresh token grants,
-named `instrukt <company>`. The registration is kept in the state database and
-made again when the return address changes or the authorization server no
-longer knows the client. A server that offers no registration, declared
-without `sign_in.client`, refuses the call naming the server and the missing
-client.
+Who signed in is learned in one of two ways (see Who signed in). Without
+`sign_in.identity`, the authorization server must be an OpenID Provider: its
+OpenID Connect discovery document names a UserInfo endpoint and a key set.
+When it is not, the call is refused naming the server and the missing
+`sign_in.identity`.
+
+#### When a sign-in starts
+
+A call with a speaker to a server declared with `speaker_login: sign-in`, for
+which the speaker has no usable login, starts a sign-in. The call finds the
+authorization server and the registration (see Discovery and Registrations),
+makes the link and, in one transaction, records a pending sign-in in the state
+database with the link, and itself as waiting on it. A company, person and
+server have at most one pending sign-in, open or being exchanged; a call that
+finds one records itself as waiting on that one, and no second link is made.
+
+The runner sends the link to the speaker as a direct message through the
+connector the turn came from
+(`project/instrukt/spec/feature/runner/conversations`); the link is never
+posted in a channel and never passes through the agent. Once the connector has
+accepted it, the link is removed from the database. A failure the connector's
+provider documents as final closes the sign-in as `undelivered`; another
+failure is retried until the sign-in expires. After a restart the runner sends
+the link of every open sign-in whose link was not accepted yet.
+
+Every waiting call waits until the sign-in closes or its own 90 seconds have
+passed, whichever comes first:
+
+| The sign-in, when the call stops waiting | The call |
+| --- | --- |
+| `completed` | Proceeds with the new login; the same turn answers. |
+| Still open, its link accepted | Fails saying that a sign-in to the server is pending and that a link was sent to the speaker by direct message. |
+| Still open, its link not yet accepted | Fails saying that a sign-in to the server is pending and that its link has not been delivered yet. |
+| `undelivered` | Fails saying that the sign-in link could not be delivered, with the provider's cause. |
+| `declined` | Fails saying that the authorization server did not complete the sign-in, with its error code. |
+| `refused` | Fails saying that the sign-in was not for the speaker's address and was not kept. |
+| `failed` | Fails saying that the sign-in failed, with its cause. |
+| `expired` | Fails saying that the sign-in expired. |
+| `cancelled` | Fails saying that the sign-in was cancelled by a sign-out. |
+
+No result carries a link, code, state, verifier or token.
+
+A sign-in is completed in one transaction that stores the login and decides
+who learns of it: every call still waiting on it proceeds, and when no call is
+waiting at that moment the runner tells the speaker by direct message that
+they are signed in and can ask again. No turn is started for it. A pending
+sign-in that is not completed within ten minutes of its making expires, and
+the next call starts a new one.
 
 #### The link
 
 The link is the authorization server's authorization endpoint with:
-`response_type=code`, the client, the redirect address, the scopes, a state,
-a code challenge with `code_challenge_method=S256`, and `resource`, the
-server's `url`. The state and the code verifier are random values of at least
-256 bits, made for this one sign-in. The state is bound to the company, the
-speaker's address, the server and the message whose call started the sign-in;
-the database keeps its SHA-256 digest, not the state itself. A state is
-usable once and for ten minutes.
+`response_type=code`, the client, the registration's return address, the
+scopes, a state, a code challenge with `code_challenge_method=S256`,
+`resource` (the server's `url`), and, without `sign_in.identity`, a nonce. The
+state, the nonce and the code verifier are each the base64url form of 256
+random bits, made for this one sign-in; the code challenge is the base64url
+form of the SHA-256 digest of the verifier. The state is bound to the company,
+the speaker's address, the server, the registration and the message whose
+call started the sign-in. The database keeps the SHA-256 digest of the state,
+never the state itself apart from the link while it is undelivered. A state is
+usable once, within the sign-in's ten minutes.
 
 #### The return
 
-The authorization server sends the person's browser back to the sign-in
-return: `<ingress.url>/hooks/inbound/sign-in` on the ingress computer's
-receiver (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`).
-It is an unsigned `GET` carrying `state` and either `code` or the
-authorization server's `error`, and `iss` where the server sends one. It is
-not an event: nothing is published to the event stream and nothing can
-subscribe to it.
+The authorization server sends the person's browser to the registration's
+return address. The ingress computer's receiver
+(`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`)
+takes it without a signature and knows no company or pending sign-in. It
+checks only the request:
 
-The receiver writes one entry to cluster Redis, keyed by the SHA-256 digest
-of the state and carrying the code or the error and the `iss` value, only when
-no entry holds that key, and expiring after ten minutes unclaimed. It does not
-know which sign-ins are pending. The browser is shown only that the return was
-received and that the person can go back to the conversation; a request
-without a `state`, or without a `code` or an `error`, is answered `400`.
+- The method is `GET`; another method is answered `405`.
+- The path is the sign-in path followed by one return id in its form;
+  another path is not found.
+- The query is decoded once and carries exactly one nonempty `state`, and
+  exactly one of `code` and `error`, each once; `iss` at most once. Other
+  parameters are ignored. A repeated, missing or undecodable parameter, or a
+  request larger than the receiver takes, is answered `400`.
 
-The runner of the computer that issued the state claims its entry while the
-sign-in is open: it reads and removes it in one operation, so an entry is
-claimed once. The waiting call learns the outcome from the pending sign-in in
-the state database. The code verifier, the speaker and the conversation never
-leave that computer.
+It then writes one entry to cluster Redis, keyed by the SHA-256 digest of the
+state and carrying the return id, the code or the error code, and `iss` when
+present. The entry is written only when no entry holds that key, and expires
+after ten minutes unclaimed. At most 1,000 sign-in entries exist at once;
+beyond that a return is answered `503` and nothing is written. The entry is no
+event: nothing is published to the event stream and nothing can subscribe to
+it.
 
-#### Who signed in
+The browser is shown a plain page saying that the return was received and
+that the person can go back to the conversation. It does not say that a login
+was accepted, loads nothing from elsewhere, and is sent with
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. The receiver,
+the runner and their logs, status and recorded causes never hold a return's
+query, code, state, verifier or token. The operator's edge filters abuse of
+the sign-in path as it does for sources.
 
-The issuing computer refuses a return whose `iss` differs from the
-authorization server's issuer, and a return without `iss` from an
-authorization server whose metadata says it sends one. Otherwise it exchanges
-the code at the token endpoint with the code verifier, the redirect address,
-the client and `resource`. It then asks who signed in:
+#### Claiming a return
 
-| Declaration | Asked |
-| --- | --- |
-| With `sign_in.identity` | The declared request, with the new login; the address is the string at `email_field`. |
-| Without it | The authorization server's OpenID Connect UserInfo endpoint, named in its metadata; the address is its `email`. A sign-in for such a server asks for the scopes `openid` and `email` as well. |
+The runner of the computer that issued a state reads only the entries of its
+own open sign-ins. It claims an entry by reading and removing it in one
+operation, and then, in one transaction, moves the sign-in from `open` to
+`exchanging`, only when it is still open and unexpired; a sign-in that is no
+longer open is never exchanged, and an entry made again for it expires
+unread. A return whose return id is not the sign-in's registration's, or whose
+`iss` differs from the issuer, is not accepted: the sign-in closes as `failed`.
+Where the authorization server's metadata says it sends `iss`, a return
+without it is not accepted either. A return carrying an error closes the
+sign-in as `declined`.
+
+#### Exchange and who signed in
+
+The runner exchanges the code at the token endpoint with the code verifier,
+the return address, the client and `resource`. The answer is used only when it
+carries an access token of type `Bearer`; an `expires_in` gives its lifetime,
+and without one the lifetime is unknown. A refused exchange or an unusable
+answer closes the sign-in as `failed`.
+
+It then asks who signed in:
+
+| Declaration | Asked | The address |
+| --- | --- | --- |
+| With `sign_in.identity` | A `GET` to the declared `url` with the new access token. | The string at `email_field` in the JSON answer. |
+| Without it | The OpenID Connect ID token from the token answer, validated as OpenID Connect Core §3.1.3.7 requires (its signature by the provider's key set, `iss`, `aud`, expiry and the nonce), then the provider's UserInfo endpoint. | UserInfo's `email`, accepted only when its `sub` equals the ID token's and `email_verified` is `true`. A sign-in for such a server asks for the scopes `openid` and `email` as well. |
+
+Declaring `sign_in.identity` is the operator's statement that the named field
+holds the account's own login address at that server, unique there and not
+changeable by the person without the server's administration.
 
 The login is kept only when that address equals the address stored with the
-speaker's message, exactly and without regard to case. A login for another
-address, or for no address, is discarded, revoked at the authorization server
-where it offers revocation, and the speaker is told by direct message. An
-`error` from the authorization server, or a refused exchange, ends the sign-in
-and the speaker is told.
+speaker's message, exactly and without regard to case. The comparison proves
+only that the server reports that address for the account that signed in: two
+accounts with the same address at the server, or an address reassigned there
+to another account, are each accepted as the speaker. A login for another
+address, for no address, or without the required identity evidence is
+discarded and revoked at the authorization server where it offers revocation;
+the sign-in closes as `refused`, and the speaker is told. A failed identity
+request closes it as `failed`.
 
 #### Keeping and renewing a login
 
 A login is kept in the state database for the company, the person's address
-and the server: the access token, when it runs out, the refresh token, the
-scopes, and the client it was issued to. It is never written to the company
-home. No value of it is shown to the agent: the output rule below removes it
-from everything a server returns.
+and the server, with the resource it was issued for (the server's `url` at
+sign-in), its registration, the access token and when it runs out, the
+refresh token and the scopes. It is never written to the company home. No
+value of it is shown to the agent: the output rule below removes it from
+everything a server returns.
 
-instrukt renews a login itself with its refresh token, before a call when the
-access token runs out within a minute, and once after the server refuses a
-call's access token. One renewal of a login runs at a time; a call that finds
-one under way waits for its result. The renewed values are stored in one
-transaction. When the authorization server issues a new refresh token, the
-previous one is revoked after the new one is stored, where the authorization
-server offers revocation. A renewal the authorization server refuses
-(`invalid_grant`) removes the login, and the call continues as a call with no
-login: it starts a sign-in. A renewal that fails otherwise fails the call
-naming the server and keeps the login.
+A login is used only for the resource it was issued for, and renewed only at
+its own authorization server with its own client. When the server's declared
+`url` differs from that resource, the login is unusable: it is removed,
+revoked at its own authorization server where it offers revocation, and the
+call starts a sign-in.
+
+Before a call, instrukt renews a login whose access token runs out within a
+minute; it also renews once when the server answers a call's access token with
+`401`. A `403` is the server's refusal and is not renewed. A call renews a
+login at most once. The renewal is a refresh token request with the refresh
+token, `resource` and the client. One renewal of a login runs at a time; a
+call that finds one under way waits for its result, within its own wait.
+
+| Renewal | Outcome |
+| --- | --- |
+| Succeeds | The new access token and lifetime are stored in one transaction. A new refresh token replaces the previous one, which is discarded and not revoked; an answer without one keeps the current refresh token. |
+| Refused with `invalid_grant` | The login is removed and the call starts a sign-in. |
+| Fails otherwise | The call fails naming the server; the login is kept. |
+| Not possible: the login has no refresh token | The login is unusable: it is removed and the call starts a sign-in. |
+
+A lifetime the server did not give is unknown, not unlimited: such a login is
+used until the server answers `401`.
 
 #### Ending a login
 
 | Who | Does |
 | --- | --- |
-| The person | Asks the agent to be signed out of a server, or of all; the agent runs `instrukt mcp sign-out [<name>]`, which acts for the speaker of its turn only. |
-| The local operator | Removes a person's logins for a company with `instrukt mcp sign-out --company <company> --email <address> [<name>]`. |
-| The authorization server | Refuses a renewal. |
+| The person | Asks the agent to be signed out of a server, or of all; the agent runs `instrukt mcp sign-out [<name>]`, which acts for the speaker of its turn: their company, their address and the named server or every server. |
+| The local operator | Removes a person's logins for a company with `instrukt mcp sign-out --company <company> --email <address> [<name>]`, outside any session; inside a session this form is refused, and no caller selects another person that way. |
+| The authorization server | Refuses a renewal with `invalid_grant`. |
 
-Removing a login revokes its refresh token at the authorization server where
-it offers revocation, and removes it from the state database whether or not
-revocation succeeds. The next call of that person to that server starts a new
-sign-in.
+A removal covers the login and every open sign-in of that company, person and
+server, or of every server: the open sign-ins close as `cancelled`, and their
+waiting calls learn so. It applies also when there is no login, only an open
+sign-in. Each company, person and server has a generation number that a
+removal raises; an exchange or a renewal that began before the removal stores
+nothing when it ends, and the tokens it received are revoked where the
+authorization server offers revocation. Removing a login revokes its refresh
+token, or its access token when it has none, at its own authorization server
+where it offers revocation, and removes it from the state database whether or
+not revocation succeeds. A call already carried out at the server is not
+undone. The next call of that person to that server starts a new sign-in.
 
 #### Direct messages
 
-The runner sends these to the speaker, `<name>` being the server's name:
+The runner sends these to the speaker, `<name>` being the server's name. Each
+is posted for that person alone and accompanies no later message
+(`project/instrukt/spec/feature/runner/slack-connector`).
 
 | When | Text |
 | --- | --- |
 | A sign-in starts | `To let the agent use <name> as you, sign in here. The link works once, for ten minutes: <link>` |
-| A sign-in completes after its call stopped waiting | `You are signed in to <name>. Ask the agent again to continue.` |
-| The login was for another address | `That sign-in to <name> was not for your address and was not kept.` |
-| The authorization server refused the sign-in | `The sign-in to <name> did not complete: <the server's error code>.` |
+| A sign-in completes while no call waits | `You are signed in to <name>. Ask the agent again to continue.` |
+| The login was not for the speaker's address | `That sign-in to <name> was not for your address and was not kept.` |
+| The sign-in closed as `declined` or `failed` | `The sign-in to <name> did not complete: <error code>.` |
+
+`<error code>` is the error code the authorization server returned when it
+consists of up to 64 of the characters OAuth allows in one, and `unknown`
+otherwise; it is sent as plain text.
 
 ### What the caller identity establishes
 
@@ -291,11 +430,11 @@ is the local operator's.
 
 | Command | Does |
 | --- | --- |
-| `instrukt mcp list` | Names each server the caller sees with its description and where it is declared. Contacts no server and reads no secret. |
+| `instrukt mcp list` | Names each server the caller sees with its description and where it is declared, and for a server with a declared sign-in client the return address to register for it. Contacts no server and reads no secret. |
 | `instrukt mcp list-tools <name>` | Returns that server's tool catalog: each tool's name, description and input shape. |
 | `instrukt mcp call <name> <tool> --json '<arguments>'` | Calls the tool with the given JSON object and prints the tool's result as JSON. |
 | `instrukt mcp sign-out [<name>]` | Removes the speaker's signed-in login for that server, or for every server of the company. Refused in a session with no speaker. |
-| `instrukt mcp sign-out --company <company> --email <address> [<name>]` | The local operator's: removes that person's signed-in logins for the company, for one server or all. |
+| `instrukt mcp sign-out --company <company> --email <address> [<name>]` | The local operator's, outside any session: removes that person's signed-in logins and open sign-ins for the company, for one server or all. |
 
 - `list` and `list-tools` accept `--json`.
 - `list-tools` carries the login a call to that server would carry and is
@@ -332,11 +471,11 @@ is the local operator's.
 ### UC-MA1: An agent uses a tool as the person who asked
 
 ```gherkin
-Given a company member asks the company's agent for work that needs a server the company declares as needing a login
+Given a company member asks the company's agent for work that needs a server the company declares with stored logins
 When the agent calls a tool of that server
 Then the call reaches the server under that member's own login
 And the agent supplied no credential
-But when that member has no login for the server
+But when that member has no stored login for the server
 Then the call is refused naming the member and the missing login
 And no other login is used
 ```
@@ -372,13 +511,19 @@ Then each call reaches its own company's address
 ### UC-MA5: Sign in once while the agent waits and be answered in the same turn
 
 ```gherkin
-Given a company member asks the agent for work that needs a server the company declares with sign-in
+Given a company member asks the agent in a direct message for work that needs a server the company declares with sign-in
 And the member has never signed in to that server
 When the agent calls a tool of that server
 Then the member receives a sign-in link in a direct message, and nowhere else
+And the link reaches the agent neither then nor with a later message
 When the member signs in with their own address while the call waits
 Then the call reaches the server under the member's own login
 And the same turn answers
+But when the member signs in with an account the server reports under another address
+Then that login is not kept, the member is told so, and the agent's call learns that the sign-in was not kept
+But when the member asks in a channel and the agent calls a tool the server does not mark as only reading
+Then the call is refused, saying that the member can ask in a direct message
+And a tool the server marks as only reading is called under the member's login
 ```
 
 ### UC-MA6: Finish a late sign-in and ask again
@@ -392,15 +537,7 @@ Then the member is told in a direct message to ask again
 And no turn starts until they do
 ```
 
-### UC-MA7: Refuse a sign-in as someone else
-
-```gherkin
-Given a member has received a sign-in link
-When they sign in as a different person
-Then that login is not kept
-And the member is told that the sign-in was not for their address
-And the agent's next call for them starts a new sign-in
-```
+### UC-MA7
 
 ### UC-MA8: Keep working without signing in again
 
@@ -408,7 +545,7 @@ And the agent's next call for them starts a new sign-in
 Given a member has signed in to a server
 When their login runs out and the agent calls a tool for them
 Then instrukt renews the login and the call reaches the server
-But when the server refuses to renew it
+But when the authorization server no longer accepts the login's renewal
 Then the login is removed and a new sign-in starts
 ```
 
@@ -417,7 +554,7 @@ Then the login is removed and a new sign-in starts
 ```gherkin
 Given a member has signed in to a server
 When they ask the agent to sign them out of it
-Then their login is removed and revoked at the server
+Then their login is removed, and revoked at the server where the server offers revocation
 And the agent's next call for them starts a new sign-in
 ```
 
@@ -427,6 +564,7 @@ And the agent's next call for them starts a new sign-in
 Given a person has signed in to a company's servers
 When the operator removes that person's logins for the company
 Then none of them is kept on the computer
+And a sign-in that person had started keeps nothing when they complete it
 And a call for that person starts a new sign-in
 ```
 
@@ -442,21 +580,39 @@ And a call for that person starts a new sign-in
   holds acting for a person it names is not supported.
 - A sign-in needs the person to open the link in a browser that reaches the
   authorization server. A server may ask the person to approve every sign-in.
-- A call that starts a sign-in holds the agent's turn for up to 90 seconds.
+- A call that waits on a sign-in holds the agent's turn for up to 90 seconds.
 - A sign-in's return reaches the issuing computer only through cluster Redis:
   a computer that cannot reach it completes no sign-in, and a return arriving
-  while it cannot be reached is lost; the person signs in again.
+  while it cannot be reached is lost; the person signs in again. A writer to
+  cluster Redis can disturb returns; cluster Redis is trusted for that.
 - Clients are registered beforehand or dynamically. A client identified by a
   metadata document of its own is not supported, nor is an authorization
-  server without `S256`.
+  server without `S256`, a public client the authorization server registers
+  differently than asked, or, without `sign_in.identity`, an authorization
+  server that is no OpenID Provider. Each is refused with its reason.
+- The address comparison relies on what the server reports: with OpenID
+  Connect a verified address, with a declared identity request what the
+  operator's declaration asserts. It does not prove that one person holds the
+  account.
+- An authorization server that keeps a replaced refresh token valid, as
+  instrukt discards it rather than revoking it, leaves a copy of that token
+  usable at the server after renewal and after sign-out, possibly without
+  end; one that offers no revocation keeps every token it issued valid after
+  sign-out until it expires there.
 - A person who can no longer reach the agent keeps their logins in the state
   database until they sign out, the operator removes them, or the
   authorization server refuses a renewal.
 - Logins lie in the state database, where any process of the same
   operating-system user can read them. With a person's own login the agent
-  holds that person's rights at the server, so text of other people that
-  accompanies the speaker's message can steer what happens under the
-  speaker's name.
+  holds that person's rights at the server, and in a channel text of other
+  people accompanies the speaker's message and can steer what happens under
+  the speaker's name. That is why, under a signed-in login, a tool that
+  changes something is called only when the person asked in a direct
+  message.
+- Whether a tool only reads is the server's own statement, its read-only
+  annotation, and instrukt does not verify it. On a server whose reading goes
+  through a general tool that is not marked as only reading, that reading is
+  refused in a channel too.
 - The agent program's own MCP settings are untouched and unknown to instrukt:
   a server configured there is reached by that program, without these rules.
 - A speaker's logins are found by the email address the connector's provider
@@ -473,12 +629,14 @@ And a call for that person starts a new sign-in
 - [project/instrukt/spec/feature/runner/single-ingress-webhook-termination](single-ingress-webhook-termination.md) — the receiver that serves the sign-in return.
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md) — where logins, clients and pending sign-ins are kept.
 - https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization — MCP authorization: protected resource metadata, authorization server discovery order, client registration, PKCE with `S256` required, `resource` in authorization and token requests, scope selection, the bearer header.
-- https://www.rfc-editor.org/rfc/rfc6749 — OAuth 2.0: the authorization code grant, `state`, the refresh token grant, `invalid_grant`, and codes that live at most ten minutes.
-- https://www.rfc-editor.org/rfc/rfc7636 — PKCE: a verifier of 43 to 128 characters with at least 256 bits of entropy, and `S256`.
-- https://www.rfc-editor.org/rfc/rfc8707 — resource indicators: the `resource` parameter.
-- https://www.rfc-editor.org/rfc/rfc9728 — protected resource metadata: `resource`, `authorization_servers`, `scopes_supported`, and that `resource` must equal the address fetched.
-- https://www.rfc-editor.org/rfc/rfc8414 — authorization server metadata: `issuer`, `registration_endpoint`, `revocation_endpoint`, `code_challenge_methods_supported`, and that `issuer` must equal the address fetched.
-- https://www.rfc-editor.org/rfc/rfc7591 — dynamic client registration: `redirect_uris`, `token_endpoint_auth_method: none` for a public client, registration without an initial token.
-- https://www.rfc-editor.org/rfc/rfc7009 — token revocation: `token` and `token_type_hint`; success also for an unknown token.
-- https://www.rfc-editor.org/rfc/rfc9207 — the `iss` authorization response parameter and when a response without it is refused.
-- https://openid.net/specs/openid-connect-core-1_0.html — the UserInfo endpoint, the `openid` and `email` scopes and the `email` claim.
+- https://modelcontextprotocol.io/specification/2025-11-25/server/tools — tool annotations; `readOnlyHint: true` says a tool does not modify its environment, absent means false, and annotations are hints a client trusts only from a trusted server.
+- https://www.rfc-editor.org/rfc/rfc6749 — OAuth 2.0: the authorization code grant, `state`, optional refresh tokens, the refresh token grant and replacing a refresh token, `invalid_grant`; a code lifetime of at most ten minutes is recommended. The ten minutes of a pending sign-in are instrukt's own.
+- https://www.rfc-editor.org/rfc/rfc7636 — PKCE: a verifier of 43 to 128 unreserved characters with at least 256 bits of entropy, and `S256`, the base64url form of the verifier's SHA-256 digest.
+- https://www.rfc-editor.org/rfc/rfc8707 — resource indicators: the `resource` parameter, an absolute identifier without a fragment, in authorization and token requests.
+- https://www.rfc-editor.org/rfc/rfc9728 — protected resource metadata: `resource`, `authorization_servers`, `scopes_supported`; `resource` must equal the protected resource's identifier the metadata address was built from.
+- https://www.rfc-editor.org/rfc/rfc8414 — authorization server metadata: `issuer`, `registration_endpoint`, `revocation_endpoint`, `code_challenge_methods_supported`; `issuer` must equal the issuer identifier the metadata address was built from.
+- https://www.rfc-editor.org/rfc/rfc7591 — dynamic client registration: `redirect_uris`, `token_endpoint_auth_method: none` for a public client; a server may protect registration or register other values than asked, which its answer shows.
+- https://www.rfc-editor.org/rfc/rfc7009 — token revocation: `token` and `token_type_hint`; revoking one token may revoke others of the same grant; success also for an unknown token.
+- https://www.rfc-editor.org/rfc/rfc9207 — the `iss` authorization response parameter, compared exactly, and refused when missing from a server that says it sends it.
+- https://www.rfc-editor.org/rfc/rfc9700 — OAuth security best current practice: mix-up attacks between authorization servers and their defenses, among them a distinct return address per authorization server.
+- https://openid.net/specs/openid-connect-core-1_0.html — the ID token and its validation (§3.1.3.7), the UserInfo endpoint and its `sub` agreeing with the ID token's (§5.3.2), the `openid` and `email` scopes, `email` and `email_verified`.

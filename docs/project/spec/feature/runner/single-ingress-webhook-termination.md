@@ -19,17 +19,19 @@ The global-only `ingress.computer` names the existing stable instrukt machine ID
 not a hostname inferred at runtime. Only that computer serves source endpoints
 and the MCP sign-in return.
 The receiver checks placement before serving and exits when no longer ingress.
-A valid enabled nonempty source set supplies receiver demand, and so does a
-company home's MCP server declared with sign-in while events is on; an empty
+A valid enabled nonempty source set supplies receiver demand, and so does
+`ingress.url` set on the ingress computer while events is on there; an empty
 map or disabled events does not. Installation/withdrawal mechanisms belong to
 S7.
 
 The standalone receiver serves HTTP on `127.0.0.1` at global-only `ingress.port`.
 A local operator-controlled edge terminates TLS, filters abuse and forwards only
 the inbound prefix. A local request to a source still needs a signature. The
-sign-in return under the same prefix is unsigned: it takes a code for a
-pending sign-in and hands it on through cluster Redis as a short-lived entry
-that is no event (`project/instrukt/spec/feature/runner/mcp-access`). No
+sign-in return under the same prefix is unsigned and knows no company: it
+checks only the request's form and its path, and hands a code on through
+cluster Redis as a bounded, short-lived entry that is no event
+(`project/instrukt/spec/feature/runner/mcp-access`). The edge filters abuse of
+it, its rate and size, as for sources. No
 session-control, work-command or general public API surface is exposed.
 
 The admitted service manager holds the listening socket across receiver restarts

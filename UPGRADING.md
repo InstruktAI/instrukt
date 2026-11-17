@@ -177,14 +177,15 @@ Before declaring a server with sign-in:
 
 - Set `ingress.url` in the global layer of every participating computer to
   the public `https` address at which the operator's edge forwards
-  `/hooks/inbound` to the receiver, and keep events enabled with cluster Redis
-  reachable from the ingress computer and the company's computer.
-- Copy the company home's `instrukt.yaml` to the ingress computer, without its
-  secrets, and run `instrukt install` there and on the company's computer.
-- Add `im:write` to the company's Slack app, as in the connector's manifest
-  (`docs/project/spec/feature/runner/slack-connector.md`), and install the app
-  to the workspace again; store the bot token again when Slack issues a new
-  one. The sign-in link is sent by direct message.
+  `/hooks/inbound` to the receiver, keep events enabled on the ingress
+  computer, and keep cluster Redis reachable from the ingress computer and
+  the company's computer. Then run `instrukt install` on both.
+- For a server registered with a client beforehand (`sign_in.client`),
+  register the return address `instrukt mcp list --company <company>` shows
+  with the server's authorization server.
+
+The Slack app needs no new permission: the sign-in link is posted to the
+person's direct messages with the bot's existing `chat:write`.
 
 ### Protected secrets and owned files
 
