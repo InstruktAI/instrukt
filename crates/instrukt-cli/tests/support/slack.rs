@@ -30,12 +30,14 @@ pub const TEAM: &str = "TFAKE";
 /// read the scenarios make spans pages.
 const PAGE: usize = 2;
 
-/// A message the agent posted, as the Web API received it.
+/// A message the agent posted, as the Web API received it: as plain text
+/// (`text`) or as Markdown Slack renders (`markdown_text`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Post {
     pub channel: String,
     pub thread: Option<String>,
-    pub text: String,
+    pub text: Option<String>,
+    pub markdown: Option<String>,
 }
 
 /// One person in Slack's records: their names, address and standing.
@@ -378,14 +380,27 @@ impl FakeSlack {
                 w.reads += 1;
                 json!({"ok": true, "messages": page, "has_more": more, "response_metadata": {"next_cursor": if more { (from + size).to_string() } else { String::new() }}})
             }
+            // As Slack does: Markdown goes alone, never together with `text`
+            // or `blocks`, and a post carries one of them.
+            "chat.postMessage"
+                if arg("markdown_text").is_some()
+                    && (arg("text").is_some() || arg("blocks").is_some()) =>
+            {
+                json!({"ok": false, "error": "markdown_text_conflict"})
+            }
+            "chat.postMessage" if arg("markdown_text").is_none() && arg("text").is_none() => {
+                json!({"ok": false, "error": "no_text"})
+            }
             "chat.postMessage" => {
                 let post = Post {
                     channel: arg("channel").unwrap().to_owned(),
                     thread: arg("thread_ts").map(str::to_owned),
-                    text: arg("text").unwrap().to_owned(),
+                    text: arg("text").map(str::to_owned),
+                    markdown: arg("markdown_text").map(str::to_owned),
                 };
                 let ts = Self::posted(&mut w);
-                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": post.text});
+                let shown = post.markdown.as_ref().or(post.text.as_ref());
+                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": shown});
                 if let Some(thread) = &post.thread {
                     message["thread_ts"] = json!(thread);
                 }
@@ -487,12 +502,119 @@ impl FakeSlack {
 
     /// A person writes to the agent in a direct message.
     pub fn direct(&self, channel: &str, user: &str, text: &str) -> String {
+        self.direct_as(channel, user, text, None, false)
+    }
+
+    /// A direct message Slack sends with `subtype`, such as `me_message` for
+    /// one written with `/me`, carrying a file when `file` is set.
+    pub fn direct_as(
+        &self,
+        channel: &str,
+        user: &str,
+        text: &str,
+        subtype: Option<&str>,
+        file: bool,
+    ) -> String {
         let ts = self.say(channel, user, text, None);
-        self.deliver(
-            &format!("envelope-{ts}"),
-            json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts}),
-        );
+        let mut event = json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
+        Self::dress(&mut event, subtype, file);
+        self.dress_stored(&ts, subtype, file);
+        self.deliver(&format!("envelope-{ts}"), event);
         ts
+    }
+
+    /// The person edits their direct message `ts` to `text`: Slack sends a
+    /// record of the change, as `message_changed`, carrying the message.
+    pub fn edit_direct(&self, channel: &str, user: &str, ts: &str, text: &str) {
+        let at = self.rewrite(ts, text);
+        let message = json!({"type": "message", "user": user, "text": text, "ts": ts, "edited": {"user": user, "ts": at}});
+        self.deliver(
+            &format!("envelope-{at}"),
+            json!({"type": "message", "subtype": "message_changed", "hidden": true, "channel_type": "im", "channel": channel, "ts": at, "event_ts": at, "message": message}),
+        );
+    }
+
+    /// The person deletes their direct message `ts`: Slack sends a record of
+    /// the deletion, as `message_deleted`.
+    pub fn delete_direct(&self, channel: &str, ts: &str) {
+        let at = {
+            let mut w = self.workspace.lock().unwrap();
+            w.messages
+                .retain(|m| m["channel"] != channel || m["ts"] != ts);
+            Self::stamp(&mut w)
+        };
+        self.deliver(
+            &format!("envelope-{at}"),
+            json!({"type": "message", "subtype": "message_deleted", "hidden": true, "channel_type": "im", "channel": channel, "ts": at, "event_ts": at, "deleted_ts": ts}),
+        );
+    }
+
+    /// A person tags the agent in a channel in a message that carries a
+    /// file, which Slack records as `file_share`.
+    pub fn mention_with_file(
+        &self,
+        channel: &str,
+        user: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) -> String {
+        let ts = self.say(channel, user, text, thread);
+        let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
+        if let Some(thread) = thread {
+            event["thread_ts"] = json!(thread);
+        }
+        Self::dress(&mut event, Some("file_share"), true);
+        self.dress_stored(&ts, Some("file_share"), true);
+        self.deliver(&format!("envelope-{ts}"), event);
+        ts
+    }
+
+    /// A person edits their channel message `ts` so that it tags the agent:
+    /// Slack sends the mention marked as edited.
+    pub fn edit_into_mention(
+        &self,
+        channel: &str,
+        user: &str,
+        ts: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) {
+        let at = self.rewrite(ts, text);
+        let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": at, "edited": {"user": user, "ts": at}});
+        if let Some(thread) = thread {
+            event["thread_ts"] = json!(thread);
+        }
+        self.deliver(&format!("envelope-{at}"), event);
+    }
+
+    /// Changes the stored message `ts` to `text`, marked as edited, and
+    /// returns the time of the edit.
+    fn rewrite(&self, ts: &str, text: &str) -> String {
+        let mut w = self.workspace.lock().unwrap();
+        let at = Self::stamp(&mut w);
+        let message = w.messages.iter_mut().find(|m| m["ts"] == ts).unwrap();
+        message["text"] = json!(text);
+        message["edited"] = json!({"user": message["user"].clone(), "ts": at});
+        at
+    }
+
+    /// Gives an event or a message its subtype and, for a file, the files
+    /// Slack lists with it.
+    fn dress(message: &mut Value, subtype: Option<&str>, file: bool) {
+        if let Some(subtype) = subtype {
+            message["subtype"] = json!(subtype);
+        }
+        if file {
+            message["files"] =
+                json!([{"id": "F1", "name": "invoice.pdf", "mimetype": "application/pdf"}]);
+            message["upload"] = json!(true);
+        }
+    }
+
+    fn dress_stored(&self, ts: &str, subtype: Option<&str>, file: bool) {
+        let mut w = self.workspace.lock().unwrap();
+        let message = w.messages.iter_mut().find(|m| m["ts"] == ts).unwrap();
+        Self::dress(message, subtype, file);
     }
 
     /// One of Slack's own notices in a channel, such as a person joining it.

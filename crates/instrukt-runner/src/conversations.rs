@@ -28,8 +28,9 @@ use crate::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeS
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::{self, RunnerState, StateError};
 
-/// Slack's guidance for one message's text; longer answers are split.
-pub const SLACK_MESSAGE_LIMIT: usize = 4000;
+/// Slack's limit for an answer posted as Markdown (`markdown_text`), in
+/// characters; longer answers are split.
+pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
 
 /// A connector's connection state, as `instrukt events status` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -968,28 +969,32 @@ fn reconcile(
     Ok(true)
 }
 
-/// Split `text` into pieces of at most `limit` characters, at a line break
-/// where one falls in the second half of a piece.
+/// Split `text` into parts of at most `limit` characters, changing nothing
+/// in it. While more than `limit` characters remain, a part takes the first
+/// `limit` of them and ends after the last line break among them when that
+/// line break lies after the first half, and after the `limit`th character
+/// otherwise. The remainder is the last part, unchanged; an empty text has
+/// no part.
 pub fn split(text: &str, limit: usize) -> Vec<String> {
-    let mut pieces = Vec::new();
+    let mut parts = Vec::new();
     let mut rest = text;
     while rest.chars().count() > limit {
-        let cut = rest
-            .char_indices()
-            .nth(limit)
-            .map_or(rest.len(), |(at, _)| at);
-        let head = &rest[..cut];
-        let at = head
-            .rfind('\n')
-            .filter(|&at| at > cut / 2)
-            .map_or(cut, |at| at + 1);
-        pieces.push(rest[..at].trim_end_matches('\n').to_owned());
+        let mut end = 0;
+        let mut after_break = None;
+        for (index, (at, character)) in rest.char_indices().take(limit).enumerate() {
+            end = at + character.len_utf8();
+            if character == '\n' && index >= limit / 2 {
+                after_break = Some(end);
+            }
+        }
+        let at = after_break.unwrap_or(end);
+        parts.push(rest[..at].to_owned());
         rest = &rest[at..];
     }
-    if !rest.trim().is_empty() {
-        pieces.push(rest.to_owned());
+    if !rest.is_empty() {
+        parts.push(rest.to_owned());
     }
-    pieces
+    parts
 }
 
 /// Read finished turns of a conversation session from its own retained
@@ -1068,8 +1073,13 @@ fn harvest(
                 .contributions
                 .iter()
                 .filter(|contribution| contribution.author.kind == AuthorKind::Agent)
-                .map(|contribution| contribution.text.trim())
-                .filter(|text| !text.is_empty() && *text != "NOOP")
+                .map(|contribution| contribution.text.as_str())
+                // Only whether it says anything is judged on its trimmed
+                // form; what is posted is the text as the agent wrote it.
+                .filter(|text| {
+                    let said = text.trim();
+                    !said.is_empty() && said != "NOOP"
+                })
                 .collect::<Vec<_>>()
                 .join("\n\n");
             answers.push((
@@ -1154,7 +1164,9 @@ fn post(
         }
     };
     for (turn, piece, text) in pending {
-        let result = api.post(&c.conversation, &text).map_err(|e| e.to_string());
+        let result = api
+            .answer(&c.conversation, &text)
+            .map_err(|e| e.to_string());
         state.write::<_, StateError>(|tx| {
             tx.execute(
                 "UPDATE conversation_answers SET posted_at=CASE WHEN ?6 IS NULL THEN ?7 END,failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
@@ -1458,18 +1470,42 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
 mod tests {
     use super::{ConnectionState, Stage, split};
 
+    /// The character count of each part, and whether the parts together
+    /// are the text unchanged.
+    fn cut(text: &str, limit: usize) -> (Vec<usize>, bool) {
+        let parts = split(text, limit);
+        let counts = parts.iter().map(|part| part.chars().count()).collect();
+        (counts, parts.concat() == text)
+    }
+
     #[test]
-    fn long_answers_split_within_the_limit_and_lose_nothing_but_the_break() {
-        let text = format!("{}\n{}", "a".repeat(30), "b".repeat(25));
-        let pieces = split(&text, 40);
-        assert_eq!(pieces.len(), 2);
-        assert!(pieces.iter().all(|piece| piece.chars().count() <= 40));
+    fn a_part_ends_after_the_last_line_break_in_its_second_half() {
+        // Line breaks at characters 23 and 29 both lie in the second half.
+        let text = format!("{}\n{}\n{}", "a".repeat(22), "b".repeat(5), "c".repeat(30));
+        assert_eq!(cut(&text, 40), (vec![29, 30], true));
+    }
+
+    #[test]
+    fn a_line_break_in_the_first_half_does_not_end_a_part() {
+        let text = format!("{}\n{}", "a".repeat(10), "b".repeat(50));
+        assert_eq!(cut(&text, 40), (vec![40, 21], true));
+    }
+
+    #[test]
+    fn the_remainder_is_the_last_part_and_no_empty_part_follows() {
+        assert_eq!(cut(&"a".repeat(41), 40), (vec![40, 1], true));
+        assert_eq!(cut(&"a".repeat(80), 40), (vec![40, 40], true));
         assert_eq!(
-            pieces.iter().map(|p| p.chars().count()).sum::<usize>(),
-            text.chars().count() - 1
+            cut(&format!("{}\n  ", "a".repeat(39)), 40),
+            (vec![40, 2], true)
         );
-        assert_eq!(split("short", 40).len(), 1);
-        assert!(split("", 40).is_empty());
+        assert_eq!(cut(&"a".repeat(5), 40), (vec![5], true));
+        assert_eq!(cut("", 40), (vec![], true));
+    }
+
+    #[test]
+    fn the_limit_counts_characters_not_bytes() {
+        assert_eq!(cut(&"é".repeat(41), 40), (vec![40, 1], true));
     }
 
     #[test]
