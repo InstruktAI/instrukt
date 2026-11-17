@@ -256,12 +256,15 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
 #[test]
 fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_session_starts() {
     let mut c = Company::new("");
+    // The runner's clock stands still, so the wait Slack names does not pass
+    // while it runs.
+    c.env.set_env("INSTRUKT_NOW", "2030-01-01T09:00:00Z");
     c.run();
     let channel = "C1";
-    // Slack limits the lookup of who wrote it and names a wait far longer
-    // than this test: the message waits, nothing is delivered or replied,
-    // and the cause shows. No lookup is made for this workspace while the
-    // wait lasts, also not for a message that arrives meanwhile.
+    // Slack limits the lookup of who wrote it and names a wait: the message
+    // waits, nothing is delivered or replied, and the cause shows. No lookup
+    // is made for this workspace while the wait lasts, also not for a
+    // message that arrives meanwhile.
     let waiting = |c: &Company| {
         c.conversations()
             .conversations
@@ -269,7 +272,7 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
             .filter(|pending| pending.pending_messages == 1 && !pending.failures.is_empty())
             .count()
     };
-    c.slack.limit_lookup(3600);
+    c.slack.limit_lookup(30);
     let asked = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> Are you there?", None);
@@ -283,6 +286,7 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
     // Restarted, the runner learns any wait again from Slack, which now
     // answers: both are answered.
     c.kill_runner();
+    c.env.remove_env("INSTRUKT_NOW");
     c.run();
     wait("both conversations' sessions", || c.sessions().len() == 2);
     let mut inputs: Vec<String> = c

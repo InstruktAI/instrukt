@@ -250,7 +250,7 @@ pub fn run(
         ));
     }
     let slack = demand
-        .then(|| crate::connectors::SlackEndpoint::from_env(cx.env))
+        .then(|| crate::connectors::SlackEndpoint::from_env(cx.env, Arc::clone(&clock)))
         .transpose()
         .map_err(|e| RunnerError::Conversations(e.to_string()))?;
     let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);

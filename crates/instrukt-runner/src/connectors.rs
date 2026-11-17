@@ -86,27 +86,52 @@ const SLACK_API: &str = "https://slack.com/api";
 /// that wait, up to [`MOST_BACKOFF`].
 const RETRY: Duration = Duration::from_secs(2);
 
+/// The time the limits read: the runner's clock.
+pub type Clock = Arc<dyn Fn() -> Timestamp + Send + Sync>;
+
 /// Until when Slack limited each method for each company's workspace, as
-/// its `Retry-After` said. The runner owns one and every client of its
-/// connectors shares it, so no call of a limited method for that workspace
-/// is made before its wait is over while the runner runs. A wait that has
-/// passed is retired.
-#[derive(Debug, Clone, Default)]
-pub struct Limits(Arc<std::sync::Mutex<HashMap<(String, String), Instant>>>);
+/// its `Retry-After` said, on the runner's clock. The runner owns one and
+/// every client of its connectors shares it, so no call of a limited method
+/// for that workspace is made before its wait is over while the runner runs.
+/// A wait that has passed is retired.
+#[derive(Clone)]
+pub struct Limits {
+    clock: Clock,
+    waits: Arc<std::sync::Mutex<HashMap<(String, String), Timestamp>>>,
+}
+
+impl std::fmt::Debug for Limits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Limits").finish_non_exhaustive()
+    }
+}
+
 impl Limits {
-    /// Until when `method` is limited for `company`'s workspace, if it is.
-    fn until(&self, company: &str, method: &str) -> Option<Instant> {
-        let mut limits = self.0.lock().ok()?;
-        let now = Instant::now();
-        limits.retain(|_, until| *until > now);
-        limits
-            .get(&(company.to_owned(), method.to_owned()))
-            .copied()
+    fn new(clock: Clock) -> Self {
+        Self {
+            clock,
+            waits: Arc::default(),
+        }
     }
 
-    fn limit(&self, company: &str, method: &str, until: Instant) {
-        if let Ok(mut limits) = self.0.lock() {
-            limits.insert((company.to_owned(), method.to_owned()), until);
+    /// How many whole seconds, rounded up, `method` stays limited for
+    /// `company`'s workspace, if it is.
+    fn remaining(&self, company: &str, method: &str) -> Option<u64> {
+        let mut waits = self.waits.lock().ok()?;
+        let now = (self.clock)();
+        waits.retain(|_, until| *until > now);
+        let until = waits.get(&(company.to_owned(), method.to_owned()))?;
+        let left = until.duration_since(now);
+        let seconds = u64::try_from(left.as_secs()).unwrap_or(0);
+        Some(seconds + u64::from(left.subsec_nanos() > 0))
+    }
+
+    /// Keeps the wait of `seconds` Slack named for `method`.
+    fn limit(&self, company: &str, method: &str, seconds: u64) {
+        let wait = jiff::SignedDuration::from_secs(i64::try_from(seconds).unwrap_or(i64::MAX));
+        let until = (self.clock)().checked_add(wait).unwrap_or(Timestamp::MAX);
+        if let Ok(mut waits) = self.waits.lock() {
+            waits.insert((company.to_owned(), method.to_owned()), until);
         }
     }
 }
@@ -154,14 +179,14 @@ pub struct SlackEndpoint {
 impl SlackEndpoint {
     /// Slack's own hosts unless [`API_URL_SETTING`] names a loopback
     /// address; any other value refuses. The endpoint starts knowing no wait
-    /// and keeps those Slack names for as long as it lives.
-    pub fn from_env(env: &Env) -> Result<Self, SlackError> {
+    /// and keeps those Slack names for as long as it lives, timed by `clock`.
+    pub fn from_env(env: &Env, clock: Clock) -> Result<Self, SlackError> {
         match env
             .get(API_URL_SETTING)
             .filter(|url| !url.trim().is_empty())
         {
             None => Ok(Self {
-                limits: Limits::default(),
+                limits: Limits::new(clock),
                 api: SLACK_API.into(),
                 local: false,
             }),
@@ -171,7 +196,7 @@ impl SlackEndpoint {
                     return Err(SlackError::Endpoint);
                 }
                 Ok(Self {
-                    limits: Limits::default(),
+                    limits: Limits::new(clock),
                     api: url.trim_end_matches('/').to_owned(),
                     local: true,
                 })
@@ -279,10 +304,10 @@ impl SlackApi {
         timeout: Option<Duration>,
     ) -> Result<Value, SlackError> {
         let company = self.company.to_string();
-        if let Some(until) = self.endpoint.limits.until(&company, method) {
+        if let Some(seconds) = self.endpoint.limits.remaining(&company, method) {
             return Err(SlackError::Limited {
                 method: method.into(),
-                seconds: until.saturating_duration_since(Instant::now()).as_secs() + 1,
+                seconds,
             });
         }
         let token = if app {
@@ -312,11 +337,7 @@ impl SlackApi {
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .unwrap_or(1);
-            self.endpoint.limits.limit(
-                &company,
-                method,
-                Instant::now() + Duration::from_secs(seconds),
-            );
+            self.endpoint.limits.limit(&company, method, seconds);
             tracing::warn!(event = "connector_rate_limited", company = %self.company, method, seconds);
             return Err(SlackError::Limited {
                 method: method.into(),
@@ -1350,6 +1371,10 @@ mod tests {
     use instrukt_core::config::Env;
     use serde_json::{Value, json};
 
+    fn system() -> super::Clock {
+        std::sync::Arc::new(jiff::Timestamp::now)
+    }
+
     fn me() -> Me {
         Me {
             user: "UAGENT".into(),
@@ -1414,9 +1439,10 @@ mod tests {
 
     #[test]
     fn only_slack_or_a_loopback_stand_in_receives_tokens() {
-        let at =
-            |url: &str| SlackEndpoint::from_env(&Env::from_pairs([(super::API_URL_SETTING, url)]));
-        assert!(SlackEndpoint::from_env(&Env::default()).is_ok_and(|e| !e.local));
+        let at = |url: &str| {
+            SlackEndpoint::from_env(&Env::from_pairs([(super::API_URL_SETTING, url)]), system())
+        };
+        assert!(SlackEndpoint::from_env(&Env::default(), system()).is_ok_and(|e| !e.local));
         assert!(at("http://127.0.0.1:9/api").is_ok_and(|e| e.local));
         for refused in [
             "http://example.com/api",
@@ -1426,7 +1452,7 @@ mod tests {
         ] {
             assert!(at(refused).is_err(), "{refused}");
         }
-        let slack = SlackEndpoint::from_env(&Env::default()).unwrap();
+        let slack = SlackEndpoint::from_env(&Env::default(), system()).unwrap();
         assert!(slack.admits_socket("wss://wss-primary.slack.com/link/?ticket=1"));
         assert!(!slack.admits_socket("ws://wss-primary.slack.com/link"));
         assert!(!slack.admits_socket("wss://evil.example/link"));
