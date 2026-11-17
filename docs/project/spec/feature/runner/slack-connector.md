@@ -141,9 +141,9 @@ shows Slack's status line for it with the text
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
 
-The connector sets the status when it admits the message, without waiting for
-its regular pass, so the person sees at once that the request was taken on.
-Beyond that first setting the status is a courtesy, kept on a best-effort
+Admitting a message wakes the connector's status pass, so the person normally
+sees at once that the request was taken on; that first setting can wait behind
+status calls already under way. The status is a courtesy, kept on a best-effort
 basis; no timing of it is promised. Slack drops a status after two minutes and
 when the app posts, so
 while a status stays the connector sets it again about every half minute, and
