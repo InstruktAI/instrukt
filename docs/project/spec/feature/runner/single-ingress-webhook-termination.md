@@ -83,9 +83,13 @@ When the ingress and the reacting computer differ, they need different things:
 | Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
 
 Changing `ingress.reactions` or `ingress.computer` is a change the operator
-coordinates while nothing is in flight: intake is stopped or the stream has
-drained, the computer that reacted so far has settled what it accepted, then the
-setting is changed on every participating computer and intake resumes. An
+coordinates while nothing is in flight. It is supported only when no
+participating computer's procedure consumer, the computer that reacted so far
+and the one that will react included, has entries from before the change still
+to read or settle, and the computer that reacted so far has settled what it
+accepted. Stopping intake keeps new entries from arriving; it does not satisfy
+the condition by itself. The setting is then changed on every participating
+computer and intake resumes. An
 activation a computer has accepted stays with that computer and runs there. A
 fact read after the change is handled under the new setting.
 
@@ -193,7 +197,7 @@ And the server publishes the fact and runs no procedure for it
 - Socket queuing survives receiver restart only within the provider timeout and an admitted service manager's support; it supplies no outage store-and-forward.
 - GitHub's delivery ID and event-type headers are not signed body fields. Source-scoped claim deduplication is bounded replay suppression, not independent authentication of those headers.
 - A scheduled-only reacting computer activates on its next tick within retention even while the receiver continues accepting.
-- Changing `ingress.reactions` or `ingress.computer` other than as a coordinated change while nothing is in flight is not supported: a fact may then find no reacting computer or two. No work moves between computers.
+- Changing `ingress.reactions` or `ingress.computer` other than as a coordinated change while nothing is in flight is not supported, including a change made while any participating procedure consumer still has entries from before it to read or settle: a fact may then find no reacting computer or two. No work moves between computers.
 - Activation keys are kept per computer. instrukt does not detect two computers that disagree on `ingress.computer` or `ingress.reactions`: then no computer reacts to external facts, the wrong one does, or two do, and nothing reports it. Agreement is established when the computers are configured (`project/instrukt/spec/feature/configuration/configuration-skill`); `instrukt events status` on each computer shows its machine ID and both settings as it reads them, for a person or an agent to compare.
 
 ## See Also
