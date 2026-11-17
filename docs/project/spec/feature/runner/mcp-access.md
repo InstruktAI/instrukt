@@ -27,8 +27,8 @@ mcp:
 | Field | Contract |
 | --- | --- |
 | `mcp.<name>` | The server's name, following the grammar of a project slug. Declared in the global layer for the computer, or in a company home for work done for that company. |
-| `url` | The server's network address. Required. |
-| `description` | One line saying what the server is for; `list` shows it. Required. |
+| `url` | The server's network address. Required. It is an `https` address, or an `http` address on this computer's loopback; any other address is a validation finding, because a login would cross the network unprotected. |
+| `description` | One line saying what the server is for; `list` shows it. Required. A description that spans lines is a validation finding. |
 | `credential` | Company home only: the name under `members.<member>.credentials` whose value a speaker's call carries (`project/instrukt/spec/feature/configuration/company-homes`). |
 | `login` | A `${NAME}` reference, never a literal value. In a company home it is the company's own login, references that home's secrets file, requires `credential`, and is carried only by a call with no speaker. In the global layer it is the machine's own login and references the machine's secrets file. |
 
@@ -51,6 +51,15 @@ runner's recorded assignment for that session.
 | A session whose recorded assignment names a company home | That company's, and the machine-wide open servers it does not replace. A machine-wide server that carries a login is offered there only when the company home declares that server itself. `--company` naming another company is refused. |
 | The local operator, outside any session, with `--company <name>` | The same as that company's sessions see. |
 | Any other caller | Every machine-wide declaration. |
+
+A recognized session working in a company home is not served as any other
+caller while its assignment is not recorded: `list-tools` and `call` are
+refused there, before any secret is read or any server contacted, naming the
+company and the missing binding, until the runner has recorded the session as
+that company's. A session without an assignment outside company homes, and
+the local operator outside any session, are served as the table says. The
+working directory only withholds access; it never gives a session a company,
+a role or a login.
 
 ### The login a call carries
 
@@ -99,15 +108,29 @@ is the local operator's.
 | `instrukt mcp call <name> <tool> --json '<arguments>'` | Calls the tool with the given JSON object and prints the tool's result as JSON. |
 
 - `list` and `list-tools` accept `--json`.
+- `list-tools` carries the login a call to that server would carry and is
+  refused as that call would be; it has no identity of its own.
 - `list-tools` and `call` each open their own connection, perform the request
-  and close it. No connection and no server state outlives the command.
+  and close it. instrukt speaks the Streamable HTTP transport of MCP version
+  2025-06-18. A reply that is not a well-formed answer to the request it was
+  sent, or that lacks what the method requires, is a failure, never an empty
+  result. An answer that arrives as an event completes the request without
+  waiting for the stream to end.
+- A connection is given ten seconds to open and each request two minutes. A
+  catalog ends as a failure when the server repeats a cursor or after one
+  hundred pages.
+- No connection outlives the command. When the server opened a session,
+  instrukt asks it once to end that session on every path, a failed one
+  included; a server that does not end it is logged and changes no outcome.
 - An unknown server name is refused naming the servers the caller sees. An
   unreachable server fails naming the server and its address. A failure the
   server reports reaches the caller with the server's cause and a non-zero
   exit.
-- Before anything a server returned is printed or logged, a result, a catalog
-  or a failure, every resolved credential value is removed from it. The
-  command's own output, logs and diagnostics name references, never values.
+- Before anything a server returned is printed or logged, a result, a catalog,
+  a failure or a part of the server's reply that the transport reports, every
+  occurrence of a resolved credential value is removed from it, in text and in
+  JSON strings and keys, also where JSON escaped it. The command's own output,
+  logs and diagnostics name references, never values.
 - The command writes no agent program's settings.
 
 ## Use cases
@@ -158,6 +181,10 @@ Then each call reaches its own company's address
   local program, or that keeps state between calls, is not.
 - A server that requires an interactive sign-in is not supported; the login is
   a stored value.
+- A credential value a server returns changed, encoded or in pieces is not
+  recognised and is not removed.
+- Refusing a session in a company home until it is bound holds for a session
+  that stays where the runner started it; it is not confinement.
 - The agent program's own MCP settings are untouched and unknown to instrukt:
   a server configured there is reached by that program, without these rules.
 - A speaker's logins are found by the email address the connector's provider
