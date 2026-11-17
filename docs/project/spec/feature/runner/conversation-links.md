@@ -121,7 +121,7 @@ unavailable occurrence time stays explicitly unknown. The paired close derives
 from the exact opening fields. Identity resolution is fixed for the contribution,
 not recomputed from a thread's later configuration. In a member envelope,
 `connector` and `conversation` name the connector and its conversation
-identity, and `member` is the member's key in the company's list; their use is
+identity, and `member` is the sender's name as the connector gives it; their use is
 `project/instrukt/spec/feature/runner/conversations`.
 
 `boundary` is a token the runner generates and writes into the opening and

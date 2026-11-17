@@ -24,8 +24,7 @@ default without an adopted enabled project creates no infrastructure demand,
 except through a company home, which follows the machine's global switches
 (`project/instrukt/spec/feature/configuration/company-homes`): a nonempty valid
 source map there demands events infrastructure and the receiver while events is
-on, and a declared connector demands the runner service while conversations is
-on.
+on, and a declared connector demands the runner service.
 Writing installation reads the registered checkouts and retains their validated
 project settings and resolved repository identities in this computer's own
 installation state. Inspection reads the current repository and those retained
@@ -39,7 +38,7 @@ unused; withdrawal waits for a complete demand read.
 | Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
 | Blueprint enabled | Release-pinned Graphify in the instrukt home via `uv tool install graphifyy==<pin>`; uv is an unmet prerequisite when installation is needed and uv is absent. No wake-up, Redis or receiver solely for blueprint. |
 | History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
-| Conversations enabled with a declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
+| A company home's declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
 | Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers retain consumers without listeners. |
@@ -133,9 +132,9 @@ One wake proves neither delivered activation nor completed task.
 ### Runner service
 
 A connector is served only by a running `instrukt run`
-(`project/instrukt/spec/feature/runner/conversations`). While
-`modules.conversations` is on and a company home on the computer declares a
-valid connector, installation keeps one owned service that runs
+(`project/instrukt/spec/feature/runner/conversations`). While a company home
+on the computer declares a valid connector, installation keeps one owned
+service that runs
 `instrukt run`: a launchd job on macOS, a systemd user service on Linux. The
 service manager starts it at login or boot and restarts it when it exits. The
 unit executes the installed instrukt binary with its configuration scope. Cron
@@ -164,8 +163,7 @@ four states, with the cause where there is one:
 | `obsolete` | An owned service remains and there is no demand. |
 | `no_demand` | There is no demand and no owned service. |
 
-Switching conversations off, or removing the last declared connector, ends the
-demand; the next `instrukt install` withdraws the owned service under the
+Removing the last declared connector ends the demand; the next `instrukt install` withdraws the owned service under the
 withdrawal and ownership rules below. A run started by hand is never the
 service and is never stopped by withdrawal.
 
@@ -423,7 +421,7 @@ Then Graphify is neither installed nor required and an existing tool is retained
 ### UC-MI13: Keep the runner running for a company's conversations
 
 ```gherkin
-Given a developer has switched conversations on and a company home declares a connector
+Given a developer has a company home that declares a connector
 When they install the demanded infrastructure and the computer later restarts
 Then an owned service has the runner running again without anyone starting it
 But when the computer has no service manager that can keep a process running

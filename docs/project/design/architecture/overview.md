@@ -8,7 +8,7 @@ description: How instrukt is built — one CLI in modules with one-way dependenc
 
 instrukt is a context-engineering module: a single
 CLI that makes documentation the way agents are instructed and, when switched
-on, runs the work those docs describe. It has no consumer daemon beside its runner; with conversations on, an owned service keeps the runner running. Core operations are commands; enabled events also
+on, runs the work those docs describe. It has no consumer daemon beside its runner; with a company's connector declared, an owned service keeps the runner running. Core operations are commands; enabled events also
 have a narrow standalone loopback webhook receiver on the designated ingress.
 Commands, independent event readers and the conversation-link stream reader
 work against files, git, GitHub, scoped
@@ -153,7 +153,7 @@ commands. Docs name `-h`.
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
-| OS service manager | runner | the ingress receiver's socket and service, and with conversations on the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
+| OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
 | Slack | runner | a Socket Mode connection `instrukt run` opens outward per company home that declares the connector; its history and posting calls with the bot token (`project/instrukt/spec/feature/runner/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |

@@ -52,32 +52,36 @@ the same reference name for different values.
 
 ```yaml
 members:
-  steven:
-    name: Steven Sonneveld
-    slack: U04ABC123
+  alex:
+    name: Alex Example
+    email: alex@example.com
     credentials:
-      erpnext: ${STEVEN_ERPNEXT_LOGIN}
+      erpnext: ${ALEX_ERPNEXT_LOGIN}
 ```
 
-A person exists for instrukt only as a member of a company. `members` in the
-company home's settings lists them; a person working for two companies is a
-member entry in each, and nothing links the two.
+A company's people reach its agent through its connectors, which know them
+from their providers (`project/instrukt/spec/feature/runner/conversations`).
+`members` in the company home's settings holds what a provider cannot supply:
+a person's own logins for the company's tools. A person working for two
+companies is a member entry in each, and nothing links the two.
 
 | Field | Contract |
 | --- | --- |
 | `members.<member>` | The member's key, unique within the company, following the grammar of a project slug. |
 | `name` | The person's display name; the key when omitted. |
-| `<connector>` | The person's identity on a supported connector, such as `slack: <member id>`. A value is listed by at most one member of the company. |
+| `email` | The person's email address. Required. An address is listed by at most one member of the company. |
 | `credentials.<tool>` | A `${NAME}` reference into the home's secrets file: the person's own login for that tool. Never a literal value. |
 
-- A connector identity resolves to the one member that lists it, by lookup in
-  that company's list alone. An identity no member lists is unknown; resolution
-  never consults another company or invents a member.
-- An identity listed by two members, a literal credential and an unknown field
-  in a member entry, an unsupported connector's key among them, are validation
-  findings naming the member and the field.
-- A member entry carries no role and grants nothing: it says who a person is on
-  a connector and which logins are theirs.
+- A connector's sender is a member when the provider gives the same email
+  address for them, compared without regard to case, by lookup in that
+  company's list alone. Matching never compares names and never consults
+  another company. A sender whose provider gives no address, or an address no
+  member lists, has no member entry and no logins of their own.
+- An address listed by two members, a missing address, a literal credential
+  and an unknown field in a member entry are validation findings naming the
+  member and the field.
+- A member entry carries no role and grants nothing. It does not decide whom
+  the agent answers; it says which logins are a person's own.
 
 ### Agent profiles
 
@@ -116,14 +120,14 @@ And neither the machine's secrets nor the other company's supply it
 And no output discloses a value
 ```
 
-### UC-CH3: List a company's people once for every channel and tool
+### UC-CH3: Give a company's people their own tool logins
 
 ```gherkin
-Given a developer lists a company's members with their channel identities and their own tool logins
+Given a developer lists a company's members with their email addresses and their own tool logins
 When the company's settings are validated and read
-Then each channel identity belongs to exactly one member
+Then each email address belongs to exactly one member
 And each member's logins appear as references, never as values
-But an identity listed by two members is refused naming both
+But an address listed by two members is refused naming both
 ```
 
 ## Known caveats

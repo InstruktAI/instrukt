@@ -26,6 +26,8 @@ the meaning and the writes of the runner tables.
   that needs it.
 - **Holds:** the work tables and the runner tables below. Nothing else is
   stored in it.
+- **Protection:** the database and the files SQLite keeps beside it are
+  readable and writable by their owner only.
 - **Stays outside it:** the blueprint graph store (one complete graph per
   revision, as files under `~/.instrukt/state/blueprint/`), publication
   state, the global index, eval fingerprints, hook outcomes and the
@@ -456,7 +458,7 @@ and `message`, the connector's identity of that message.
 
 | Column | Meaning |
 | --- | --- |
-| `member` | The member who wrote it, by key in the company's member list. |
+| `sender` | The connector identity of the person who wrote it. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
 | `state` | `received` once stored; `pending` once what accompanies it is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
@@ -474,6 +476,12 @@ cause of its last failed post, `NULL` once posted.
 **`conversation_refusals`** — the one fixed reply owed to a sender no member
 lists. Key: the address and `sender`. Columns: `received_at`; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`.
+
+**`conversation_people`** — what a connector's provider said about a person
+who addressed an agent. Key: `(company, connector, identity)`. Columns: `name`;
+`email`, `NULL` when the provider gives none; `own`, whether the provider
+knows them as one of the company's own; `checked_at`, when the provider was
+last asked.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
@@ -601,7 +609,8 @@ after seven days. Local history does not backfill a newly created Redis group.
 Conversation bindings, addressed messages, answer pieces and refusal receipts
 are kept with their text, captured context and framed input after delivery and
 posting; a `failure` cause is the only value cleared, when its operation
-recovers.
+recovers. What a provider said about a person is kept and replaced in place
+when the provider is asked again.
 
 ### Agent capacity
 
@@ -630,7 +639,8 @@ agents use `instrukt agents availability|status`, never direct database queries.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
 - Conversation text is kept without a limit: addressed messages, what
-  accompanied them, their framed input and the answers stay in the database.
+  accompanied them, their framed input and the answers stay in the database,
+  with the names and email addresses of the people who addressed an agent.
 - Work recorded only in an earlier build's file store is not read. Reflect
   it to GitHub with that build before upgrading; after the upgrade it enters
   the database again by pull-through.
