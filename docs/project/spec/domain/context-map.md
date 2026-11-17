@@ -42,7 +42,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
-| conversations | runner's connectors and conversation sessions | Global switch, off by default; runtime adapter required; served by the long-lived `instrukt run` |
+| conversations | runner's connectors and conversation sessions | Given by a company home's declared connector; runtime adapter required; served by the long-lived `instrukt run` |
 
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.

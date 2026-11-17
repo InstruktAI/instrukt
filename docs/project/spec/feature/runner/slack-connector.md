@@ -32,9 +32,51 @@ connectors:
 | `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
 
 A literal token, a missing token and an unknown field are validation findings
-naming the company and the field. A member's Slack identity is
-`members.<member>.slack`, the person's member id in that workspace
-(`project/instrukt/spec/feature/configuration/company-homes`).
+naming the company and the field.
+
+### The Slack app
+
+Each company's workspace has its own Slack app, created from this manifest and
+installed to the workspace. Its name is `agent`: Slack shows that name as the
+sender of every answer and in front of the status line.
+
+```yaml
+display_information:
+  name: agent
+  description: The company's agent. Tag it in a channel or message it directly.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: agent
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - channels:history
+      - groups:history
+      - im:history
+      - users:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+```
+
+The app token is generated in the app's settings as an app-level token with
+the scope `connections:write`. The bot token is issued when the app is
+installed. The agent hears a channel only once it has been invited to it.
 
 ### Connection
 
@@ -58,6 +100,44 @@ workspace.
 A message that does not tag the agent in a channel never reaches instrukt,
 whether or not the agent already takes part in that thread.
 
+### Who is answered
+
+For each addressed message the connector reads Slack's record of the sender
+after the message was written. The sender is one of the company's own only
+when that record shows all of the following; a record that leaves one of them
+undecided admits no one.
+
+| Slack's record | Required |
+| --- | --- |
+| `deleted` | false: the account is not deactivated. |
+| `is_bot` | false, and the sender is not Slackbot. |
+| `is_restricted`, `is_ultra_restricted` | both false: the person is no guest. |
+| Workspace | The workspace the app is installed in, which the connector learns from Slack for its own bot token. The record's `team_id` equals it, or, in an Enterprise organization, the workspaces the record lists for the person include it. |
+
+The sender's name and email address come from that same record and are kept
+with the message. The name is the person's display name, their real name when
+that is empty, and their Slack id when Slack gives neither. Anyone who is not
+one of the company's own gets the fixed reply
+`I only answer members of this workspace.`, in a channel and in a direct
+message alike.
+
+### While the agent works
+
+From the admission of an addressed message until its turn ends, the connector
+keeps Slack's status line set for it with the text
+`is working on your request`. Slack puts the app's name in front of it.
+
+| Where | The status sits on | It stays while |
+| --- | --- | --- |
+| A channel | the conversation's thread | any admitted message of that thread is unfinished |
+| A direct message | the addressed message itself | that one message is unfinished |
+
+Slack drops a status after two minutes and when the app posts, so the
+connector sets each status again at least once a minute for as long as it
+stays, and clears it when it no longer does, whatever the turn posted. After a
+restart the same rule holds for every message still unfinished. A status Slack
+refuses is logged and does not fail the conversation.
+
 ### What accompanies an addressed message
 
 The connector reads the accompanying messages with the bot token when the
@@ -75,7 +155,12 @@ When its range holds more, the most recent ones accompany it and the
 conversation context says that earlier messages were left out.
 
 Each accompanying message carries its speaker and time; the agent's own posts
-are marked as its own. The range does not depend on whether the agent posted an
+are marked as its own. A speaker is named as a sender is, and in every message
+the connector supplies, the addressed one included, a mention is written as
+`@` and that person's name; nothing else in a text changes. A name Slack
+cannot give at that moment is written as the Slack id and holds no message
+back. Slack's own notices in a conversation, such as a person joining a
+channel, accompany no message and do not count toward `context_messages`. The range does not depend on whether the agent posted an
 answer. Messages the agent was sent before stay in its session and are not
 sent again.
 
@@ -90,7 +175,7 @@ answer is split at Slack's message size limit and posted in order.
 ### UC-SL1: Connect a company's Slack without exposing the computer
 
 ```gherkin
-Given a developer has declared a company's Slack connector and switched conversations on
+Given a developer has declared a company's Slack connector
 When the runner is running
 Then messages addressed to the agent in that workspace reach the company's agent
 And the computer exposes no public address for them
@@ -132,6 +217,7 @@ Then each of their messages reaches the agent without a tag
   message.
 - Files, images and reactions are not carried; a message's text is.
 - One Slack workspace serves one company home.
+- Two people with the same name look alike to the agent.
 
 ## See Also
 
@@ -140,3 +226,5 @@ Then each of their messages reaches the agent without a tag
 - https://docs.slack.dev/apis/events-api/using-socket-mode/ — Slack's Socket Mode: the app opens the connection and acknowledges each envelope.
 - https://docs.slack.dev/reference/events/app_mention/ — the mention event the app subscribes to.
 - https://docs.slack.dev/reference/events/message.im/ — the direct-message event the app subscribes to.
+- https://docs.slack.dev/reference/objects/user-object/ — the fields that tell a full member from a bot, a guest and a member of another workspace.
+- https://docs.slack.dev/reference/methods/assistant.threads.setStatus/ — the status line: its text, its two-minute limit and its removal when the app replies.

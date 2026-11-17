@@ -54,17 +54,24 @@ runner's recorded assignment for that session.
 
 ### The login a call carries
 
-The speaker is the company member the runner recorded as the sender of the
-addressed message that started the calling session's current turn
+The speaker is the person the runner recorded as the sender of the addressed
+message that started the calling session's current turn
 (`project/instrukt/spec/feature/runner/conversations`). A session with no such
 record has no speaker. No argument and no value the agent passes selects a
-member.
+speaker or a member.
+
+The speaker's own logins are those of the one member entry of that company
+(`project/instrukt/spec/feature/configuration/company-homes`) whose email
+address equals the address recorded for the speaker with that message,
+compared without regard to case. The match never compares names and never
+consults another company. A speaker recorded without an address, or with an
+address no member lists, has no member entry.
 
 | Declaration | Speaker | Login |
 | --- | --- | --- |
 | Open, machine-wide or a company's | Any, or none | None. |
-| A company's, with `credential` | A member holding that credential | That member's credential. |
-| A company's, with `credential` | A member without it | The call is refused naming the member and the missing credential. |
+| A company's, with `credential` | A speaker whose member entry holds that credential | That member's credential. |
+| A company's, with `credential` | A speaker with no member entry, or whose entry lacks it | The call is refused naming the speaker and the missing credential. |
 | A company's, with `credential` and `login` | None | The company's `login`. |
 | A company's, with `credential` and no `login` | None | The call is refused naming the server and the missing company login. |
 | Machine-wide, with `login` | None: it is offered to no session that has a speaker | The machine's `login`. |
@@ -153,6 +160,9 @@ Then each call reaches its own company's address
   a stored value.
 - The agent program's own MCP settings are untouched and unknown to instrukt:
   a server configured there is reached by that program, without these rules.
+- A speaker's logins are found by the email address the connector's provider
+  holds for them. Two accounts the provider gives one address reach the same
+  member entry.
 
 ## See Also
 

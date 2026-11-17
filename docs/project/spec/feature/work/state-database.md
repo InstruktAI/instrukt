@@ -26,6 +26,8 @@ the meaning and the writes of the runner tables.
   that needs it.
 - **Holds:** the work tables and the runner tables below. Nothing else is
   stored in it.
+- **Protection:** the database and the files SQLite keeps beside it are
+  readable and writable by their owner only.
 - **Stays outside it:** the blueprint graph store (one complete graph per
   revision, as files under `~/.instrukt/state/blueprint/`), publication
   state, the global index, eval fingerprints, hook outcomes and the
@@ -98,6 +100,12 @@ Version 2 preserves version-1 session bindings while introducing role attempts. 
 Version 13 canonicalizes retained native assignments with an omitted dispatcher
 to explicit unknown evidence. Its admission semantics are owned by
 `project/instrukt/spec/feature/runner/session-continuity`.
+
+Version 18 gives each addressed message its sender's connector identity, name
+and email address. A message stored before it keeps the member key it was
+recorded with as its `sender_name` and has no `sender` and no `sender_email`:
+it is delivered as it was admitted, and a tool call during its turn finds no
+login of the speaker's own. No identity or address is derived for it.
 
 Persisted runtime requests and manual standing reservations enter domain code
 with a required captured title. Migration fills a missing or null title with
@@ -456,10 +464,11 @@ and `message`, the connector's identity of that message.
 
 | Column | Meaning |
 | --- | --- |
-| `member` | The member who wrote it, by key in the company's member list. |
+| `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
+| `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `pending` once what accompanies it is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `state` | `received` once stored; `refused` once the provider's record showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
@@ -471,8 +480,8 @@ address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
 when the connector accepted its post, `NULL` while outstanding; `failure`, the
 cause of its last failed post, `NULL` once posted.
 
-**`conversation_refusals`** — the one fixed reply owed to a sender no member
-lists. Key: the address and `sender`. Columns: `received_at`; `replied_at`,
+**`conversation_refusals`** — the one fixed reply owed to a sender the agent
+does not answer (`project/instrukt/spec/feature/runner/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`.
 
 **`connector_states`** — one row per declared connector. Key:
@@ -482,7 +491,10 @@ when the connector accepted the reply, `NULL` while outstanding; `failure`.
 **`conversation_relay`** — one row: `failure`, the cause while the relay that
 serves conversations is not running, `NULL` while it runs; `updated_at`.
 
-A message is stored before the connector acknowledges it to its provider.
+A message is stored, with its sender's connector identity, before the
+connector acknowledges it to its provider, so admission is taken up again
+after a restart. A message's `refused` state and the reply owed to its sender
+are written in one transaction.
 Reading a finished turn and the connector accepting a post are separate
 boundaries: an answer's pieces are stored in the same transaction as the
 position that read them and the message's `answered` state, and `posted_at`
@@ -630,7 +642,8 @@ agents use `instrukt agents availability|status`, never direct database queries.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
 - Conversation text is kept without a limit: addressed messages, what
-  accompanied them, their framed input and the answers stay in the database.
+  accompanied them, their framed input and the answers stay in the database,
+  with the names and email addresses of the people who addressed an agent.
 - Work recorded only in an earlier build's file store is not read. Reflect
   it to GitHub with that build before upgrading; after the upgrade it enters
   the database again by pull-through.

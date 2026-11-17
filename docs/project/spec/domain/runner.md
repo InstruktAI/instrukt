@@ -14,7 +14,8 @@ in one process, entered through `instrukt run` or `instrukt tick` and woken by
 the OS scheduler. The long-lived `instrukt run` also hosts turn-end conversation
 relay and the connectors through which people address a company's agent;
 scheduled `tick` does neither. It has no consumer daemon beside the runner;
-with conversations on, an owned service keeps `instrukt run` itself running.
+with a company's connector declared, an owned service keeps `instrukt run`
+itself running.
 A separate opt-in loopback webhook receiver accepts signed external events on
 the designated ingress computer. The work context owns work content, artifacts
 and stamps; workflow owns authorization and derived workflow state.

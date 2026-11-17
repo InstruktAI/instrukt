@@ -17,14 +17,12 @@ stay the path for facts
 
 ### Enablement and hosting
 
-`modules.conversations` is a global-only switch, off by default. A company home
-declares its connectors under `connectors:`
-(`project/instrukt/spec/feature/configuration/layered-configuration`); a
-declared connector with the switch off is a validation finding naming the
-switch. The long-lived `instrukt run` hosts every declared connector of every
-company home on the computer; a scheduled tick hosts none. While a connector
-is declared and the switch is on, `instrukt install` keeps that run running
-through an owned service
+A company home declares its connectors under `connectors:`
+(`project/instrukt/spec/feature/configuration/layered-configuration`).
+Declaring a connector is what gives a company conversations. The long-lived
+`instrukt run` hosts every declared connector of every company home on the
+computer; a scheduled tick hosts none. While a connector is declared,
+`instrukt install` keeps that run running through an owned service
 (`project/instrukt/spec/feature/runner/module-installation`). Conversations need a
 selected runtime with the capabilities
 `project/instrukt/spec/feature/runner/session-continuity` lists for them.
@@ -33,12 +31,15 @@ selected runtime with the capabilities
 
 A connector is the code for one channel provider. For each message addressed
 to the agent it supplies the company home that declares it, a stable
-conversation identity, the sender's identity on that connector, the time the
-message was written, its text, the conversation's earlier messages its
-provider contract says accompany it, and whether that contract left earlier
-messages out. It posts text to a conversation it
-carries. Which messages count as addressed, and what accompanies them, is each
-connector's own contract
+conversation identity, the sender's identity on that connector, whether its
+provider knows the sender as one of the company's own people, the sender's
+name and, where the provider gives one, email address, the time the message
+was written, its text, the conversation's earlier messages its provider
+contract says accompany it, and whether that contract left earlier messages
+out. It posts text to a conversation it carries, and shows there that the
+agent is working where its provider has a way to. Which messages count as
+addressed, who counts as the company's own, and what accompanies a message is
+each connector's own contract
 (`project/instrukt/spec/feature/runner/slack-connector`).
 
 ### The session bound to a conversation
@@ -58,9 +59,10 @@ connector's own contract
 - Its role is `conversation`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
-- Resolution is serialized per conversation. The runner retains the binding,
-  each accepted message until it is delivered, and each answer until it is
-  posted.
+- Resolution is serialized per conversation. The runner keeps the binding,
+  each accepted message and each answer, so a message is not lost before it is
+  delivered and an answer is not lost before it is posted. What is stored and
+  kept is `project/instrukt/spec/feature/work/state-database`.
 
 ### One addressed message, one turn
 
@@ -72,22 +74,32 @@ connector's own contract
   context envelope carrying the accompanying earlier messages as data, each
   with its speaker and time and with the agent's own earlier posts marked as
   its own, and saying so when the connector left earlier messages out,
-  followed by a member envelope carrying the addressed message's text
-  unchanged, with connector, conversation, member and time in its opening.
+  followed by a member envelope carrying the addressed message's text as the
+  connector supplies it, with connector, conversation, member and time in its
+  opening.
   Both carry the delivery's boundary token, so a line inside them that looks
   like an opening or a closing stays content.
-- The speaker of a turn is the member named by its member envelope. The runner
-  records it for the turn; `project/instrukt/spec/feature/runner/mcp-access`
-  reads it.
+- The speaker of a turn is the person who wrote its addressed message. Their
+  connector identity, name and email address, as the provider gave them when
+  that message was admitted, are stored with the message and do not change
+  afterwards; `project/instrukt/spec/feature/runner/mcp-access` reads them.
 
-### Members and unknown senders
+### Who is answered
 
-The connector's sender identity is resolved to a member through the company's
-member list. A sender no member lists gets one fixed reply in that
-conversation, saying they are not listed for this company's agent; no session
-is started or woken and nothing is delivered. The reply is sent once per sender
-and conversation. A person who is not a member still appears in a context
-envelope as a speaker, by the name the connector gives.
+The agent answers the company's own people, as the connector's provider knows
+them; nobody is listed for it. Whether a sender is one of them is decided for
+each addressed message, from what the provider says about the sender after
+that message was written. An earlier answer about the same person admits
+nothing. A message is delivered only once that is decided; while the provider
+cannot be asked, the message waits, nothing is delivered and nothing is
+replied, and the cause shows in `instrukt events status`. A message that was
+admitted is delivered, and a turn that has started runs to its end.
+
+A sender who is not one of the company's own gets one fixed reply in that
+conversation, worded by the connector; no session is started or woken and
+nothing is delivered. The reply is sent once per sender and conversation. Such
+a person still appears in a context envelope as a speaker, by the name the
+connector gives.
 
 ### The answer back
 
@@ -101,9 +113,14 @@ envelope as a speaker, by the name the connector gives.
   the post; a failed post stays pending and is retried.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
+- From the admission of an addressed message until its turn ends, the
+  connector shows in that conversation that the agent is working, where its
+  provider has a way to. The indication ends with the turn, whether the turn
+  posted an answer, posted nothing or failed.
 - `instrukt events status` shows each connector's connection state, the
   conversations with pending messages or answers, and failures with their
-  cause, without conversation text or credentials.
+  cause, without conversation text or credentials. A connector that no running
+  runner hosts is shown as stopped.
 
 ## Use cases
 
@@ -127,12 +144,12 @@ Then each message is its own turn naming the member who wrote it
 And the second turn starts only after the first has finished
 ```
 
-### UC-CV4: Turn away a person the company has not listed
+### UC-CV4: Turn away a person who is not one of the company's own
 
 ```gherkin
-Given a person who is not among the company's members addresses the agent
+Given a person who is not one of the company's own people addresses the agent in a connected channel
 When their message arrives
-Then they receive one fixed reply saying they are not listed
+Then they receive one fixed reply saying the agent only answers the company's own people
 And no agent session starts and nothing is delivered to one
 ```
 
@@ -152,9 +169,8 @@ And no subscribed procedure is activated by that message
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message.
 - A post whose acceptance was lost can be sent twice.
-- Everyone the connector lets address the agent and whom the company lists as
-  a member is served alike; a member entry grants nothing and restricts
-  nothing.
+- Everyone the connector's provider knows as one of the company's own is
+  served alike.
 - A conversation session reads what its home and the computer let it read,
   the home's secrets file among it. A connector open to people outside the
   company needs an agent that is confined; no such confinement exists here.

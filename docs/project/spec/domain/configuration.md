@@ -32,9 +32,9 @@ secrets file make a company exist on the machine. Its document is read on its
 own and is no layer.
 
 **Member**
-: A person as a company home lists them: a key, a display name, their identity
-on each connector and references to their own tool logins. A person exists only
-as a member of a company.
+: A person's entry in a company home: a key, a display name, their email
+address and references to their own tool logins. An entry gives a person
+logins; it does not decide whom the company's agent answers.
 
 **Effective configuration**
 : The global layer with the project layer applied over it, for a caller
@@ -130,7 +130,7 @@ JSON.
 - **Invariants:**
   - `company` equals the folder's name.
   - References in its settings resolve only from its own secrets file.
-  - A connector identity is listed by at most one of its members.
+  - An email address is listed by at most one of its members.
   - It combines with no layer and names no project.
 - **Identifier:** the company name, unique among the machine's company homes.
 - **Lifecycle:** created by `instrukt config init --company <name>`; changed by
@@ -170,7 +170,7 @@ This context emits no events.
 ## Use cases
 
 - **layered-configuration** — `project/instrukt/spec/feature/configuration/layered-configuration` — a machine's settings and a project's settings combine, a cloned project cannot decide what runs on the machine, and older documents keep working.
-- **company-homes** — [project/instrukt/spec/feature/configuration/company-homes](../feature/configuration/company-homes.md) — a company is added to a computer as its own home, each company's secrets stay in its own home, and its people are listed once for every channel and tool.
+- **company-homes** — [project/instrukt/spec/feature/configuration/company-homes](../feature/configuration/company-homes.md) — a company is added to a computer as its own home, each company's secrets stay in its own home, and its people's own tool logins are kept with their email addresses.
 - **configuration-editing** — `project/instrukt/spec/feature/configuration/configuration-editing` — settings are created, read and changed without losing a concurrent change or writing an invalid document.
 - **roles-and-capabilities** — [project/instrukt/spec/feature/configuration/roles-and-capabilities](../feature/configuration/roles-and-capabilities.md) — class, scoped action grants, bundles, assignment-based object resolution, focused enforcement and awareness help.
 - **agent-selection** — [project/instrukt/spec/feature/configuration/agent-selection](../feature/configuration/agent-selection.md) — role mappings, provider-instance profiles, tier chains, readiness and selection diagnostics.
