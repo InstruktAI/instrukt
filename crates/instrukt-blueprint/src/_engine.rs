@@ -21,10 +21,11 @@ use std::io::{self, Write as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use instrukt_core::config::SHIPPED_BLUEPRINT_ENGINES;
 use instrukt_core::home::Home;
+use instrukt_core::process::{Limit, Look};
 
 use crate::{Graphify, GraphifyError};
 
@@ -92,6 +93,8 @@ pub enum EngineError {
     },
     #[error("the graph engine did not finish within {}s and was ended", .0.as_secs())]
     TimedOut(Duration),
+    #[error("the graph engine's limit cannot be measured: {0}")]
+    Clock(String),
     #[error("the graph engine was not started: its process group could not be recorded ({0})")]
     Untracked(String),
     #[error("the graph engine produced no graph at {0}")]
@@ -383,27 +386,31 @@ fn go_ahead(recorded: Result<(), String>) -> Start {
 /// — it ends.
 const GO_AHEAD: &str = "IFS= read -r _ || exit 125; exec \"$0\" \"$@\" </dev/null";
 
+/// Waits for the engine within `timeout`, measured as every limit on a
+/// started program is ([`Limit`]); past it, or when its clock has no time,
+/// the engine's group is ended.
 fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError> {
-    let started = Instant::now();
+    let limit = Limit::start(timeout).map_err(EngineError::Clock)?;
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) if started.elapsed() >= timeout => {
-                kill_group(child.id());
-                if let Err(err) = child.wait() {
-                    tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
-                }
-                return Err(EngineError::TimedOut(timeout));
+        let ended = child.try_wait().map_err(|source| EngineError::Io {
+            what: "cannot wait for the engine started in",
+            path: PathBuf::new(),
+            source,
+        })?;
+        let stopped = match limit.judge(ended) {
+            Ok(Look::Ended(status)) => return Ok(status),
+            Ok(Look::Running) => {
+                std::thread::sleep(POLL);
+                continue;
             }
-            Ok(None) => std::thread::sleep(POLL),
-            Err(source) => {
-                return Err(EngineError::Io {
-                    what: "cannot wait for the engine started in",
-                    path: PathBuf::new(),
-                    source,
-                });
-            }
+            Ok(Look::Passed) => EngineError::TimedOut(timeout),
+            Err(reason) => EngineError::Clock(reason),
+        };
+        kill_group(child.id());
+        if let Err(err) = child.wait() {
+            tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
         }
+        return Err(stopped);
     }
 }
 

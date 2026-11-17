@@ -64,7 +64,8 @@ configuration entry. The adapter's metadata carries the observation.
 - `--only <paths>` commits exactly those paths as they are in the working
   tree, new files included, and leaves everything else in the index as it
   was.
-- The project's own git hooks run as for any commit; a hook that refuses the
+- The project's own git hooks run as for any commit, and the commit waits for
+  them however long they take; a hook that refuses the
   commit leaves nothing committed.
 - Works in any git repository; the project layer is not required.
 

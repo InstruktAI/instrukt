@@ -106,6 +106,11 @@ pub(super) fn diagnose(
             kind: source.kind(),
             os_code: source.raw_os_error(),
         },
+        SessionsError::Process(ProcessError::Clock { .. }) => NativeCause::Io {
+            phase: "limit clock",
+            kind: std::io::ErrorKind::Other,
+            os_code: None,
+        },
         SessionsError::InvalidResponse {
             category,
             line,

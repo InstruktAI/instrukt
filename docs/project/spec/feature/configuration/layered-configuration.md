@@ -320,6 +320,13 @@ clock. It is never silent: while it is set, every command prints
 `instrukt: clock overridden to <value>` to stderr. A value that is not RFC 3339
 refuses the command; it never falls back to the system clock.
 
+`INSTRUKT_NOW=@<path>` takes the time from a file instead. The file holds one
+RFC 3339 time and is read again each time the command asks for the time, so a
+verification can move the clock while a command runs. In this form the time
+limits instrukt gives the programs it starts are measured on that clock as
+well. A file that is missing or holds no RFC 3339 time refuses the command at
+that moment.
+
 ### External state declarations
 
 External names default to occurrence. A `webhooks.<domain>` source may
@@ -416,6 +423,10 @@ But a cloned project cannot replace the machine's agent-action values
 - Every entry path migrates older configuration before refusal or skip. All
   commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
+- With `INSTRUKT_NOW=@<path>` real time bounds no started program: its limit
+  runs out only when the time in the file moves past it, so a program that
+  never ends waits until the file's time is moved or the command is
+  interrupted.
 - `requires` naming a switched-off module is a validation finding.
 - Runtime capability metadata belongs to the shipped integration; adapter
   behavior requires code. Agent instruction prose remains configuration.
