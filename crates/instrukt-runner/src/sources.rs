@@ -287,7 +287,7 @@ pub fn synchronize_main(root: &Path, observed: &MainObservation) -> Result<(), S
             "project checkout is dirty; preserve its changes and retry after their owner clears the checkout",
         ));
     }
-    git::run(
+    git::run_with_hooks(
         root,
         [
             "merge",

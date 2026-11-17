@@ -6,7 +6,10 @@
 //! (a message text, a session id, a prompt) are never interpolated into
 //! that text: they are appended as positional parameters (`sh -c '<command>
 //! "$@"' instrukt <operands…>`), the argument-vector form
-//! `session-continuity` requires. Every wait is bounded.
+//! `session-continuity` requires. Every wait is bounded, except for a command
+//! that runs another party's code for as long as that code takes — git
+//! running the repository's hooks — which is waited for to its end, as the
+//! plain command is ([`output_to_end`]).
 
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt as _;
@@ -110,7 +113,7 @@ impl<'a> Invocation<'a> {
         if let Some(cwd) = self.cwd {
             command.current_dir(cwd);
         }
-        let output = self.execute(&mut command, timeout)?;
+        let output = self.execute(&mut command, Some(timeout))?;
         Ok(Finished {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -118,13 +121,14 @@ impl<'a> Invocation<'a> {
         })
     }
 
+    /// Runs `command` to its end, or until `timeout` when there is one.
     fn execute(
         &self,
         command: &mut Command,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<std::process::Output, ProcessError> {
         let started = Instant::now();
-        let deadline = started + timeout;
+        let deadline = timeout.map(|timeout| (started + timeout, timeout));
         command
             .stdin(if self.input.is_some() {
                 Stdio::piped()
@@ -157,14 +161,14 @@ impl<'a> Invocation<'a> {
         let outcome = (|| {
             if let Some(writer) = writer {
                 receive(&writer, deadline)
-                    .ok_or_else(|| self.timeout(timeout))?
+                    .map_err(|limit| self.unreceived(limit))?
                     .map_err(|source| self.io(source))?;
             }
             let out = receive(&stdout, deadline)
-                .ok_or_else(|| self.timeout(timeout))?
+                .map_err(|limit| self.unreceived(limit))?
                 .map_err(|source| self.io(source))?;
             let err = receive(&stderr, deadline)
-                .ok_or_else(|| self.timeout(timeout))?
+                .map_err(|limit| self.unreceived(limit))?
                 .map_err(|source| self.io(source))?;
             Ok((out, err))
         })();
@@ -184,11 +188,16 @@ impl<'a> Invocation<'a> {
         })
     }
 
+    /// Waits for `child` to end, or until `deadline`; the timeout reported
+    /// is the limit the command was given.
     fn wait(
         &self,
         child: &mut Child,
-        deadline: Instant,
+        deadline: Option<(Instant, Duration)>,
     ) -> Result<std::process::ExitStatus, ProcessError> {
+        let Some((deadline, limit)) = deadline else {
+            return child.wait().map_err(|source| self.io(source));
+        };
         let mut pause = Duration::from_millis(2);
         loop {
             if let Some(status) = child.try_wait().map_err(|source| self.io(source))? {
@@ -196,13 +205,21 @@ impl<'a> Invocation<'a> {
             }
             let now = Instant::now();
             if now >= deadline {
-                return Err(ProcessError::Timeout {
-                    program: self.program.clone(),
-                    timeout: deadline.saturating_duration_since(now),
-                });
+                return Err(self.timeout(limit));
             }
             std::thread::sleep(pause.min(deadline - now));
             pause = (pause * 2).min(Duration::from_millis(50));
+        }
+    }
+
+    /// Why a reader or writer of the command delivered nothing: its limit
+    /// passed, or it ended without its result.
+    fn unreceived(&self, limit: Option<Duration>) -> ProcessError {
+        match limit {
+            Some(limit) => self.timeout(limit),
+            None => self.io(std::io::Error::other(
+                "its input or output ended without a result",
+            )),
         }
     }
 
@@ -256,11 +273,18 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<std::io::Result<
     receive
 }
 
-/// What `receiver` delivers before `deadline`; `None` once it has passed.
-fn receive<T>(receiver: &Receiver<T>, deadline: Instant) -> Option<T> {
-    receiver
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .ok()
+/// What `receiver` delivers, before `deadline` when there is one: the limit
+/// that passed, or no limit when its sender ended without delivering.
+fn receive<T>(
+    receiver: &Receiver<T>,
+    deadline: Option<(Instant, Duration)>,
+) -> Result<T, Option<Duration>> {
+    match deadline {
+        Some((deadline, limit)) => receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| Some(limit)),
+        None => receiver.recv().map_err(|_| None),
+    }
 }
 pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
@@ -356,5 +380,19 @@ pub fn output(
     let name = command.get_program().to_string_lossy().into_owned();
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
-    invocation.execute(command, timeout)
+    invocation.execute(command, Some(timeout))
+}
+
+/// Executes a native command as [`output`] does, waiting for it to its end
+/// however long that takes: a command that runs another party's code, such
+/// as git running the repository's hooks, takes as long as the plain command
+/// does.
+pub fn output_to_end(
+    command: &mut Command,
+    input: Option<&[u8]>,
+) -> Result<std::process::Output, ProcessError> {
+    let name = command.get_program().to_string_lossy().into_owned();
+    let mut invocation = Invocation::program(&name, &[]);
+    invocation.input = input;
+    invocation.execute(command, None)
 }

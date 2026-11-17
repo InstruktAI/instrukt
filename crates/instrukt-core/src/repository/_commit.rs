@@ -107,7 +107,7 @@ pub fn commit(
         args.push(format!("--author={author}"));
     }
     if request.only.is_empty() {
-        git::run(cwd, &args)?;
+        git::run_with_hooks(cwd, &args)?;
     } else {
         commit_only(cwd, &mut args, &request.only)?;
     }
@@ -157,7 +157,7 @@ fn commit_only(
     args.push("--only".into());
     args.push("--".into());
     args.extend(paths.iter().map(|path| path.display().to_string()));
-    let committed = git::run(cwd, &*args);
+    let committed = git::run_with_hooks(cwd, &*args);
     if committed.is_err() && !untracked.is_empty() {
         let mut forget = vec![
             "rm".to_owned(),

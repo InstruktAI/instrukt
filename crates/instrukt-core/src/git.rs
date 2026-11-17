@@ -59,6 +59,31 @@ where
     S: AsRef<OsStr>,
 {
     let (args_text, output) = raw(dir, args)?;
+    stdout_text(dir, args_text, output)
+}
+
+/// Runs `git <args>` in `dir` for a command that runs the repository's
+/// hooks (`commit`, `merge`): as plain git, it waits for the hooks however
+/// long they take, so no limit meant for git's own reads applies. Returns
+/// stdout with one trailing newline removed; a non-zero exit is an error
+/// carrying stderr.
+pub fn run_with_hooks<I, S>(dir: &Path, args: I) -> Result<String, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let (args_text, mut command) = command(dir, args);
+    let output =
+        crate::process::output_to_end(&mut command, None).map_err(|error| GitError::Spawn {
+            dir: dir.to_path_buf(),
+            source: std::io::Error::other(error),
+        })?;
+    stdout_text(dir, args_text, output)
+}
+
+/// A successful command's stdout with one trailing newline removed; a
+/// non-zero exit is an error carrying stderr.
+fn stdout_text(dir: &Path, args_text: String, output: Output) -> Result<String, GitError> {
     if !output.status.success() {
         return Err(failed(dir, args_text, &output));
     }
