@@ -140,7 +140,10 @@ valid connector, installation keeps one owned service that runs
 service manager starts it at login or boot and restarts it when it exits. The
 unit executes the installed instrukt binary with its configuration scope. Cron
 cannot keep a process running; a computer with no supported service manager
-has an unmet prerequisite naming it.
+has an unmet prerequisite naming it. On Linux the user's service manager has
+to start at boot, without a login: where it does not, installation and
+`install --check` report that as an unmet prerequisite naming
+`loginctl enable-linger`, and installation does not change it.
 
 The service's run is an ordinary `instrukt run`: it performs every enabled
 module's work, and the runner lock still admits one runner per machine. While
@@ -150,6 +153,16 @@ process waits for the lock. Installation reuses a working service, repairs a
 missing or stale definition and restarts it so the desired installed
 executable and configuration are the ones running. `install --check` reports
 a missing, stale or stopped service as unmet demand without changing it.
+
+`instrukt events status` reports the service as `runner_service` in one of
+four states, with the cause where there is one:
+
+| State | Meaning |
+| --- | --- |
+| `running` | A live owned service process runs the desired installed executable and configuration. It may be waiting for the runner lock. |
+| `unmet` | There is demand, and its service is missing, stale, stopped, in conflict with a definition instrukt does not own, or cannot be inspected. |
+| `obsolete` | An owned service remains and there is no demand. |
+| `no_demand` | There is no demand and no owned service. |
 
 Switching conversations off, or removing the last declared connector, ends the
 demand; the next `instrukt install` withdraws the owned service under the
