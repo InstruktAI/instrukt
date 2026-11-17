@@ -718,9 +718,11 @@ CREATE TABLE IF NOT EXISTS project_boards (
 /// session, the start request captured for its first message and its own
 /// answer-source position; each addressed message from receipt to its
 /// answered turn, with its text and, from the time what accompanies it is
-/// read, its captured context, boundary token and framed input; each
+/// read, its captured context, boundary token and framed input, and when its
+/// send to the runtime was begun; each
 /// answer piece and when the connector accepted its post; each sender's
-/// pending or sent refusal; and each connector's connection state. Applying it again over a database that
+/// pending or sent refusal; whether the relay serving conversations runs; and
+/// each connector's connection state. Applying it again over a database that
 /// already holds the tables changes nothing.
 const V17: &str = r#"
 CREATE TABLE IF NOT EXISTS connected_conversations (
@@ -750,6 +752,7 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     context_json TEXT,
     boundary     TEXT,
     content      TEXT,
+    attempted_at TEXT,
     turn         TEXT,
     failure      TEXT,
     PRIMARY KEY (company, connector, conversation, message)
@@ -774,6 +777,11 @@ CREATE TABLE IF NOT EXISTS conversation_refusals (
     replied_at   TEXT,
     failure      TEXT,
     PRIMARY KEY (company, connector, conversation, sender)
+);
+CREATE TABLE IF NOT EXISTS conversation_relay (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    failure    TEXT,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS connector_states (
     company    TEXT NOT NULL,

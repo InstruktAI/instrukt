@@ -18,8 +18,7 @@ use crate::fixtures::t3::FakeT3;
 pub const COMPANY: &str = "acme";
 
 /// The members the company lists, by key and Slack identity.
-pub const MEMBERS: &str =
-    "{steven: {name: Steven Sonneveld, slack: USTEVEN}, anna: {name: Anna, slack: UANNA}}";
+pub const MEMBERS: &str = "{steven: {name: Steven Sonneveld, slack: USTEVEN}, anna: {name: Anna, slack: UANNA}, bram: {slack: UBRAM}}";
 
 /// What one accepted runtime input carried.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,8 +27,12 @@ pub struct Delivered {
     pub member: ProjectSlug,
     /// How many member envelopes it carries.
     pub members: usize,
-    /// Each accompanying message's speaker and whether it is the agent's own.
-    pub context: Vec<(String, bool)>,
+    /// Each accompanying message's speaker, as the company's member that
+    /// speaker identity resolves to, and whether it is the agent's own post.
+    pub context: Vec<(Option<ProjectSlug>, bool)>,
+    /// How many of the addressed message and its accompanying messages
+    /// arrived with no text.
+    pub empty: usize,
     /// Whether the context says earlier messages were left out.
     pub left_out: bool,
 }
@@ -189,13 +192,16 @@ impl Company {
     pub fn delivered(&self, session: &str, n: usize) -> Delivered {
         let input = self.runtime.message(session, n);
         let spans = envelopes::segment(&input);
-        let member = spans
+        let (member, body) = spans
             .iter()
             .find_map(|span| match span {
-                Span::Member { member, .. } => Some(ProjectSlug::parse(member).unwrap()),
+                Span::Member { member, body, .. } => {
+                    Some((ProjectSlug::parse(member).unwrap(), *body))
+                }
                 _ => None,
             })
             .unwrap();
+        let members = self.members();
         let context = spans
             .iter()
             .find_map(|span| match span {
@@ -206,10 +212,23 @@ impl Company {
         Delivered {
             member,
             left_out: context.left_out,
+            empty: usize::from(body.is_empty())
+                + context
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.chars == 0)
+                    .count(),
             context: context
                 .entries
-                .into_iter()
-                .map(|entry| (entry.speaker.to_owned(), entry.own))
+                .iter()
+                .map(|entry| {
+                    (
+                        members
+                            .resolve(instrukt_runner::connectors::SLACK, entry.speaker)
+                            .map(|member| member.key.clone()),
+                        entry.own,
+                    )
+                })
                 .collect(),
             members: spans
                 .iter()
@@ -218,14 +237,15 @@ impl Company {
         }
     }
 
-    /// Whether the session's `n`th input was queued behind a running turn
-    /// rather than starting one of its own.
+    /// Whether the session's `n`th input arrived while a turn was running,
+    /// as the runtime recorded it on arrival; finishing a turn leaves this
+    /// record as it was.
     pub fn queued(&self, session: &str, n: usize) -> bool {
         let thread: serde_json::Value = serde_json::from_slice(
             &std::fs::read(self.runtime.state_dir().join(format!("{session}.json"))).unwrap(),
         )
         .unwrap();
-        thread["messages"][n]["queued"].as_bool().unwrap_or(false)
+        thread["messages"][n]["busy"].as_bool().unwrap_or(false)
     }
 
     /// The conversations `instrukt events status` reports with pending work
@@ -250,14 +270,19 @@ impl Company {
     /// The key of the member the company lists for a Slack identity, as
     /// configuration resolves it.
     pub fn member(&self, slack: &str) -> ProjectSlug {
+        self.members()
+            .resolve(instrukt_runner::connectors::SLACK, slack)
+            .unwrap()
+            .key
+            .clone()
+    }
+
+    /// The company's member list, as configuration reads it.
+    pub fn members(&self) -> instrukt_core::config::Members {
         let home = instrukt_core::home::Home::at_user_home(self.env.home().to_path_buf());
         instrukt_core::config::Configuration::load_company(&home.for_inspection(), &self.company())
             .unwrap()
             .members()
             .unwrap()
-            .resolve(instrukt_runner::connectors::SLACK, slack)
-            .unwrap()
-            .key
-            .clone()
     }
 }

@@ -49,9 +49,16 @@ impl Worker {
             .name("conversation-relay".into())
             .spawn(move || {
                 let _notice = ExitNotice(supervise);
+                // Links catch up at startup and on native source changes only;
+                // connector arrivals and the retry bound drive conversation
+                // work alone.
+                let mut links_due = true;
                 loop {
-                    if let Err(error) = relay(&home, source.as_ref(), adapter.as_ref()) {
-                        record(&home, &error);
+                    if links_due {
+                        if let Err(error) = relay(&home, source.as_ref(), adapter.as_ref()) {
+                            record(&home, &error);
+                        }
+                        links_due = false;
                     }
                     if let Some(destinations) = &destinations
                         && let Err(error) = crate::conversations::relay(
@@ -82,7 +89,10 @@ impl Worker {
                             break;
                         }
                         match notifications.wait(Duration::from_millis(100)) {
-                            Ok(true) => break,
+                            Ok(true) => {
+                                links_due = true;
+                                break;
+                            }
                             Ok(false) => {}
                             Err(error) => {
                                 return Err(LinkError::Source(error));

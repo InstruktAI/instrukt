@@ -49,6 +49,7 @@ struct Workspace {
     refuse: bool,
     hold_reads: bool,
     reads: usize,
+    held: usize,
 }
 
 pub struct FakeSlack {
@@ -98,10 +99,15 @@ impl FakeSlack {
                     let mut body = String::new();
                     request.as_reader().read_to_string(&mut body).unwrap();
                     // Held reads answer only once released.
+                    let mut counted = false;
                     while method.starts_with("conversations.")
                         && workspace.lock().unwrap().hold_reads
                         && !stop.load(Ordering::Acquire)
                     {
+                        if !counted {
+                            workspace.lock().unwrap().held += 1;
+                            counted = true;
+                        }
                         std::thread::sleep(Duration::from_millis(20));
                     }
                     let answer =
@@ -324,6 +330,11 @@ impl FakeSlack {
 
     pub fn release_reads(&self) {
         self.workspace.lock().unwrap().hold_reads = false;
+    }
+
+    /// How many reads were held back while reads were held.
+    pub fn held(&self) -> usize {
+        self.workspace.lock().unwrap().held
     }
 
     /// How many history and replies pages were read.

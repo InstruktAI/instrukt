@@ -506,31 +506,87 @@ fn connection(
     stop: &AtomicBool,
     wake: &SyncSender<()>,
 ) {
-    let mut backoff = Duration::from_secs(1);
-    while !stop.load(Ordering::Acquire) {
-        state(home, company, ConnectionState::Connecting, None);
-        let failure = session(home, endpoint, company, declared, stop, wake).err();
-        if stop.load(Ordering::Acquire) {
-            break;
+    // Intake runs beside the socket, so reading what accompanies a message
+    // or posting a refusal never holds back the next acknowledgement. Its
+    // end ends this connection, which the run loop then restarts.
+    let ended = AtomicBool::new(false);
+    let (nudge, nudges) = std::sync::mpsc::sync_channel::<()>(1);
+    let ended = &ended;
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            struct Ended<'a>(&'a AtomicBool);
+            impl Drop for Ended<'_> {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Release);
+                }
+            }
+            let _ended = Ended(ended);
+            intake_worker(home, endpoint, company, declared, stop, wake, &nudges);
+        });
+        let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
+        let mut backoff = Duration::from_secs(1);
+        while !quit() {
+            state(home, company, ConnectionState::Connecting, None);
+            let failure = session(home, endpoint, company, declared, &quit, &nudge).err();
+            if quit() {
+                break;
+            }
+            if let Some(error) = &failure {
+                tracing::warn!(event = "connector_failed", company = %company, connector = SLACK, error = %error);
+                state(home, company, ConnectionState::Failed, Some(error));
+            }
+            let until = Instant::now() + backoff;
+            while Instant::now() < until && !quit() {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            backoff = if failure.is_some() {
+                (backoff * 2).min(Duration::from_secs(60))
+            } else {
+                Duration::from_secs(1)
+            };
         }
-        if let Some(error) = &failure {
-            tracing::warn!(event = "connector_failed", company = %company, connector = SLACK, error = %error);
-            state(home, company, ConnectionState::Failed, Some(error));
-        }
-        let until = Instant::now() + backoff;
-        while Instant::now() < until && !stop.load(Ordering::Acquire) {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        if let Ok(api) = SlackApi::with(home, company, declared, endpoint) {
-            intake(home, company, declared, &api, None, wake);
-        }
-        backoff = if failure.is_some() {
-            (backoff * 2).min(Duration::from_secs(60))
-        } else {
-            Duration::from_secs(1)
-        };
+    });
+    if stop.load(Ordering::Acquire) {
+        state(home, company, ConnectionState::Stopped, None);
     }
-    state(home, company, ConnectionState::Stopped, None);
+}
+
+/// The company's retained intake work, until `stop`: run when a retained
+/// envelope nudges it, and retried within a bound while work remains.
+fn intake_worker(
+    home: &Home,
+    endpoint: &SlackEndpoint,
+    company: &ProjectSlug,
+    declared: &SlackConnector,
+    stop: &AtomicBool,
+    wake: &SyncSender<()>,
+    nudges: &std::sync::mpsc::Receiver<()>,
+) {
+    let mut me = None;
+    while !stop.load(Ordering::Acquire) {
+        match SlackApi::with(home, company, declared, endpoint) {
+            Ok(api) => {
+                if me.is_none() {
+                    me = api.identity().ok();
+                }
+                intake(home, company, declared, &api, me.as_ref(), wake);
+            }
+            // A failure before any request stays with the outstanding work.
+            Err(error) => {
+                if let Err(record) =
+                    conversations::intake_failed(home, company, SLACK, &error.to_string())
+                {
+                    tracing::warn!(event = "connector_intake_failed", company = %company, connector = SLACK, error = %record);
+                }
+            }
+        }
+        let until = Instant::now() + RETRY;
+        while Instant::now() < until && !stop.load(Ordering::Acquire) {
+            if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
+                break;
+            }
+        }
+    }
 }
 
 /// One Socket Mode connection, from opening to its drop or a disconnect.
@@ -539,8 +595,8 @@ fn session(
     endpoint: &SlackEndpoint,
     company: &ProjectSlug,
     declared: &SlackConnector,
-    stop: &AtomicBool,
-    wake: &SyncSender<()>,
+    quit: &dyn Fn() -> bool,
+    nudge: &SyncSender<()>,
 ) -> Result<(), String> {
     let api = SlackApi::with(home, company, declared, endpoint).map_err(|e| e.to_string())?;
     let url = api.connection_url().map_err(|e| e.to_string())?;
@@ -559,13 +615,8 @@ fn session(
     .map_err(|e| format!("Socket Mode connection: {e}"))?;
     state(home, company, ConnectionState::Connected, None);
     tracing::info!(event = "connector_connected", company = %company, connector = SLACK);
-    let mut due = Instant::now();
     let mut unretained = false;
-    while !stop.load(Ordering::Acquire) {
-        if Instant::now() >= due {
-            intake(home, company, declared, &api, Some(&me), wake);
-            due = Instant::now() + RETRY;
-        }
+    while !quit() {
         let message = match socket.read() {
             Ok(message) => message,
             Err(tungstenite::Error::Io(error))
@@ -611,7 +662,7 @@ fn session(
                     state(home, company, ConnectionState::Connected, None);
                     unretained = false;
                 }
-                due = Instant::now();
+                let _ = nudge.try_send(());
             }
             Err(error) => {
                 tracing::warn!(event = "connector_message_unretained", company = %company, connector = SLACK, error = %error);

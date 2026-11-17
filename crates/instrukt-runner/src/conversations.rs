@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use instrukt_core::config::{CONVERSATION_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
-use instrukt_core::state_db::rusqlite::params;
+use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -321,6 +321,31 @@ pub fn captured(
     Ok(())
 }
 
+/// Retain why a company's intake could not even begin — its Slack access
+/// could not be prepared — on its outstanding refusals and unread messages.
+pub fn intake_failed(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    cause: &str,
+) -> Result<(), ConversationError> {
+    RunnerState::new(home).write::<_, StateError>(|tx| {
+        let path = state::db_path(tx);
+        tx.execute(
+            "UPDATE conversation_refusals SET failure=?3 WHERE company=?1 AND connector=?2 AND replied_at IS NULL",
+            params![company.as_str(), connector, cause],
+        )
+        .map_err(state::sql(&path))?;
+        tx.execute(
+            "UPDATE conversation_messages SET failure=?3 WHERE company=?1 AND connector=?2 AND state=?4",
+            params![company.as_str(), connector, cause, Stage::Received.as_str()],
+        )
+        .map_err(state::sql(&path))?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
 /// A refusal still to be posted.
 #[derive(Debug, Clone)]
 pub struct Refusal {
@@ -412,6 +437,8 @@ struct Message {
     boundary: Option<String>,
     /// The framed input, present from `pending` on.
     content: Option<String>,
+    /// A send to the runtime was begun; its acceptance may be unrecorded.
+    attempted: bool,
 }
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
@@ -486,7 +513,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state<>?4 ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state<>?4 ORDER BY written_us, message")
                 .map_err(state::sql(path))?;
             q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()], |r| {
                 Ok((
@@ -494,6 +521,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     r.get::<_, String>(1)?,
                     r.get::<_, Option<String>>(2)?,
                     r.get::<_, Option<String>>(3)?,
+                    r.get::<_, bool>(4)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -502,7 +530,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
         })?
         .unwrap_or_default();
     rows.into_iter()
-        .map(|(message, stage, boundary, content)| {
+        .map(|(message, stage, boundary, content, attempted)| {
             Ok(Message {
                 message,
                 stage: Stage::parse(&stage).ok_or_else(|| {
@@ -510,6 +538,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                 })?,
                 boundary,
                 content,
+                attempted,
             })
         })
         .collect()
@@ -779,8 +808,7 @@ fn send(
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
     // A send whose acceptance was lost is observed before sending again.
-    if adapter.observe_input(session, content, now)?.state != crate::runtime::InputState::Unknown {
-        accepted(state, c, &next.message, None)?;
+    if next.attempted && reconcile(adapter, state, c, session, next, now)? {
         return Ok(());
     }
     let thread = adapter.read_state(session)?;
@@ -790,9 +818,39 @@ fn send(
     ) {
         return Ok(());
     }
+    // The attempt is recorded before the runtime can accept it, so a lost
+    // acceptance is reconciled before any answer is read past it.
+    state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET attempted_at=coalesce(attempted_at,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            params![c.company.as_str(), c.connector, c.conversation, next.message, now.to_string()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
     adapter.send(session, content)?;
     accepted(state, c, &next.message, None)?;
     Ok(())
+}
+
+/// Whether an attempted send was accepted by the runtime after all; if so,
+/// its acceptance is recorded.
+fn reconcile(
+    adapter: &dyn RuntimeAdapter,
+    state: &RunnerState,
+    c: &Conversation,
+    session: &SessionRef,
+    message: &Message,
+    now: Timestamp,
+) -> Result<bool, ConversationError> {
+    let Some(content) = message.content.as_deref() else {
+        return Ok(false);
+    };
+    if adapter.observe_input(session, content, now)?.state == crate::runtime::InputState::Unknown {
+        return Ok(false);
+    }
+    accepted(state, c, &message.message, None)?;
+    Ok(true)
 }
 
 /// Split `text` into pieces of at most `limit` characters, at a line break
@@ -860,9 +918,11 @@ fn harvest(
             .filter(|turn| turn.conversation == session.id)
             .collect::<Vec<_>>();
         turns.sort_by_key(|turn| turn.order);
+        // A completion belongs to the message its turn carried: one accepted,
+        // or one whose send was begun with its acceptance still unrecorded.
         let sent = open_messages(state, c)?
             .into_iter()
-            .filter(|m| m.stage == Stage::Sent)
+            .filter(|m| m.stage == Stage::Sent || (m.stage == Stage::Pending && m.attempted))
             .collect::<Vec<_>>();
         let mut answers = Vec::new();
         for turn in turns {
@@ -949,7 +1009,24 @@ fn post(
     if pending.is_empty() {
         return Ok(());
     }
-    let api = SlackApi::for_company(home, &c.company, endpoint)?;
+    // A failure before any request is the cause of the first outstanding
+    // piece, kept until that same post succeeds.
+    let api = match SlackApi::for_company(home, &c.company, endpoint) {
+        Ok(api) => api,
+        Err(error) => {
+            let (turn, piece, _) = &pending[0];
+            let cause = error.to_string();
+            state.write::<_, StateError>(|tx| {
+                tx.execute(
+                    "UPDATE conversation_answers SET failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+                    params![c.company.as_str(), c.connector, c.conversation, turn, piece, cause],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+                Ok(())
+            })?;
+            return Err(error.into());
+        }
+    };
     for (turn, piece, text) in pending {
         let result = api.post(&c.conversation, &text).map_err(|e| e.to_string());
         state.write::<_, StateError>(|tx| {
@@ -983,6 +1060,26 @@ pub fn relay(
         let Some(c) = reread(&state, &initial)? else {
             continue;
         };
+        // Attempted sends whose acceptance went unrecorded are reconciled
+        // before any answer is read past them.
+        if let Some(session) = &c.session {
+            for message in open_messages(&state, &c)?
+                .into_iter()
+                .filter(|m| m.stage == Stage::Pending && m.attempted)
+            {
+                if let Err(error) =
+                    reconcile(adapter, &state, &c, session, &message, Timestamp::now())
+                {
+                    let cause = match &error {
+                        ConversationError::Sessions(native) => adapter
+                            .diagnostic("conversation delivery", native)
+                            .to_string(),
+                        other => other.to_string(),
+                    };
+                    set_message_failure(&state, &c, &message.message, Some(&cause))?;
+                }
+            }
+        }
         let read = harvest(&state, source, &c);
         set_failure(
             &state,
@@ -1028,16 +1125,19 @@ pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
         .unwrap_or(false))
 }
 
-/// Retain the cause of the relay reader's unexpected end on every
-/// conversation it serves, until a later read of each recovers.
-pub fn reader_failed(home: &Home, cause: &str) {
+/// Record whether the finished-turn relay serving conversations runs: the
+/// cause of its failure to start or of its end, kept until it runs again.
+pub fn relay_state(home: &Home, failure: Option<&str>) {
     let result = RunnerState::new(home).write::<_, StateError>(|tx| {
-        tx.execute("UPDATE connected_conversations SET failure=?1", [cause])
-            .map_err(state::sql(&state::db_path(tx)))?;
+        tx.execute(
+            "INSERT INTO conversation_relay(id,failure,updated_at) VALUES (1,?1,?2) ON CONFLICT(id) DO UPDATE SET failure=excluded.failure,updated_at=excluded.updated_at",
+            params![failure, Timestamp::now().to_string()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     });
     if let Err(error) = result {
-        tracing::error!(event = "conversation_failure_unrecorded", error = %error);
+        tracing::error!(event = "conversation_relay_state_unrecorded", error = %error);
     }
 }
 
@@ -1081,6 +1181,8 @@ pub struct ConversationStatus {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Status {
+    /// Why the finished-turn relay serving conversations is not running.
+    pub relay_failure: Option<String>,
     pub connectors: Vec<ConnectorStatus>,
     pub conversations: Vec<ConversationStatus>,
 }
@@ -1163,7 +1265,20 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
             });
         }
     }
+    let relay_failure = state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT failure FROM conversation_relay WHERE id=1",
+                [],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(state::sql(path))
+        })?
+        .flatten()
+        .flatten();
     Ok(Status {
+        relay_failure,
         connectors,
         conversations,
     })

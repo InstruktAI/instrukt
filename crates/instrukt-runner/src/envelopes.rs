@@ -149,6 +149,8 @@ pub struct ContextLine<'a> {
     pub speaker: &'a str,
     pub at: &'a str,
     pub own: bool,
+    /// How many characters the entry's text holds.
+    pub chars: usize,
 }
 
 /// A conversation-context body as [`context`] writes it: whether earlier
@@ -181,10 +183,16 @@ pub fn context_body(body: &str) -> Option<ContextBody<'_>> {
             SAID => false,
             _ => return None,
         };
+        let mut chars = 0;
         for _ in 0..count.parse::<usize>().ok()? {
-            lines.next()?;
+            chars += lines.next()?.chars().count();
         }
-        entries.push(ContextLine { speaker, at, own });
+        entries.push(ContextLine {
+            speaker,
+            at,
+            own,
+            chars,
+        });
     }
     Some(ContextBody { left_out, entries })
 }

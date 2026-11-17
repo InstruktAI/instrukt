@@ -193,16 +193,42 @@ pub fn run(
             Some(supervise.clone()),
         )
     };
-    let mut relay = match runtime {
-        Some(_) => match serve() {
-            Ok(worker) => Some(worker),
+    // The relay is demanded whenever a runtime is chosen. One that ended or
+    // could not start stays supervised: its cause is kept where it serves,
+    // and it is started again on every supervision pass until it runs.
+    let supervise_relay = |relay: &mut Option<crate::links::Worker>| {
+        if runtime.is_none() {
+            return;
+        }
+        if let Some(current) = relay.as_mut() {
+            match current.check() {
+                Ok(()) => return,
+                Err(error) => {
+                    crate::links::record_failure(cx.home, &error);
+                    if demand {
+                        crate::conversations::relay_state(cx.home, Some(&error.to_string()));
+                    }
+                    *relay = None;
+                }
+            }
+        }
+        match serve() {
+            Ok(worker) => {
+                if demand {
+                    crate::conversations::relay_state(cx.home, None);
+                }
+                *relay = Some(worker);
+            }
             Err(error) => {
                 crate::links::record_failure(cx.home, &error);
-                None
+                if demand {
+                    crate::conversations::relay_state(cx.home, Some(&error.to_string()));
+                }
             }
-        },
-        None => None,
+        }
     };
+    let mut relay = None;
+    supervise_relay(&mut relay);
     let mut connections = match &slack {
         Some(slack) => Some(
             crate::connectors::Connections::start(cx.home, slack, arrive, supervise.clone())
@@ -212,21 +238,7 @@ pub fn run(
     };
     tracing::info!(event = "runner_started");
     loop {
-        if let Some(current) = &mut relay
-            && let Err(error) = current.check()
-        {
-            // The relay's end stays visible on what it serves, and it is
-            // started again.
-            crate::links::record_failure(cx.home, &error);
-            crate::conversations::reader_failed(cx.home, &error.to_string());
-            relay = match serve() {
-                Ok(worker) => Some(worker),
-                Err(error) => {
-                    crate::links::record_failure(cx.home, &error);
-                    None
-                }
-            };
-        }
+        supervise_relay(&mut relay);
         if let Some(connections) = &mut connections {
             connections.check();
         }
@@ -258,8 +270,12 @@ pub fn run(
         // worker's end, which is observed within a second.
         let until = std::time::Instant::now() + interval;
         while std::time::Instant::now() < until {
-            if supervision.try_recv().is_ok() {
-                break;
+            // Supervision runs each second, independently of the wake-up.
+            if supervision.try_recv().is_ok() || relay.is_none() {
+                supervise_relay(&mut relay);
+                if let Some(connections) = &mut connections {
+                    connections.check();
+                }
             }
             let slice = (until - std::time::Instant::now()).min(Duration::from_secs(1));
             if let Some(platform) = &platform {

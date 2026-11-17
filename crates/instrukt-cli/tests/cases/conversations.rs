@@ -74,6 +74,15 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
             (channel.to_owned(), Some(question))
         ]
     );
+    // Together the pieces carry the whole answer.
+    assert_eq!(
+        c.slack
+            .posts()
+            .iter()
+            .map(|post| post.text.chars().count())
+            .sum::<usize>(),
+        reply.chars().count()
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV3
@@ -113,7 +122,9 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         let delivered = c.delivered(&session, n);
         assert_eq!(delivered.member, member, "input {n}");
         assert_eq!(delivered.members, 1, "input {n}");
-        // Each started its own turn: none was queued into a running one.
+        assert_eq!(delivered.empty, 0, "input {n}");
+        // Each started its own turn: none arrived while a turn was running,
+        // as the runtime recorded on its arrival.
         assert!(!c.queued(&session, n), "input {n}");
     }
     assert_eq!(c.sessions().len(), 1);

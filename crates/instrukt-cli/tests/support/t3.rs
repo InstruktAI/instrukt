@@ -121,7 +121,7 @@ elif command=='send':
     run='run:'+t['threadId']+':'+str(len(t['messages'])+2)
     if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
         queued=False; t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
-    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued}); save(t)
+    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued}); save(t)
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
 elif command=='show':
