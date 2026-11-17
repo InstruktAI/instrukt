@@ -115,7 +115,7 @@ needed for it.
 | Open, machine-wide or a company's | Any, or none | None. |
 | A company's, `stored` | A speaker whose member entry holds that credential | That member's credential. |
 | A company's, `stored` | A speaker with no member entry, or whose entry lacks it | The call is refused naming the speaker and the missing credential. |
-| A company's, `sign-in` | A speaker with a usable login for the server | That login, renewed first when it runs out; a tool that changes something only when the turn came by direct message (see Calls that change something). |
+| A company's, `sign-in` | A speaker with a usable login for the server | That login, renewed first when it runs out. |
 | A company's, `sign-in` | A speaker with no usable login for the server | A sign-in starts, and the call waits for it. |
 | A company's, `sign-in` | A speaker recorded without an email address | The call is refused naming the speaker and the missing address. |
 | A company's, with `login` | None | The company's `login`. |
@@ -126,22 +126,11 @@ A call that has a speaker never carries a company's or the machine's login. A
 stored value is sent as the request's `Authorization` header; a signed-in login
 is sent as `Authorization: Bearer <access token>`.
 
-### Calls that change something
-
-Under a speaker's own login obtained by sign-in, a call to a tool that changes
-something is carried out only when the turn's addressed message came by direct
-message. In a channel conversation such a call is refused, saying that a tool
-that changes something is called under the person's own login only when they
-ask in a direct message, and that they can ask there. A call to a tool that
-only reads is carried out in both.
-
-A tool only reads when the server's tool catalog, as the call reads it, marks
-it with the MCP read-only annotation (`readOnlyHint: true`). A tool without
-that mark counts as changing. Whether a conversation is a direct message is
-what the connector supplied for it
-(`project/instrukt/spec/feature/runner/conversations`). This rule concerns only
-calls that carry a speaker's signed-in login; a call with the company's own
-login or with a stored value is carried out as before.
+A call under a speaker's signed-in login may do whatever that server permits
+that person. instrukt adds no restriction of its own, by tool, by kind of call
+or by where the message came from: what the person may do is decided by the
+server's own permissions for the login they signed in with. The server's
+answer, a refusal included, reaches the caller as it does for any call.
 
 ### Sign-in
 
@@ -185,11 +174,14 @@ Without a declared client instrukt registers one where the authorization
 server offers registration: a public client (`token_endpoint_auth_method:
 none`) whose one redirect address is the return address, for the authorization
 code and refresh token grants, named `instrukt <company>`. The registration is
-used only when the authorization server's answer shows `none`, that exact
-redirect address and the authorization code grant; otherwise the call is
-refused naming the server and the declared client it needs. A server that
-offers no registration and has no declared client refuses the call the same
-way. A dynamic registration is made again when the return address changes or
+refused when the authorization server's answer states something that
+contradicts what was asked: another redirect address, grant types without the
+authorization code grant, or a client authentication method that needs a
+secret while none was issued. What the answer leaves out is no refusal. A
+refused registration refuses the call naming the server and the declared
+client it needs; a server that offers no registration and has no declared
+client refuses the call the same way. A server that issues no refresh token
+gives logins that cannot be renewed (see Keeping and renewing a login). A dynamic registration is made again when the return address changes or
 the authorization server no longer knows the client; a new registration has a
 new return id. A login and a pending sign-in keep the registration they began
 with.
@@ -283,7 +275,11 @@ checks only the request:
 - The method is `GET`; another method is answered `405`.
 - The path is the sign-in path followed by one return id in its form;
   another path is not found.
-- The query is decoded once and carries exactly one nonempty `state`, and
+- A return without a `state` belongs to no pending sign-in: it is received
+  and discarded, nothing is written, and the browser is shown the same page as
+  for any return. The pending sign-in it may have come from ends by its own
+  lifetime, and the person is told nothing that the return did not establish.
+- Otherwise the query is decoded once and carries one nonempty `state`, and
   exactly one of `code` and `error`, each once; `iss` at most once. Other
   parameters are ignored. A repeated, missing or undecodable parameter, or a
   request larger than the receiver takes, is answered `400`.
@@ -370,13 +366,29 @@ call that finds one under way waits for its result, within its own wait.
 
 | Renewal | Outcome |
 | --- | --- |
-| Succeeds | The new access token and lifetime are stored in one transaction. A new refresh token replaces the previous one, which is discarded and not revoked; an answer without one keeps the current refresh token. |
+| Succeeds | The new access token and lifetime are stored in one transaction. A new refresh token replaces the previous one, which is discarded and not revoked; an answer without one keeps the current refresh token. Who the login identifies as is then asked again. |
 | Refused with `invalid_grant` | The login is removed and the call starts a sign-in. |
 | Fails otherwise | The call fails naming the server; the login is kept. |
 | Not possible: the login has no refresh token | The login is unusable: it is removed and the call starts a sign-in. |
 
 A lifetime the server did not give is unknown, not unlimited: such a login is
 used until the server answers `401`.
+
+Each time a login is renewed, who it identifies as is asked again with the new
+access token, by the same identity source as at sign-in: the declared identity
+request, or the UserInfo endpoint, whose `sub` must equal the one recorded at
+sign-in and whose `email` must be verified. At some servers a person can
+change their own login address, so a login is kept only while that answer
+equals the address it is stored under. When it no longer does, the login is
+removed and revoked where the authorization server offers revocation, and the
+call starts a sign-in. When the identity request fails, the call fails naming
+the server and the login is kept.
+
+#### Revocation
+
+A revocation request names the kind of token it carries (`token_type_hint`:
+`refresh_token` or `access_token`). A successful answer is not taken as proof
+that the token no longer works.
 
 #### Ending a login
 
@@ -521,9 +533,6 @@ Then the call reaches the server under the member's own login
 And the same turn answers
 But when the member signs in with an account the server reports under another address
 Then that login is not kept, the member is told so, and the agent's call learns that the sign-in was not kept
-But when the member asks in a channel and the agent calls a tool the server does not mark as only reading
-Then the call is refused, saying that the member can ask in a direct message
-And a tool the server marks as only reading is called under the member's login
 ```
 
 ### UC-MA6: Finish a late sign-in and ask again
@@ -546,6 +555,8 @@ Given a member has signed in to a server
 When their login runs out and the agent calls a tool for them
 Then instrukt renews the login and the call reaches the server
 But when the authorization server no longer accepts the login's renewal
+Then the login is removed and a new sign-in starts
+But when, at a renewal, the server reports the login under another address than the member's
 Then the login is removed and a new sign-in starts
 ```
 
@@ -599,6 +610,13 @@ And a call for that person starts a new sign-in
   usable at the server after renewal and after sign-out, possibly without
   end; one that offers no revocation keeps every token it issued valid after
   sign-out until it expires there.
+- A server may keep honouring a login's renewal for an account it has
+  disabled while refusing the renewed access token. The stored login is then
+  paused, not ended: calls fail naming the server until the account is
+  enabled again or the login is removed.
+- A server may send a refusal back without a `state`. Such a return belongs
+  to no sign-in: the person sees the neutral page, the agent's call learns
+  that the sign-in is still pending, and the sign-in ends when it expires.
 - A person who can no longer reach the agent keeps their logins in the state
   database until they sign out, the operator removes them, or the
   authorization server refuses a renewal.
@@ -606,13 +624,7 @@ And a call for that person starts a new sign-in
   operating-system user can read them. With a person's own login the agent
   holds that person's rights at the server, and in a channel text of other
   people accompanies the speaker's message and can steer what happens under
-  the speaker's name. That is why, under a signed-in login, a tool that
-  changes something is called only when the person asked in a direct
-  message.
-- Whether a tool only reads is the server's own statement, its read-only
-  annotation, and instrukt does not verify it. On a server whose reading goes
-  through a general tool that is not marked as only reading, that reading is
-  refused in a channel too.
+  the speaker's name.
 - The agent program's own MCP settings are untouched and unknown to instrukt:
   a server configured there is reached by that program, without these rules.
 - A speaker's logins are found by the email address the connector's provider
@@ -629,7 +641,6 @@ And a call for that person starts a new sign-in
 - [project/instrukt/spec/feature/runner/single-ingress-webhook-termination](single-ingress-webhook-termination.md) — the receiver that serves the sign-in return.
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md) — where logins, clients and pending sign-ins are kept.
 - https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization — MCP authorization: protected resource metadata, authorization server discovery order, client registration, PKCE with `S256` required, `resource` in authorization and token requests, scope selection, the bearer header.
-- https://modelcontextprotocol.io/specification/2025-11-25/server/tools — tool annotations; `readOnlyHint: true` says a tool does not modify its environment, absent means false, and annotations are hints a client trusts only from a trusted server.
 - https://www.rfc-editor.org/rfc/rfc6749 — OAuth 2.0: the authorization code grant, `state`, optional refresh tokens, the refresh token grant and replacing a refresh token, `invalid_grant`; a code lifetime of at most ten minutes is recommended. The ten minutes of a pending sign-in are instrukt's own.
 - https://www.rfc-editor.org/rfc/rfc7636 — PKCE: a verifier of 43 to 128 unreserved characters with at least 256 bits of entropy, and `S256`, the base64url form of the verifier's SHA-256 digest.
 - https://www.rfc-editor.org/rfc/rfc8707 — resource indicators: the `resource` parameter, an absolute identifier without a fragment, in authorization and token requests.

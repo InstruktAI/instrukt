@@ -100,7 +100,7 @@ workspace.
 | Where | A message is addressed when | The conversation is |
 | --- | --- | --- |
 | A channel | it tags the agent | the thread the tag is in; a tag outside a thread starts the thread under itself |
-| A direct message to the agent | always | that direct-message channel, which the connector supplies as a direct message |
+| A direct message to the agent | always | that direct-message channel |
 
 A message that does not tag the agent in a channel never reaches instrukt,
 whether or not the agent already takes part in that thread.

@@ -506,9 +506,7 @@ person alone, such as a sign-in link
 (`project/instrukt/spec/feature/runner/slack-connector`). Key: `(company,
 connector, channel, message)`, the provider's identity of the posted message.
 Column: `posted_at`. These messages are left out of every range of
-accompanying messages. `connected_conversations` also has `direct`, `1` when
-the connector supplied the conversation as a direct message between the
-person and the agent.
+accompanying messages.
 
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
@@ -535,6 +533,7 @@ for that server.
 | Column | Meaning |
 | --- | --- |
 | `resource` | The server's `url` the login was issued for. |
+| `subject` | The OpenID Connect `sub` recorded at sign-in; `NULL` with a declared identity request. |
 | `return_id` | The registration it was issued to, which names its authorization server and client. |
 | `access_token`, `expires_at` | The access token and when it runs out; `expires_at` is `NULL` when the server gave no lifetime, which means unknown. |
 | `refresh_token` | The refresh token; `NULL` when the server issued none. |
