@@ -64,7 +64,7 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt install [--module todos\|events\|history\|blueprint\|conversations]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
 | `instrukt install --check [--module todos\|events\|history\|blueprint\|conversations]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
-| `instrukt events status` | Show this computer's machine ID, the ingress and reacting computers its global layer names and any disagreement with other computers, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state and each connector's connection; masks credentials. |
+| `instrukt events status` | Show this computer's machine ID and its `ingress.computer` and `ingress.reactions` as it reads them, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state and each connector's connection; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
 | `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress or with no enabled valid source. |
 
@@ -274,23 +274,6 @@ Socket custody is bounded by the provider timeout; it is not a durable HTTP queu
 While cluster Redis cannot publish, requests fail rather than being accepted
 into a new local store-and-forward service.
 
-### Agreement on the ingress and the reacting computer
-
-Every computer with events enabled keeps a participant record in cluster Redis,
-under the `instrukt:*` namespace: its machine ID with its own values of
-`ingress.computer` and `ingress.reactions`. `instrukt install` writes it and
-every tick and runner pass refreshes it; a record not refreshed for seven days
-lapses. `instrukt install`, `instrukt install --check` and
-`instrukt events status` compare this computer's values with every current
-record and report each of these as an unmet finding:
-
-| Finding | Repair door |
-| --- | --- |
-| Another computer's `ingress.computer` or `ingress.reactions` differs from this computer's, naming both computers and both values | Correct the global layer of the computer that is wrong with `instrukt config patch --global`, then run `instrukt install` there |
-| The ingress or the reacting computer this computer names has no current record, naming the ID | Run `instrukt install` on that computer with events enabled, or name a computer that participates |
-
-`install --check` and `events status` read records and write none.
-
 ### Owned units without a login
 
 On Linux every owned unit is a systemd user unit that has to run without a
@@ -366,8 +349,6 @@ When the configuration agent installs its dependencies on participating computer
 Then only ingress receives a loopback socket and receiver service with its declaring-project signing material
 And other computers, the reacting computer included, receive no listener
 And sources with events off are reported without enabling events or installing their receiver
-But when participating computers disagree on the ingress or the reacting computer, or one names a computer the cluster does not know
-Then installation and its check report the disagreement with its repair door
 ```
 
 ### UC-MI5: Reuse a working setup and repair only drift
@@ -483,9 +464,7 @@ Then installation reports that prerequisite and claims no success
   convergence; successful parts are reported separately and reruns reuse them.
 - No release-pointer, daemon lifecycle, fleet update or legacy Redis config
   migration is imported from TeleClaude.
-- Agreement is judged from participant records only. A computer that has not
-  refreshed its record for seven days, such as one switched off, is reported as
-  unknown until its next tick, runner pass or installation.
+- Each computer checks only its own settings. instrukt does not detect two computers that disagree on `ingress.computer` or `ingress.reactions`: then no computer reacts to external facts, the wrong one does, or two do, and nothing reports it. Agreement is established when the computers are configured (`project/instrukt/spec/feature/configuration/configuration-skill`); `instrukt events status` on each computer shows its machine ID and both settings as it reads them, for a person or an agent to compare.
 
 ## See Also
 

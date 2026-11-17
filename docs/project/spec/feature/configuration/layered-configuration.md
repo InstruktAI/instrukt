@@ -96,8 +96,11 @@ URL spellings and ACL credentials may differ when they reach the same logical
 store with required permissions. `ingress.port` is a valid TCP port shared only
 by the ingress receiver and local edge. The bind host is fixed loopback. Local
 Redis socket paths, local credentials, runtime and ticks settings stay local.
-`instrukt events status` shows each computer's own machine ID
-(`project/instrukt/spec/feature/runner/module-installation`). No shared
+`instrukt events status` shows each computer's own machine ID and both IDs as
+that computer reads them (`project/instrukt/spec/feature/runner/module-installation`);
+agreement is established when the computers are configured
+(`project/instrukt/spec/feature/configuration/configuration-skill`), and a
+computer validates only its own settings. No shared
 configuration layer exists, and no key routes facts per project, per home or to
 a project's owner computer.
 

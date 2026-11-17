@@ -186,7 +186,7 @@ And the server publishes the fact and runs no procedure for it
 - Socket queuing survives receiver restart only within the provider timeout and an admitted service manager's support; it supplies no outage store-and-forward.
 - GitHub's delivery ID and event-type headers are not signed body fields. Source-scoped claim deduplication is bounded replay suppression, not independent authentication of those headers.
 - A scheduled-only reacting computer activates on its next tick within retention even while the receiver continues accepting.
-- Activation keys are kept per computer. While participating computers disagree on `ingress.reactions`, an external fact can activate on two computers or on none; installation reports the disagreement (`project/instrukt/spec/feature/runner/module-installation`).
+- Activation keys are kept per computer. instrukt does not detect two computers that disagree on `ingress.computer` or `ingress.reactions`: then no computer reacts to external facts, the wrong one does, or two do, and nothing reports it. Agreement is established when the computers are configured (`project/instrukt/spec/feature/configuration/configuration-skill`); `instrukt events status` on each computer shows its machine ID and both settings as it reads them, for a person or an agent to compare.
 
 ## See Also
 

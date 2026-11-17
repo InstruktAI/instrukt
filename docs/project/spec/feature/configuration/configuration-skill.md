@@ -198,9 +198,8 @@ And it offers the local skill path for that computer without claiming cluster co
 
 - Distribution and binary installation are outside this package's contract.
   The skill directory must already be readable where an agent runs it.
-- Agreements are checked from participating agents' observations and the
-  participant records installation compares, not an atomic cluster
-  transaction. Concurrent changes require rereading revisions;
+- Agreements are checked from participating agents' observations, not an
+  atomic cluster transaction. Concurrent changes require rereading revisions;
   partial completion is reported per computer.
 - There is no dedicated project-owner-machine configuration key. Project
   placement follows existing adopted homes and intake/claim contracts.
