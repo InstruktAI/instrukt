@@ -409,6 +409,10 @@ But a cloned project cannot replace the machine's agent-action values
 - Every entry path migrates older configuration before refusal or skip. All
   commands refuse a newer schema version and direct the caller to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
+- With `INSTRUKT_NOW=@<path>` real time bounds no started program: its limit
+  runs out only when the time in the file moves past it, so a program that
+  never ends waits until the file's time is moved or the command is
+  interrupted.
 - `requires` naming a switched-off module is a validation finding.
 - Runtime capability metadata belongs to the shipped integration; adapter
   behavior requires code. Agent instruction prose remains configuration.
