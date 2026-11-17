@@ -34,8 +34,9 @@ selected runtime with the capabilities
 A connector is the code for one channel provider. For each message addressed
 to the agent it supplies the company home that declares it, a stable
 conversation identity, the sender's identity on that connector, the time the
-message was written, its text, and the conversation's earlier messages its
-provider contract says accompany it. It posts text to a conversation it
+message was written, its text, the conversation's earlier messages its
+provider contract says accompany it, and whether that contract left earlier
+messages out. It posts text to a conversation it
 carries. Which messages count as addressed, and what accompanies them, is each
 connector's own contract
 (`project/instrukt/spec/feature/runner/slack-connector`).
@@ -70,7 +71,8 @@ connector's own contract
   `project/instrukt/spec/feature/runner/conversation-links`: a conversation
   context envelope carrying the accompanying earlier messages as data, each
   with its speaker and time and with the agent's own earlier posts marked as
-  its own, followed by a member envelope carrying the addressed message's text
+  its own, and saying so when the connector left earlier messages out,
+  followed by a member envelope carrying the addressed message's text
   unchanged, with connector, conversation, member and time in its opening.
   Both carry the delivery's boundary token, so a line inside them that looks
   like an opening or a closing stays content.
