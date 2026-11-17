@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+assertion_line: 94
 expression: "read(&[\"config\", \"get\"])"
 ---
 modules:
@@ -7,6 +8,7 @@ modules:
   todos: false
   events: false
   history: true
+  conversations: false
 ticks: 'on'
 github:
   api_url: https://api.github.com

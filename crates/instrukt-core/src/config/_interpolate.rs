@@ -14,6 +14,20 @@ pub(crate) enum Mode<'a> {
     Check,
 }
 
+/// Whether the value at `path` keeps its stored `${NAME}` references: webhook
+/// signing material, App keys, and a company home's member logins and
+/// connector tokens resolve only through their typed accessors.
+fn stored_reference(path: &str) -> bool {
+    ["webhooks", "github.apps", "members", "connectors"]
+        .iter()
+        .any(|root| {
+            path == *root
+                || path
+                    .strip_prefix(root)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+}
+
 /// Resolves paths and expands references over one configuration value.
 pub(crate) struct Interpolator<'a> {
     root: &'a Value,
@@ -56,11 +70,7 @@ impl<'a> Interpolator<'a> {
     }
 
     fn expand_value(&self, value: &Value, path: &str) -> Result<Value, ConfigError> {
-        if path == "webhooks"
-            || path.starts_with("webhooks.")
-            || path == "github.apps"
-            || path.starts_with("github.apps.")
-        {
+        if stored_reference(path) {
             return Ok(value.clone());
         }
         match value {
@@ -123,7 +133,7 @@ impl<'a> Interpolator<'a> {
         value: &Value,
         stack: &mut Vec<String>,
     ) -> Result<String, ConfigError> {
-        if path.starts_with("webhooks.") || path.starts_with("github.apps.") {
+        if stored_reference(&path) {
             return value
                 .as_str()
                 .map(str::to_owned)

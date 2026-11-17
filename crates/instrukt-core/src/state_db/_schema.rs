@@ -4,7 +4,7 @@
 
 /// Every migration this build ships; the schema version is their count.
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
 ];
 
 /// Version 7: retained conversations, search and transactional extraction positions.
@@ -711,5 +711,68 @@ const V16: &str = r#"
 CREATE TABLE IF NOT EXISTS project_boards (
     project TEXT PRIMARY KEY NOT NULL,
     board   TEXT NOT NULL
+);
+"#;
+
+/// Version 17: conversations through connectors — each conversation's bound
+/// session and answer-source position, every accepted addressed message until
+/// it is delivered (with the member who wrote it, the speaker of its turn),
+/// every answer piece until the connector accepted its post, the senders
+/// already turned away, and each connector's connection state. Applying it
+/// again over a database that already holds the tables changes nothing.
+const V17: &str = r#"
+CREATE TABLE IF NOT EXISTS connected_conversations (
+    company       TEXT NOT NULL,
+    connector     TEXT NOT NULL,
+    conversation  TEXT NOT NULL,
+    semantic_key  TEXT NOT NULL,
+    request       TEXT,
+    session       TEXT,
+    position_json TEXT,
+    failure       TEXT,
+    PRIMARY KEY (company, connector, conversation)
+);
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    member       TEXT NOT NULL,
+    written_at   TEXT NOT NULL,
+    arrived_at   TEXT NOT NULL,
+    text         TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'answered')),
+    content      TEXT,
+    turn         TEXT,
+    failure      TEXT,
+    PRIMARY KEY (company, connector, conversation, message)
+);
+CREATE TABLE IF NOT EXISTS conversation_answers (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    turn         TEXT NOT NULL,
+    piece        INTEGER NOT NULL,
+    text         TEXT NOT NULL,
+    posted_at    TEXT,
+    failure      TEXT,
+    PRIMARY KEY (company, connector, conversation, turn, piece)
+);
+CREATE TABLE IF NOT EXISTS conversation_turned_away (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    sender       TEXT NOT NULL,
+    replied_at   TEXT NOT NULL,
+    PRIMARY KEY (company, connector, conversation, sender)
+);
+CREATE TABLE IF NOT EXISTS connector_states (
+    company    TEXT NOT NULL,
+    connector  TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    failure    TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (company, connector)
 );
 "#;

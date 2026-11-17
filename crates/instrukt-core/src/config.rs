@@ -10,6 +10,7 @@
 
 mod _agents;
 mod _agents_migrate;
+mod _company;
 mod _edit;
 mod _effective;
 mod _error;
@@ -30,9 +31,11 @@ mod _webhooks;
 use std::path::Path;
 
 pub use _agents::{
-    AgentSelection, Agents, Effort, HarnessKind, Profile, RoleSelection, SHIPPED_AGENTS,
+    AgentSelection, Agents, CONVERSATION_ROLE, Effort, HarnessKind, Profile, RoleSelection,
+    SHIPPED_AGENTS,
 };
 
+pub use _company::{CONNECTORS, DEFAULT_CONTEXT_MESSAGES, Member, Members, SlackConnector};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};
@@ -46,7 +49,9 @@ pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
 pub use _render::render_yaml;
 pub use _runtime::WorkflowCapability;
 pub use _runtime::{Env, NativeCapabilities, Runtime};
-pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};
+pub use _schema::{
+    CONVERSATIONS, CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema,
+};
 pub use _validate::{validate, validate_local};
 pub use _webhooks::{
     Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources, webhook_domain,

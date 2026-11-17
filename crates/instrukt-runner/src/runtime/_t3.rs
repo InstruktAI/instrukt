@@ -554,6 +554,7 @@ fn semantic_key(title: &str) -> Option<&str> {
         "instrukt:standing:",
         "instrukt:task:",
         "instrukt:run:",
+        "instrukt:conversation:",
     ]
     .iter()
     .any(|prefix| {

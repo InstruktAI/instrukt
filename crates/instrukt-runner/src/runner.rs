@@ -42,6 +42,8 @@ pub enum RunnerError {
     Links(#[from] crate::links::LinkError),
     #[error(transparent)]
     History(#[from] crate::history::HistoryError),
+    #[error("conversations: {0}")]
+    Conversations(String),
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
     #[error("the activation wake channel failed; accepted work remains pending")]
@@ -170,6 +172,21 @@ pub fn run(
             }
         },
         None => None,
+    };
+    // Connectors and their conversations run beside the wake-ups while a
+    // company declares a connector and conversations are on.
+    let (accepted, arrivals) = std::sync::mpsc::sync_channel(1);
+    let _conversations = if crate::conversations::demand(cx.home)
+        .map_err(|e| RunnerError::Conversations(e.to_string()))?
+        .is_empty()
+    {
+        None
+    } else {
+        let worker = crate::conversations::Worker::start(cx.home, cx.env, arrivals)
+            .map_err(|e| RunnerError::Conversations(e.to_string()))?;
+        let connections = crate::connectors::Connections::start(cx.home, accepted)
+            .map_err(|e| RunnerError::Conversations(e.to_string()))?;
+        Some((connections, worker))
     };
     tracing::info!(event = "runner_started");
     loop {

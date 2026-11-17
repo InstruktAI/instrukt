@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+assertion_line: 151
 expression: "String::from_utf8_lossy(&refused.get_output().stderr)"
 ---
-instrukt: `instrukt run` serves the todos, events and history modules, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`
+instrukt: `instrukt run` serves the todos, events and history modules and conversations, and all are off; switch on `modules.todos`, `modules.events` or `modules.history`, or switch on `modules.conversations` with a company's declared connector
