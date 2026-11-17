@@ -47,7 +47,7 @@ pub fn run_run(args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         tz: &tz,
         wiring: &wiring,
     };
-    let clock = ctx.clock;
+    let clock = ctx.clock.clone();
     runner::run(&cx, move || clock.now(), RUN_INTERVAL, args.service)?;
     Ok(ExitCode::SUCCESS)
 }
