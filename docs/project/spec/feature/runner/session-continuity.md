@@ -6,8 +6,9 @@ visibility: public
 
 ## What it is
 
-The runner defines a Rust runtime-adapter trait and ships T3 first, explicitly
-selected with global `runner.runtime`. It acts where instrukt has no agent:
+The runner defines a Rust runtime-adapter trait and ships two runtimes, T3 and
+the direct runtime (`project/instrukt/spec/feature/runner/direct-runtime`),
+explicitly selected with global `runner.runtime`. It acts where instrukt has no agent:
 todo orchestrator pickup, event-driven standing agents, recurring tasks,
 keyed singleton discovery, event/approval delivery and conversation-link relay. Its implementation is code.
 
@@ -158,7 +159,9 @@ to its own dispatch path, never an instruction for an agent to execute.
 ### Runtime choice and feature availability
 
 `runner.runtime` is global-only and names a compiled adapter. It has no default.
-`t3` is the first shipped implementation. No code chooses a runtime from
+`t3` and `direct` are the shipped implementations; the direct runtime carries
+conversations only, and its contract is
+`project/instrukt/spec/feature/runner/direct-runtime`. No code chooses a runtime from
 installed tools or session environment variables. Unknown adapter names are
 validation findings. Runtime instruction entries are configuration prose, not
 adapter verb templates.
@@ -170,7 +173,7 @@ adapter verb templates.
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
 | History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unset or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
-| Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/runner/conversations`. |
+| Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and the answer back: on T3 through `conversation_source` with native change notifications, on the direct runtime as the result of the turn's run, per `project/instrukt/spec/feature/runner/conversations`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Receiving and publishing external facts need no agent runtime. A computer that

@@ -455,8 +455,8 @@ is `(company, connector, conversation)`.
 | --- | --- |
 | `semantic_key` | The key its one session is started and woken by. |
 | `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
-| `session` | The bound session; `NULL` until a start is bound. |
-| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
+| `session` | The bound session; `NULL` until a start is bound. On the direct runtime it is `direct:<uuid>`, recorded before the session's first run. |
+| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to; `NULL` on the direct runtime, which has none. |
 | `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
 
 **`conversation_messages`** — one row per addressed message. Key: the address
@@ -468,7 +468,7 @@ and `message`, the connector's identity of that message.
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished; `failed` once the runtime reported that its turn ended without an answer, as the direct runtime does for a failed or interrupted run. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |

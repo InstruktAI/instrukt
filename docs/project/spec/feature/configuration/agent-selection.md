@@ -22,7 +22,7 @@ changing a procedure or recompiling instrukt.
 | `roles: {<role>: <role-entry>}` | One entry combines class, scoped `can` grants, model order and tier, and optional GitHub App reference. |
 | `bundles: {<name>: <grants>}` | Named scoped capability bundles, owned by roles-and-capabilities. |
 | `profiles: {<name>: <profile>}` | User-visible profile names; orders reference these names. |
-| Profile `instance` | The existing T3 provider-instance id this profile addresses. |
+| Profile `instance` | On T3, the existing T3 provider-instance id this profile addresses. On the direct runtime, the account: the agent program runs with that instance's own configuration directory (`project/instrukt/spec/feature/runner/direct-runtime`). |
 | Profile `kind` | A known harness kind selecting that profile's allowed effort values and typed extra settings. |
 | Profile tier chains | Nonempty ordered entries for `light`, `standard`, `strong` and `premium`, each holding a model name, one runtime-neutral `effort` field validated per kind, and extra harness settings beside it. |
 
@@ -113,7 +113,9 @@ shows the current order, asks where to place them, and writes the corresponding
 profiles and order changes. For a supported harness that is not ready, it guides
 login or key setup and waits for readiness. instrukt creates no provider
 instances and carries no ACP implementation. Model-provider keys remain with
-T3, outside instrukt's secrets file.
+T3, outside instrukt's secrets file. On the direct runtime an account's login
+stays in the agent program's own configuration directory for that instance,
+outside instrukt's secrets file.
 
 ## Use cases
 

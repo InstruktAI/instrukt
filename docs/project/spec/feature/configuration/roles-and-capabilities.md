@@ -63,6 +63,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Publication | `publication` | `sync` and hook-triggered publication for the selected project and positions; position ownership remains mandatory. |
 | Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
 | Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
+| Tools | `mcp-use` | `mcp list|list-tools|call|sign-out` for the caller: the declared MCP servers it sees and its speaker's own sign-in logins. `own` reaches the servers of the company home of the recorded assignment; `any` reaches every server the caller sees (`project/instrukt/spec/feature/runner/mcp-access`). |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
@@ -121,6 +122,7 @@ composition is:
 | `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `session-recover`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
+| `tools` | `mcp-use` at `own`. |
 | `all` | Every catalog action at `any`. |
 
 These entries cover every role declared by instrukt's shipped procedures and
@@ -140,7 +142,7 @@ column names the identity reference, not another model/provider choice.
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
-| `conversation` | `standing` | `read` | project |
+| `conversation` | `standing` | `read`, `tools` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
@@ -168,6 +170,13 @@ constraints named. Briefs carry the resolved role, class, grants and assignment
 scope. Help and execution use the same code-owned action mapping. Every class
 and the roleless caller still pass claim, phase, shared-workspace admission,
 publication ownership and single-writer-on-main checks.
+
+On the direct runtime grants are enforced in a second way: they decide the
+tools a run of the agent program has. A run may run each instrukt command the
+runtime offers an agent whose action the role's effective grants contain, and
+no other tool; a role whose grants contain none of them runs with no tools at
+all (`project/instrukt/spec/feature/runner/direct-runtime`). This holds for
+every class.
 
 Configuration validation rejects unknown classes, action names, bundle names,
 scopes and malformed grants; it reports configured role entries that no
@@ -203,9 +212,10 @@ Then new assignments enforce that role's grants
 
 ## Known caveats
 
-- Capabilities cover instrukt commands only. File edits, raw git, `gh` and
-  native runtime tools remain governed by the runtime's permission mode.
-  Per-role runtime permission mode is unspecified.
+- Capabilities cover instrukt commands only. On T3, file edits, raw git, `gh`
+  and native runtime tools remain governed by the runtime's permission mode,
+  and per-role runtime permission mode is unspecified. On the direct runtime
+  the grants decide the agent program's tools, as stated above.
 - This contract adds no agent-to-agent discussion design or session-authority
   hierarchy. Native conversation operations retain their existing contracts.
 
