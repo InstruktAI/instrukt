@@ -1,14 +1,157 @@
-//! Filesystem effects every context shares: whole-file atomic writes and
-//! advisory locks.
+//! Filesystem effects every context shares: whole-file atomic writes,
+//! advisory locks, and the write fence every write passes.
 //!
 //! A write either lands completely or not at all — readers never see a
 //! partly written file. A lock is held for the lifetime of its guard and
 //! released by the operating system if the process dies.
+//!
+//! Every write instrukt makes goes through this module, which admits it at
+//! the write fence first (`_fence`); the workspace's clippy configuration
+//! disallows the standard library's writing operations everywhere else.
+
+mod _fence;
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+pub use _fence::{EXIT as FENCE_EXIT, RECORD as FENCE_RECORD, VARIABLE as FENCE_VARIABLE};
+
+/// Fences the locations the startup environment names in
+/// [`FENCE_VARIABLE`] for the rest of this process. Called once, first, by
+/// the binary.
+pub fn fence(env: &crate::config::Env) {
+    _fence::install(&env.write_fence(), env.get("TMPDIR").map(Path::new));
+}
+
+/// [`std::fs::write`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    _fence::admit(path.as_ref());
+    std::fs::write(path, contents)
+}
+
+/// [`std::fs::create_dir_all`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
+    _fence::admit(path.as_ref());
+    std::fs::create_dir_all(path)
+}
+
+/// [`std::fs::remove_file`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
+    _fence::admit(path.as_ref());
+    std::fs::remove_file(path)
+}
+
+/// [`std::fs::remove_dir`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn remove_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    _fence::admit(path.as_ref());
+    std::fs::remove_dir(path)
+}
+
+/// [`std::fs::remove_dir_all`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
+    _fence::admit(path.as_ref());
+    std::fs::remove_dir_all(path)
+}
+
+/// [`std::fs::rename`], admitted at the fence on both ends.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
+    _fence::admit(from.as_ref());
+    _fence::admit(to.as_ref());
+    std::fs::rename(from, to)
+}
+
+/// [`std::fs::set_permissions`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn set_permissions(
+    path: impl AsRef<Path>,
+    permissions: std::fs::Permissions,
+) -> io::Result<()> {
+    _fence::admit(path.as_ref());
+    std::fs::set_permissions(path, permissions)
+}
+
+/// [`File::create`], admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn create(path: impl AsRef<Path>) -> io::Result<File> {
+    _fence::admit(path.as_ref());
+    File::create(path)
+}
+
+/// Opens `path` with `options`, admitted at the fence. Reading alone needs
+/// no admission: [`File::open`] reads.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn open(options: &OpenOptions, path: impl AsRef<Path>) -> io::Result<File> {
+    _fence::admit(path.as_ref());
+    options.open(path)
+}
+
+/// A named temporary file in `dir`, admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn temp_file_in(dir: impl AsRef<Path>) -> io::Result<tempfile::NamedTempFile> {
+    _fence::admit(dir.as_ref());
+    tempfile::NamedTempFile::new_in(dir)
+}
+
+/// Puts `temp` in `path`'s place, admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn persist(
+    temp: tempfile::NamedTempFile,
+    path: impl AsRef<Path>,
+) -> Result<File, tempfile::PersistError> {
+    _fence::admit(path.as_ref());
+    temp.persist(path)
+}
+
+/// Puts `temp` at `path` unless something is there, admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn persist_noclobber(
+    temp: tempfile::NamedTempFile,
+    path: impl AsRef<Path>,
+) -> Result<File, tempfile::PersistError> {
+    _fence::admit(path.as_ref());
+    temp.persist_noclobber(path)
+}
+
+/// A temporary directory `builder` makes in `dir`, admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn temp_dir_in(
+    builder: &tempfile::Builder<'_, '_>,
+    dir: impl AsRef<Path>,
+) -> io::Result<tempfile::TempDir> {
+    _fence::admit(dir.as_ref());
+    builder.tempdir_in(dir)
+}
+
+/// A temporary directory `builder` makes in the system's temporary
+/// directory, admitted at the fence.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn temp_dir(builder: &tempfile::Builder<'_, '_>) -> io::Result<tempfile::TempDir> {
+    _fence::admit(&std::env::temp_dir());
+    builder.tempdir()
+}
+
+/// Opens the SQLite database at `path` with `flags`; one that may write or
+/// create it is admitted at the fence first.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn open_database(
+    path: impl AsRef<Path>,
+    flags: rusqlite::OpenFlags,
+) -> rusqlite::Result<rusqlite::Connection> {
+    if flags.intersects(
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+    ) {
+        _fence::admit(path.as_ref());
+    }
+    rusqlite::Connection::open_with_flags(path, flags)
+}
 
 /// A filesystem effect failed; names the path it concerned.
 #[derive(Debug, thiserror::Error)]
@@ -34,11 +177,11 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), FsError> {
         path: path.to_path_buf(),
         source,
     };
-    std::fs::create_dir_all(parent).map_err(wrap)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(wrap)?;
+    create_dir_all(parent).map_err(wrap)?;
+    let mut temp = temp_file_in(parent).map_err(wrap)?;
     temp.write_all(contents).map_err(wrap)?;
     temp.as_file().sync_all().map_err(wrap)?;
-    temp.persist(path).map_err(|err| wrap(err.error))?;
+    persist(temp, path).map_err(|err| wrap(err.error))?;
     Ok(())
 }
 
@@ -58,12 +201,12 @@ pub fn atomic_write_with_permissions(
         path: path.to_path_buf(),
         source,
     };
-    std::fs::create_dir_all(parent).map_err(wrap)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(wrap)?;
+    create_dir_all(parent).map_err(wrap)?;
+    let mut temp = temp_file_in(parent).map_err(wrap)?;
     temp.write_all(contents).map_err(wrap)?;
     temp.as_file().set_permissions(permissions).map_err(wrap)?;
     temp.as_file().sync_all().map_err(wrap)?;
-    temp.persist(path).map_err(|err| wrap(err.error))?;
+    persist(temp, path).map_err(|err| wrap(err.error))?;
     Ok(())
 }
 
@@ -197,14 +340,13 @@ fn open_lock_file(path: &Path) -> Result<File, FsError> {
         source,
     };
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(wrap)?;
+        create_dir_all(parent).map_err(wrap)?;
     }
-    OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(path)
-        .map_err(wrap)
+    open(
+        OpenOptions::new().create(true).truncate(false).write(true),
+        path,
+    )
+    .map_err(wrap)
 }
 
 #[cfg(test)]

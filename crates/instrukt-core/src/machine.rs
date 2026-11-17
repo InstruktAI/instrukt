@@ -131,11 +131,11 @@ fn create_once(path: &Path, id: &str) -> Result<(), MachineError> {
             "the machine-id path has no parent",
         ))
     })?;
-    std::fs::create_dir_all(parent).map_err(wrap)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(wrap)?;
+    crate::fsx::create_dir_all(parent).map_err(wrap)?;
+    let mut temp = crate::fsx::temp_file_in(parent).map_err(wrap)?;
     io::Write::write_all(&mut temp, format!("{id}\n").as_bytes()).map_err(wrap)?;
     temp.as_file().sync_all().map_err(wrap)?;
-    match temp.persist_noclobber(path) {
+    match crate::fsx::persist_noclobber(temp, path) {
         Ok(_) => Ok(()),
         // Another process created it first; its id stands.
         Err(err) if err.error.kind() == io::ErrorKind::AlreadyExists => Ok(()),

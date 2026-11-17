@@ -3,6 +3,13 @@
 //! This file is the composition root: it parses the command line, builds
 //! the invocation context and hands each command to its context's command
 //! module under `commands/`.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "unit tests build their scratch trees directly"
+    )
+)]
 
 mod authorization;
 mod clock;
@@ -82,6 +89,7 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    instrukt_core::fsx::fence(&instrukt_core::config::Env::from_process());
     let matches = match Cli::command().try_get_matches() {
         Ok(matches) => matches,
         Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {

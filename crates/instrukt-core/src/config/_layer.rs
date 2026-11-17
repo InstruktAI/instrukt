@@ -563,7 +563,7 @@ pub fn init(
             Value::String(name.to_string()),
         );
         let dir = home.company_dir(name);
-        std::fs::create_dir_all(&dir)
+        crate::fsx::create_dir_all(&dir)
             .map_err(|source| ConfigError::CreateHome { path: dir, source })?;
     }
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;

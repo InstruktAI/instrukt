@@ -218,7 +218,7 @@ fn project_docs(path: &Path) -> Result<PartOutcome, RepositoryError> {
     if path.is_dir() {
         return Ok(PartOutcome::AlreadyPresent);
     }
-    std::fs::create_dir_all(path).map_err(|source| RepositoryError::Create {
+    crate::fsx::create_dir_all(path).map_err(|source| RepositoryError::Create {
         path: path.to_path_buf(),
         source,
     })?;

@@ -3,6 +3,13 @@
 //! and the interfaces core declares for optional modules.
 //!
 //! Dependencies point one way: core depends on nothing of instrukt.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "unit tests build their scratch trees directly"
+    )
+)]
 
 pub mod config;
 pub mod docs;

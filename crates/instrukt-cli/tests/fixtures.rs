@@ -1,4 +1,8 @@
 //! Boundary fixtures shared by every CLI scenario.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "scenarios build their fixtures directly; the binary under test writes through the fence"
+)]
 #[path = "support/conversing.rs"]
 pub mod conversing;
 #[path = "support/documented.rs"]

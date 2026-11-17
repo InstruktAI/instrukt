@@ -141,7 +141,7 @@ impl Files for WorkingTree {
     }
 
     fn remove(&mut self, path: &Path) -> Result<(), DocsError> {
-        std::fs::remove_file(path).map_err(|source| DocsError::Remove {
+        crate::fsx::remove_file(path).map_err(|source| DocsError::Remove {
             path: path.to_path_buf(),
             source,
         })

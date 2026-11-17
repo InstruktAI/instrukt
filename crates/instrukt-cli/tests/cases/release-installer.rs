@@ -161,7 +161,7 @@ fn unsupported_platform_refuses_before_download_or_write() {
             release.env.path("download-attempted").display()
         ),
     );
-    let untouched = common::LiveGuard::over(
+    let untouched = common::Snapshot::over(
         vec![],
         vec![release.env.home().into(), release.env.path("tmp")],
     );

@@ -168,7 +168,7 @@ impl InstallPlan {
 /// directory and the hooks directory git runs them from.
 fn hook_bounds(root: &Path, dir: &HooksDir) -> Result<Bounds, RepositoryError> {
     let common = _git::common_dir(root)?;
-    std::fs::create_dir_all(&dir.path).map_err(|source| RepositoryError::Create {
+    crate::fsx::create_dir_all(&dir.path).map_err(|source| RepositoryError::Create {
         path: dir.path.clone(),
         source,
     })?;

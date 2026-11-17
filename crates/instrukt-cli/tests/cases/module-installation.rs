@@ -1370,7 +1370,7 @@ fn schema_two_ownership_golden_is_read_without_writes_and_persisted_on_unchanged
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, original.as_bytes()).unwrap();
     let inspection_only =
-        common::LiveGuard::over(vec![], vec![env.home().into(), repo.path().into()]);
+        common::Snapshot::over(vec![], vec![env.home().into(), repo.path().into()]);
     env.run(repo.path(), ["install", "--check"]).success();
     assert_eq!(original.as_bytes(), std::fs::read(&path).unwrap());
     assert!(inspection_only.changed().is_empty());
@@ -1429,9 +1429,18 @@ fn assert_receiver_execution(
         .replace(&digest, "[INVOCATION]")
         .replace(&format!("LISTEN_PID={pid}"), "LISTEN_PID=[PID]")
         .replace(env.path("").to_str().unwrap(), "[TMP]/");
+    // The harness's write fence names this computer's live home.
+    let fence = format!("{}=", instrukt_core::fsx::FENCE_VARIABLE);
     let rendered = rendered
         .split_whitespace()
         .filter(|field| !field.starts_with("__CF_USER_TEXT_ENCODING="))
+        .map(|field| {
+            if field.starts_with(&fence) {
+                format!("{fence}[LIVE HOME]")
+            } else {
+                field.to_owned()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
     insta::assert_snapshot!("receiver_execution", rendered);
@@ -1513,7 +1522,7 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
         },
     );
     let before = fixture.request(&["inspect", unit]);
-    let untouched = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    let untouched = common::Snapshot::over(vec![], vec![env.home().into()]);
     env.run(env.home(), ["install", "--check"]).failure();
     assert!(untouched.changed().is_empty());
     let copied = env.path("replacement-instrukt");
@@ -1543,7 +1552,7 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
     assert_receiver_execution(&env, &after, &copied, port);
     let moved = env.path("temporarily-unavailable-checkout");
     std::fs::rename(repo.path(), &moved).unwrap();
-    let inspection_only = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    let inspection_only = common::Snapshot::over(vec![], vec![env.home().into()]);
     assert!(inspect().status.success());
     assert!(inspection_only.changed().is_empty());
     std::fs::rename(moved, repo.path()).unwrap();
@@ -1556,7 +1565,7 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
             job["pid"].as_u64().is_some() && job["pid"] != after["pid"]
         },
     );
-    let unchanged = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    let unchanged = common::Snapshot::over(vec![], vec![env.home().into()]);
     assert!(!inspect().status.success());
     assert!(unchanged.changed().is_empty());
     // A misleading unsigned 401 is insufficient when the native override did not apply.
@@ -1591,7 +1600,7 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
         std::time::Duration::from_secs(15),
         || fixture.request(&["inspect", unit])["pid"].is_null(),
     );
-    let cold = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    let cold = common::Snapshot::over(vec![], vec![env.home().into()]);
     assert!(!inspect().status.success());
     assert!(cold.changed().is_empty());
     let stopped = fixture.request(&["inspect", unit]);
@@ -1614,7 +1623,7 @@ fn github_installation() -> (TestEnv, Repo, common::github::FakeGitHub) {
 fn github_check(env: &TestEnv, repo: &Repo, healthy: bool) -> serde_json::Value {
     let mut command = env.instrukt(repo.path());
     command.args(["install", "--check", "--module", "todos", "--json"]);
-    let guard = common::LiveGuard::over(vec![], vec![env.path("")]);
+    let guard = common::Snapshot::over(vec![], vec![env.path("")]);
     let output = if healthy {
         command.assert().success()
     } else {
@@ -1881,7 +1890,7 @@ fn history_converges_cluster_without_event_resources_or_local_credentials() {
 #[test]
 fn history_inspection_checks_only_cluster_without_changing_files() {
     let (env, repo, redis) = history_cluster_fixture();
-    let guard = common::LiveGuard::over(vec![], vec![env.home().into(), repo.path().into()]);
+    let guard = common::Snapshot::over(vec![], vec![env.home().into(), repo.path().into()]);
     let result = env
         .run(
             repo.path(),
@@ -2103,7 +2112,7 @@ fn blueprint_installs_private_pin_reuses_it_and_repairs_drift() {
     let env = blueprint_machine();
     let _repo = project(&env, "blueprint", "{blueprint: true}");
     fake_uv(&env);
-    let before = common::LiveGuard::over(vec![], vec![env.home().into()]);
+    let before = common::Snapshot::over(vec![], vec![env.home().into()]);
     env.run(env.home(), ["install", "--check", "--module", "blueprint"])
         .failure();
     assert!(before.changed().is_empty(), "{:?}", before.changed());
@@ -2120,7 +2129,7 @@ fn blueprint_installs_private_pin_reuses_it_and_repairs_drift() {
     assert!(!env.path("runtime-bin/calls").exists());
     for tool in ["#!/bin/sh\necho 'graphify 0.0.0'\n", "#!/bin/sh\nexit 8\n"] {
         std::fs::write(&binary, tool).unwrap();
-        let before = common::LiveGuard::over(vec![], vec![env.home().into()]);
+        let before = common::Snapshot::over(vec![], vec![env.home().into()]);
         env.run(env.home(), ["install", "--check"]).failure();
         assert!(before.changed().is_empty(), "{:?}", before.changed());
         fake_uv(&env);

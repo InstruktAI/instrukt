@@ -1,4 +1,8 @@
 //! All CLI integration scenarios, linked once with shared boundary fixtures.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "scenarios build their fixtures directly; the binary under test writes through the fence"
+)]
 mod common;
 mod fixtures;
 

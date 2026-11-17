@@ -53,17 +53,16 @@ impl Transaction {
     /// directory below `home_root` (the same filesystem as the published
     /// tree, so moving them is a rename).
     pub(super) fn begin(home_root: &Path) -> Result<Self, PublicationError> {
-        std::fs::create_dir_all(home_root).map_err(|source| PublicationError::Io {
+        crate::fsx::create_dir_all(home_root).map_err(|source| PublicationError::Io {
             path: home_root.to_path_buf(),
             source,
         })?;
-        let trash = tempfile::Builder::new()
-            .prefix(TRASH_PREFIX)
-            .tempdir_in(home_root)
-            .map_err(|source| PublicationError::Io {
-                path: home_root.to_path_buf(),
-                source,
-            })?;
+        let trash =
+            crate::fsx::temp_dir_in(tempfile::Builder::new().prefix(TRASH_PREFIX), home_root)
+                .map_err(|source| PublicationError::Io {
+                    path: home_root.to_path_buf(),
+                    source,
+                })?;
         Ok(Self {
             trash,
             steps: Vec::new(),
@@ -91,7 +90,7 @@ impl Transaction {
         let Some(previous) = read_existing(target)? else {
             return Ok(());
         };
-        std::fs::remove_file(target).map_err(|source| PublicationError::Io {
+        crate::fsx::remove_file(target).map_err(|source| PublicationError::Io {
             path: target.to_path_buf(),
             source,
         })?;
@@ -111,12 +110,12 @@ impl Transaction {
     ) -> Result<(), PublicationError> {
         let saved = self.stash(target)?;
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| PublicationError::Io {
+            crate::fsx::create_dir_all(parent).map_err(|source| PublicationError::Io {
                 path: parent.to_path_buf(),
                 source,
             })?;
         }
-        if let Err(source) = std::fs::rename(staged, target) {
+        if let Err(source) = crate::fsx::rename(staged, target) {
             if let Some(saved) = &saved {
                 restore_dir(saved, target);
             }
@@ -157,7 +156,7 @@ impl Transaction {
         }
         self.moved += 1;
         let saved = self.trash.path().join(self.moved.to_string());
-        std::fs::rename(target, &saved).map_err(|source| PublicationError::Io {
+        crate::fsx::rename(target, &saved).map_err(|source| PublicationError::Io {
             path: target.to_path_buf(),
             source,
         })?;
@@ -170,7 +169,7 @@ impl Transaction {
     /// later sync.
     pub(super) fn commit(self) -> Option<PathBuf> {
         let path = self.trash.keep();
-        match std::fs::remove_dir_all(&path) {
+        match crate::fsx::remove_dir_all(&path) {
             Ok(()) => None,
             Err(error) => {
                 tracing::warn!(event = "sync_trash_left", path = %path.display(), %error);
@@ -189,7 +188,7 @@ impl Transaction {
                         Some(previous) => {
                             atomic_write(&target, &previous).map_err(|e| e.to_string())
                         }
-                        None => std::fs::remove_file(&target).map_err(|e| e.to_string()),
+                        None => crate::fsx::remove_file(&target).map_err(|e| e.to_string()),
                     };
                     if let Err(error) = undone {
                         tracing::error!(event = "sync_rollback_failed", path = %target.display(), %error);
@@ -214,15 +213,15 @@ impl Transaction {
 }
 
 fn restore_dir(saved: &Path, target: &Path) {
-    if let Err(error) = std::fs::rename(saved, target) {
+    if let Err(error) = crate::fsx::rename(saved, target) {
         tracing::error!(event = "sync_rollback_failed", path = %target.display(), %error);
     }
 }
 
 fn remove_any(path: &Path) -> std::io::Result<()> {
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
-        Ok(_) => std::fs::remove_file(path),
+        Ok(meta) if meta.is_dir() => crate::fsx::remove_dir_all(path),
+        Ok(_) => crate::fsx::remove_file(path),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }

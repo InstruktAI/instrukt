@@ -506,17 +506,20 @@ fn map(
                 home,
                 Configuration::load(home, Some(&queued.project_root))?.blueprint_engine()?,
             )?;
-            std::fs::create_dir_all(&files.dir).map_err(|source| GenerationError::Read {
+            instrukt_core::fsx::create_dir_all(&files.dir).map_err(|source| {
+                GenerationError::Read {
+                    path: files.dir.clone(),
+                    source,
+                }
+            })?;
+            let scratch = instrukt_core::fsx::temp_dir_in(
+                tempfile::Builder::new().prefix(CHECKOUT_PREFIX),
+                &files.dir,
+            )
+            .map_err(|source| GenerationError::Read {
                 path: files.dir.clone(),
                 source,
             })?;
-            let scratch = tempfile::Builder::new()
-                .prefix(CHECKOUT_PREFIX)
-                .tempdir_in(&files.dir)
-                .map_err(|source| GenerationError::Read {
-                    path: files.dir.clone(),
-                    source,
-                })?;
             let tree = scratch.path().join("tree");
             check_out(&queued.project_root, &queued.sha, scratch.path(), &tree)?;
             // The engine may start only once its group is durably recorded:
@@ -617,16 +620,15 @@ impl Files {
 
     fn generation_lock_file(&self) -> Result<File, GenerationError> {
         let path = self.dir.join(GENERATION_LOCK_FILE);
-        std::fs::create_dir_all(&self.dir).map_err(|source| GenerationError::Read {
+        instrukt_core::fsx::create_dir_all(&self.dir).map_err(|source| GenerationError::Read {
             path: self.dir.clone(),
             source,
         })?;
-        OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .map_err(|source| GenerationError::Read { path, source })
+        instrukt_core::fsx::open(
+            OpenOptions::new().create(true).truncate(false).write(true),
+            &path,
+        )
+        .map_err(|source| GenerationError::Read { path, source })
     }
 
     /// Whether no worker holds the generation lock, looked at without
@@ -762,9 +764,11 @@ impl Files {
         let _lock = self.queue_lock()?;
         let queued = self.read(&self.queue())?;
         if queued.is_some() {
-            std::fs::remove_file(self.queue()).map_err(|source| GenerationError::Read {
-                path: self.queue(),
-                source,
+            instrukt_core::fsx::remove_file(self.queue()).map_err(|source| {
+                GenerationError::Read {
+                    path: self.queue(),
+                    source,
+                }
             })?;
         }
         Ok(queued)

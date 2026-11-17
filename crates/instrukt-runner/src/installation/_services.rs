@@ -584,7 +584,7 @@ impl Owned {
                 if definition.name != ResourceKind::Redis
                     || file.file_name().is_none_or(|name| name != "users.acl")
                 {
-                    std::fs::remove_file(file)?;
+                    instrukt_core::fsx::remove_file(file)?;
                 }
             }
         }

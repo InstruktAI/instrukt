@@ -21,6 +21,13 @@
 //!
 //! The CLI wires every implementation (`crates/instrukt-cli/src/wiring.rs`)
 //! only when `modules.todos` is on.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "unit tests build their scratch trees directly"
+    )
+)]
 
 pub mod eval;
 pub mod evidence;

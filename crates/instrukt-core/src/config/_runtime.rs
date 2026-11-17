@@ -58,6 +58,17 @@ impl Env {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.vars.get(name).map(String::as_str)
     }
+    /// The locations [`crate::fsx::FENCE_VARIABLE`] keeps this process from
+    /// writing, separated as `PATH` is; none when it is unset.
+    pub fn write_fence(&self) -> Vec<std::path::PathBuf> {
+        self.get(crate::fsx::FENCE_VARIABLE)
+            .map(|value| {
+                std::env::split_paths(value)
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// A runtime compiled into instrukt; selection is always explicit.

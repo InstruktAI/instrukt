@@ -102,7 +102,7 @@ pub fn fold(repo_root: &Path, slug: &TodoSlug) -> Result<FoldOutcome, DocsError>
                 outcome.written.push(PathBuf::from(path));
             }
             None => {
-                std::fs::remove_file(&absolute).map_err(|source| DocsError::Remove {
+                crate::fsx::remove_file(&absolute).map_err(|source| DocsError::Remove {
                     path: absolute.clone(),
                     source,
                 })?;

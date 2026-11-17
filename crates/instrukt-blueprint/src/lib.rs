@@ -15,6 +15,13 @@
 //! - [`trace_use_case`] and [`trace_files`] — use-case trace.
 //!
 //! Depends on core only.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "unit tests build their scratch trees directly"
+    )
+)]
 
 mod _answers;
 mod _contract;

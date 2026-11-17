@@ -1,11 +1,15 @@
 //! The harness's own guarantees: every command prints its contract on
 //! `--help` without acting, subprocesses see only the environment the test
-//! gives them, and writes to guarded live paths are detected.
+//! gives them, and an instrukt write outside the temporary home is refused
+//! before it lands, directly or through a symbolic link.
+
+#![allow(clippy::unwrap_used, reason = "isolated harness fixtures")]
 
 use crate::common;
 use std::collections::BTreeMap;
 
-use common::{LiveGuard, TestEnv};
+use common::{Snapshot, TestEnv};
+use instrukt_core::fsx::{FENCE_EXIT, FENCE_VARIABLE};
 
 const COMMANDS: [&str; 15] = [
     "config",
@@ -104,39 +108,73 @@ fn commits_carry_the_isolated_git_identity() {
     );
 }
 
-#[test]
-fn a_write_to_a_guarded_path_is_detected() {
-    let live = tempfile::tempdir().unwrap();
-    let settings = live.path().join("settings.json");
-    std::fs::write(&settings, "{}").unwrap();
-    let tree = live.path().join(".instrukt");
-    let guard = LiveGuard::over(vec![settings.clone()], vec![tree.clone()]);
-    assert!(guard.changed().is_empty());
+/// A directory standing in for the live user's home: the real one is never
+/// written by these tests, not even to show it is protected.
+struct Live {
+    dir: tempfile::TempDir,
+}
+impl Live {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".instrukt")).unwrap();
+        std::fs::write(dir.path().join(".instrukt/keep"), "live data\n").unwrap();
+        Self { dir }
+    }
+    fn path(&self) -> std::path::PathBuf {
+        self.dir.path().canonicalize().unwrap()
+    }
+}
 
-    std::fs::create_dir_all(tree.join("docs")).unwrap();
-    std::fs::write(&settings, "{\"changed\": true}").unwrap();
-    let changed = guard.changed();
-    assert!(changed.contains(&settings), "{changed:?}");
-    assert!(changed.contains(&tree), "{changed:?}");
+/// Runs `instrukt config init --global` and returns its exit status and
+/// stderr, with the stand-in live home and the test's directory named.
+fn initialize(env: &TestEnv, live: &Live) -> (Option<i32>, String) {
+    let output = env
+        .instrukt(env.home())
+        .args(["config", "init", "--global"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .replace(&live.path().display().to_string(), "[LIVE]")
+        .replace(&env.home().display().to_string(), "[TEST HOME]");
+    (output.status.code(), stderr)
 }
 
 #[test]
-fn a_write_through_a_guarded_symlink_is_detected() {
-    let live = tempfile::tempdir().unwrap();
-    let real = live.path().join("dotfiles/settings.json");
-    std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-    std::fs::write(&real, "{}").unwrap();
-    let link = live.path().join("settings.json");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
-    let guard = LiveGuard::over(vec![link.clone()], Vec::new());
-    assert!(guard.changed().is_empty());
+fn a_write_outside_the_temporary_home_is_refused_before_it_lands() {
+    let live = Live::new();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    env.set_env(
+        "INSTRUKT_HOME",
+        &live.path().join(".instrukt").display().to_string(),
+    );
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(FENCE_EXIT));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [LIVE]/.instrukt/locks resolves to [LIVE]/.instrukt/locks, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
 
-    std::fs::write(&real, "{\"written\": \"through the link\"}").unwrap();
-    assert_eq!(guard.changed(), vec![link.clone()]);
+#[test]
+fn a_write_through_a_symbolic_link_is_refused_before_it_lands() {
+    let live = Live::new();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path());
+    std::os::unix::fs::symlink(live.path().join(".instrukt"), env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(FENCE_EXIT));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/.instrukt/locks, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
 
-    let other = live.path().join("dotfiles/other.json");
-    std::fs::write(&other, "{\"written\": \"through the link\"}").unwrap();
-    std::fs::remove_file(&link).unwrap();
-    std::os::unix::fs::symlink(&other, &link).unwrap();
-    assert_eq!(guard.changed(), vec![link]);
+#[test]
+fn every_instrukt_process_is_fenced_from_the_live_home() {
+    let env = TestEnv::new();
+    let live = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    let fenced: Vec<_> = std::env::split_paths(env.injected(FENCE_VARIABLE).unwrap()).collect();
+    assert!(fenced.contains(&live.join(".instrukt")), "{fenced:?}");
+    assert!(fenced.contains(&live.join(".teleclaude")), "{fenced:?}");
 }

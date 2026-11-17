@@ -217,7 +217,7 @@ fn open(path: &Path) -> Result<Connection, SourceError> {
     let mut uri = url::Url::from_file_path(path)
         .map_err(|_| source_error("database path must be absolute"))?;
     uri.set_query(Some("mode=ro"));
-    let db = Connection::open_with_flags(
+    let db = instrukt_core::fsx::open_database(
         uri.as_str(),
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI

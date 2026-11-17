@@ -144,12 +144,13 @@ impl StateDb {
         let path = home.state_db_file();
         refuse_links(home, &path)?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| FsError::Write {
+            crate::fsx::create_dir_all(parent).map_err(|source| FsError::Write {
                 path: parent.to_path_buf(),
                 source,
             })?;
         }
-        let mut conn = Connection::open(&path).map_err(StateDbError::sqlite(&path))?;
+        let mut conn = crate::fsx::open_database(&path, OpenFlags::default())
+            .map_err(StateDbError::sqlite(&path))?;
         configure(&conn, &path)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(StateDbError::sqlite(&path))?;
@@ -210,7 +211,7 @@ impl StateRead {
         let conn = if home.is_state_read_only() {
             _snapshot::read(home, &path)?
         } else {
-            Connection::open_with_flags(
+            crate::fsx::open_database(
                 &path,
                 OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )
