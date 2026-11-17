@@ -58,7 +58,9 @@ and stamps; workflow owns authorization and derived workflow state.
 
 **Runtime adapter**
 : A Rust trait implemented in code, selected explicitly by global
-`runner.runtime`. T3 is shipped first over its published host CLI and native thread stream. The
+`runner.runtime`. T3 is shipped over its published host CLI and native thread stream, and
+the direct runtime, in which instrukt starts the agent program itself for each turn, carries a
+company's conversations. The
 adapter translates start-or-wake, start, send, state and conversation reads,
 recognises caller identity without runtime I/O,
 and reports optional capabilities. Its recognized native session is the key to
@@ -415,6 +417,8 @@ has no origin, as declared in Canonical fields.
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed.
+- **Direct runtime** — [project/instrukt/spec/feature/runner/direct-runtime](../feature/runner/direct-runtime.md)
+  — run a company's agent with only the tools its role gives, one run per turn.
 - **Conversations** — [project/instrukt/spec/feature/runner/conversations](../feature/runner/conversations.md)
   — ask a company's agent where the team talks, be answered there by the one session that knows the conversation.
 - **Slack connector** — [project/instrukt/spec/feature/runner/slack-connector](../feature/runner/slack-connector.md)

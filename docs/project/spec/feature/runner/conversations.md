@@ -110,10 +110,17 @@ connector gives.
   agent wrote it, in parts where the connector's message size limit requires,
   in order. Tool calls, tool results,
   thinking and control input are not posted. A bare `NOOP` posts nothing.
-- The turn relay `instrukt run` already hosts does this: the same durable
-  conversation source, completed-turn evidence and retained positions as
-  conversation links. A position advances only after the connector accepted
-  the post; a failed post stays pending and is retried.
+- On T3 the turn relay `instrukt run` already hosts does this: the same
+  durable conversation source, completed-turn evidence and retained positions
+  as conversation links. A position advances only after the connector accepted
+  the post. On the direct runtime the turn's output is what the turn's run
+  returns, stored as the answer when the run ends
+  (`project/instrukt/spec/feature/runner/direct-runtime`). On both a failed
+  post stays pending and is retried.
+- When the runtime reports that a turn ended without an answer, as the direct
+  runtime does for a failed or interrupted run, the person gets one fixed
+  reply in that conversation, worded by the connector, and the message is not
+  delivered again.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until its turn ends, the

@@ -141,7 +141,8 @@ with the message. The name is the person's display name, their real name when
 that is empty, and their Slack id when Slack gives neither. Anyone who is not
 one of the company's own gets the fixed reply
 `I only answer members of this workspace.`, in a channel and in a direct
-message alike.
+message alike. A turn that ended without an answer gets the fixed reply
+`I could not answer this message. Ask again if it still needs an answer.`
 
 ### While the agent works
 

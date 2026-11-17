@@ -62,7 +62,7 @@ enable events. Installation and withdrawal are owned by
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
-| `runner.runtime` (compiled adapter name, no default; initially `t3`) | global only | runner |
+| `runner.runtime` (compiled adapter name, no default; `t3` or `direct`) | global only | runner |
 | `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
@@ -148,7 +148,10 @@ installer toggle, shared configuration layer or runtime detection is added.
 ### Runtime choice
 
 The developer chooses global `runner.runtime` by compiled adapter name. `t3`
-selects the shipped T3 implementation; an unknown name is a validation finding.
+selects the shipped T3 implementation and `direct` the direct runtime
+(`project/instrukt/spec/feature/runner/direct-runtime`); an unknown name is a
+validation finding. The direct runtime needs no `runtimes` entry: it carries no
+feature whose agents read the agent-action values below.
 An unset value selects no runtime, even when T3 is installed or a caller is
 inside a T3 session. There is no first-entry default or detection.
 
