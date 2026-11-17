@@ -339,7 +339,9 @@ mod tests {
         .unwrap();
         let steven = members.resolve("slack", "U1").unwrap();
         assert_eq!(steven.key, ProjectSlug::parse("steven").unwrap());
-        assert_eq!(members.resolve("slack", "U2").unwrap().name, "anna");
+        // Without a display name, the member is named by their key.
+        let anna = members.resolve("slack", "U2").unwrap();
+        assert_eq!(anna.name, anna.key.as_str());
         assert_eq!(members.resolve("slack", "U3"), None);
     }
 

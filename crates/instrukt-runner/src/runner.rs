@@ -163,8 +163,38 @@ pub fn run(
     let mut platform: Option<EventPlatform> = None;
     let mut _readers = None;
     let mut history = crate::history::Readers::default();
-    let mut relay = match Configuration::load_global(cx.home)?.runner_runtime()? {
-        Some(_) => match crate::links::Worker::start(cx.home, cx.env) {
+    // The relay serves links and, while a company declares a connector and
+    // conversations are on, the connector destination; the connections take
+    // the intake. Both report their unexpected end to this loop at once.
+    let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
+    let demand = !crate::conversations::demand(cx.home)
+        .map_err(|e| RunnerError::Conversations(e.to_string()))?
+        .is_empty();
+    let runtime = Configuration::load_global(cx.home)?.runner_runtime()?;
+    if demand && runtime.is_none() {
+        return Err(RunnerError::Conversations(
+            "conversations need a runtime, and no runtime is chosen; choose one with `runner.runtime`".into(),
+        ));
+    }
+    let slack = demand
+        .then(|| crate::connectors::SlackEndpoint::from_env(cx.env))
+        .transpose()
+        .map_err(|e| RunnerError::Conversations(e.to_string()))?;
+    let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
+    let destinations = slack.as_ref().map(|slack| crate::links::Destinations {
+        slack: slack.clone(),
+        arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
+    });
+    let serve = || {
+        crate::links::Worker::start(
+            cx.home,
+            cx.env,
+            destinations.clone(),
+            Some(supervise.clone()),
+        )
+    };
+    let mut relay = match runtime {
+        Some(_) => match serve() {
             Ok(worker) => Some(worker),
             Err(error) => {
                 crate::links::record_failure(cx.home, &error);
@@ -173,27 +203,32 @@ pub fn run(
         },
         None => None,
     };
-    // Connectors and their conversations run beside the wake-ups while a
-    // company declares a connector and conversations are on.
-    let (accepted, arrivals) = std::sync::mpsc::sync_channel(1);
-    let _conversations = if crate::conversations::demand(cx.home)
-        .map_err(|e| RunnerError::Conversations(e.to_string()))?
-        .is_empty()
-    {
-        None
-    } else {
-        let worker = crate::conversations::Worker::start(cx.home, cx.env, arrivals)
-            .map_err(|e| RunnerError::Conversations(e.to_string()))?;
-        let connections = crate::connectors::Connections::start(cx.home, accepted)
-            .map_err(|e| RunnerError::Conversations(e.to_string()))?;
-        Some((connections, worker))
+    let mut connections = match &slack {
+        Some(slack) => Some(
+            crate::connectors::Connections::start(cx.home, slack, arrive, supervise.clone())
+                .map_err(|e| RunnerError::Conversations(e.to_string()))?,
+        ),
+        None => None,
     };
     tracing::info!(event = "runner_started");
     loop {
-        if let Some(relay) = &mut relay
-            && let Err(error) = relay.check()
+        if let Some(current) = &mut relay
+            && let Err(error) = current.check()
         {
+            // The relay's end stays visible on what it serves, and it is
+            // started again.
             crate::links::record_failure(cx.home, &error);
+            crate::conversations::reader_failed(cx.home, &error.to_string());
+            relay = match serve() {
+                Ok(worker) => Some(worker),
+                Err(error) => {
+                    crate::links::record_failure(cx.home, &error);
+                    None
+                }
+            };
+        }
+        if let Some(connections) = &mut connections {
+            connections.check();
         }
         history.refresh(cx.home, cx.env)?;
         let considered = considered_projects(cx.home)?;
@@ -219,19 +254,29 @@ pub fn run(
             tracing::error!(event = "runner_wakeup_failed", error = %err);
         }
         drop(invocation);
-        if let Some(platform) = &platform {
-            let receiver = platform
-                .wakeups
-                .lock()
-                .map_err(|_| RunnerError::ActivationWakeFailed)?;
-            match receiver.recv_timeout(interval) {
-                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(RunnerError::ActivationWakeFailed);
-                }
+        // Wait for the interval, an activation wake-up, or a supervised
+        // worker's end, which is observed within a second.
+        let until = std::time::Instant::now() + interval;
+        while std::time::Instant::now() < until {
+            if supervision.try_recv().is_ok() {
+                break;
             }
-        } else {
-            std::thread::sleep(interval);
+            let slice = (until - std::time::Instant::now()).min(Duration::from_secs(1));
+            if let Some(platform) = &platform {
+                let receiver = platform
+                    .wakeups
+                    .lock()
+                    .map_err(|_| RunnerError::ActivationWakeFailed)?;
+                match receiver.recv_timeout(slice) {
+                    Ok(()) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(RunnerError::ActivationWakeFailed);
+                    }
+                }
+            } else {
+                std::thread::sleep(slice);
+            }
         }
     }
 }

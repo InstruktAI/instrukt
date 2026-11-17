@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/slack-connector.rs
+assertion_line: 35
+expression: "String::from_utf8_lossy(&refused.get_output().stderr)"
+---
+instrukt: conversations: `INSTRUKT_SLACK_API_URL` may only name a loopback address (http://127.0.0.1, http://localhost or http://[::1]); unset it to reach Slack

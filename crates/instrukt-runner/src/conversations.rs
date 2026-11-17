@@ -3,16 +3,23 @@
 //! session in the company's home, every addressed message is its own turn,
 //! and the answer of that turn is posted back. No event is emitted and no
 //! subscribed procedure is activated on this path.
+//!
+//! The record moves each addressed message through its stages: received
+//! (retained before the connector acknowledges it), pending (its
+//! accompanying messages captured), sent (accepted by the runtime as its own
+//! turn) and answered (its turn finished). Each answer piece stays pending
+//! until the connector accepted its post.
 use std::path::PathBuf;
 
 use instrukt_core::config::{CONVERSATION_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
-use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
+use instrukt_core::state_db::rusqlite::params;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::envelopes::{self, ContextEntry, Control};
+use crate::connectors::{SlackApi, SlackEndpoint};
+use crate::envelopes::{self, ContextEntry, Control, Span};
 use crate::keyed::{self, RuntimeInvocation};
 use crate::runtime::conversations::{AuthorKind, ConversationSource, SourcePosition};
 use crate::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
@@ -22,15 +29,67 @@ use crate::state::{self, RunnerState, StateError};
 /// Slack's guidance for one message's text; longer answers are split.
 pub const SLACK_MESSAGE_LIMIT: usize = 4000;
 
-/// A connector's connection states, as `instrukt events status` shows them.
-pub const CONNECTING: &str = "connecting";
-pub const CONNECTED: &str = "connected";
-pub const FAILED: &str = "failed";
-pub const STOPPED: &str = "stopped";
-
 /// The one fixed reply a sender no member lists receives.
 pub const TURN_AWAY: &str =
     "You are not listed among this company's members, so its agent does not answer you here.";
+
+/// A connector's connection state, as `instrukt events status` shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionState {
+    Connecting,
+    Connected,
+    Failed,
+    Stopped,
+}
+impl ConnectionState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+        }
+    }
+    fn parse(text: &str) -> Option<Self> {
+        [
+            Self::Connecting,
+            Self::Connected,
+            Self::Failed,
+            Self::Stopped,
+        ]
+        .into_iter()
+        .find(|state| state.as_str() == text)
+    }
+}
+
+/// Where an addressed message is on its way to the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// Retained before the connector acknowledged it.
+    Received,
+    /// Its accompanying messages captured; waiting for its turn.
+    Pending,
+    /// Accepted by the runtime as its own turn.
+    Sent,
+    /// Its turn finished; its answer, if any, is retained for posting.
+    Answered,
+}
+impl Stage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Received => "received",
+            Self::Pending => "pending",
+            Self::Sent => "sent",
+            Self::Answered => "answered",
+        }
+    }
+    fn parse(text: &str) -> Option<Self> {
+        [Self::Received, Self::Pending, Self::Sent, Self::Answered]
+            .into_iter()
+            .find(|stage| stage.as_str() == text)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConversationError {
@@ -46,6 +105,8 @@ pub enum ConversationError {
     Lock(#[from] instrukt_core::fsx::FsError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Slack(#[from] crate::connectors::SlackError),
     #[error("conversation: {0}")]
     Refused(String),
 }
@@ -60,9 +121,10 @@ pub struct Earlier {
     pub text: String,
 }
 
-/// What a connector supplies for one message addressed to the agent.
+/// What a connector supplies for one message addressed to the agent, as it
+/// arrives.
 #[derive(Debug, Clone)]
-pub struct Addressed {
+pub struct Incoming {
     pub company: ProjectSlug,
     pub connector: String,
     pub conversation: String,
@@ -71,19 +133,17 @@ pub struct Addressed {
     pub sender: String,
     pub written_at: Timestamp,
     pub text: String,
-    pub context: Vec<Earlier>,
 }
 
-/// What became of an addressed message.
+/// What became of an incoming addressed message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Admission {
+pub enum Intake {
     /// Retained for its conversation's session.
-    Accepted,
-    /// Its sender is listed by no member and has not been answered yet: the
-    /// connector posts the fixed reply, then records it.
-    TurnAway,
-    /// Its sender was already turned away in this conversation.
-    AlreadyTurnedAway,
+    Retained,
+    /// Its sender is listed by no member: a refusal is retained for posting.
+    Refused,
+    /// Already retained, or its sender already refused here.
+    Repeated,
 }
 
 /// The semantic start key of a conversation's session.
@@ -95,110 +155,178 @@ pub fn key(company: &ProjectSlug, connector: &str, conversation: &str) -> String
     )
 }
 
-/// Retain one addressed message, or tell the connector to turn its sender
-/// away. A repeated message is accepted once.
-pub fn admit(
+fn micros(at: Timestamp) -> i64 {
+    at.as_microsecond()
+}
+
+/// Retain one incoming addressed message — or, for a sender no member
+/// lists, the one refusal owed to them in this conversation — before the
+/// connector acknowledges it. Nothing here waits on the network.
+pub fn retain(
     home: &Home,
-    addressed: &Addressed,
+    incoming: &Incoming,
     now: Timestamp,
-) -> Result<Admission, ConversationError> {
-    let config = Configuration::load_company(home, &addressed.company)?;
-    let members = config.members()?;
+) -> Result<Intake, ConversationError> {
+    let members = Configuration::load_company(home, &incoming.company)?.members()?;
     let state = RunnerState::new(home);
-    let Some(member) = members.resolve(&addressed.connector, &addressed.sender) else {
-        let replied = state
-            .read(|conn, path| {
-                conn.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_turned_away WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4)",
-                    params![addressed.company.as_str(), addressed.connector, addressed.conversation, addressed.sender],
-                    |r| r.get::<_, bool>(0),
-                )
-                .map_err(state::sql(path))
-            })?
-            .unwrap_or(false);
-        return Ok(if replied {
-            Admission::AlreadyTurnedAway
+    let company = incoming.company.as_str();
+    let Some(member) = members.resolve(&incoming.connector, &incoming.sender) else {
+        let inserted = state.write::<_, StateError>(|tx| {
+            tx.execute(
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
+                params![company, incoming.connector, incoming.conversation, incoming.sender, now.to_string()],
+            )
+            .map_err(state::sql(&state::db_path(tx)))
+        })?;
+        return Ok(if inserted > 0 {
+            Intake::Refused
         } else {
-            Admission::TurnAway
+            Intake::Repeated
         });
     };
-    let context = serde_json::to_string(&addressed.context)?;
     let semantic = key(
-        &addressed.company,
-        &addressed.connector,
-        &addressed.conversation,
+        &incoming.company,
+        &incoming.connector,
+        &incoming.conversation,
     );
-    state.write::<_, StateError>(|tx| {
+    let inserted = state.write::<_, StateError>(|tx| {
         let path = state::db_path(tx);
         tx.execute(
             "INSERT INTO connected_conversations(company,connector,conversation,semantic_key) VALUES (?1,?2,?3,?4) ON CONFLICT DO NOTHING",
-            params![addressed.company.as_str(), addressed.connector, addressed.conversation, semantic],
+            params![company, incoming.connector, incoming.conversation, semantic],
         )
         .map_err(state::sql(&path))?;
         tx.execute(
-            "INSERT INTO conversation_messages(company,connector,conversation,message,member,written_at,arrived_at,text,context_json,state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'pending') ON CONFLICT DO NOTHING",
+            "INSERT INTO conversation_messages(company,connector,conversation,message,member,written_us,written_at,arrived_at,state,text) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
             params![
-                addressed.company.as_str(),
-                addressed.connector,
-                addressed.conversation,
-                addressed.message,
+                company,
+                incoming.connector,
+                incoming.conversation,
+                incoming.message,
                 member.key.as_str(),
-                addressed.written_at.to_string(),
+                micros(incoming.written_at),
+                incoming.written_at.to_string(),
                 now.to_string(),
-                addressed.text,
-                context
+                Stage::Received.as_str(),
+                incoming.text
             ],
         )
-        .map_err(state::sql(&path))?;
-        Ok(())
+        .map_err(state::sql(&path))
     })?;
-    tracing::info!(event = "conversation_message_accepted", company = %addressed.company, connector = %addressed.connector, conversation = %addressed.conversation, member = %member.key);
-    Ok(Admission::Accepted)
+    if inserted == 0 {
+        return Ok(Intake::Repeated);
+    }
+    tracing::info!(event = "conversation_message_accepted", company = %incoming.company, connector = %incoming.connector, conversation = %incoming.conversation, member = %member.key);
+    Ok(Intake::Retained)
 }
 
-/// Record that the fixed reply reached a sender no member lists.
-pub fn turned_away(
+/// A retained message whose accompanying messages are still to be read.
+#[derive(Debug, Clone)]
+pub struct Unread {
+    pub conversation: String,
+    pub message: String,
+    /// The previous addressed message of the conversation in written order,
+    /// if any: the lower bound of this one's range.
+    pub previous: Option<String>,
+}
+
+/// The received messages of one company's connector, oldest written first.
+pub fn unread(
     home: &Home,
-    addressed: &Addressed,
-    now: Timestamp,
+    company: &ProjectSlug,
+    connector: &str,
+) -> Result<Vec<Unread>, ConversationError> {
+    Ok(RunnerState::new(home)
+        .read(|conn, path| {
+            let mut q = conn
+                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1) FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .map_err(state::sql(path))?;
+            q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
+                Ok(Unread {
+                    conversation: r.get(0)?,
+                    message: r.get(1)?,
+                    previous: r.get(2)?,
+                })
+            })
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or_default())
+}
+
+/// Record what accompanies a received message, or why it could not be read.
+pub fn captured(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    unread: &Unread,
+    context: Result<Vec<Earlier>, String>,
 ) -> Result<(), ConversationError> {
+    let (stage, context, failure) = match context {
+        Ok(context) => (Stage::Pending, Some(serde_json::to_string(&context)?), None),
+        Err(failure) => (Stage::Received, None, Some(failure)),
+    };
     RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
-            "INSERT INTO conversation_turned_away VALUES (?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
-            params![
-                addressed.company.as_str(),
-                addressed.connector,
-                addressed.conversation,
-                addressed.sender,
-                now.to_string()
-            ],
+            "UPDATE conversation_messages SET state=?5,context_json=coalesce(?6,context_json),failure=?7 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?8",
+            params![company.as_str(), connector, unread.conversation, unread.message, stage.as_str(), context, failure, Stage::Received.as_str()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })?;
-    tracing::info!(event = "conversation_sender_turned_away", company = %addressed.company, connector = %addressed.connector, conversation = %addressed.conversation);
     Ok(())
 }
 
-/// The connector identity of the latest addressed message retained for a
-/// conversation, if any: what bounds a later message's accompanying range.
-pub fn previous_message(
+/// A refusal still to be posted.
+#[derive(Debug, Clone)]
+pub struct Refusal {
+    pub conversation: String,
+    pub sender: String,
+}
+
+pub fn unsent_refusals(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
-    conversation: &str,
-) -> Result<Option<String>, ConversationError> {
+) -> Result<Vec<Refusal>, ConversationError> {
     Ok(RunnerState::new(home)
         .read(|conn, path| {
-            conn.query_row(
-                "SELECT message FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 ORDER BY written_at DESC, message DESC LIMIT 1",
-                params![company.as_str(), connector, conversation],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
+            let mut q = conn
+                .prepare("SELECT conversation,sender FROM conversation_refusals WHERE company=?1 AND connector=?2 AND replied_at IS NULL ORDER BY rowid")
+                .map_err(state::sql(path))?;
+            q.query_map(params![company.as_str(), connector], |r| {
+                Ok(Refusal {
+                    conversation: r.get(0)?,
+                    sender: r.get(1)?,
+                })
+            })
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<_>, _>>()
             .map_err(state::sql(path))
         })?
-        .flatten())
+        .unwrap_or_default())
+}
+
+/// Record that a refusal's post was accepted, or why it failed.
+pub fn refusal_posted(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    refusal: &Refusal,
+    outcome: Result<(), String>,
+    now: Timestamp,
+) -> Result<(), ConversationError> {
+    let failure = outcome.err();
+    RunnerState::new(home).write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_refusals SET replied_at=CASE WHEN ?5 IS NULL THEN ?6 END,failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4",
+            params![company.as_str(), connector, refusal.conversation, refusal.sender, failure, now.to_string()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// The company homes whose declared connector `instrukt run` hosts: every
@@ -227,8 +355,10 @@ struct Conversation {
     connector: String,
     conversation: String,
     semantic_key: String,
+    opening: Option<String>,
     request: Option<String>,
     session: Option<SessionRef>,
+    source_identity: Option<String>,
     position: Option<SourcePosition>,
 }
 
@@ -236,23 +366,20 @@ struct Message {
     message: String,
     member: String,
     written_at: Timestamp,
-    text: String,
-    context: Vec<Earlier>,
+    stage: Stage,
+    text: Option<String>,
+    context: Option<Vec<Earlier>>,
+    boundary: Option<String>,
     content: Option<String>,
 }
 
-fn conversations(
-    state: &RunnerState,
-    open_only: bool,
-) -> Result<Vec<Conversation>, ConversationError> {
-    let sql = if open_only {
-        "SELECT c.company,c.connector,c.conversation,c.semantic_key,c.request,c.session,c.position_json FROM connected_conversations c WHERE EXISTS (SELECT 1 FROM conversation_messages m WHERE m.company=c.company AND m.connector=c.connector AND m.conversation=c.conversation AND m.state IN ('pending','sent')) ORDER BY c.rowid"
-    } else {
-        "SELECT company,connector,conversation,semantic_key,request,session,position_json FROM connected_conversations WHERE session IS NOT NULL ORDER BY rowid"
-    };
+const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
+
+fn conversations(state: &RunnerState) -> Result<Vec<Conversation>, ConversationError> {
+    let sql = format!("SELECT {CONVERSATION_COLUMNS} FROM connected_conversations ORDER BY rowid");
     let rows = state
         .read(|conn, path| {
-            let mut q = conn.prepare(sql).map_err(state::sql(path))?;
+            let mut q = conn.prepare(&sql).map_err(state::sql(path))?;
             q.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -262,6 +389,8 @@ fn conversations(
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, Option<String>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -271,18 +400,30 @@ fn conversations(
         .unwrap_or_default();
     rows.into_iter()
         .map(
-            |(company, connector, conversation, semantic_key, request, session, position)| {
+            |(
+                company,
+                connector,
+                conversation,
+                semantic_key,
+                opening,
+                request,
+                session,
+                source_identity,
+                position,
+            )| {
                 Ok(Conversation {
                     company: ProjectSlug::parse(&company)
                         .map_err(|e| ConversationError::Refused(e.to_string()))?,
                     connector,
                     conversation,
                     semantic_key,
+                    opening,
                     request,
                     session: session
                         .map(|s| SessionRef::parse(&s))
                         .transpose()
                         .map_err(|e| ConversationError::Refused(e.to_string()))?,
+                    source_identity,
                     position: position.map(|p| serde_json::from_str(&p)).transpose()?,
                 })
             },
@@ -290,31 +431,34 @@ fn conversations(
         .collect()
 }
 
-fn messages(
+fn reread(
     state: &RunnerState,
     c: &Conversation,
-    states: &str,
-) -> Result<Vec<Message>, ConversationError> {
-    let sql = format!(
-        "SELECT message,member,written_at,text,context_json,state,content FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN ({states}) ORDER BY written_at, message"
-    );
+) -> Result<Option<Conversation>, ConversationError> {
+    Ok(conversations(state)?
+        .into_iter()
+        .find(|o| o.semantic_key == c.semantic_key))
+}
+
+/// The conversation's messages not yet answered, oldest written first.
+fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, ConversationError> {
     let rows = state
         .read(|conn, path| {
-            let mut q = conn.prepare(&sql).map_err(state::sql(path))?;
-            q.query_map(
-                params![c.company.as_str(), c.connector, c.conversation],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, String>(4)?,
-                        r.get::<_, String>(5)?,
-                        r.get::<_, Option<String>>(6)?,
-                    ))
-                },
-            )
+            let mut q = conn
+                .prepare("SELECT message,member,written_at,state,text,context_json,boundary,content FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state<>?4 ORDER BY written_us, message")
+                .map_err(state::sql(path))?;
+            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                ))
+            })
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(state::sql(path))
@@ -322,15 +466,19 @@ fn messages(
         .unwrap_or_default();
     rows.into_iter()
         .map(
-            |(message, member, written_at, text, context, _state, content)| {
+            |(message, member, written_at, stage, text, context, boundary, content)| {
                 Ok(Message {
                     message,
                     member,
                     written_at: written_at
                         .parse()
                         .map_err(|e: jiff::Error| ConversationError::Refused(e.to_string()))?,
+                    stage: Stage::parse(&stage).ok_or_else(|| {
+                        ConversationError::Refused(format!("unknown message stage `{stage}`"))
+                    })?,
                     text,
-                    context: serde_json::from_str(&context)?,
+                    context: context.map(|c| serde_json::from_str(&c)).transpose()?,
+                    boundary,
                     content,
                 })
             },
@@ -348,13 +496,20 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
 }
 
 /// One addressed message framed for its own turn: the context envelope and
-/// the member envelope, sharing one fresh boundary token.
-fn framed(c: &Conversation, m: &Message) -> Result<String, ConversationError> {
-    let mut texts: Vec<&str> = m.context.iter().map(|e| e.text.as_str()).collect();
-    texts.push(&m.text);
-    let token = envelopes::delivery_boundary(&texts)?;
-    let entries: Vec<ContextEntry<'_>> = m
-        .context
+/// the member envelope, sharing one fresh boundary token that occurs nowhere
+/// in what they frame.
+fn framed(c: &Conversation, m: &Message) -> Result<(String, String), ConversationError> {
+    let missing =
+        || ConversationError::Refused("message text or context is not yet captured".into());
+    let text = m.text.as_deref().ok_or_else(missing)?;
+    let context = m.context.as_ref().ok_or_else(missing)?;
+    let mut scanned: Vec<&str> = vec![text, &c.connector, &c.conversation, &m.member];
+    for entry in context {
+        scanned.push(&entry.text);
+        scanned.push(&entry.speaker);
+    }
+    let token = envelopes::delivery_boundary(&scanned)?;
+    let entries: Vec<ContextEntry<'_>> = context
         .iter()
         .map(|e| ContextEntry {
             speaker: &e.speaker,
@@ -363,7 +518,7 @@ fn framed(c: &Conversation, m: &Message) -> Result<String, ConversationError> {
             text: &e.text,
         })
         .collect();
-    Ok(format!(
+    let input = format!(
         "{}\n{}",
         envelopes::context(&token, &entries),
         envelopes::member(
@@ -372,9 +527,10 @@ fn framed(c: &Conversation, m: &Message) -> Result<String, ConversationError> {
             &m.member,
             Some(m.written_at),
             &token,
-            &m.text
+            text
         )
-    ))
+    );
+    Ok((token, input))
 }
 
 /// The runner-authored opening assignment of a conversation session.
@@ -401,7 +557,7 @@ fn source_end(source: &dyn ConversationSource) -> Result<SourcePosition, Convers
     position.ok_or_else(|| ConversationError::Refused("source supplied no position".into()))
 }
 
-fn record_failure(
+fn set_failure(
     state: &RunnerState,
     c: &Conversation,
     failure: Option<&str>,
@@ -416,29 +572,52 @@ fn record_failure(
     })
 }
 
-/// Deliver every conversation's next addressed message: the first starts
-/// its session by key in the company's home; a later one waits until the
-/// session's current turn has finished.
-pub fn deliver(
-    invocation: &RuntimeInvocation,
-    adapter: &dyn RuntimeAdapter,
-    source: &dyn ConversationSource,
-    now: Timestamp,
-) -> Result<(), ConversationError> {
-    let home = invocation.home();
-    let state = RunnerState::new(home);
-    for c in conversations(&state, true)? {
-        let _lock = lock(home, &c)?;
-        let result = deliver_one(invocation, adapter, source, &state, &c, now);
-        let failure = result.as_ref().err().map(ToString::to_string);
-        if let Some(error) = &failure {
-            tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
-        }
-        record_failure(&state, &c, failure.as_deref())?;
-    }
-    Ok(())
+fn set_message_failure(
+    state: &RunnerState,
+    c: &Conversation,
+    message: &str,
+    failure: Option<&str>,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            params![c.company.as_str(), c.connector, c.conversation, message, failure],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
 }
 
+/// The runtime accepted `message` as its own turn; a first message's
+/// acceptance also binds the conversation's session.
+fn accepted(
+    state: &RunnerState,
+    c: &Conversation,
+    message: &str,
+    session: Option<&SessionRef>,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        tx.execute(
+            "UPDATE conversation_messages SET state=?5,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str()],
+        )
+        .map_err(state::sql(&path))?;
+        if let Some(session) = session {
+            tx.execute(
+                "UPDATE connected_conversations SET session=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                params![c.company.as_str(), c.connector, c.conversation, session.to_string()],
+            )
+            .map_err(state::sql(&path))?;
+        }
+        Ok(())
+    })
+}
+
+/// Deliver the conversation's next addressed message. The first starts its
+/// session by key in the company's home, with an opening request owned by
+/// that one message; a later one waits until the session's current turn has
+/// finished. Failures stay with the message until it is delivered.
 fn deliver_one(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
@@ -447,106 +626,140 @@ fn deliver_one(
     c: &Conversation,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
-    // Re-read under the conversation's lock.
-    let Some(c) = conversations(state, true)?
-        .into_iter()
-        .find(|o| o.semantic_key == c.semantic_key)
-    else {
-        return Ok(());
-    };
-    if !messages(state, &c, "'sent'")?.is_empty() {
+    let open = open_messages(state, c)?;
+    if open.iter().any(|m| m.stage == Stage::Sent) {
         return Ok(());
     }
-    let Some(next) = messages(state, &c, "'pending'")?.into_iter().next() else {
+    // A captured opening request belongs to its own message alone.
+    // Until its session is bound, a captured opening request belongs to its
+    // own message alone.
+    let next = match (&c.session, &c.opening) {
+        (None, Some(opening)) => open.iter().find(|m| &m.message == opening),
+        _ => open.first(),
+    };
+    let Some(next) = next else {
         return Ok(());
     };
+    if next.stage != Stage::Pending {
+        return Ok(());
+    }
+    let result = match &c.session {
+        None => start(invocation, adapter, source, state, c, next, now),
+        Some(session) => send(adapter, state, c, session, next, now),
+    };
+    // A runtime failure is retained through the adapter's safe diagnostic,
+    // never its raw native output.
+    let failure = result.as_ref().err().map(|error| match error {
+        ConversationError::Sessions(native) => adapter
+            .diagnostic("conversation delivery", native)
+            .to_string(),
+        other => other.to_string(),
+    });
+    if let Some(error) = &failure {
+        tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+    }
+    set_message_failure(state, c, &next.message, failure.as_deref())?;
+    result
+}
+
+fn start(
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    source: &dyn ConversationSource,
+    state: &RunnerState,
+    c: &Conversation,
+    next: &Message,
+    now: Timestamp,
+) -> Result<(), ConversationError> {
     let home = invocation.home();
-    let Some(session) = &c.session else {
-        let request = match &c.request {
-            Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
-            None => {
-                let checkout: PathBuf = home.company_dir(&c.company);
-                Configuration::load_company(home, &c.company)?;
-                let config = Configuration::load_global(home)?;
-                let preferences =
-                    crate::agents::role_order(&config, None, Some(CONVERSATION_ROLE))?;
-                let selection = crate::agents::selections(&config, home, &preferences, now)?
-                    .into_iter()
-                    .next();
-                let request = RuntimeStart {
-                    preferences,
-                    selection,
-                    selection_evidence: Some(
-                        adapter
-                            .selection_realization(crate::runtime::SelectionOperation::ThreadStart),
-                    ),
-                    checkout,
-                    title: crate::runtime::thread_title(
-                        &format!("conversation · {}", c.connector),
-                        &c.semantic_key,
-                    ),
-                    key: c.semantic_key.clone(),
-                    brief: format!("{}\n{}", assignment(home, &c)?, framed(&c, &next)?),
-                    worktree: None,
-                };
-                let position = source_end(source)?;
-                state.write::<_, StateError>(|tx| {
-                    let path = state::db_path(tx);
-                    tx.execute(
-                        "UPDATE connected_conversations SET request=?4,position_json=?5 WHERE company=?1 AND connector=?2 AND conversation=?3",
-                        params![c.company.as_str(), c.connector, c.conversation, serde_json::to_string(&request).map_err(|e| state::invalid(&path, e))?, serde_json::to_string(&position).map_err(|e| state::invalid(&path, e))?],
-                    )
-                    .map_err(state::sql(&path))?;
-                    tx.execute(
-                        "UPDATE conversation_messages SET content=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                        params![c.company.as_str(), c.connector, c.conversation, next.message, request.brief],
-                    )
-                    .map_err(state::sql(&path))?;
-                    Ok(())
-                })?;
-                request
-            }
-        };
-        let thread = adapter.start_or_wake(&RuntimeAssignment {
-            creation: CreationPermit::Initial,
-            invocation,
-            project: None,
-            request: &request,
-            now,
-        })?;
-        state.write::<_, StateError>(|tx| {
-            let path = state::db_path(tx);
-            tx.execute(
-                "UPDATE connected_conversations SET session=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
-                params![c.company.as_str(), c.connector, c.conversation, thread.session.to_string()],
-            )
-            .map_err(state::sql(&path))?;
-            tx.execute(
-                "UPDATE conversation_messages SET state='sent' WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                params![c.company.as_str(), c.connector, c.conversation, next.message],
-            )
-            .map_err(state::sql(&path))?;
-            Ok(())
-        })?;
-        tracing::info!(event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
-        return Ok(());
+    let request = match &c.request {
+        Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
+        None => {
+            let checkout: PathBuf = home.company_dir(&c.company);
+            Configuration::load_company(home, &c.company)?;
+            let config = Configuration::load_global(home)?;
+            let preferences = crate::agents::role_order(&config, None, Some(CONVERSATION_ROLE))?;
+            let selection = crate::agents::selections(&config, home, &preferences, now)?
+                .into_iter()
+                .next();
+            let (token, input) = framed(c, next)?;
+            let request = RuntimeStart {
+                preferences,
+                selection,
+                selection_evidence: Some(
+                    adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
+                ),
+                checkout,
+                title: crate::runtime::thread_title(
+                    &format!("conversation · {}", c.connector),
+                    &c.semantic_key,
+                ),
+                key: c.semantic_key.clone(),
+                brief: format!("{}\n{input}", assignment(home, c)?),
+                worktree: None,
+            };
+            let position = source_end(source)?;
+            state.write::<_, StateError>(|tx| {
+                let path = state::db_path(tx);
+                tx.execute(
+                    "UPDATE connected_conversations SET opening=?4,request=?5,source_identity=?6,position_json=?7 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                    params![
+                        c.company.as_str(),
+                        c.connector,
+                        c.conversation,
+                        next.message,
+                        serde_json::to_string(&request).map_err(|e| state::invalid(&path, e))?,
+                        source.identity(),
+                        serde_json::to_string(&position).map_err(|e| state::invalid(&path, e))?
+                    ],
+                )
+                .map_err(state::sql(&path))?;
+                tx.execute(
+                    "UPDATE conversation_messages SET boundary=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    params![c.company.as_str(), c.connector, c.conversation, next.message, token],
+                )
+                .map_err(state::sql(&path))?;
+                Ok(())
+            })?;
+            request
+        }
     };
+    let thread = adapter.start_or_wake(&RuntimeAssignment {
+        creation: CreationPermit::Initial,
+        invocation,
+        project: None,
+        request: &request,
+        now,
+    })?;
+    accepted(state, c, &next.message, Some(&thread.session))?;
+    tracing::info!(event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
+    Ok(())
+}
+
+fn send(
+    adapter: &dyn RuntimeAdapter,
+    state: &RunnerState,
+    c: &Conversation,
+    session: &SessionRef,
+    next: &Message,
+    now: Timestamp,
+) -> Result<(), ConversationError> {
     // A send whose acceptance was lost is observed before sending again.
     let content = match &next.content {
         Some(content) => {
             let seen = adapter.observe_input(session, content, now)?;
             if seen.state != crate::runtime::InputState::Unknown {
-                mark_sent(state, &c, &next)?;
+                accepted(state, c, &next.message, None)?;
                 return Ok(());
             }
             content.clone()
         }
         None => {
-            let content = framed(&c, &next)?;
+            let (token, content) = framed(c, next)?;
             state.write::<_, StateError>(|tx| {
                 tx.execute(
-                    "UPDATE conversation_messages SET content=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, next.message, content],
+                    "UPDATE conversation_messages SET boundary=?5,content=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    params![c.company.as_str(), c.connector, c.conversation, next.message, token, content],
                 )
                 .map_err(state::sql(&state::db_path(tx)))?;
                 Ok(())
@@ -562,19 +775,8 @@ fn deliver_one(
         return Ok(());
     }
     adapter.send(session, &content)?;
-    mark_sent(state, &c, &next)?;
+    accepted(state, c, &next.message, None)?;
     Ok(())
-}
-
-fn mark_sent(state: &RunnerState, c: &Conversation, m: &Message) -> Result<(), StateError> {
-    state.write(|tx| {
-        tx.execute(
-            "UPDATE conversation_messages SET state='sent' WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-            params![c.company.as_str(), c.connector, c.conversation, m.message],
-        )
-        .map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
-    })
 }
 
 /// Split `text` into pieces of at most `limit` characters, at a line break
@@ -601,40 +803,12 @@ pub fn split(text: &str, limit: usize) -> Vec<String> {
     pieces
 }
 
-/// Something that posts text into a conversation a connector carries.
-pub trait Poster {
-    fn post(
-        &self,
-        company: &ProjectSlug,
-        connector: &str,
-        conversation: &str,
-        text: &str,
-    ) -> Result<(), String>;
-}
-
-/// Read finished turns of conversation sessions: the conversational output
-/// of a turn started by an addressed message becomes its answer, retained
-/// until the connector accepted its post. A turn started any other way is
-/// not posted. Then post what is pending, in order.
-pub fn relay(
-    home: &Home,
-    source: &dyn ConversationSource,
-    poster: &dyn Poster,
-) -> Result<(), ConversationError> {
-    let state = RunnerState::new(home);
-    for c in conversations(&state, false)? {
-        let _lock = lock(home, &c)?;
-        if let Err(error) =
-            relay_one(&state, source, &c).and_then(|()| post_pending(&state, poster, &c))
-        {
-            tracing::warn!(event = "conversation_answer_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
-            record_failure(&state, &c, Some(&error.to_string()))?;
-        }
-    }
-    Ok(())
-}
-
-fn relay_one(
+/// Read finished turns of a conversation session from its own retained
+/// source position: the conversational output of a turn its addressed
+/// message started becomes that message's answer. A turn started any other
+/// way is not posted. Missing native content leaves the delivery unresolved
+/// with its cause; the position does not move past it.
+fn harvest(
     state: &RunnerState,
     source: &dyn ConversationSource,
     c: &Conversation,
@@ -642,8 +816,18 @@ fn relay_one(
     let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
         return Ok(());
     };
+    if c.source_identity.as_deref() != Some(source.identity()) {
+        return Err(ConversationError::Refused(
+            "the selected conversation source changed; restore the recorded source".into(),
+        ));
+    }
     loop {
         let batch = source.changed_since(Some(&position))?;
+        if batch.missing.iter().any(|id| id == &session.id) {
+            return Err(ConversationError::Refused(
+                "the session's native conversation content is missing; restore it".into(),
+            ));
+        }
         if let Some(failure) = batch
             .turn_failures
             .iter()
@@ -660,17 +844,23 @@ fn relay_one(
             .filter(|turn| turn.conversation == session.id)
             .collect::<Vec<_>>();
         turns.sort_by_key(|turn| turn.order);
-        let sent = messages(state, c, "'sent'")?;
+        let sent = open_messages(state, c)?
+            .into_iter()
+            .filter(|m| m.stage == Stage::Sent)
+            .collect::<Vec<_>>();
         let mut answers = Vec::new();
         for turn in turns {
-            let started = turn.contributions.iter().find_map(|contribution| {
-                (contribution.author.kind == AuthorKind::Human)
-                    .then(|| {
-                        sent.iter()
-                            .find(|m| m.content.as_deref() == Some(contribution.text.as_str()))
-                    })
-                    .flatten()
-            });
+            let started = turn
+                .contributions
+                .iter()
+                .filter(|contribution| contribution.author.kind == AuthorKind::Human)
+                .flat_map(|contribution| envelopes::segment(&contribution.text))
+                .find_map(|span| match span {
+                    Span::Member { boundary, .. } => sent
+                        .iter()
+                        .find(|m| m.boundary.as_deref() == Some(boundary)),
+                    _ => None,
+                });
             let Some(message) = started else {
                 continue;
             };
@@ -700,8 +890,8 @@ fn relay_one(
                     .map_err(state::sql(&path))?;
                 }
                 tx.execute(
-                    "UPDATE conversation_messages SET state='answered',turn=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, message, turn],
+                    "UPDATE conversation_messages SET state=?5,turn=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn],
                 )
                 .map_err(state::sql(&path))?;
             }
@@ -719,9 +909,12 @@ fn relay_one(
     Ok(())
 }
 
-fn post_pending(
+/// Post the conversation's retained answer pieces in order. A failed piece
+/// keeps its cause, and the pieces after it wait.
+fn post(
+    home: &Home,
     state: &RunnerState,
-    poster: &dyn Poster,
+    endpoint: &SlackEndpoint,
     c: &Conversation,
 ) -> Result<(), ConversationError> {
     let pending = state
@@ -737,8 +930,12 @@ fn post_pending(
             .map_err(state::sql(path))
         })?
         .unwrap_or_default();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let api = SlackApi::for_company(home, &c.company, endpoint)?;
     for (turn, piece, text) in pending {
-        let result = poster.post(&c.company, &c.connector, &c.conversation, &text);
+        let result = api.post(&c.conversation, &text).map_err(|e| e.to_string());
         state.write::<_, StateError>(|tx| {
             tx.execute(
                 "UPDATE conversation_answers SET posted_at=CASE WHEN ?6 IS NULL THEN ?7 END,failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
@@ -747,13 +944,85 @@ fn post_pending(
             .map_err(state::sql(&state::db_path(tx)))?;
             Ok(())
         })?;
-        if let Err(error) = result {
-            return Err(ConversationError::Refused(format!(
-                "post failed and stays pending: {error}"
-            )));
+        result.map_err(|error| {
+            ConversationError::Refused(format!("post failed and stays pending: {error}"))
+        })?;
+    }
+    Ok(())
+}
+
+/// The connector destination of the finished-turn relay `instrukt run`
+/// already hosts: for every conversation, read its finished turns into
+/// answers, post what is retained, then deliver its next addressed message.
+pub fn relay(
+    home: &Home,
+    source: &dyn ConversationSource,
+    adapter: &dyn RuntimeAdapter,
+    endpoint: &SlackEndpoint,
+) -> Result<(), ConversationError> {
+    let state = RunnerState::new(home);
+    let mut invocation = None;
+    for initial in conversations(&state)? {
+        let _lock = lock(home, &initial)?;
+        let Some(c) = reread(&state, &initial)? else {
+            continue;
+        };
+        let read = harvest(&state, source, &c);
+        set_failure(
+            &state,
+            &c,
+            read.as_ref().err().map(ToString::to_string).as_deref(),
+        )?;
+        if let Err(error) = read {
+            tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+            continue;
+        }
+        if let Err(error) = post(home, &state, endpoint, &c) {
+            tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+        }
+        let Some(c) = reread(&state, &c)? else {
+            continue;
+        };
+        if invocation.is_none() {
+            invocation = Some(RuntimeInvocation::acquire(
+                home,
+                std::time::Duration::from_secs(120),
+            )?);
+        }
+        if let Some(invocation) = &invocation {
+            // Its failure stays with the message it concerns.
+            let _ = deliver_one(invocation, adapter, source, &state, &c, Timestamp::now());
         }
     }
     Ok(())
+}
+
+/// Whether any conversation work is outstanding: a message not yet
+/// accepted, an answer not yet posted or a refusal not yet sent.
+pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
+    Ok(RunnerState::new(home)
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE state IN (?1,?2)) OR EXISTS(SELECT 1 FROM conversation_answers WHERE posted_at IS NULL) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)",
+                [Stage::Received.as_str(), Stage::Pending.as_str()],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or(false))
+}
+
+/// Retain the cause of the relay reader's unexpected end on every
+/// conversation it serves, until a later read of each recovers.
+pub fn reader_failed(home: &Home, cause: &str) {
+    let result = RunnerState::new(home).write::<_, StateError>(|tx| {
+        tx.execute("UPDATE connected_conversations SET failure=?1", [cause])
+            .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::error!(event = "conversation_failure_unrecorded", error = %error);
+    }
 }
 
 /// Record a connector's connection state for `instrukt events status`.
@@ -761,13 +1030,13 @@ pub fn connector_state(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
-    status: &str,
+    status: ConnectionState,
     failure: Option<&str>,
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
             "INSERT INTO connector_states VALUES (?1,?2,?3,?4,?5) ON CONFLICT(company,connector) DO UPDATE SET state=excluded.state,failure=excluded.failure,updated_at=excluded.updated_at",
-            params![company.as_str(), connector, status, failure, Timestamp::now().to_string()],
+            params![company.as_str(), connector, status.as_str(), failure, Timestamp::now().to_string()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -775,30 +1044,34 @@ pub fn connector_state(
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectorStatus {
     pub company: String,
     pub connector: String,
-    pub state: String,
+    pub state: ConnectionState,
     pub failure: Option<String>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ConversationStatus {
     pub company: String,
     pub connector: String,
     pub conversation: String,
     pub pending_messages: i64,
     pub pending_answers: i64,
-    pub failure: Option<String>,
+    pub pending_refusals: i64,
+    /// Every outstanding failure with its cause: of reading answers, of
+    /// delivering or reading a message, of posting an answer or a refusal.
+    pub failures: Vec<String>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Status {
     pub connectors: Vec<ConnectorStatus>,
     pub conversations: Vec<ConversationStatus>,
 }
 
-/// Connection states, conversations with pending messages or answers, and
-/// failures with their cause; no conversation text or credentials.
+/// Connection states, conversations with pending messages, answers or
+/// refusals, and their outstanding failures with their cause; no
+/// conversation text or credentials.
 pub fn status(home: &Home) -> Result<Status, ConversationError> {
     let state = RunnerState::new(home);
     let connectors = state
@@ -807,32 +1080,7 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
                 .prepare("SELECT company,connector,state,failure FROM connector_states ORDER BY company,connector")
                 .map_err(state::sql(path))?;
             q.query_map([], |r| {
-                Ok(ConnectorStatus {
-                    company: r.get(0)?,
-                    connector: r.get(1)?,
-                    state: r.get(2)?,
-                    failure: r.get(3)?,
-                })
-            })
-            .map_err(state::sql(path))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(state::sql(path))
-        })?
-        .unwrap_or_default();
-    let conversations = state
-        .read(|conn, path| {
-            let mut q = conn
-                .prepare("SELECT c.company,c.connector,c.conversation,(SELECT count(*) FROM conversation_messages m WHERE m.company=c.company AND m.connector=c.connector AND m.conversation=c.conversation AND m.state IN ('pending','sent')),(SELECT count(*) FROM conversation_answers a WHERE a.company=c.company AND a.connector=c.connector AND a.conversation=c.conversation AND a.posted_at IS NULL),c.failure FROM connected_conversations c ORDER BY c.rowid")
-                .map_err(state::sql(path))?;
-            q.query_map([], |r| {
-                Ok(ConversationStatus {
-                    company: r.get(0)?,
-                    connector: r.get(1)?,
-                    conversation: r.get(2)?,
-                    pending_messages: r.get(3)?,
-                    pending_answers: r.get(4)?,
-                    failure: r.get(5)?,
-                })
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?))
             })
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
@@ -840,106 +1088,106 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
         })?
         .unwrap_or_default()
         .into_iter()
-        .filter(|c| c.pending_messages > 0 || c.pending_answers > 0 || c.failure.is_some())
-        .collect();
+        .map(|(company, connector, state, failure)| {
+            Ok(ConnectorStatus {
+                company,
+                connector,
+                state: ConnectionState::parse(&state)
+                    .ok_or_else(|| ConversationError::Refused(format!("unknown connection state `{state}`")))?,
+                failure,
+            })
+        })
+        .collect::<Result<Vec<_>, ConversationError>>()?;
+    let rows = state
+        .read(|conn, path| {
+            let mut q = conn
+                .prepare("WITH addresses AS (SELECT company,connector,conversation FROM connected_conversations UNION SELECT company,connector,conversation FROM conversation_refusals) SELECT a.company,a.connector,a.conversation,(SELECT count(*) FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND m.state<>?1),(SELECT count(*) FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND x.posted_at IS NULL),(SELECT count(*) FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND r.replied_at IS NULL),(SELECT json_group_array(f) FROM (SELECT failure AS f FROM connected_conversations c WHERE c.company=a.company AND c.connector=a.connector AND c.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND failure IS NOT NULL)) FROM addresses a ORDER BY a.company,a.connector,a.conversation")
+                .map_err(state::sql(path))?;
+            q.query_map([Stage::Answered.as_str()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, String>(6)?,
+                ))
+            })
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or_default();
+    let mut conversations = Vec::new();
+    for (
+        company,
+        connector,
+        conversation,
+        pending_messages,
+        pending_answers,
+        pending_refusals,
+        failures,
+    ) in rows
+    {
+        let failures: Vec<String> = serde_json::from_str(&failures)?;
+        if pending_messages > 0
+            || pending_answers > 0
+            || pending_refusals > 0
+            || !failures.is_empty()
+        {
+            conversations.push(ConversationStatus {
+                company,
+                connector,
+                conversation,
+                pending_messages,
+                pending_answers,
+                pending_refusals,
+                failures,
+            });
+        }
+    }
     Ok(Status {
         connectors,
         conversations,
     })
 }
 
-/// The reader `instrukt run` hosts for conversations: on a native source
-/// change, an accepted message or a short retry bound, it relays finished
-/// turns' answers and delivers the next waiting messages.
-pub struct Worker {
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Worker {
-    pub fn start(
-        home: &Home,
-        env: &instrukt_core::config::Env,
-        accepted: std::sync::mpsc::Receiver<()>,
-    ) -> Result<Self, ConversationError> {
-        let runtime = Configuration::load_global(home)?
-            .runner_runtime()?
-            .ok_or(SessionsError::NoRuntime)?;
-        let adapter = crate::runtime::adapter(runtime);
-        let source = adapter.conversation_source(home, env)?;
-        let mut notifications = source.subscribe()?;
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stopping = std::sync::Arc::clone(&stop);
-        let home = home.clone();
-        let handle = std::thread::Builder::new()
-            .name("conversations".into())
-            .spawn(move || {
-                let retry = std::time::Duration::from_secs(2);
-                while !stopping.load(std::sync::atomic::Ordering::Acquire) {
-                    if let Err(error) = relay(
-                        &home,
-                        source.as_ref(),
-                        &crate::connectors::Posting { home: &home },
-                    ) {
-                        tracing::warn!(event = "conversation_relay_failed", error = %error);
-                    }
-                    match RuntimeInvocation::acquire(&home, std::time::Duration::from_secs(120)) {
-                        Ok(invocation) => {
-                            if let Err(error) = deliver(&invocation, adapter.as_ref(), source.as_ref(), Timestamp::now()) {
-                                tracing::warn!(event = "conversation_delivery_failed", error = %error);
-                            }
-                        }
-                        Err(error) => tracing::warn!(event = "conversation_delivery_failed", error = %error),
-                    }
-                    let until = std::time::Instant::now() + retry;
-                    while std::time::Instant::now() < until
-                        && !stopping.load(std::sync::atomic::Ordering::Acquire)
-                    {
-                        if accepted.try_recv().is_ok() {
-                            break;
-                        }
-                        match notifications.wait(std::time::Duration::from_millis(100)) {
-                            Ok(true) => break,
-                            Ok(false) => {}
-                            Err(error) => {
-                                tracing::error!(event = "conversation_source_failed", error = %error);
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                            }
-                        }
-                    }
-                }
-            })
-            .map_err(|e| ConversationError::Refused(format!("conversation reader could not start: {e}")))?;
-        Ok(Self {
-            stop,
-            handle: Some(handle),
-        })
-    }
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Release);
-        if let Some(handle) = self.handle.take()
-            && handle.join().is_err()
-        {
-            tracing::error!(event = "conversation_reader_panicked");
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::split;
+    use super::{ConnectionState, Stage, split};
 
     #[test]
-    fn long_answers_split_within_the_limit_and_lose_nothing() {
+    fn long_answers_split_within_the_limit_and_lose_nothing_but_the_break() {
         let text = format!("{}\n{}", "a".repeat(30), "b".repeat(25));
         let pieces = split(&text, 40);
+        assert_eq!(pieces.len(), 2);
         assert!(pieces.iter().all(|piece| piece.chars().count() <= 40));
-        assert_eq!(pieces.concat(), text.replace('\n', ""));
-        assert_eq!(split("short", 40), ["short"]);
-        assert!(split("NOOP", 40).len() == 1);
+        assert_eq!(
+            pieces.iter().map(|p| p.chars().count()).sum::<usize>(),
+            text.chars().count() - 1
+        );
+        assert_eq!(split("short", 40).len(), 1);
         assert!(split("", 40).is_empty());
+    }
+
+    #[test]
+    fn stored_states_read_back_as_their_variants() {
+        for state in [
+            ConnectionState::Connecting,
+            ConnectionState::Connected,
+            ConnectionState::Failed,
+            ConnectionState::Stopped,
+        ] {
+            assert_eq!(ConnectionState::parse(state.as_str()), Some(state));
+        }
+        for stage in [
+            Stage::Received,
+            Stage::Pending,
+            Stage::Sent,
+            Stage::Answered,
+        ] {
+            assert_eq!(Stage::parse(stage.as_str()), Some(stage));
+        }
     }
 }

@@ -4,11 +4,16 @@
 #![allow(clippy::unwrap_used, reason = "isolated feature scenarios")]
 
 use crate::fixtures::conversing::{Company, company_home, slack_settings, wait};
-use crate::fixtures::slack::Post;
-use instrukt_runner::conversations::{CONNECTED, FAILED};
+use crate::fixtures::slack::BOT_USER;
+use instrukt_runner::connectors::API_URL_SETTING;
+use instrukt_runner::conversations::{ConnectionState, Status};
 
-fn texts(earlier: &[instrukt_runner::conversations::Earlier]) -> Vec<(String, bool)> {
-    earlier.iter().map(|e| (e.text.clone(), e.own)).collect()
+fn context(speakers: &[&str], own: &[bool]) -> Vec<(String, bool)> {
+    speakers
+        .iter()
+        .zip(own)
+        .map(|(speaker, own)| ((*speaker).to_owned(), *own))
+        .collect()
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL1
@@ -22,27 +27,41 @@ fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_
         "xoxb-refused",
         &slack_settings("{}", ""),
     );
+    // Tokens go to Slack's own hosts, or to a stand-in on this computer only.
+    let stand_in = c.slack.api_url.clone();
+    c.env
+        .set_env(API_URL_SETTING, "http://slack.example.com/api");
+    let refused = c.env.run(c.env.home(), ["run"]).failure();
+    insta::assert_snapshot!(
+        "remote-slack-address-refused",
+        String::from_utf8_lossy(&refused.get_output().stderr)
+    );
+    c.env.set_env(API_URL_SETTING, &stand_in);
     c.run();
     let state = |company: &str| {
-        c.status()["conversations"]["connectors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|connector| connector["company"] == company)
-            .map(|connector| connector["state"].as_str().unwrap().to_owned())
+        let status: Status = serde_json::from_value(c.status()["conversations"].clone()).unwrap();
+        status
+            .connectors
+            .into_iter()
+            .find(|connector| connector.company == company)
+            .map(|connector| connector.state)
     };
     wait("the refused connector's failure", || {
-        state("bravo").as_deref() == Some(FAILED)
+        state("bravo") == Some(ConnectionState::Failed)
     });
-    assert_eq!(state("acme").as_deref(), Some(CONNECTED));
-    let question = "<@UAGENT> Are you there?";
-    let message = c.slack.mention("C1", "USTEVEN", question, None);
+    assert_eq!(state("acme"), Some(ConnectionState::Connected));
+    // Slack's acknowledgement does not wait for reading what accompanies the
+    // message.
+    c.slack.hold_reads();
+    let message = c
+        .slack
+        .mention("C1", "USTEVEN", "<@UAGENT> Are you there?", None);
+    wait("the acknowledgement", || {
+        c.slack.acknowledged() == [format!("envelope-{message}")]
+    });
+    c.slack.release_reads();
     let session = c.session();
-    assert_eq!(
-        c.addressed(&session, 0),
-        (c.member("USTEVEN"), question.to_owned())
-    );
-    assert_eq!(c.slack.acknowledged(), [format!("envelope-{message}")]);
+    assert_eq!(c.delivered(&session, 0).member, c.member("USTEVEN"));
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL2
@@ -54,28 +73,28 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_everything_since_the_previous_
     c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> What do you think?", Some(&root));
     let session = c.session();
-    let answer = "Friday works.";
-    c.finish_turn(&session, 0, answer);
+    assert_eq!(
+        c.delivered(&session, 0).context,
+        context(&["UANNA"], &[false])
+    );
+    c.finish_turn(&session, 0, "Friday works.");
     wait("the answer's post", || !c.slack.posts().is_empty());
-    let agreed = "Agreed.";
-    let plan = "Then QA runs on Thursday.";
-    c.slack.say("C1", "UANNA", agreed, Some(&root));
-    c.slack.say("C1", "USTEVEN", plan, Some(&root));
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    assert_eq!(c.runtime.message_count(&session), 1);
-    let tag = c
-        .slack
+    c.slack.say("C1", "UANNA", "Agreed.", Some(&root));
+    c.slack
+        .say("C1", "USTEVEN", "Then QA runs on Thursday.", Some(&root));
+    c.slack
         .mention("C1", "UANNA", "<@UAGENT> Anything to add?", Some(&root));
     wait("the tagged message", || {
         c.runtime.message_count(&session) == 2
     });
+    // The untagged messages reached the agent only as what accompanies the
+    // tag: the agent's own answer, then both, across more than one page.
+    let delivered = c.delivered(&session, 1);
+    assert_eq!(delivered.member, c.member("UANNA"));
+    assert_eq!(delivered.members, 1);
     assert_eq!(
-        texts(&c.accompanying(&format!("C1/{root}"), &tag)),
-        [
-            (answer.to_owned(), true),
-            (agreed.to_owned(), false),
-            (plan.to_owned(), false)
-        ]
+        delivered.context,
+        context(&[BOT_USER, "UANNA", "USTEVEN"], &[true, false, false])
     );
 }
 
@@ -84,18 +103,34 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_everything_since_the_previous_
 fn a_first_tag_brings_the_most_recent_messages_before_it() {
     let mut c = Company::new(", context_messages: 2");
     c.run();
-    let said = ["The deploy failed.", "It was the cache.", "Retrying now."];
-    for text in said {
-        c.slack.say("C1", "UANNA", text, None);
+    // A tag that starts its thread: the most recent of the channel.
+    for user in ["U1", "U2", "U3"] {
+        c.slack.say("C1", user, "Earlier talk.", None);
     }
-    let tag = c
-        .slack
+    c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> Can you summarise?", None);
-    c.session();
-    assert_eq!(
-        texts(&c.accompanying(&format!("C1/{tag}"), &tag)),
-        [(said[1].to_owned(), false), (said[2].to_owned(), false)]
-    );
+    let first = c.session();
+    let delivered = c.delivered(&first, 0);
+    assert_eq!(delivered.member, c.member("USTEVEN"));
+    assert_eq!(delivered.context, context(&["U2", "U3"], &[false, false]));
+    // A first tag inside a long thread: the most recent of that thread.
+    let root = c.slack.say("C2", "U1", "A long thread.", None);
+    for user in ["U2", "U3", "U4"] {
+        c.slack.say("C2", user, "More talk.", Some(&root));
+    }
+    c.slack
+        .mention("C2", "UANNA", "<@UAGENT> Where are we?", Some(&root));
+    wait("the second conversation's session", || {
+        c.sessions().len() == 2
+    });
+    let second = c
+        .sessions()
+        .into_iter()
+        .find(|session| *session != first)
+        .unwrap();
+    let delivered = c.delivered(&second, 0);
+    assert_eq!(delivered.member, c.member("UANNA"));
+    assert_eq!(delivered.context, context(&["U3", "U4"], &[false, false]));
 }
 
 // spec: project/instrukt/spec/feature/runner/slack-connector UC-SL4
@@ -107,24 +142,19 @@ fn every_direct_message_reaches_the_agent_without_a_tag() {
     c.slack
         .direct(channel, "UANNA", "Can you check the invoice?");
     let session = c.session();
-    let reply = "The invoice is paid.";
-    c.finish_turn(&session, 0, reply);
-    let next = "And the next one?";
-    c.slack.direct(channel, "UANNA", next);
+    c.finish_turn(&session, 0, "The invoice is paid.");
+    c.slack.direct(channel, "UANNA", "And the next one?");
     wait("the second direct message", || {
         c.runtime.message_count(&session) == 2
     });
-    assert_eq!(
-        c.addressed(&session, 1),
-        (c.member("UANNA"), next.to_owned())
-    );
+    for n in 0..2 {
+        assert_eq!(c.delivered(&session, n).member, c.member("UANNA"));
+    }
     wait("the answer's post", || !c.slack.posts().is_empty());
+    let posts = c.slack.posts();
+    assert_eq!(posts.len(), 1);
     assert_eq!(
-        c.slack.posts(),
-        [Post {
-            channel: channel.into(),
-            thread: None,
-            text: reply.into(),
-        }]
+        (posts[0].channel.as_str(), posts[0].thread.as_deref()),
+        (channel, None)
     );
 }

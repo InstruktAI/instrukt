@@ -11,6 +11,8 @@ pub enum Feature {
     SessionStatus,
     LinkedSessionInput,
     WorktreeAttachment,
+    /// Conversations through company connectors (`modules.conversations`).
+    Conversations,
 }
 impl Feature {
     pub fn name(self) -> &'static str {
@@ -23,12 +25,14 @@ impl Feature {
             Self::SessionStatus => "session status",
             Self::LinkedSessionInput => "linked-session input",
             Self::WorktreeAttachment => "worktree attachment",
+            Self::Conversations => "conversations",
         }
     }
     pub(crate) fn switched_on_by(module: &str) -> &'static [Self] {
         match module {
             "events" => &[Self::StandingAgents],
             "todos" => &[Self::TodoDispatch, Self::RecurringTasks],
+            super::CONVERSATIONS => &[Self::Conversations],
             _ => &[],
         }
     }

@@ -11,8 +11,31 @@ pub(crate) struct Worker {
     failure: Option<LinkError>,
     home: Home,
 }
+/// The connector destination the relay serves beside links: its endpoint,
+/// the intake's wake-ups, and the run loop's supervision notice.
+#[derive(Clone)]
+pub(crate) struct Destinations {
+    pub(crate) slack: crate::connectors::SlackEndpoint,
+    pub(crate) arrivals: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<()>>>,
+}
+/// Wakes the run loop's supervision when the relay ends, whether it
+/// returned or unwound.
+struct ExitNotice(Option<mpsc::SyncSender<()>>);
+impl Drop for ExitNotice {
+    fn drop(&mut self) {
+        if let Some(notice) = &self.0 {
+            let _ = notice.try_send(());
+        }
+    }
+}
 impl Worker {
-    pub(crate) fn start(home: &Home, env: &Env) -> Result<Self, LinkError> {
+    /// The relay serving links and, when given, the connector destination.
+    pub(crate) fn start(
+        home: &Home,
+        env: &Env,
+        destinations: Option<Destinations>,
+        supervise: Option<mpsc::SyncSender<()>>,
+    ) -> Result<Self, LinkError> {
         let runtime = Configuration::load_global(home)?
             .runner_runtime()?
             .ok_or(crate::sessions::SessionsError::NoRuntime)?;
@@ -25,13 +48,38 @@ impl Worker {
         let handle = std::thread::Builder::new()
             .name("conversation-relay".into())
             .spawn(move || {
+                let _notice = ExitNotice(supervise);
                 loop {
                     if let Err(error) = relay(&home, source.as_ref(), adapter.as_ref()) {
                         record(&home, &error);
                     }
+                    if let Some(destinations) = &destinations
+                        && let Err(error) = crate::conversations::relay(
+                            &home,
+                            source.as_ref(),
+                            adapter.as_ref(),
+                            &destinations.slack,
+                        )
+                    {
+                        tracing::warn!(event = "conversation_relay_failed", error = %error);
+                    }
+                    // Retained connector work that is not yet done is retried
+                    // within a bound; otherwise only a native change or new
+                    // intake wakes the relay.
+                    let retry = destinations.is_some()
+                        && crate::conversations::outstanding(&home).unwrap_or(true);
+                    let until = std::time::Instant::now() + Duration::from_secs(2);
                     loop {
                         if stopping.try_recv().is_ok() {
                             return Ok(());
+                        }
+                        if destinations.as_ref().is_some_and(|d| {
+                            d.arrivals
+                                .lock()
+                                .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
+                        }) || (retry && std::time::Instant::now() >= until)
+                        {
+                            break;
                         }
                         match notifications.wait(Duration::from_millis(100)) {
                             Ok(true) => break,

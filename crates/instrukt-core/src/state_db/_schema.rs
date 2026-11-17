@@ -714,22 +714,25 @@ CREATE TABLE IF NOT EXISTS project_boards (
 );
 "#;
 
-/// Version 17: conversations through connectors — each conversation's bound
-/// session and answer-source position, every accepted addressed message until
-/// it is delivered (with the member who wrote it, the speaker of its turn),
-/// every answer piece until the connector accepted its post, the senders
-/// already turned away, and each connector's connection state. Applying it
-/// again over a database that already holds the tables changes nothing.
+/// Version 17: conversations through connectors. Each conversation's bound
+/// session, the start request captured for its first message and its own
+/// answer-source position; each addressed message from receipt to its
+/// answered turn, with its text, captured context and framed input; each
+/// answer piece and when the connector accepted its post; each sender's
+/// pending or sent refusal; and each connector's connection state. Applying it again over a database that
+/// already holds the tables changes nothing.
 const V17: &str = r#"
 CREATE TABLE IF NOT EXISTS connected_conversations (
-    company       TEXT NOT NULL,
-    connector     TEXT NOT NULL,
-    conversation  TEXT NOT NULL,
-    semantic_key  TEXT NOT NULL,
-    request       TEXT,
-    session       TEXT,
-    position_json TEXT,
-    failure       TEXT,
+    company         TEXT NOT NULL,
+    connector       TEXT NOT NULL,
+    conversation    TEXT NOT NULL,
+    semantic_key    TEXT NOT NULL,
+    opening         TEXT,
+    request         TEXT,
+    session         TEXT,
+    source_identity TEXT,
+    position_json   TEXT,
+    failure         TEXT,
     PRIMARY KEY (company, connector, conversation)
 );
 CREATE TABLE IF NOT EXISTS conversation_messages (
@@ -738,11 +741,13 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     conversation TEXT NOT NULL,
     message      TEXT NOT NULL,
     member       TEXT NOT NULL,
+    written_us   INTEGER NOT NULL,
     written_at   TEXT NOT NULL,
     arrived_at   TEXT NOT NULL,
-    text         TEXT NOT NULL,
-    context_json TEXT NOT NULL,
-    state        TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'answered')),
+    state        TEXT NOT NULL CHECK (state IN ('received', 'pending', 'sent', 'answered')),
+    text         TEXT,
+    context_json TEXT,
+    boundary     TEXT,
     content      TEXT,
     turn         TEXT,
     failure      TEXT,
@@ -754,23 +759,25 @@ CREATE TABLE IF NOT EXISTS conversation_answers (
     conversation TEXT NOT NULL,
     turn         TEXT NOT NULL,
     piece        INTEGER NOT NULL,
-    text         TEXT NOT NULL,
+    text         TEXT,
     posted_at    TEXT,
     failure      TEXT,
     PRIMARY KEY (company, connector, conversation, turn, piece)
 );
-CREATE TABLE IF NOT EXISTS conversation_turned_away (
+CREATE TABLE IF NOT EXISTS conversation_refusals (
     company      TEXT NOT NULL,
     connector    TEXT NOT NULL,
     conversation TEXT NOT NULL,
     sender       TEXT NOT NULL,
-    replied_at   TEXT NOT NULL,
+    received_at  TEXT NOT NULL,
+    replied_at   TEXT,
+    failure      TEXT,
     PRIMARY KEY (company, connector, conversation, sender)
 );
 CREATE TABLE IF NOT EXISTS connector_states (
     company    TEXT NOT NULL,
     connector  TEXT NOT NULL,
-    state      TEXT NOT NULL,
+    state      TEXT NOT NULL CHECK (state IN ('connecting', 'connected', 'failed', 'stopped')),
     failure    TEXT,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (company, connector)

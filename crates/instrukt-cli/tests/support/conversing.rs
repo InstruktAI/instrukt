@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::conversations::Earlier;
+use instrukt_runner::conversations::Status;
 use instrukt_runner::envelopes::{self, Span};
 
 use crate::common::{self, TestEnv};
@@ -20,6 +20,17 @@ pub const COMPANY: &str = "acme";
 /// The members the company lists, by key and Slack identity.
 pub const MEMBERS: &str =
     "{steven: {name: Steven Sonneveld, slack: USTEVEN}, anna: {name: Anna, slack: UANNA}}";
+
+/// What one accepted runtime input carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delivered {
+    /// The member whose addressed message it is.
+    pub member: ProjectSlug,
+    /// How many member envelopes it carries.
+    pub members: usize,
+    /// Each accompanying message's speaker and whether it is the agent's own.
+    pub context: Vec<(String, bool)>,
+}
 
 pub struct Running(std::process::Child);
 impl Running {
@@ -170,34 +181,53 @@ impl Company {
         self.runtime.set_status(session, "idle");
     }
 
-    /// The addressed message the session's `n`th input carries, by the
-    /// member who wrote it and its text, as the registered vocabulary reads it.
-    pub fn addressed(&self, session: &str, n: usize) -> (String, String) {
+    /// What the session's `n`th accepted input carries, as the registered
+    /// vocabulary reads it: the member who addressed the agent, and who said
+    /// each accompanying message and whether it was the agent's own post.
+    pub fn delivered(&self, session: &str, n: usize) -> Delivered {
         let input = self.runtime.message(session, n);
-        envelopes::segment(&input)
-            .into_iter()
+        let spans = envelopes::segment(&input);
+        let member = spans
+            .iter()
             .find_map(|span| match span {
-                Span::Member { member, body, .. } => Some((member.to_owned(), body.to_owned())),
+                Span::Member { member, .. } => Some(ProjectSlug::parse(member).unwrap()),
+                _ => None,
+            })
+            .unwrap();
+        let context = spans
+            .iter()
+            .find_map(|span| match span {
+                Span::Context { body, .. } => envelopes::context_entries(body),
                 _ => None,
             })
             .unwrap()
+            .into_iter()
+            .map(|entry| (entry.speaker.to_owned(), entry.own))
+            .collect();
+        Delivered {
+            member,
+            context,
+            members: spans
+                .iter()
+                .filter(|span| matches!(span, Span::Member { .. }))
+                .count(),
+        }
     }
 
-    /// What accompanied the addressed message `message` of `conversation`,
-    /// as the runner retained it with that message.
-    pub fn accompanying(&self, conversation: &str, message: &str) -> Vec<Earlier> {
-        let db = instrukt_core::state_db::rusqlite::Connection::open(
-            self.env.instrukt_home().join("state/instrukt.db"),
+    /// Whether the session's `n`th input was queued behind a running turn
+    /// rather than starting one of its own.
+    pub fn queued(&self, session: &str, n: usize) -> bool {
+        let thread: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(self.runtime.state_dir().join(format!("{session}.json"))).unwrap(),
         )
         .unwrap();
-        let context: String = db
-            .query_row(
-                "SELECT context_json FROM conversation_messages WHERE company=?1 AND conversation=?2 AND message=?3",
-                [COMPANY, conversation, message],
-                |row| row.get(0),
-            )
-            .unwrap();
-        serde_json::from_str(&context).unwrap()
+        thread["messages"][n]["queued"].as_bool().unwrap_or(false)
+    }
+
+    /// The conversations `instrukt events status` reports with pending work
+    /// or failures.
+    pub fn conversations(&self) -> Status {
+        serde_json::from_value(self.status()["conversations"].clone()).unwrap()
     }
 
     /// `instrukt events status --json`.
@@ -215,7 +245,7 @@ impl Company {
 
     /// The key of the member the company lists for a Slack identity, as
     /// configuration resolves it.
-    pub fn member(&self, slack: &str) -> String {
+    pub fn member(&self, slack: &str) -> ProjectSlug {
         let home = instrukt_core::home::Home::at_user_home(self.env.home().to_path_buf());
         instrukt_core::config::Configuration::load_company(&home.for_inspection(), &self.company())
             .unwrap()
@@ -224,6 +254,6 @@ impl Company {
             .resolve(instrukt_runner::connectors::SLACK, slack)
             .unwrap()
             .key
-            .to_string()
+            .clone()
     }
 }

@@ -6,8 +6,17 @@
 use crate::common;
 use crate::fixtures::conversing::{Company, wait};
 use crate::fixtures::documented;
-use crate::fixtures::slack::Post;
-use instrukt_runner::conversations::TURN_AWAY;
+use instrukt_runner::conversations::{SLACK_MESSAGE_LIMIT, TURN_AWAY};
+use instrukt_runner::transport::EVENT_STREAM;
+
+/// Where each post went: its channel and thread.
+fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
+    c.slack
+        .posts()
+        .into_iter()
+        .map(|post| (post.channel, post.thread))
+        .collect()
+}
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV1
 #[test]
@@ -42,8 +51,8 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     );
     assert_eq!(assignment.procedure, None);
     assert_eq!(assignment.company, Some(c.company()));
-    let reply = "We ship on Friday.";
-    // Someone types in the session's thread directly: that turn is not posted.
+    // Someone types in the session's thread directly: that turn is read
+    // before the answer's, and it is not posted.
     c.store.turn(
         &session,
         "direct",
@@ -51,16 +60,19 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
         "A note typed in the thread.",
         "Noted.",
     );
-    c.finish_turn(&session, 0, reply);
-    wait("the answer's post", || !c.slack.posts().is_empty());
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // An answer longer than one Slack message arrives as its pieces.
+    let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
+    c.finish_turn(&session, 0, &reply);
+    wait("the answer's pieces", || c.slack.posts().len() >= 2);
+    wait("nothing left to post", || {
+        c.conversations().conversations.is_empty()
+    });
     assert_eq!(
-        c.slack.posts(),
-        [Post {
-            channel: channel.into(),
-            thread: Some(question),
-            text: reply.into(),
-        }]
+        destinations(&c),
+        [
+            (channel.to_owned(), Some(question.clone())),
+            (channel.to_owned(), Some(question))
+        ]
     );
 }
 
@@ -73,24 +85,37 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         .slack
         .mention("C1", "USTEVEN", "<@UAGENT> Is the build green?", None);
     let session = c.session();
-    let later = "<@UAGENT> And the release notes?";
-    c.slack.mention("C1", "UANNA", later, Some(&root));
-    wait("both messages acknowledged", || {
-        c.slack.acknowledged().len() == 2
-    });
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    assert_eq!(
-        c.runtime.message_count(&session),
-        1,
-        "the second turn waits for the first"
+    // While the first turn runs, two more arrive out of the order they were
+    // written in, within one second.
+    c.slack.mention_at(
+        "1700000500.000100",
+        "C1",
+        "USTEVEN",
+        "<@UAGENT> And the changelog?",
+        Some(&root),
     );
+    c.slack.mention_at(
+        "1700000500.000000",
+        "C1",
+        "UANNA",
+        "<@UAGENT> And the release notes?",
+        Some(&root),
+    );
+    wait("all three messages acknowledged", || {
+        c.slack.acknowledged().len() == 3
+    });
     c.finish_turn(&session, 0, "Green.");
     wait("the second turn", || c.runtime.message_count(&session) == 2);
-    assert_eq!(c.addressed(&session, 0).0, c.member("USTEVEN"));
-    assert_eq!(
-        c.addressed(&session, 1),
-        (c.member("UANNA"), later.to_owned())
-    );
+    c.finish_turn(&session, 1, "Written.");
+    wait("the third turn", || c.runtime.message_count(&session) == 3);
+    let order = [c.member("USTEVEN"), c.member("UANNA"), c.member("USTEVEN")];
+    for (n, member) in order.into_iter().enumerate() {
+        let delivered = c.delivered(&session, n);
+        assert_eq!(delivered.member, member, "input {n}");
+        assert_eq!(delivered.members, 1, "input {n}");
+        // Each started its own turn: none was queued into a running one.
+        assert!(!c.queued(&session, n), "input {n}");
+    }
     assert_eq!(c.sessions().len(), 1);
 }
 
@@ -103,22 +128,17 @@ fn an_unlisted_person_receives_one_fixed_reply_and_no_session_starts() {
     let first = c
         .slack
         .mention(channel, "USTRANGER", "<@UAGENT> Who are you?", None);
-    wait("the fixed reply", || !c.slack.posts().is_empty());
     c.slack
         .mention(channel, "USTRANGER", "<@UAGENT> Hello?", Some(&first));
-    wait("both messages acknowledged", || {
-        c.slack.acknowledged().len() == 2
-    });
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    assert_eq!(
-        c.slack.posts(),
-        [Post {
-            channel: channel.into(),
-            thread: Some(first),
-            text: TURN_AWAY.into(),
-        }]
-    );
-    assert!(c.sessions().is_empty());
+    // A member's direct message after both: once it reaches a session, the
+    // connector has handled everything before it.
+    c.slack.direct("D1", "USTEVEN", "Are you there?");
+    let session = c.session();
+    assert_eq!(c.delivered(&session, 0).member, c.member("USTEVEN"));
+    let posts = c.slack.posts();
+    assert_eq!(destinations(&c), [(channel.to_owned(), Some(first))]);
+    assert_eq!(posts[0].text, TURN_AWAY);
+    assert_eq!(c.sessions(), [session]);
 }
 
 // spec: project/instrukt/spec/feature/runner/conversations UC-CV5
@@ -160,19 +180,33 @@ fn a_conversation_message_activates_no_subscribed_procedure() {
     c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> Anything new?", None);
     let session = c.session();
+    assert_eq!(c.delivered(&session, 0).member, c.member("USTEVEN"));
     c.finish_turn(&session, 0, "Nothing new.");
     wait("the answer's post", || !c.slack.posts().is_empty());
+    // An event after the conversation: once the procedure answered it, the
+    // event reader has passed everything before it.
+    let computer = std::fs::read_to_string(c.env.instrukt_home().join("state/machine-id")).unwrap();
+    let barrier = "barrier-event";
+    let event = serde_json::json!({"id": barrier, "type": "example.changed", "source": computer.trim(), "subject": "todo:demo", "home": "project:fork", "home_owner": "unresolved", "time": "2026-11-05T00:00:00Z", "data": {}});
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(event.to_string())
+        .query::<String>(&mut redis.connection())
+        .unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    let count = |table: &str| -> i64 {
-        db.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-            row.get(0)
-        })
-        .unwrap()
+    let activated = || -> Vec<String> {
+        db.prepare("SELECT event_id FROM procedure_activations")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     };
-    assert_eq!(count("procedure_activations"), 0);
-    assert_eq!(count("procedure_responsibilities"), 0);
-    assert_eq!(c.sessions(), [session]);
+    wait("the event reader's activation", || !activated().is_empty());
+    assert_eq!(activated(), [barrier]);
 }

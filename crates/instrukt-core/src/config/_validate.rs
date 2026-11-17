@@ -390,7 +390,7 @@ fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFindi
     if name.is_some() && chosen.is_none() {
         return;
     }
-    for module in ["events", "todos"] {
+    for module in ["events", "todos", super::CONVERSATIONS] {
         let on = value
             .get("modules")
             .and_then(|m| m.get(module))
@@ -598,6 +598,19 @@ mod tests {
         let doc = current_document("runner: {runtime: t3}\nmodules: {todos: true, events: true}");
         let found = judge(&doc, LayerKind::Global, None);
         assert!(found.is_empty());
+    }
+    #[test]
+    fn conversations_need_a_chosen_runtime() {
+        let doc = current_document("modules: {conversations: true}");
+        assert_eq!(
+            judge(&doc, LayerKind::Global, None)
+                .iter()
+                .map(|f| (f.key.as_str(), f.kind))
+                .collect::<Vec<_>>(),
+            [("modules.conversations", FindingKind::NoRuntimeChosen)]
+        );
+        let chosen = current_document("runner: {runtime: t3}\nmodules: {conversations: true}");
+        assert!(judge(&chosen, LayerKind::Global, None).is_empty());
     }
     #[test]
     fn a_declared_connector_needs_the_machines_conversations_switch() {

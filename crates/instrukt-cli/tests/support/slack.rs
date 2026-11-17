@@ -24,6 +24,10 @@ pub const BOT_TOKEN: &str = "xoxb-fake-bot";
 pub const BOT_USER: &str = "UAGENT";
 pub const BOT_ID: &str = "BAGENT";
 
+/// The most messages one history or replies page carries, so that every
+/// read the scenarios make spans pages.
+const PAGE: usize = 2;
+
 /// A message the agent posted, as the Web API received it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Post {
@@ -43,6 +47,8 @@ struct Workspace {
     connections: usize,
     next: u64,
     refuse: bool,
+    hold_reads: bool,
+    reads: usize,
 }
 
 pub struct FakeSlack {
@@ -91,6 +97,13 @@ impl FakeSlack {
                         .unwrap_or_default();
                     let mut body = String::new();
                     request.as_reader().read_to_string(&mut body).unwrap();
+                    // Held reads answer only once released.
+                    while method.starts_with("conversations.")
+                        && workspace.lock().unwrap().hold_reads
+                        && !stop.load(Ordering::Acquire)
+                    {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
                     let answer =
                         Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
                     request
@@ -197,17 +210,20 @@ impl FakeSlack {
                     .filter(|m| bound(m, "latest", true) && bound(m, "oldest", false))
                     .cloned()
                     .collect();
+                // As Slack does: channel history newest first, a thread's
+                // replies oldest first, in pages no larger than asked and at
+                // most `PAGE`, continued with a cursor.
                 if thread.is_none() {
                     found.reverse();
                 }
-                let limit: usize = arg("limit").map_or(100, |l| l.parse().unwrap());
-                if thread.is_some() {
-                    let skip = found.len().saturating_sub(limit);
-                    found.drain(..skip);
-                } else {
-                    found.truncate(limit);
-                }
-                json!({"ok": true, "messages": found})
+                let size = arg("limit")
+                    .map_or(PAGE, |l| l.parse::<usize>().unwrap())
+                    .min(PAGE);
+                let from: usize = arg("cursor").map_or(0, |c| c.parse().unwrap());
+                let page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                let more = from + size < found.len();
+                w.reads += 1;
+                json!({"ok": true, "messages": page, "has_more": more, "response_metadata": {"next_cursor": if more { (from + size).to_string() } else { String::new() }}})
             }
             "chat.postMessage" => {
                 let post = Post {
@@ -237,8 +253,21 @@ impl FakeSlack {
     /// A person writes a message nobody addresses to the agent: Slack sends
     /// instrukt nothing for it.
     pub fn say(&self, channel: &str, user: &str, text: &str, thread: Option<&str>) -> String {
+        let ts = Self::stamp(&mut self.workspace.lock().unwrap());
+        self.say_at(&ts, channel, user, text, thread)
+    }
+
+    /// A message written at the Slack time `ts`.
+    pub fn say_at(
+        &self,
+        ts: &str,
+        channel: &str,
+        user: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) -> String {
         let mut w = self.workspace.lock().unwrap();
-        let ts = Self::stamp(&mut w);
+        let ts = ts.to_owned();
         let mut message = json!({"channel": channel, "ts": ts, "user": user, "text": text});
         if let Some(thread) = thread {
             message["thread_ts"] = json!(thread);
@@ -256,7 +285,20 @@ impl FakeSlack {
 
     /// A person tags the agent in a channel, in `thread` or starting one.
     pub fn mention(&self, channel: &str, user: &str, text: &str, thread: Option<&str>) -> String {
-        let ts = self.say(channel, user, text, thread);
+        let ts = Self::stamp(&mut self.workspace.lock().unwrap());
+        self.mention_at(&ts, channel, user, text, thread)
+    }
+
+    /// A tag written at the Slack time `ts`.
+    pub fn mention_at(
+        &self,
+        ts: &str,
+        channel: &str,
+        user: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) -> String {
+        let ts = self.say_at(ts, channel, user, text, thread);
         let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
         if let Some(thread) = thread {
             event["thread_ts"] = json!(thread);
@@ -273,6 +315,20 @@ impl FakeSlack {
             json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts}),
         );
         ts
+    }
+
+    /// History and replies reads wait until [`FakeSlack::release_reads`].
+    pub fn hold_reads(&self) {
+        self.workspace.lock().unwrap().hold_reads = true;
+    }
+
+    pub fn release_reads(&self) {
+        self.workspace.lock().unwrap().hold_reads = false;
+    }
+
+    /// How many history and replies pages were read.
+    pub fn reads(&self) -> usize {
+        self.workspace.lock().unwrap().reads
     }
 
     /// The Web API refuses every token from now on.
