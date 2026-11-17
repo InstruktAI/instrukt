@@ -74,7 +74,12 @@ reviewable without splitting the required outcomes among several bindings.
 
 The real CLI, filesystem and git boundaries are the behavior developers adopt.
 Isolating them in temporary homes protects the machine while preserving those
-boundaries. Independently authored use cases supply the expected outcomes;
+boundaries. The write fence stops what instrukt itself attempts against a real
+location, as the file system stands when it attempts it, so a test never fails
+because another program changed that location. It is not a sandbox: the
+programs instrukt starts and the test's own fixtures stay inside the temporary
+home by construction, and a path that another process retargets between
+instrukt's check and its write is outside what the fence stops. Independently authored use cases supply the expected outcomes;
 pure-logic units and property tests cover the Rust exception without replacing
 feature-level evidence.
 
@@ -90,7 +95,7 @@ isolation, network-boundary fakes and scenario provenance.
 
 ## Exceptions
 
-- The test harness's safety self-tests, which prove that the temporary-home guard detects writes outside the temporary home (directly or through a symbolic link), bind no use case. They live beside the harness in `crates/instrukt-cli/tests/`. The exception covers only tests of the guard itself; any other harness behaviour is checked through the use cases that run under it.
+- The test harness's safety self-tests, which prove that the write fence refuses an instrukt write outside the temporary home before it lands (directly or through a symbolic link), bind no use case. They live beside the harness in `crates/instrukt-cli/tests/`. The exception covers only tests of the fence itself; any other harness behaviour is checked through the use cases that run under it.
 - In pure colocated unit tests, equality between a whole returned identifier, path or node id and the expected value is a value assertion, not a `TQ-07` string-content assertion. Substring, prefix, suffix or pattern assertions on such values remain `TQ-07` findings, and rendered text and messages stay governed by `TQ-07` and the CLI snapshot rule.
 - In CLI-crate integration tests, an `insta` snapshot may record the GitHub state the local GitHub fake holds after a command (issues, comments, project board fields and items), because that state is the outcome a developer sees on GitHub. It never records the requests themselves, never replaces assertions on CLI output, and never snapshots instrukt's internal state.
 - In CLI-crate integration tests, an `insta` snapshot may record a file a command writes for a developer to read, such as the evaluation report, because that file is the command's output. The test makes the file deterministic (a controlled clock and fixed inputs), and the snapshot never records instrukt's internal state.

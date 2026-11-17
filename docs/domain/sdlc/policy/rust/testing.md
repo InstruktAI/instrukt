@@ -167,7 +167,7 @@ visibility: 'public'
     }
     ```
 
-15. **A shared helper guards the boundary.** The helper that creates the temporary `HOME` fails any test that writes outside it.
+15. **A shared helper fences the boundary.** The helper that creates the temporary `HOME` makes the binary under test refuse any write of its own outside it before the write lands, and fails the test that attempted one. It does not watch the developer's real home, so what other programs change there never fails a test. The fence is not a sandbox: programs the binary starts and the test's own fixtures stay inside the temporary `HOME` by construction.
 
 ### Test data — builders, not fixtures
 
