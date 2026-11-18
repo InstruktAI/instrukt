@@ -1,5 +1,5 @@
 ---
-description: Company containers — on a Linux host each company runs in one long-running container of its own, with T3 and the agent tools inside; its agents reach no other company and nothing of the host, its state lives in its folder on the host and survives the container, it is signed in once, its tools follow their selected releases automatically without a new image, shared defaults reach every company, its owner opens its environment without the operator's credentials, and every company is backed up each night.
+description: Company containers — on a Linux host each company runs in one long-running container of its own, with T3 and the agent tools inside; its agents reach no other company and nothing of the host, its state lives in its folder on the host and survives the container, it is signed in once, its tools take each release that passed instrukt's nightly check automatically and without a new image, shared defaults reach every company, its owner opens its environment without the operator's credentials and admits their own people, who may steer agents inside it, and every company is backed up each night.
 ---
 
 # Company Containers — Spec
@@ -22,9 +22,9 @@ A **company's folder** is the one folder on the host, under the operator's
 how the rest is laid out beside the home is the architecture's.
 
 Four kinds of people are involved. The company's **members** talk to its
-agent. The company's **owner** may open the company's own environment. The
-**operator** runs the host and sets companies up on it. **Another company**
-on the same host is kept apart from this one.
+agent. The company's **owner** opens the company's own environment and admits
+their own people to it. The **operator** runs the host and sets companies up
+on it. **Another company** on the same host is kept apart from this one.
 
 ## Canonical fields
 
@@ -32,7 +32,7 @@ on the same host is kept apart from this one.
 
 | Fact | Contract |
 | --- | --- |
-| Host | A Linux computer. A Mac running Docker runs the same container for testing and is no host. |
+| Host | A Linux computer. A Mac runs the same container for testing and is no host. |
 | One per company | A company has one container on a host, and a container serves one company. Two companies never share a container, its runtime or its agent program's login (`sdlc/policy/security-awareness`: isolate components so a compromise in one cannot reach others). |
 | Long-running | The container runs until the operator stops it, and starts again with the host. A session in it keeps its conversation across a restart under `project/instrukt/spec/feature/runner/session-continuity`. |
 | What runs in it | T3 and the agent programs it starts, for this company only. |
@@ -41,13 +41,14 @@ on the same host is kept apart from this one.
 ### What a company's container reaches
 
 - The company's own folder: the company's home at the location
-  `project/instrukt/spec/feature/configuration/company-homes` names, the same
-  in the container as on the host, and the company's projects.
+  `project/instrukt/spec/feature/configuration/company-homes` names, and the
+  company's projects. Each has one location that holds on the host and in the
+  container alike, so a document or procedure that names the company's home or
+  its projects names one path, valid wherever it is read.
 - The services the company is connected to: the channels its connectors
   speak to, the MCP servers it declares
   (`project/instrukt/spec/feature/runner/mcp-access`), the agent program's
-  provider and the shared services of the host the company uses, such as a
-  shared ERPNext.
+  provider and the shared services of the host the company uses.
 - Nothing else of the host: no other company's folder, no file of the
   operator's, no state database or secrets file that holds another company's
   values, and no way to start, stop or change another container or the host
@@ -96,13 +97,15 @@ unfinished, cancelled or expired, leaves no login and nothing waiting.
 ### Tools and their releases
 
 The tools in a company's container are installed into the company's folder,
-not into the image, and follow their selected releases automatically: a
-selected release reaches every company's container without anyone acting for
-one company, without the image being rebuilt, without a version pinned by
-hand, and without touching a company's logins, threads or projects. The
-selection is the same for every company on a host. Which releases are
-selected, every new release or only one that has passed instrukt's nightly
-test against T3, is outside this contract.
+not into the image. Each tool takes its newest release that has passed
+instrukt's nightly check against that tool, automatically: once a release has
+passed, it reaches every company's container without anyone acting for one
+company, without the image being rebuilt, without a version set by hand, and
+without touching a company's logins, threads or projects. A release that fails
+the check is not taken, and the failure is reported as an anomaly through
+`project/instrukt/spec/feature/runner/anomaly-notification`; the companies keep
+the release they run. A company therefore runs a new release at most a day
+after it appears, and a release instrukt cannot work with stops no company.
 
 ### Shared defaults
 
@@ -125,21 +128,20 @@ cannot cascade).
   the T3 of the company's container. The owner opens it on their own device,
   with a login of their own; the operator's credentials are never handed over
   (`sdlc/policy/security-awareness`: no shared root credentials).
-- The owner reaches that one company's environment and nothing beyond the
-  company's container (`sdlc/policy/security-awareness`: isolate components
-  so a compromise in one cannot reach others).
-- The operator can revoke an owner's access at any time, and a revoked owner
-  is turned away on their next request, also in a session they already had
-  open (`sdlc/policy/security-awareness`: session invalidation is immediate
-  and server-side).
-- Whether the owner may start or steer agents in that environment, and whether
-  the owner may give their own people access to it, is outside this contract.
-  The two depend on each other: an agent working in the company's environment
-  can reach what grants access to it, so an owner who may start agents can
-  give access through one unless such an agent is kept from it. If the owner
-  may start or steer agents, nothing such an agent does reaches beyond the
-  company's container. If the owner may give access, what they give reaches
-  that one company's environment only.
+- The environment is the company's, and who enters it is the owner's
+  decision: the owner may give their own people access to it. What the owner
+  gives reaches that one company's environment only.
+- The owner, and whoever the owner admits, may start and steer agents in the
+  environment. Those agents work inside the company's container, within the
+  limits a company cannot change, and reach nothing beyond it.
+- The owner and everyone they admit reach that one company's environment and
+  nothing beyond the company's container (`sdlc/policy/security-awareness`:
+  isolate components so a compromise in one cannot reach others).
+- The operator can see who has access to a company's environment and can
+  revoke any of it at any time, the owner's included. A revoked access is
+  turned away on its next request, also in a session already open
+  (`sdlc/policy/security-awareness`: session invalidation is immediate and
+  server-side).
 
 ### Credentials that open an environment
 
@@ -231,10 +233,11 @@ And the company's projects, threads and installed tools are as they were
 
 ```gherkin
 Given an operator runs companies on a host
-When a new release of their tools is selected
+When a new release of their tools passes instrukt's nightly check
 Then every company's container runs the new release without anyone acting for one company
 And no image was rebuilt and no version was set by hand
 And each company's logins, conversations and projects are unchanged
+But a release that fails the check is not taken, every company keeps the release it runs and the failure is reported
 ```
 
 ### UC-CC6: Change a shared default for every company at once
@@ -246,14 +249,16 @@ Then every company's container runs with the changed default
 And no company had to be changed on its own
 ```
 
-### UC-CC7: Open one's own company's environment without the operator's credentials
+### UC-CC7: Run one's own company's environment without the operator's credentials
 
 ```gherkin
 Given an operator has given a company's owner access to their company's environment
-When the owner opens it on their own device
-Then they reach that company's environment and nothing of another company
-And they never received the operator's credentials
-But once the operator revokes their access they are turned away on their next request
+When the owner opens it on their own device, admits one of their people and starts an agent there
+Then the owner and the person they admitted reach that company's environment and nothing of another company
+And the owner never received the operator's credentials
+And the agent works inside the company's container and reaches nothing beyond it
+And the operator sees both among those with access to the company's environment
+But once the operator revokes the admitted person's access, that person's next request is refused
 ```
 
 ### UC-CC8: Back up every company each night
@@ -301,9 +306,12 @@ But a credential the operator issues for someone is handed once to the person wh
   can read, change or erase anything of its own company's that the container
   holds, the company's secrets file and its login included. A restore from
   the last archive brings it back, and work since that night is lost.
-- An owner who may start agents in their company's environment can, through
-  such an agent, do anything inside the company's container that the agent
-  can.
+- Inside its container a company is one trust zone. Whoever may steer an
+  agent there, the owner and everyone the owner admits, can reach what that
+  company's agents can reach, the logins its people stored for the company's
+  services included. The operator keeps companies apart from each other and
+  from the host; this contract keeps no boundary between people inside one
+  company.
 - A connector open to people outside the company needs an agent with no
   tools. A company's container does not provide one.
 - A Mac is for testing the container, not for hosting companies.
