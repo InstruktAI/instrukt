@@ -137,10 +137,9 @@ same content with the same instrukt release write the same bytes.
   entrypoint whose file differs from its rendering, each missing one, and
   each finding. Neither needs a home, a publication or a configuration: a
   fresh clone and the binary are enough.
-- **Never by sync or checkout.** A sync publishes; it writes no repository
-  file. A checkout receives the entrypoints committed at its revision from
-  git, so every checkout — the primary one, a linked worktree, a clone on
-  another computer — holds the instructions committed on its branch.
+- **Never by sync or checkout.** A sync writes no entrypoint, and no hook
+  renders one after a checkout
+  (`project/instrukt/spec/feature/repository/hook-sections`).
 
 ### A commit made without the hook
 
@@ -170,6 +169,12 @@ company-assistance procedure reaches the agent through its role
 doctrine, not company knowledge. instrukt writes no other instruction file in
 the home and leaves any other there as it is.
 
+- **What makes a repository a company home.** A repository renders as a
+  company home when its root holds `AGENTS.master.md` and its committed
+  content holds no project layer: no tracked `instrukt.yaml` at its root. A
+  project always commits its layer, and a company home keeps its settings
+  document out of git, so the same committed content decides it in the home,
+  in a clone and in CI.
 - **The company passage.** Between the generated line and the master's
   content, every company rendering carries one fixed passage: an agent
   working in this home may change the company's documents here and commit
@@ -227,17 +232,25 @@ publishes. They are the computer's own, never committed anywhere.
 - **Targets come from the selected runtime.** The sync asks the runtime that
   `runner.runtime` selects
   (`project/instrukt/spec/feature/configuration/layered-configuration`),
-  through its adapter, which agent runtimes are configured and enabled, and
-  writes a file for each of those instrukt deploys to. For T3 these are its
-  enabled provider instances, read with the provider snapshot the adapter
-  already reads (`project/instrukt/spec/feature/runner/session-continuity`):
-  an instance's driver names the agent runtime, and an ACP-registry instance
-  names it by the registry agent it runs.
-- **Each instance's own home.** A runtime's file is written in the home the
-  instance runs with: the home its settings name, otherwise the runtime's
-  home variable in the instance's environment, otherwise the runtime's
-  default home for the user. Instances that share a home share one file; an
-  instance with a home of its own receives its file there.
+  through its adapter, which enabled instances of which agent runtimes are
+  configured and which home each reports, and writes a file for each of
+  those runtimes instrukt deploys to; for T3 the adapter reports its enabled
+  provider instances (`project/instrukt/spec/feature/runner/session-continuity`).
+- **Each instance's own home.** A destination is taken only from what the
+  runtime reports. A runtime's file is written in the home an enabled
+  instance reports. An enabled instance that reports no home receives its
+  file in the runtime vendor's default home, and the sync's output names
+  that instance and says its home was not reported. Instances that share a
+  home share one file; an instance with a home of its own receives its file
+  there.
+- **Removing a file written earlier.** A global file instrukt wrote earlier
+  for a runtime is removed only when instrukt establishes that no enabled
+  instance of that runtime uses that home: the runtime has no enabled
+  instance, or every enabled instance of it reports its home and none is
+  that one. While any enabled instance of the runtime reports no home, every
+  file written earlier for that runtime stays, and `instrukt status` shows
+  each as kept, with that reason. A removed file is retracted as owned output
+  is: only while its content is what instrukt wrote.
 - **Destinations.** Publication writes each runtime's user-scope instruction
   file at the location that runtime loads in that home — a file, or one file
   of instrukt's own in a directory of instruction files. For a runtime
@@ -254,11 +267,11 @@ publishes. They are the computer's own, never committed anywhere.
   receives no global file. Its agents read the repository's committed
   `AGENTS.md`.
 - **No runtime, no files.** Without a selected runtime, no agent runtime is
-  configured and no global file is written. A runtime that is no longer
-  configured, or a home no instance uses any more, loses its file as owned
-  output is retracted. When the selected runtime cannot be asked, the sync
-  leaves every global file and its record as they are, reports a notice
-  naming the runtime and the cause, and publishes the rest.
+  configured: no global file is written, and the files written earlier are
+  removed as above. When the selected runtime cannot be asked, nothing is
+  established about any instance: the sync leaves every global file and its
+  record as they are, reports a notice naming the runtime and the cause, and
+  publishes the rest.
 - **`agents` names** are validated against the runtimes instrukt deploys to,
   whatever is configured on the computer.
 - **Never over a file instrukt did not write.** Before writing anything, the
@@ -344,6 +357,10 @@ And the agents' global instructions do not name it
 And the domain's snippets are still found by listing that domain
 ```
 
+### UC-AE6: An agent in a linked worktree receives the published baseline (retired)
+
+### UC-AE7: A fresh primary checkout bootstraps publication once (retired)
+
 ### UC-AE8: An operator gives every agent working for a company the company's own knowledge
 
 ```gherkin
@@ -351,6 +368,8 @@ Given an operator keeps a company's knowledge in the master of its home, which i
 When the operator changes the master in the repository's web editor
 Then the company's workflow commits the rendered instruction file to main
 And an agent started in the home once the home holds that commit, and an agent that checks the repository out elsewhere, each start with the master's content
+But when the operator's change names a required read of doctrine outside the company's own documents
+Then the rendering reports the master and the read, and the committed instruction file is not changed
 ```
 
 ### UC-AE9: A developer's CI catches instructions a commit left stale
@@ -373,23 +392,9 @@ But when the project selects a snippet that reads a configured value
 Then the rendering reports the snippet and says to list it instead, and the instruction file is not changed
 ```
 
-### UC-AE11: An agent in a linked worktree reads the instructions of its branch
+### UC-AE11: An agent in a linked worktree reads the instructions of its branch (retired)
 
-```gherkin
-Given a developer commits a change to the project's selection on a branch
-When the developer opens a linked worktree on that branch and another on main
-Then each worktree holds the instruction file committed at its revision
-And no publication runs for either
-```
-
-### UC-AE12: An operator keeps a company's knowledge separate from other doctrine
-
-```gherkin
-Given an operator's company master names a required read of always-on doctrine
-When the operator validates the company or renders the home's instruction file
-Then the master and the read are reported
-And the home's instruction file is not changed
-```
+### UC-AE12: An operator keeps a company's knowledge separate from other doctrine (retired)
 
 ### UC-AE13: An agent runtime the developer stops using no longer receives instructions
 
@@ -397,6 +402,8 @@ And the home's instruction file is not changed
 Given publication wrote global instructions for two configured agent runtimes
 When the developer removes one of them from their runtime and publication runs
 Then that runtime's global instructions are removed and the other's are current
+But when an enabled instance of the removed runtime remains whose home the runtime does not report
+Then that runtime's global instructions are kept, and status shows them as kept because a home was not reported
 But when the runtime cannot be asked during publication
 Then every global instruction file is left as it was and the developer is told why
 ```
@@ -419,8 +426,15 @@ Then every global instruction file is left as it was and the developer is told w
   every checkout carries the stale rendering, and a company home started from
   it reads the previous knowledge.
 - A home a T3 instance takes only from T3's own process environment is not
-  reported to instrukt; the instance's file is written in the home its
-  settings or environment name, otherwise in the runtime's default home.
+  reported to instrukt. Such an instance receives its file in the vendor's
+  default home, which the sync names, and the files written earlier for its
+  runtime are kept while it reports no home; where it actually runs from
+  another home, that home's file is current only up to the last sync that
+  could write it.
+- After a sync during which the selected runtime could not be asked, the
+  global files stay as they were until the next sync that publishes them: a
+  new revision of main in the project that owns `docs/general/`, or
+  `instrukt sync --force` there. A sync of an unchanged main does nothing.
 - How a runtime combines the rendering with other instruction files in a
   home, and whether it reads it again during a session or when it resumes
   one, is that runtime's.

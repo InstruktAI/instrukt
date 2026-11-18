@@ -135,6 +135,8 @@ Then instrukt's sections are absent
 And the developer's own hook content and hook files remain unchanged
 ```
 
+### UC-HK5: A developer keeps their checkout hooks working through the rendering handoff (retired)
+
 ### UC-HK6: A developer's commit carries the agent instructions its content yields
 
 ```gherkin

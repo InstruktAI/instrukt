@@ -107,7 +107,6 @@ fn demo_project(env: &TestEnv) -> Repo {
     repo
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
 #[test]
 fn an_agent_opened_in_the_project_reads_its_purpose_and_its_selection() {
     let env = TestEnv::new();
@@ -121,7 +120,6 @@ fn an_agent_opened_in_the_project_reads_its_purpose_and_its_selection() {
     assert_eq!(repo.read("AGENTS.override.md"), repo.read("AGENTS.md"));
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
 #[test]
 fn a_nested_master_renders_beside_itself_with_its_required_reads() {
     let env = TestEnv::new();
@@ -134,7 +132,6 @@ fn a_nested_master_renders_beside_itself_with_its_required_reads() {
     assert!(!repo.path().join("tools/AGENTS.override.md").exists());
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
 #[test]
 fn a_root_master_with_required_reads_is_refused_naming_the_project_index() {
     let env = TestEnv::new();
@@ -156,7 +153,6 @@ fn a_root_master_with_required_reads_is_refused_naming_the_project_index() {
     assert!(!repo.path().join("AGENTS.md").exists());
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
 #[test]
 fn without_a_project_index_the_root_agents_md_holds_the_purpose_and_procedures() {
     let env = TestEnv::new();
@@ -270,7 +266,6 @@ fn keeps_every_member(before: &Value, after: &Value) -> bool {
     }
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE2
 #[cfg(unix)]
 #[test]
 fn every_installed_agent_cli_starts_with_the_general_section_and_keeps_its_settings() {
@@ -351,7 +346,6 @@ fn every_installed_agent_cli_starts_with_the_general_section_and_keeps_its_setti
     assert!(!home.join(".codex/settings.json").exists());
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE3
 #[test]
 fn an_agents_snippet_ends_only_its_own_clis_global_file() {
     let env = TestEnv::new();
@@ -369,7 +363,6 @@ fn an_agents_snippet_ends_only_its_own_clis_global_file() {
     insta::assert_snapshot!("codex_global_file", read(".codex/AGENTS.md"));
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE3
 #[test]
 fn mapping_a_snippet_to_an_unsupported_agent_cli_is_refused_naming_the_supported_ones() {
     let env = TestEnv::new();
@@ -386,7 +379,6 @@ fn mapping_a_snippet_to_an_unsupported_agent_cli_is_refused_naming_the_supported
     assert!(!env.home().join(".claude/CLAUDE.md").exists());
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE4
 #[test]
 fn a_global_file_the_developer_wrote_stops_publication_until_it_is_moved() {
     let env = TestEnv::new();
@@ -417,7 +409,6 @@ fn a_global_file_the_developer_wrote_stops_publication_until_it_is_moved() {
     );
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE4
 #[test]
 fn a_global_file_edited_after_instrukt_wrote_it_stops_the_next_publication() {
     let env = TestEnv::new();
@@ -477,7 +468,6 @@ fn a_domain_without_an_index_is_published_but_absent_from_the_global_files() {
     );
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE4
 #[test]
 fn retracting_the_global_files_keeps_one_the_developer_edited_and_names_it() {
     let env = TestEnv::new();

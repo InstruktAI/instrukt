@@ -390,8 +390,10 @@ A hard process stop before revocation leaves the session bounded by its short TT
 The same read answers publication's question which agent runtimes are
 configured (`project/instrukt/spec/feature/publication/agent-entrypoints`):
 each enabled provider instance in the response's server settings, its driver,
-for an ACP-registry instance the registry agent it names, and the home its
-settings or its instance environment name. A server that cannot be reached or
+for an ACP-registry instance the registry agent it names, and the home it
+reports: the home its settings name, otherwise the runtime's home variable in
+its instance environment. An instance naming neither reports no home; a home
+T3 takes from its own process environment is not in the response. A server that cannot be reached or
 read answers nothing, and publication leaves the global agent files as they
 are.
 
