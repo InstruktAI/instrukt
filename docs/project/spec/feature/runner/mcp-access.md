@@ -50,6 +50,11 @@ mcp:
 | `sign_in.accept_return_without_issuer` | With `speaker_login: sign-in`, optional, `true` or `false` (the default): the operator's acceptance of a return that does not name its issuer, for a server whose authorization server does not announce that it names itself on the return (see The return path and the issuer). |
 | `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose authorization server is no OpenID Provider. `url` is an absolute `https` address without credentials or fragment, which the operator trusts to receive this server's tokens; instrukt sends a `GET` to it with the new access token and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
 
+`instrukt config schema --company <name> mcp` shows these fields with their
+contracts for a company home, and `instrukt config schema --global mcp` for
+the computer
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+
 A declaration that carries none of `credential`, `login` and `speaker_login:
 sign-in` is an open server: its calls carry no login. A company home's
 declaration takes the place of a machine-wide declaration of the same name for

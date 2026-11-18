@@ -54,11 +54,13 @@ and the company's live settings, and it is kept on the computer.
 
 ### Addressing
 
-`instrukt config init|get|patch|validate --company <name>` address a company
-home's settings document with the verbs of
+`instrukt config init|get|patch|validate|schema --company <name>` address a
+company home's settings document with the verbs of
 `project/instrukt/spec/feature/configuration/configuration-editing`.
 `init --company <name>` creates the home folder and its settings document and
-leaves an existing home as it is. `instrukt secrets set|generate --company
+leaves an existing home as it is. `schema --company <name>` shows every key
+this document can declare — connectors with each kind's setup, MCP servers,
+members, profiles — with its contract. `instrukt secrets set|generate --company
 <name>` write that home's secrets file.
 
 ### Secrets

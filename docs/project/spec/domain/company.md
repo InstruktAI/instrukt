@@ -92,7 +92,9 @@ state database's file and migrations (work).
     connector contract of `project/instrukt/spec/feature/company/conversations`.
   - Each connector kind's declaration: the fields its `connectors.<kind>` entry
     takes, published as data, against which configuration validates a company
-    home (`project/instrukt/spec/domain/configuration`).
+    home (`project/instrukt/spec/domain/configuration`), together with the kind's
+    setup at its provider, which `instrukt config schema` shows
+    (`project/instrukt/spec/feature/configuration/configuration-editing`).
   - The hosting the runner declares and this context implements: opening and
     supervising the connections, the relay pass over finished turns, whether
     retained work is outstanding, the relay's state, and the conversations

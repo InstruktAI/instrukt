@@ -1,5 +1,5 @@
 ---
-description: Creating, reading and changing `instrukt.yaml` through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes.
+description: Creating, reading and changing `instrukt.yaml` through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
 ---
 
 # Configuration Editing — Spec
@@ -23,6 +23,7 @@ default, the global layer with `--global` and a company home's document with
 | `init` | creates the layer document with the current `schema_version` and defaults when it is absent; `--company <name>` creates that company's home folder and its document (`project/instrukt/spec/feature/configuration/company-homes`); the project layer's `project` is the primary worktree's folder name normalized to a slug, including when invoked in a linked worktree. An empty normalized slug is refused, directing the caller to `instrukt init --slug <slug>`. An existing document is not overwritten; it is migrated when older (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 | `get [<path>]` | answers the value at a dotted path, or the whole document without a path, from the effective configuration (the global layer with `--global`, a company home's document with `--company <name>`), interpolated (`project/instrukt/spec/feature/configuration/interpolation`). A scalar value prints bare. A path that does not exist fails non-zero, naming the missing segment. |
 | `patch --revision <rev>` | applies a merge patch to the addressed layer (below). |
+| `schema [<path>]` | shows what the addressed document can declare, from the types validation reads (Schema, below). |
 | `validate` | reports the addressed layer's findings (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 
 Configuration migration precedes refusal or skip on every verb, not only init.
@@ -51,6 +52,41 @@ Owned-file evolution and protected secret commands are
 - **Missing layer:** a patch to a layer that does not exist is refused,
   directing the caller to `init`. A project-layer patch outside a project is
   refused.
+
+### Schema
+
+`instrukt config schema [<path>]` answers what the addressed document — the
+project layer, the global layer with `--global`, a company home's document
+with `--company <name>` — can declare, so that an agent that has never seen
+such a document learns it from the program. `instrukt config -h` names the
+verb.
+
+- It is generated from the same types validation reads that document with,
+  and admits exactly the keys validation admits there: a key it does not show
+  is a finding in that document.
+- For each key it prints the key's path, its type, whether it is required,
+  its allowed values or its default where it has them, and the key's contract
+  in one or a few lines: the text the type declares, which the specification
+  owning the key states. A key that holds a `${NAME}` reference says so and
+  names `instrukt secrets set` as the way its value is written.
+- Under `connectors`, it shows each connector kind instrukt has, with the
+  fields its declaration takes and the kind's setup: what is created at the
+  provider, with any manifest the kind's specification gives in full, which
+  tokens come from there and the field each one's reference goes into, and
+  where the agent has to be made present. A kind's declaration and setup are
+  published by the company context as data
+  (`project/instrukt/spec/domain/company`); this verb prints them.
+- `<path>` is a dotted key path, such as `mcp` or `connectors.<kind>`; the
+  output is then that key and what lies under it. A path the document cannot
+  declare fails non-zero, naming the keys it can declare at that level.
+- `--json` prints the same as a JSON Schema, the one the editor schemas are
+  generated with (`project/instrukt/spec/feature/publication/editor-schemas`),
+  for the addressed document, a company home's included.
+- It reads no document, secret or server, and needs no home to exist:
+  `--company <name>` shows what a company home's document can declare whether
+  or not that company is on the computer.
+- A finding of `validate` or a refused patch that names a key the document
+  cannot declare directs to `instrukt config schema` at that key's parent.
 
 ### Webhook and transport edits
 
@@ -130,6 +166,19 @@ But when existing configuration has an older schema
 Then it is migrated to the current schema with every setting preserved
 But when existing configuration has a newer schema
 Then initialization is refused and the developer is directed to upgrade instrukt
+```
+
+### UC-CE4: An operator's agent learns from the program what a company home can declare
+
+```gherkin
+Given an operator's agent that has never seen a company home is to connect a company's messaging and one of its services
+When it reads the help of the configuration command and asks what a company home can declare
+Then it sees each key a company home's document can hold with its type and contract
+And for each connector kind it sees the fields to declare and what to create at the provider, with the tokens and where their references go
+And for a service it sees the fields of a server declaration, for a person's sign-in, a stored login and the company's own login
+And what it sees is exactly what validation of that document admits
+But when it asks for a key a company home cannot declare
+Then it is told which keys it can declare there
 ```
 
 ### UC-CE3: Know whether a module's infrastructure is ready

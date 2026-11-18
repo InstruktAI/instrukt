@@ -11,15 +11,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
 
+use instrukt_connector::{Accompanying, Earlier, Incoming, Sender};
 use instrukt_core::config::{Configuration, Env, SecretSource, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
 use jiff::Timestamp;
 use serde_json::Value;
 
-use crate::conversations::{
-    self, Accompanying, ConnectionState, Earlier, Incoming, Intake, Sender,
-};
+use crate::conversations::{self, ConnectionState, Intake};
 
 /// The connector's key under `connectors`.
 pub const SLACK: &str = "slack";
@@ -1191,7 +1190,6 @@ fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Res
         _ => return Ok(()),
     };
     let incoming = Incoming {
-        company: company.clone(),
         connector: SLACK.into(),
         conversation: match thread {
             Some(thread) => format!("{channel}/{thread}"),
@@ -1202,7 +1200,9 @@ fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Res
         written_at: ts_time(ts).ok_or("message without a valid time")?,
         text: text("text").unwrap_or_default().to_owned(),
     };
-    match conversations::retain(home, &incoming, Timestamp::now()).map_err(|e| e.to_string())? {
+    match conversations::retain(home, company, &incoming, Timestamp::now())
+        .map_err(|e| e.to_string())?
+    {
         Intake::Retained | Intake::Repeated => Ok(()),
     }
 }
