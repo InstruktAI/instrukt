@@ -87,6 +87,7 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError
         schemas: &schemas,
     };
     let (mut findings, mut notices) = check_all(&corpus, &env)?;
+    check_masters(&corpus, &env, &mut findings)?;
     notices.extend(unreferenced(&corpus, request.repo_root)?);
     super::_directives::check(
         &corpus,
@@ -251,7 +252,10 @@ pub(super) fn check_all(
     for manifest in corpus.baselines() {
         check_baseline(corpus, manifest, &mut reads, &mut out)?;
     }
-    let published = crate::index::GlobalIndex::load(corpus.home())?;
+    let published = match corpus.home() {
+        Some(home) => crate::index::GlobalIndex::load(home)?,
+        None => None,
+    };
     let mut known = Known {
         reads,
         index: published.as_ref(),
@@ -519,6 +523,30 @@ fn check_references(
     }
 }
 
+/// The required reads of every master of the repository, through the
+/// checks a snippet's required reads get: a read of a domain no repository
+/// on the computer publishes, or of a snippet that does not resolve, is a
+/// finding naming the master.
+fn check_masters(
+    corpus: &Corpus,
+    env: &CheckEnv<'_>,
+    out: &mut Vec<Finding>,
+) -> Result<(), DocsError> {
+    for (rel, text) in super::_directives::compiled_sources(env.repo_root)? {
+        let path = Path::new(&rel);
+        let master = Version::parse(&rel, &text, None, corpus.project(), corpus.user_home());
+        for reference in master.required_reads() {
+            match &reference.target {
+                Some(RefTarget::Domain(domain)) => {
+                    check_domain_read(corpus, env, path, domain, out)
+                }
+                target => check_target(corpus, path, false, &reference.raw, target.as_ref(), out),
+            }
+        }
+    }
+    Ok(())
+}
+
 fn reference_link_finding(
     corpus: &Corpus,
     repo_root: &Path,
@@ -567,7 +595,9 @@ fn check_domain_read(
     let known = domain.as_str() == GENERAL
         || super::_index_check::holds(env.repo_root, domain)
         || corpus.published_domains().contains(domain)
-        || corpus.home().domain_dir(domain).is_dir();
+        || corpus
+            .home()
+            .is_some_and(|home| home.domain_dir(domain).is_dir());
     if !known {
         push(
             out,
@@ -709,8 +739,10 @@ fn unpublished_domain(corpus: &Corpus, target: &RefTarget) -> Option<DomainName>
         }
         _ => return None,
     };
-    let published =
-        corpus.published_domains().contains(&domain) || corpus.home().domain_dir(&domain).is_dir();
+    let published = corpus.published_domains().contains(&domain)
+        || corpus
+            .home()
+            .is_some_and(|home| home.domain_dir(&domain).is_dir());
     (!published).then_some(domain)
 }
 
@@ -907,7 +939,10 @@ fn published_references(
     owned: &BTreeSet<DomainName>,
 ) -> Result<BTreeSet<SnippetId>, DocsError> {
     let mut named = BTreeSet::new();
-    let docs = corpus.home().docs_dir();
+    let Some(home) = corpus.home() else {
+        return Ok(named);
+    };
+    let docs = home.docs_dir();
     let Ok(entries) = std::fs::read_dir(&docs) else {
         return Ok(named);
     };
@@ -920,7 +955,7 @@ fn published_references(
     domains.sort();
     for domain in domains {
         let position = Position::of_domain(&domain);
-        let dir = corpus.home().domain_dir(&domain);
+        let dir = home.domain_dir(&domain);
         if let Some(text) = read_home(&dir.join(INDEX_FILE))? {
             named.extend(index_ids(&position, &text));
         }
@@ -942,13 +977,8 @@ fn published_references(
             let Some(source) = published_origin(&home_rel) else {
                 continue;
             };
-            let version = Version::parse(
-                &source,
-                &text,
-                None,
-                corpus.project(),
-                corpus.home().user_home(),
-            );
+            let version =
+                Version::parse(&source, &text, None, corpus.project(), corpus.user_home());
             named.extend(snippet_targets(&version));
         }
     }
@@ -1021,14 +1051,17 @@ impl<'c> RequiredReads<'c> {
         let Some(source) = published_source(id) else {
             return Ok(None);
         };
-        let file = self.corpus.home().docs_dir().join(format!("{id}.md"));
+        let Some(home) = self.corpus.home() else {
+            return Ok(None);
+        };
+        let file = home.docs_dir().join(format!("{id}.md"));
         Ok(read_home(&file)?.map(|text| {
             Version::parse(
                 &source,
                 &text,
                 taxonomy_of(id),
                 self.corpus.project(),
-                self.corpus.home().user_home(),
+                self.corpus.user_home(),
             )
         }))
     }
@@ -1038,14 +1071,14 @@ impl<'c> RequiredReads<'c> {
     fn manifest(&self, domain: &DomainName) -> Result<Vec<RefTarget>, DocsError> {
         let lines = match domain_baseline(self.corpus, domain) {
             Some(manifest) => manifest.lines().to_vec(),
-            None => {
-                let file = self.corpus.home().domain_dir(domain).join("baseline.md");
-                read_home(&file)?
+            None => match self.corpus.home() {
+                Some(home) => read_home(&home.domain_dir(domain).join("baseline.md"))?
                     .map(|text| {
-                        manifest_lines(&text, self.corpus.project(), self.corpus.home().user_home())
+                        manifest_lines(&text, self.corpus.project(), self.corpus.user_home())
                     })
-                    .unwrap_or_default()
-            }
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            },
         };
         Ok(lines
             .into_iter()
@@ -1307,7 +1340,10 @@ fn procedure_states(corpus: &Corpus) -> Result<Vec<ProcedureState>, DocsError> {
 /// domain without procedures, has none; any other read failure is an
 /// error, because a dropped procedure could hide a role clash.
 fn home_procedure_states(corpus: &Corpus) -> Result<Vec<ProcedureState>, DocsError> {
-    let docs = corpus.home().docs_dir();
+    let Some(home) = corpus.home() else {
+        return Ok(Vec::new());
+    };
+    let docs = home.docs_dir();
     let domains = match std::fs::read_dir(&docs) {
         Ok(domains) => domains,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1383,7 +1419,7 @@ fn home_procedure_states(corpus: &Corpus) -> Result<Vec<ProcedureState>, DocsErr
             &text,
             Some(Taxonomy::Procedure),
             corpus.project(),
-            corpus.home().user_home(),
+            corpus.user_home(),
         );
         states.push(state(&class.id, &version, None));
     }
@@ -1724,7 +1760,7 @@ mod tests {
     fn corpus_at(home: &Path, files: &[(&str, &str)]) -> Corpus {
         Corpus::from_sources(
             ProjectSlug::parse("demo").ok(),
-            &Home::at_user_home(home.to_path_buf()),
+            Some(&Home::at_user_home(home.to_path_buf())),
             files.iter().map(|(path, text)| SourceFile {
                 path: (*path).to_owned(),
                 text: (*text).to_owned(),

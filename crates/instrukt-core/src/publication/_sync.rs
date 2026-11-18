@@ -348,7 +348,11 @@ fn publish(
         .collect();
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
-    let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
+    let corpus = Corpus::from_sources(
+        Some(project.slug.clone()),
+        Some(home),
+        committed.doc_sources(),
+    );
     let contribution = Contribution::of(&project.slug, &corpus, &held);
     if let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
         && claim.owner != project.slug
@@ -555,14 +559,7 @@ pub(super) fn project_agents(
         let dir = Path::new(master).parent().unwrap_or(Path::new(""));
         let rendered = if master == MASTER_FILE_NAME {
             if project_index.is_none() {
-                notices.push(Notice {
-                    path: PathBuf::from(format!("{}/{INDEX_FILE}", Position::Project.dir())),
-                    code: NoticeCode::ProjectWithoutIndex,
-                    value: Some(format!(
-                        "the root AGENTS.md holds the purpose and the triggered procedures only; \
-                         `docs/project/{INDEX_FILE}` selects what else it includes"
-                    )),
-                });
+                notices.push(super::_render::project_without_index());
             }
             let rendered = renderer.root_agents(master, &text, project_index)?;
             agents.extend(project_overrides(home, &rendered)?);

@@ -63,7 +63,11 @@ pub(crate) fn checkout_entrypoints(
         })?;
     committed.materialize(temp.path())?;
     let config = Configuration::load(&home.for_inspection(), Some(temp.path()))?;
-    let corpus = Corpus::from_sources(Some(project.slug.clone()), home, committed.doc_sources());
+    let corpus = Corpus::from_sources(
+        Some(project.slug.clone()),
+        Some(home),
+        committed.doc_sources(),
+    );
     let (held, _) = super::_tree::held_positions(&committed);
     let owned: BTreeSet<_> = held.iter().cloned().collect();
     let index = GlobalIndex::load(home)?.unwrap_or_default();

@@ -355,7 +355,7 @@ mod tests {
         ];
         Inventory::read(&Corpus::from_sources(
             ProjectSlug::parse("demo").ok(),
-            &Home::at_user_home(PathBuf::from("/nonexistent-home")),
+            Some(&Home::at_user_home(PathBuf::from("/nonexistent-home"))),
             sources.into_iter().map(|(path, text)| SourceFile {
                 path: path.to_owned(),
                 text,

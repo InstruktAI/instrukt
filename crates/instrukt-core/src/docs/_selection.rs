@@ -46,6 +46,18 @@ impl Listing {
     }
 }
 
+/// The line naming a snippet another repository publishes:
+/// `` - <id> — `instrukt docs get <id> --closure` ``.
+pub fn reference_line(id: &SnippetId) -> String {
+    format!("- {id} — `{}`", closure_command(id))
+}
+
+/// The line naming a domain another repository publishes:
+/// `` - <x> — `instrukt docs get --domain <x>` ``.
+pub fn domain_reference_line(domain: &str) -> String {
+    format!("- {domain} — `instrukt docs get --domain {domain}`")
+}
+
 /// The command that reads `id` with its closure.
 pub fn closure_command(id: &SnippetId) -> String {
     format!("instrukt docs get {id} --closure")
@@ -74,6 +86,11 @@ pub struct Selection {
     /// The snippets in full, in traversal order: each required read before
     /// the snippet requiring it, each once.
     pub in_full: Vec<InFull>,
+    /// What another repository publishes, named rather than copied: one
+    /// [`reference_line`] or [`domain_reference_line`] per required read
+    /// the rendering does not hold, in traversal order. Only a committed
+    /// rendering has any.
+    pub references: Vec<String>,
     /// The `listed` snippets, in the order the index lists them.
     pub listed: Vec<Listing>,
     /// The position's procedures carrying an `activation_trigger`.
@@ -112,8 +129,9 @@ impl Selection {
     /// The rendered section: the position's heading; each snippet in full,
     /// headings demoted, under the heading of its own position, a heading
     /// opening wherever the traversal moves to another position; then the
-    /// listing lines, back under the position's heading; then the triggered
-    /// procedures neither rendered in full nor listed.
+    /// reference lines and the listing lines, back under the position's
+    /// heading; then the triggered procedures neither rendered in full nor
+    /// listed.
     pub fn render(&self) -> String {
         let mut blocks: Vec<String> = vec![heading(&self.position)];
         let mut current = self.position.as_str();
@@ -131,10 +149,15 @@ impl Selection {
             blocks.push(in_full(snippet));
         }
         let lines: Vec<String> = self
-            .listed
+            .references
             .iter()
-            .chain(self.triggered.iter().filter(|t| !shown.contains(&t.id)))
-            .map(Listing::line)
+            .cloned()
+            .chain(
+                self.listed
+                    .iter()
+                    .chain(self.triggered.iter().filter(|t| !shown.contains(&t.id)))
+                    .map(Listing::line),
+            )
             .collect();
         if !lines.is_empty() {
             if current != self.position {
