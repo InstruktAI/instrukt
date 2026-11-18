@@ -66,10 +66,23 @@ The record names consumer and source coordinate, retains original envelope or ra
 entry, and records attempts, first/last attempt and failure details. The
 announcement names the consumer and parked entry, uses a stream-entry subject
 and none origin, and is a declared stateless fact. It never states successful
-business handling. Parking advances settled accounting only after these stages
-succeed. A failed persist, announcement or ACK remains unsettled and retries
+business handling. Parking advances settled accounting only after the persist
+and the ACK succeed. A failed persist or ACK remains unsettled and retries
 unfinished parking before later entries; already completed stages remain
-recognizable after interruption. Other groups keep their own progress.
+recognizable after interruption. A failed announcement — local transport not
+prepared, the envelope not encodable, local Redis unreachable — is counted in
+`instrukt events status` and parking completes without it, so it never holds later
+entries. Other groups keep their own progress.
+
+A reaction that panics is caught where it is called: the entry counts a failed
+attempt, as any failure does, and the reader goes on.
+
+The activation matcher reads the published subscriptions entry by entry: an entry
+that cannot be decoded, or that is invalid, is dropped and named in
+`instrukt events status`, and every other subscription stays active. An index that
+cannot be read as a whole fails the event's handling, which is retried and then
+parked; it is never taken as empty.
+`instrukt events status` counts events settled with no activation.
 
 ### Lifetime distinction
 
@@ -145,9 +158,10 @@ Then selection is identical and only the selected reaction interprets data
 ```gherkin
 Given a developer has an event that fails through the attempt ceiling, including a malformed entry
 When parking succeeds
-Then its original evidence and failure facts are inspectable as that consumer's dead letter and it is announced before ACK
-And later entries proceed
-But any failed parking stage leaves it unsettled and resumes the unfinished stages after interruption
+Then its original evidence and failure facts are inspectable as that consumer's dead letter
+And later entries proceed, whether or not its announcement could be made
+And a dead letter that could not be announced is counted in status
+But a failed persist or ACK leaves it unsettled and resumes the unfinished stages after interruption
 ```
 
 ### UC-EC9: Catch up an existing responsibility after downtime
@@ -165,6 +179,15 @@ And missing trimmed payloads remain a visible recovery limit rather than success
 Given a developer registers a new retained consumer after older events exist
 When its group is prepared and new producers are admitted
 Then it receives subsequent occurrences without replaying stream or local-log history
+```
+
+### UC-EC13: A developer's procedure keeps responding while another's subscription is broken
+
+```gherkin
+Given a developer has published two procedures that subscribe to events, and the subscription entry of one of them is broken
+When an event the other procedure subscribes to arrives
+Then that procedure's agent takes the event up
+And the developer sees the broken entry named in status
 ```
 
 ## Known caveats

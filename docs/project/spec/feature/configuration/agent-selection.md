@@ -51,19 +51,30 @@ profile, kind, instance, model and harness-native effort/options.
 
 ### Shipped defaults and upgrades
 
-instrukt deploys the file once and then treats it as the user's own. It ships
-default profiles for every harness T3 has built in. The role map preserves the
+The defaults are part of the program. It ships default profiles for every harness T3 has built in. The role map preserves the
 cross-model pattern: authors prefer Claude, reviewers prefer Codex. These are
 heuristics, not validation rules, and DeepSeek has no special default position.
 Shipped effort is `high`, never `xhigh` or `max`; each `premium` chain ends
 with the strong model. Exact models and chains belong to the shipped data,
 not a price promise or a rule enforced against user edits.
 
-On upgrade, an unedited deployed file is replaced with the new defaults. An
-edited file is retained and instrukt reports that new defaults exist. Whether
-it was edited is established against the deployed version, never guessed from
-its age. Owned-shape migrations remain distinct from default replacement and
-follow `project/instrukt/spec/feature/configuration/owned-files`.
+`agents.yaml` is optional and holds the user's overrides. The effective
+selection is the shipped defaults with the file merged over them before
+validation: maps (`profiles`, `roles`, `bundles`) by key; within an entry, a
+field the file sets replaces the shipped one and a field it leaves out is
+inherited; lists (an order, a tier chain, `can`) are replaced whole. The merged
+value is validated as one document. A newer instrukt's defaults therefore reach
+every key the file does not name. instrukt never writes the file
+(`project/instrukt/policy/checks-and-guards`: a person's stated choices are
+migrated, never discarded). Owned-shape
+migrations follow `project/instrukt/spec/feature/configuration/owned-files`.
+
+A file that is a full copy of shipped defaults, recognised as unedited by the
+deployment record kept beside it, is removed by the first writing command, which
+then deletes the record. A file the record does not recognise as unedited —
+edited, unrecognised, or with the record unreadable — is kept and overrides
+everything it names. Reading commands change neither, and with the record gone
+nothing is converted again.
 
 Capability-field resolution preserves customized agents files at read time;
 its contract is `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
@@ -141,13 +152,13 @@ But malformed fields or an invalid effort value produce shape findings
 And configured roles with no installed procedure are reported
 ```
 
-### UC-AS4: Preserve user edits during a defaults upgrade
+### UC-AS4: Receive new defaults while keeping one's own choices
 
 ```gherkin
-Given a newer instrukt ships changed agents defaults
-When its deployed file is unchanged from the prior defaults
-Then the file receives the new defaults
-But an edited deployed file is kept and the new defaults are announced
+Given a developer overrode one role's profile order in their agents file
+When work starts for that role and for a role they did not override
+Then the first starts on the profile they chose
+And the second starts on the shipped default
 ```
 
 ### UC-AS5: Check a harness before creating a thread and contain quota marking (retired)

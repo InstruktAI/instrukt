@@ -72,7 +72,7 @@ into it when enabled. Core declares the todo-existence and flavor-role lookup
 interfaces, wired by the CLI to todos only when enabled.
 
 Core declares a caller-identity lookup interface for configuration interpolation
-and commit composition. The CLI wires the explicitly selected runtime adapter
+and commit composition. The CLI wires the selected runtime adapter
 into it; the lookup reads caller context without runtime I/O. Core never imports
 runner. The CLI also wires owner-supplied work/standing assignment lookup into
 command admission. The native caller identifies the recorded assignment whose
@@ -108,7 +108,7 @@ deleting the home is not a lossless reset.
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
-| `agents.yaml` | one role map with class, scoped `can` bundles, model order/tier and App references; typed provider-instance tier chains | shipped once, then user-owned; upgrade handling under `project/instrukt/spec/feature/configuration/agent-selection` |
+| `agents.yaml` | the user's overrides of the shipped role map (class, scoped `can` bundles, model order/tier, App references) and provider-instance tier chains; optional | the user; the defaults are in the program (`project/instrukt/spec/feature/configuration/agent-selection`) |
 | `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
 | `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
 | `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
@@ -125,6 +125,16 @@ deleting the home is not a lossless reset.
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+
+The state directory is resolved to its canonical location once, and every path and
+lock above derives from it, so a home reached through a link keeps one authority;
+a link at the database file itself is refused
+(`project/instrukt/spec/feature/work/state-database`). The state database also holds
+the read-back cursor of each connector (`connector_read_back`), each conversation
+message's no-work interval and the current state of the runner's background
+workers — the history workers and the readiness refresh (`runner_workers`). Installation keeps no record of the units it wrote and the runner
+service publishes no identity: both converge by name
+(`project/instrukt/spec/feature/runner/module-installation`).
 
 A project carries `instrukt.yaml` (the project layer) and documentation in
 three positions:
@@ -162,7 +172,7 @@ commands. Docs name `-h`.
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
 | Configured agent runtimes | publication | rendered global files in each configured runtime's home, written whole on every sync and never removed, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
-| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
@@ -408,8 +418,9 @@ session-fixed timing through A3's bounded batch log.
   resumes when GitHub is reachable.
 - **Main turns red anyway:** the integrator reverts the culprit first and
   repairs it in its own todo.
-- **No runtime is chosen:** runtime-dependent module enablement refuses and
-  names `runner.runtime`; code selects none. A missing caller context makes
+- **`runner.runtime` names no compiled adapter:** runtime-dependent module
+  enablement refuses and names it. Unset, it is the compiled adapter; code never
+  detects one. A missing caller context makes
   `runtime.session_id` fail and omits a commit's `Session:` trailer.
 - **Runtime identity or delivery is uncertain:** preserve the event, key and
   any start marker; recover through listing or explicit resolution. A failed

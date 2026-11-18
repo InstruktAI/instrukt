@@ -43,6 +43,17 @@ operation, so its default is unavailable; an explicit `runner.notify` command
 can provide it. The project layer does not supply this machine-level
 notification command.
 
+The runner also raises an anomaly, once per running process, for what automation
+cannot resolve in a conversation or a start: an unresolved start, a live key
+conflict or an archived bound thread that persists past the runner's operator
+bound, a message no turn has taken past that bound, and a message whose turn keeps
+failing (`project/instrukt/spec/feature/runner/session-continuity`,
+`project/instrukt/spec/feature/company/conversations`). Each is also listed in
+`instrukt events status` with its door, whether or not a notification command is
+configured, so the operator sees it when the runtime offers no notification
+(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
+the operator).
+
 ## Use cases
 
 ### UC-AN1: Notice a failed task that is not waiting in a conversation

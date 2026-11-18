@@ -111,7 +111,9 @@ hook and test commands retain their existing scope.
 the newest version-ordered `v*-nightly.*` tag and its commit using
 `git ls-remote --tags --refs`, without the releases API for discovery. It compares
 that version with the pin recorded on the workflow-owned `upstream/t3-nightly`
-branch. An unchanged nightly skips the update and check. A missing branch or
+branch. An unchanged nightly skips the update; the check is dispatched again when
+no contract run exists for the recorded head, so a dispatch that failed or was
+interrupted is repaired at the next run. A missing branch or
 changed nightly produces a pin-bump commit on that branch, using the current
 default-branch source with `crates/instrukt-runner/t3.version` set to the nightly
 version. The default branch's stable pin and the person's installation stay
@@ -188,9 +190,9 @@ And it leaves the maintainer's runtime and home untouched
 - Dependency observation sees current selected branch heads. A failure on a
   head replaced by a newer nightly before observation may be missed; retained
   Actions diagnostics do not provide catch-up through this route.
-- A pin commit records the selected nightly, not completed verification. An
-  interrupted or failed dispatch needs redispatch against that branch; unchanged
-  nightly discovery does not itself prove that a check ran.
+- A pin commit records the selected nightly, not completed verification. A
+  dispatch that never produced a run is repeated by the next hourly run; a run that
+  completed and failed is not repeated for an unchanged nightly.
 - Provider-free checks cover migration shape and the payloads actually produced
   by management/deferred-input operations. Successful model execution, assistant
   streaming/completion, reasoning/tool/diff payload generation, provider-created

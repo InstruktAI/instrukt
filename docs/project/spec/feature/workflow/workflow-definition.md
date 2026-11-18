@@ -85,7 +85,7 @@ non-list values and a missing declaration are definition findings. Baseline
 module primitives remain required independently of this list.
 
 Enablement unions `requires` across the selected workflow's flows and checks
-it against the explicitly selected runtime's native capabilities for agent
+it against the selected runtime's native capabilities for agent
 operations and adapter capabilities for unattended operations. A nonempty
 instruction is not proof of capability; supported native operations come from
 the selected runtime's separately declared capability facts, not prose inspection. A missing required capability

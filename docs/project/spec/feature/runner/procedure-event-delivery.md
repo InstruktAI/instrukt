@@ -59,8 +59,9 @@ Each eligible handover selects the oldest pending snapshot into one ordered log,
 shared across events, approvals and recovery of runner-owned executions. A delivery
 contains at most 32 entries and 64 KiB including its header, metadata and final
 `N more pending` entry. The rest stays durable for the next handover after
-observed consumption. A single entry larger than that limit remains pending
-with a visible size failure for explicit resolution; no event payload is truncated.
+observed consumption. A single entry larger than that limit is set aside with a
+visible size failure in `instrukt events status` and the entries after it proceed;
+no event payload is truncated.
 No collection delay is added. In continuous `run`, durable activation acceptance
 signals the existing runner loop immediately; its normal periodic wake still
 observes runtime state when no new fact arrives. Routing performs no runtime
@@ -77,7 +78,10 @@ state already selected or accepted by the runtime is never replaced.
 One session-wide slot covers every producer. A selected or uncertain send also
 reserves it. New entries remain pending while it waits. Only adapter evidence
 that the message entered a native run clears the slot; acceptance alone clears
-nothing. Missing consumption evidence retains the slot and reports its gap.
+nothing. Missing consumption evidence retains the slot and reports its gap until
+the input bound (`runner/inputs.rs`) passes; then the input is recorded as
+unconfirmed, the slot is released and later entries proceed. An unconfirmed input
+is never sent again.
 A native turn reported as interrupted receives its same immutable batch again;
 a generic failure, cancellation or rollback retains its own recovery contract. Handling
 reconciles domain effects idempotently. Completion is a domain outcome rather
@@ -324,7 +328,8 @@ Examples:
   can trigger batch replay; a terminal transition missed between observations
   is not reconstructed from a later run ID.
 - A claim change during an unconfirmed mixed handover blocks retries of that
-  fixed batch while its original waiting reservation remains. Runtime evidence
+  fixed batch while its original waiting reservation remains, until the input
+  bound releases it as unconfirmed. Runtime evidence
   can reconcile an already supplied message; an obsolete approval is never
   re-sent merely to clear the slot. T3's CLI supplies no atomic queue withdrawal.
 - Handover establishes supplied context, not successful domain execution.

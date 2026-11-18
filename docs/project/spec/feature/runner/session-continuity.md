@@ -6,8 +6,8 @@ visibility: public
 
 ## What it is
 
-The runner defines a Rust runtime-adapter trait and ships T3 first, explicitly
-selected with global `runner.runtime`. It acts where instrukt has no agent:
+The runner defines a Rust runtime-adapter trait and ships T3 first, selected
+with global `runner.runtime` or, unset, as the one compiled adapter. It acts where instrukt has no agent:
 todo orchestrator pickup, event-driven standing agents, recurring tasks,
 keyed singleton discovery, event/approval delivery and conversation-link relay. Its implementation is code.
 
@@ -157,7 +157,8 @@ to its own dispatch path, never an instruction for an agent to execute.
 
 ### Runtime choice and feature availability
 
-`runner.runtime` is global-only and names a compiled adapter. It has no default.
+`runner.runtime` is global-only and names a compiled adapter. Unset, it is the
+one adapter compiled into this instrukt.
 `t3` is the first shipped implementation. No code chooses a runtime from
 installed tools or session environment variables. Unknown adapter names are
 validation findings. Runtime instruction entries are configuration prose, not
@@ -168,26 +169,26 @@ adapter verb templates.
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
-| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unset or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
+| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
-enabled for a declaring home and no runtime chosen: the project's effective
+enabled for a declaring home whether or not its runtime is installed there: the project's effective
 switch for a project source, the machine's global switch for a company source.
 Its receiver installs and serves as on any ingress. The standing-agent row
 applies where activation happens: on the reacting computer, and for the events
 a computer emits itself; a procedure activation the ingress accepts for an event
-of its own fails visibly at its execution boundary while no runtime is chosen.
+of its own fails visibly at its execution boundary while that runtime is not installed there.
 Every other feature in the table keeps its requirement.
 
-Enabling a module without a selected runtime, or with its native/adapter path
+Enabling a module while `runner.runtime` names no compiled adapter, or with its native/adapter path
 lacking a required capability, is refused without changing configuration, with
 the ingress exception above. The refusal and
-`config validate` name the runtime and missing capability, or state that no
-runtime is chosen. A temporarily unreachable runtime is an execution failure,
+`config validate` name the runtime and missing capability, or the unknown
+runtime name. A temporarily unreachable runtime is an execution failure,
 never a reason to select another adapter or create a replacement session.
 Enablement reads the selected workflow's typed `requires` declaration under
 `project/instrukt/spec/feature/workflow/workflow-definition`; it does not infer
@@ -334,8 +335,14 @@ The same discovery and start rules govern every key, for both `start` and
 4. Listing failure, malformed output, an unknown listing shape or multiple
    exact matches leaves the assignment pending and starts nothing. Multiple
    matches report a key conflict. Failed sends retain the same target for
-   retry. A bound id that is absent, renamed or inaccessible raises an anomaly;
-   it is not a request for a replacement start or retargeted delivery.
+   retry. A bound id the runtime reports absent (an explicit unknown-thread
+   answer) is retired with its key's binding, and the start proceeds under the
+   same key. A bound id that is archived is no replacement: nothing is started,
+   its completed answers are still read, and the operator is told. A bound id
+   that is alive but no longer lists under its key (renamed) keeps being used by
+   its id. An inaccessible id is an observation error, retried
+   (`project/instrukt/policy/checks-and-guards`: a new actor starts only where the
+   earlier one is proven gone).
 
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
@@ -350,6 +357,24 @@ key. The resolved request retains its input and retry permission until retried.
 A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
+
+**Recovery by case.** Every place a start or delivery can stall is one of these;
+whether a fresh start is made depends on the actor it would share the work with,
+never on how long anyone has waited:
+
+| Case | Established by | Outcome |
+| --- | --- | --- |
+| Nothing started | Listing failed, the runtime not ready, no permitted model, rejection proven before creation | Retried every pass until it succeeds. |
+| Lost acknowledgement | An unresolved marker | Recorded; discovery reconciles every pass; `instrukt sessions resolve-start` is the operator's door. No fresh start. |
+| Proven absence | The runtime reports the bound thread absent | The binding is retired; a fresh start under the same key. |
+| Live conflict | Two or more threads under one key | Nothing chosen, nothing started; the door is to archive or delete the extra thread. |
+| Archived | The bound thread is shown archived | Nothing started; its completed answers are read; the door is to unarchive or delete it. |
+| Renamed, alive | The bound thread reads, its key no longer lists | Used by its id. |
+
+An unresolved start, a live conflict and an archived thread that persist past the
+runner's operator bound raise one anomaly each (`runner.notify`) and are listed in
+`instrukt events status` with their door, whether or not a notification command
+is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains
@@ -369,23 +394,33 @@ role order or tier chains. Every T3 built-in harness has shipped defaults.
 ACP discovery and configuration remain with the configuration skill; instrukt
 creates no T3 provider instance and implements no ACP protocol.
 
-Before each instrukt-owned start, the adapter acquires and translates readiness
-facts. Generic runner policy owns quota expiry, marking and the ordered walk of
-configured profiles and tier chains; those decisions are not adapter translation.
-A failed or unknown readiness outcome refuses creation visibly. Existing keyed
-conversations retain their captured selection without a new-start probe.
+An instrukt-owned start selects from the last known readiness facts and never
+acquires them itself. The runner keeps those facts current in the background, on
+a wake of its own and never on a start; the adapter translates them. Generic
+runner policy owns quota expiry, marking and the ordered walk of configured
+profiles and tier chains; those decisions are not adapter translation. A refresh
+that fails or runs past its limit keeps the last known facts and is reported in
+`instrukt events status`; it never refuses a start. With no facts known yet, a
+start proceeds in the configured order. A refusal by the runtime at the start
+itself is the signal, handled as any refused start. Existing keyed conversations
+retain their captured selection without a new-start probe.
 
-For T3, the adapter reads the local server's `server.getConfig` WebSocket RPC and
-its `providers: ServerProvider[]` snapshot. It issues a five-minute read-scoped
-session with `t3 auth session issue --scope orchestration:read --ttl 5m
---token-only --label instrukt-readiness`, keeps its token only in memory and
-revokes that session after use. Server discovery, token framing and RPC framing
-follow T3's internal protocol. Runtime-descriptor version, negotiated orchestration
-protocol and consumed response-shape validation admit the operation; CLI/server
-release strings are diagnostics, not exact-release gates. Unknown descriptor
-version or protocol/shape, failed acquisition and failed token cleanup refuse startup
-with the operation and a safe failure category, without raw outputs or credentials.
-A hard process stop before revocation leaves the session bounded by its short TTL.
+For T3, a refresh reads the local server's `server.getConfig` WebSocket RPC and
+its `providers: ServerProvider[]` snapshot. The runner issues one read-scoped
+session when it starts, with `t3 auth session issue --scope orchestration:read
+--ttl <lifetime> --token-only --label instrukt-readiness`, keeps its token only in
+memory, issues the next one before it expires and then revokes the earlier one,
+and revokes the last one when it stops; the token's lifetime and the limit of each
+CLI launch are declared in `crates/instrukt-runner/src/runtime/_t3_readiness.rs`.
+Server discovery, token framing and RPC framing follow T3's internal protocol.
+Runtime-descriptor version, negotiated orchestration protocol and consumed
+response-shape validation admit a snapshot; CLI/server release strings are
+diagnostics, not exact-release gates. An unknown descriptor version or
+protocol/shape, a failed or slow token issue and a failed read are a failed
+refresh, reported with the operation and a safe failure category, without raw
+outputs or credentials. A token that cannot be revoked is logged: it is
+read-scoped and lapses at the end of the TTL it was issued with. A hard process
+stop before revocation leaves the session bounded by its short TTL.
 
 The same read answers publication's question which agent runtimes are
 configured (`project/instrukt/spec/feature/publication/agent-entrypoints`):
@@ -415,8 +450,11 @@ Reported model slugs and aliases are acquisition facts; T3's native `auto` and
 Runner policy applies those facts in configured order. Automatic starts skip
 unavailable and degraded marks until expiry at the command clock; available
 clears the addressed restriction. A usage window at 100% restricts that profile's
-configured models until its reset. Missing resets use one hour from the command
-clock and record that default. Overlapping exhausted windows use the latest
+configured models until its reset. Missing resets use one hour from the time the
+snapshot was observed and record that default. A snapshot's windows are applied
+once, when the snapshot is read; a start applies the restrictions in force and
+never applies the windows of a snapshot it reuses again, so a reused snapshot
+never renews a lapsed restriction. Overlapping exhausted windows use the latest
 active reset; a reset already past has lapsed. Observed quota marks and manual
 restrictions remain independent. Availability and skip diagnostics retain cause
 and expiry. Launch-error text supplies no quota evidence or no-start proof.
@@ -454,7 +492,7 @@ instruction prose is a separate configuration surface.
 | Todo phase orchestrator start | Preparation: `--worktree origin/main --branch <slug>/prepare`. Work: `--worktree origin/main --branch <slug>/work`; resumption on another computer: `--worktree origin/<slug>/work --branch <slug>/work`. Creation refuses an existing local phase branch. Native shared children inherit the orchestrator's recorded phase worktree. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
-| Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search. |
+| Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |
 | Recover keyed identity | `t3 thread list --project <checkout> --json`; top-level array entries carry `threadId`, `projectId`, `title`, `status`, `link`, `providerInstanceId`, `model`, `settled`, `snoozed`, and timestamps. `settled` alone does not make a thread gone. |
 | Linked-thread source | The adapter reads the T3 projection database read-only, with per-conversation fingerprints and native database change notifications, as history does. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
@@ -496,7 +534,7 @@ GitHub command creates no second attention item.
 | `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
-| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. |
+| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Only absence retires a binding. |
 
 An unrecognised status or response shape, command failure or unreachable runtime
 is an observation error, never `gone` or success. Status spellings and optional
@@ -512,7 +550,10 @@ workspace work requires a new attempt. Artifact writers and stamps retain `<runt
 step is complete only with its required artifact and stamp. For a runner-owned
 execution, after a terminal run without either, or a gone session,
 the runner attempts one recovery send to that same id; continued absence raises an anomaly. Observation failure retries
-observation instead. Release claims through work's command contract; ending
+observation instead. Such an execution is listed in `instrukt events status` until its workflow
+state advances, whether or not a notification command is configured; recovered means
+that its state advanced (`project/instrukt/policy/checks-and-guards`: what instrukt
+cannot resolve goes to the operator). Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
 
 ### Fresh canonical base
@@ -568,13 +609,15 @@ But a custom workflow requiring existing-worktree attachment is refused with the
 And a feature missing another required capability is refused without changing configuration
 ```
 
-### UC-SS6: A developer who has chosen no runtime is never given one
+### UC-SS6: A developer who has chosen no runtime works with the compiled one, never a detected one
 
 ```gherkin
-Given T3 Code is installed but the developer has chosen no runtime
+Given the developer has not set `runner.runtime`
 When the developer enables work dispatch or standing agents
-Then instrukt refuses saying that no runtime is chosen
-And no runtime is picked for them
+Then the one runtime compiled into instrukt is selected and named
+And nothing about installed tools or the caller's session changes that choice
+But when `runner.runtime` names no compiled adapter
+Then instrukt refuses naming the unknown runtime
 ```
 
 ### UC-SS8: Events keep one standing agent through a runtime outage
@@ -709,6 +752,16 @@ And old key-only titles and new readable titles are both discovered
 And duplicate old/new titles for one key are reported as a conflict
 And the existing conversation wakes without a new thread
 And the listing window has no part in that decision
+```
+
+### UC-SS22: A developer who deleted a standing agent's thread has the subject's events handled in a new one
+
+```gherkin
+Given a developer's procedure keeps a standing agent for a subject
+When the developer deletes its thread in the runtime and a later event for that subject arrives
+Then a successor conversation for that subject handles the event
+But when the developer archived the thread instead
+Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

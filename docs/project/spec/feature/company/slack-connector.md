@@ -64,8 +64,11 @@ oauth_config:
       - app_mentions:read
       - chat:write
       - channels:history
+      - channels:read
       - groups:history
+      - groups:read
       - im:history
+      - im:read
       - users:read
       - users:read.email
 settings:
@@ -94,8 +97,15 @@ connector; other connectors, event readers and local work continue. Where
 Slack limits a method and names a wait, the connector does not call that
 method for that workspace again before the wait is over, for as long as the
 runner runs; after a restart it learns the wait again from Slack's answer.
-The runner reads the declared connectors when it starts: a connector declared
-or removed while it runs takes effect when the runner next starts.
+The runner admits declared connectors when it starts and at every wake: a
+connector declared, changed or removed while it runs is connected, reconnected or
+disconnected at the wake that admits the change
+(`project/instrukt/spec/feature/runner/work-dispatch`: the runner works from its
+admitted configuration). At admission the connector reads the scopes Slack names
+for its bot token; one the manifest requires that is missing withholds the
+connector with a finding naming it
+(`project/instrukt/spec/feature/configuration/company-homes`). A token Slack
+refuses later is retried and reported like a lost connection.
 
 The Slack app is subscribed to exactly two kinds of message: mentions of the
 agent and direct messages to it. Slack sends instrukt nothing else from the
@@ -133,7 +143,8 @@ undecided admits no one. When Slack answers that it shows the app no such
 user (`user_not_found`, `user_not_visible`), the sender is not one of the
 company's own. When Slack gives no answer about the sender, because the
 request fails, is limited or Slack refuses the app's own token, nothing is
-decided and the message waits.
+decided and the message waits; Slack is asked again until it answers
+(`project/instrukt/policy/checks-and-guards`: an outside failure is retried).
 
 | Slack's record | Required |
 | --- | --- |
@@ -151,14 +162,30 @@ message alike.
 
 ### While the agent works
 
-From the admission of an addressed message until its turn ends, the connector
-shows Slack's status line for it with the text
-`is working on your request`. Slack puts the app's name in front of it.
+From the admission of an addressed message until it is complete — its answer
+posted, or its turn completed with a bare `NOOP` — the connector shows Slack's
+status line for it with one of two fixed texts, chosen from the
+message's state (`project/instrukt/spec/feature/company/conversations`):
+
+| The message's state | Text |
+| --- | --- |
+| its no-work interval is open, the relay-wide failure included (the interval the notice reads) | `is temporarily unavailable — your message is saved` |
+| otherwise, from its admission | `is working on your request` |
+
+Slack puts the app's name in front of it. Each status pass sets the text that
+matches the state as it then stands, so a change of state shows at the next
+pass. Where one status serves several unfinished messages, the unavailable text
+shows while every one of them has its interval open, the working text
+otherwise.
 
 | Where | The status sits on | It stays while |
 | --- | --- | --- |
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
+
+A message is unfinished until its answer is posted or its turn completes with a
+bare `NOOP`; a failed turn awaiting redelivery and an answer not yet posted leave
+it unfinished.
 
 Admitting a message wakes the connector's status pass, so the person normally
 sees at once that the request was taken on; that first setting can wait behind
@@ -209,6 +236,11 @@ that one was answered, and does not depend on whether the agent posted an
 answer. Messages the agent was sent before stay in its session and are not
 sent again.
 
+When the accompanying messages cannot be read within the context bound the
+conversation core declares, counted from the message's arrival, the message
+is delivered without them and the conversation context says they could not be
+read.
+
 ### Posting
 
 An answer is posted with the bot token into the conversation it answers: in
@@ -227,6 +259,37 @@ characters remain, that remainder is posted unchanged as the last part and
 splitting ends, so an answer that is an exact multiple of the limit is
 followed by no empty part. Nothing is inserted, so no part is longer than
 12,000 characters.
+
+The one platform notice of `project/instrukt/spec/feature/company/conversations`
+is posted the same way, worded
+`<@member-id> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.`,
+with the waiting person's Slack id. To recognise a notice whose post lost its
+response, the connector reads the conversation (`conversations.replies` for a
+thread, `conversations.history` for a direct message) from that person's epoch
+for a post of its own beginning with that mention and sentence.
+
+### Reading back after a connection
+
+After every connection is established, the connector reads back what was written
+while it was not connected:
+
+- For each conversation the app is in (`users.conversations`, types
+  `public_channel`, `private_channel` and `im`), it reads every parent message
+  Slack serves (`conversations.history`, no time filter on parents), the replies
+  after the read window's start of each parent whose `latest_reply` is after it
+  (`conversations.replies`), and the top-level and direct messages after it.
+- The window starts where the last completed read-back started, less a margin;
+  with none completed, at the earlier of the time the runner first saw the
+  connector declared and the answering bound back
+  (`project/instrukt/spec/feature/company/conversations`). Only a read-back that completes moves it;
+  a failed, partial or interrupted one reads the same window again.
+- Every message read goes through the rules of "What reaches the agent" and "Who
+  is answered". One already retained is skipped by its identity; an addressed one
+  written within the answering bound is admitted like a live one; an older one is
+  not admitted and is named to the operator
+  (`project/instrukt/spec/feature/company/conversations`).
+- Slack's retention, the app's access and Slack's rate limits are its only
+  limits; in a large workspace it runs long, in the background.
 
 ### Direct messages from instrukt
 
@@ -300,10 +363,20 @@ Then the member sees them rendered, not the Markdown that writes them
 And an answer longer than Slack takes in one message arrives in parts, in order, with nothing added to what the agent wrote
 ```
 
+### UC-SL6: Be answered when the earlier messages cannot be read
+
+```gherkin
+Given a member addresses the agent in a thread whose earlier messages Slack cannot hand over
+When the context bound passes
+Then the agent receives the member's message, saying the earlier messages could not be read
+And the member is answered
+```
+
 ## Known caveats
 
-- A message written while the connection is down reaches the agent only when
-  Slack still delivers it after reconnection.
+- A message written while the connection is down is read back after it returns,
+  as far as Slack still serves it; one older than the answering bound is named to the operator,
+  not answered.
 - The agent reads no more of a conversation than what accompanies an addressed
   message.
 - Files, images and reactions are not carried; a message's text is. The

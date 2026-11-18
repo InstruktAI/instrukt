@@ -68,8 +68,9 @@ removes a key, any other value replaces.
 the derived `runtime.session_id` and selected `runtime.<operation>`.
 
 **Selected runtime**
-: The compiled adapter explicitly chosen by global `runner.runtime`, initially
-`t3`. Absence means no runtime, not a request for detection or a default.
+: The compiled adapter chosen by global `runner.runtime`, initially `t3`.
+Absent, it is the one runtime compiled into this instrukt; an unknown name is a
+finding. No runtime is detected from installed tools or the caller's environment.
 
 **Caller identity**
 : The selected adapter's recognition of the current native session. It may
@@ -90,7 +91,7 @@ be absent outside that runtime and does not change runtime selection.
   before any configuration is read (a document read without them finds no
   connector kind supported); layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
-  revisions and safe patching; interpolation; validation of the explicit runtime
+  revisions and safe patching; interpolation; validation of the runtime
   choice, agent-action instruction entries and derived caller identity.
   Code owns the action catalog and operation mappings; configuration owns the
   composed grants, with admission consuming owner-supplied assignment facts.
@@ -111,7 +112,7 @@ be absent outside that runtime and does not change runtime selection.
   each also addressing a company home with `--company <name>`;
   the migration operation every entry path invokes before refusal or skip; the
   configuration schema type the editor schema of `instrukt.yaml` is generated
-  from (`project/instrukt/spec/feature/publication/editor-schemas`); the explicit runtime selection and adapter caller-identity lookup used by
+  from (`project/instrukt/spec/feature/publication/editor-schemas`); the runtime selection and adapter caller-identity lookup used by
   commit composition.
 - **Allowed dependencies** — the company context's connector declarations, as
   published data; configuration depends on no other context's behavior.
@@ -151,7 +152,7 @@ JSON.
 #### Layer document (aggregate)
 
 - **Root:** Layer document (global or project).
-- **Contains:** `schema_version`; settings; explicit runtime choice (global only).
+- **Contains:** `schema_version`; settings; runtime choice (global only; absent, the one compiled runtime).
 - **Invariants:**
   - Every key it holds is permitted in its layer; a key of the other layer is
     a finding, and a write that would introduce one is refused.

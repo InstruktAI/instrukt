@@ -20,7 +20,7 @@ message that writes them itself is refused.
 
 | Fact | Source | Unresolved |
 | --- | --- | --- |
-| Active runtime and its session id | the explicitly selected adapter's recognition of the caller's native session (`project/instrukt/spec/domain/configuration`) | no `Session:` trailer |
+| Active runtime and its session id | the selected adapter's recognition of the caller's native session (`project/instrukt/spec/domain/configuration`) | no `Session:` trailer |
 | Bot-role author | the recognized session's recorded role and configured App's verified bot login/id | refuse with the App identity configuration door |
 | Active agent outside a bot role | the selected adapter's reported agent identity, when it can resolve one | the git user's own identity as author |
 | Non-bot agent author | the global layer's `agents.<name>.git_author` for the active agent | refuse and name `agents.<name>.git_author` |
@@ -36,7 +36,7 @@ when T3 reports no provider-agent identity. A known role with unavailable App
 identity refuses rather than writing under the developer's name. A roleless
 human session keeps the existing non-bot resolution.
 
-The runtime choice is explicit; recognising caller identity does not select one.
+The runtime is `runner.runtime` or, unset, the compiled adapter; recognising caller identity does not select one.
 An adapter may identify the provider of its recognised session, but an unknown
 agent identity stays unresolved rather than being inferred from an ordered
 configuration entry. The adapter's metadata carries the observation.

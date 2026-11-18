@@ -70,6 +70,26 @@ home's `secrets.env`. The machine's secrets file, another company's file, the
 process environment and any `.env` supply no fallback, so two companies use
 the same reference name for different values.
 
+### What a company's connector needs
+
+A connector a company declares is admitted on a computer only with what it needs
+there; each missing one is a finding that names the company and withholds that
+connector, reported by `instrukt config validate --company <name>`,
+`instrukt install --check` and `instrukt events status`
+(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
+enters, never discovered by the running runner):
+
+- a published procedure declaring the role `company-agent` on that computer —
+  publishing it is part of setting the company up;
+- a value in the home's secrets file for each secret the declaration references,
+  not blank;
+- at admission, the provider permissions the connector requires, as the provider
+  reports them for the connector's own token
+  (`project/instrukt/spec/feature/company/slack-connector`).
+
+A token the provider refuses after admission is the provider's availability, not
+a missing prerequisite: the connector retries it and reports it to the operator.
+
 ### Members
 
 ```yaml

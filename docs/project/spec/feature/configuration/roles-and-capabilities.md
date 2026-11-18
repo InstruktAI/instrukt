@@ -82,7 +82,7 @@ project does not own the machine.
 
 ### Caller and object resolution
 
-The explicitly selected runtime adapter recognizes the native caller. For T3,
+The selected runtime adapter recognizes the native caller. For T3,
 `T3CODE_THREAD_ID` yields the native id and the session reference `t3:<id>`.
 The environment identifies the session, not its role. Role, todo and scope come
 from that session's recorded binding, never an environment role variable, a

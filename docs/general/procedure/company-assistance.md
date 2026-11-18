@@ -71,8 +71,15 @@ documents in your home.
 
 ## Recovery
 
-- **instrukt refuses a call.** Tell the person what the refusal names as
-  missing and which part of their request waits on it, and carry out the
-  rest.
-- **The service refuses a call.** Tell the person which action was refused
-  and the reason the service gave, as it gave it.
+- **A service is unreachable or refuses a call.** Tell the person, in their
+  words, which of their services it is, what it said, which part of their
+  request waits on it and what you will do; carry out the rest.
+- **The person must sign in.** Tell them to sign in to that service, as
+  instrukt names it, and that you will continue once they have.
+- **Anything else you cannot do** — instrukt refuses a call for a reason of its
+  own, a document or setting you need is missing. Do not explain it to the
+  person: tell them you cannot do that part right now, carry out the rest, and
+  leave the cause to the operator; instrukt records its refusals.
+- **Your earlier turn on this message did not finish.** A message can reach you
+  again after a turn that failed. Check what the services already show before
+  you act again, so nothing is done twice.
