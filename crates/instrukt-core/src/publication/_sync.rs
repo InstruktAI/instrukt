@@ -416,24 +416,32 @@ fn publish(
         settings,
     };
     preflight(home, project, commit, &prepared)?;
-    // Before anything is published: a refresh that cannot write fails the
-    // sync, and no commit is recorded.
-    if !home.is_development() {
-        *report.editor = write_editor_schemas(&project.primary)?;
-    }
     // Coordinate only publication application with checkout rendering. Validation
     // and preparation retain the separate docs lock, so a checkout inside a
     // pull/rebase never waits for that long-lived preparation phase.
     let _outputs = lock_outputs(home)?;
     let mut tx = Transaction::begin(home.root())?;
-    match write(home, project, commit, request.now, &prepared, &mut tx) {
+    // The editor schemas are the transaction's first steps: a refresh that
+    // cannot write, or any later failure, puts them back as they were, and
+    // no commit is recorded. The links they replaced are named with them.
+    let schemas = if home.is_development() {
+        Ok(Vec::new())
+    } else {
+        write_editor_schemas(&project.primary, &mut tx)
+    };
+    let schema_links = tx.replaced_links().len();
+    let written = schemas.and_then(|schemas| {
+        *report.editor = schemas;
+        write(home, project, commit, request.now, &prepared, &mut tx)
+    });
+    match written {
         Ok(global_files) => {
             let changed = tx.changed()
                 || report
                     .editor
                     .iter()
                     .any(|change| change.kind != EditorChangeKind::Linked);
-            *report.replaced_links = tx.replaced_links().to_vec();
+            *report.replaced_links = tx.replaced_links()[schema_links..].to_vec();
             report.leftovers.extend(tx.commit());
             *report.global_files = global_files;
             let (project, commit) = (project.slug.clone(), commit.clone());

@@ -44,6 +44,8 @@ enum Step {
     /// A symbolic link at `target`, pointing at `points_to`, was removed so
     /// a file or directory could take its place.
     Link { target: PathBuf, points_to: PathBuf },
+    /// The directory `target` was created where nothing stood.
+    CreatedDir { target: PathBuf },
 }
 
 /// The pending writes of one sync.
@@ -91,8 +93,8 @@ impl Transaction {
 
     /// Removes a symbolic link standing at `target`, dangling or not, so a
     /// file or directory can take its place; the file it points to is left
-    /// as it is. Undone by making the link again.
-    fn unlink(&mut self, target: &Path) -> Result<bool, PublicationError> {
+    /// as it is. Undone by making the link again. Whether a link stood there.
+    pub(super) fn unlink(&mut self, target: &Path) -> Result<bool, PublicationError> {
         let io = |source| PublicationError::Io {
             path: target.to_path_buf(),
             source,
@@ -133,6 +135,31 @@ impl Transaction {
             previous,
         });
         Ok(true)
+    }
+
+    /// Makes `target` a directory: a link there is replaced, and a missing
+    /// directory is created, with its parents. Undone by removing what was
+    /// created and making the link again.
+    pub(super) fn ensure_dir(&mut self, target: &Path) -> Result<(), PublicationError> {
+        self.unlink(target)?;
+        match std::fs::symlink_metadata(target) {
+            Ok(_) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: target.to_path_buf(),
+                    source,
+                });
+            }
+        }
+        crate::fsx::create_dir_all(target).map_err(|source| PublicationError::Io {
+            path: target.to_path_buf(),
+            source,
+        })?;
+        self.steps.push(Step::CreatedDir {
+            target: target.to_path_buf(),
+        });
+        Ok(())
     }
 
     /// Removes the file `target` when it exists; a link there is removed
@@ -269,6 +296,11 @@ impl Transaction {
                     }
                     if let Some(saved) = saved {
                         restore_dir(&saved, &target);
+                    }
+                }
+                Step::CreatedDir { target } => {
+                    if let Err(error) = remove_any(&target) {
+                        tracing::error!(event = "sync_rollback_failed", path = %target.display(), %error);
                     }
                 }
                 Step::Link { target, points_to } => {

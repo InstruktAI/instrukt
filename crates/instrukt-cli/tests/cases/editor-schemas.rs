@@ -325,4 +325,42 @@ fn a_refresh_that_cannot_write_fails_the_sync_and_the_next_sync_tries_again() {
         stdout(&env, &next).replace(&repo.head(), "[SHA]")
     );
     assert!(record.exists(), "the next sync publishes");
+
+    // A refresh that fails part-way puts back what it changed before: the
+    // schema it replaced is the link again, pointing where it pointed.
+    let moved = env.path("general-index.schema.json");
+    std::fs::rename(dir.join("general-index.schema.json"), &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, dir.join("general-index.schema.json")).unwrap();
+    let moved_bytes = std::fs::read(&moved).unwrap();
+    std::fs::remove_file(dir.join("domain-index.schema.json")).unwrap();
+    std::fs::create_dir(dir.join("domain-index.schema.json")).unwrap();
+    env.run(repo.path(), ["sync"]).failure();
+    assert_eq!(
+        std::fs::read_link(dir.join("general-index.schema.json")).unwrap(),
+        moved
+    );
+    assert_eq!(std::fs::read(&moved).unwrap(), moved_bytes);
+    std::fs::remove_dir(dir.join("domain-index.schema.json")).unwrap();
+    std::fs::remove_file(dir.join("general-index.schema.json")).unwrap();
+    std::fs::rename(&moved, dir.join("general-index.schema.json")).unwrap();
+    env.run(repo.path(), ["sync"]).success();
+
+    // A sync that fails after the refresh puts the schemas' directory back
+    // as the link it was.
+    let elsewhere = env.path("schemas-elsewhere");
+    std::fs::rename(&dir, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &dir).unwrap();
+    let kept: Vec<Vec<u8>> = SCHEMAS
+        .iter()
+        .map(|name| std::fs::read(elsewhere.join(name)).unwrap())
+        .collect();
+    std::fs::remove_file(&record).unwrap();
+    std::fs::create_dir(&record).unwrap();
+    env.run(repo.path(), ["sync"]).failure();
+    assert_eq!(std::fs::read_link(&dir).unwrap(), elsewhere);
+    let after: Vec<Vec<u8>> = SCHEMAS
+        .iter()
+        .map(|name| std::fs::read(elsewhere.join(name)).unwrap())
+        .collect();
+    assert_eq!(after, kept);
 }

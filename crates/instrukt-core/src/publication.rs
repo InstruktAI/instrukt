@@ -38,7 +38,7 @@ pub use _adoption::{
 pub(crate) use _checkout::{Checkout, checkout_entrypoints};
 pub use _editor::{
     EditorChange, EditorChangeKind, SCHEMAS_DIR, committed_modeline, editor_schema_describes,
-    refresh_editor_schemas, write_editor_schemas,
+    refresh_editor_schemas,
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
