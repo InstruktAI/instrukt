@@ -105,17 +105,18 @@ same content with the same instrukt release write the same bytes.
   document; the door is to list that snippet instead, so it is read on demand
   where `instrukt docs get` resolves the value. `@exec`, `@include` and a
   reference left for an agent program to resolve are findings as everywhere
-  (`general/policy/agent-artifact-governance`: no generated entrypoint leaves
-  an import).
+  (`general/policy/agent-artifact-governance`: a reference a rendering would
+  leave is a finding, and a committed `AGENTS.md` with one keeps its previous
+  content).
 - **Written whole.** A rendering is written over whatever `AGENTS.md` beside
   its master holds, a file a person wrote included; `instrukt init` keeps a
   copy of a hand-written root file first
   (`project/instrukt/spec/feature/repository/project-initialization`). An
   `AGENTS.md` whose master no longer exists is removed only while it opens
   with the generated line
-  (`general/principle/trust-and-guardrails`: a rendering is rebuilt from its
-  sources, so a person's words are protected by a copy and by where they
-  belong, never by a refusal).
+  (`general/policy/agent-artifact-governance`: the `AGENTS.md` beside a
+  master is instrukt's; what a person writes into it by hand is replaced at
+  the next commit, and a person's own instructions belong in documentation).
 
 ### Project entrypoints
 
@@ -256,9 +257,10 @@ publishes. They are the computer's own, never committed anywhere.
   finding naming the file and the reference and goes on: `general`'s
   `expanded` can bring in a snippet another project published, which this
   sync does not validate again, and one such snippet stops no other file
-  (`general/policy/agent-artifact-governance`: no generated entrypoint leaves
-  an import; `general/principle/trust-and-guardrails`: the next sync rebuilds
-  the file once the snippet is corrected).
+  (`general/policy/agent-artifact-governance`: a global file with such a
+  reference is written as rendered and named, and the sync goes on;
+  `general/principle/trust-and-guardrails`: the next sync rebuilds the file
+  once the snippet is corrected, so a refusal would guard nothing).
 - **A domain without `index.yaml`** is absent from every global file; the
   sync reports a notice naming it, and it is found through
   `instrukt docs index --domain <x>`.
@@ -276,6 +278,14 @@ publishes. They are the computer's own, never committed anywhere.
   that instance and says its home was not reported. Instances that share a
   home share one file; an instance with a home of its own receives its file
   there.
+- **What the sync reports.** Every sync that writes global files names in
+  its output each destination it wrote or found current, with the runtime
+  and the instances it serves, and each link it ensured, beside the notices
+  this section names. That output is where the destinations show:
+  `instrukt status` keeps no record of them and asks no runtime
+  (`project/instrukt/spec/feature/publication/instrukt-status`), and
+  `instrukt init` reports the ones a first sync will write
+  (`project/instrukt/spec/feature/repository/project-initialization`).
 - **Links where an instance reads through another folder.** Besides the home
   that receives the file, the runtime reports, per instance, each folder in
   which a link to that file must exist for the instance to read it
@@ -284,15 +294,14 @@ publishes. They are the computer's own, never committed anywhere.
   at the file in the home. A file there under that name, or a link pointing
   elsewhere, is replaced by that link; no link is ever removed, and nothing
   is recorded (`general/policy/agent-artifact-governance`: a runtime's
-  folders are deployment targets; `general/principle/trust-and-guardrails`:
-  the link is rebuilt by every sync, so it needs no guard). The adapter
+  folders are deployment targets, never a source). The adapter
   reports the folders; publication knows nothing else of the runtime.
 - **Nothing is removed.** A global file stays where it is when its runtime is
   no longer configured, when an instance moves to another home, and when the
   project stops publishing `docs/general/`. Nothing records which files
   instrukt wrote, and nothing is removed on the strength of a memory
-  (`general/principle/trust-and-guardrails`: a record kept to authorize a
-  later action is a guard that restoring state does not need).
+  (`general/policy/agent-artifact-governance`: the sync keeps no record of
+  what it wrote and never removes a user-scope instruction file).
 - **Destinations.** Publication writes each runtime's user-scope instruction
   file at the location that runtime loads in that home — a file, or one file
   of instrukt's own in a directory of instruction files. For a runtime
@@ -318,11 +327,11 @@ publishes. They are the computer's own, never committed anywhere.
 - **Written whole, every time.** Each destination is written whole by every
   sync that publishes, whatever it holds: a file another tool or a person
   wrote there is overwritten. Nothing is refused because of what a file holds
-  (`general/principle/trust-and-guardrails`: the file is rebuilt from
-  published documentation, so overwriting it is repaired by the next sync;
-  rules a person wants a runtime to read belong in a snippet
-  `docs/general/index.yaml` selects, or in an `agents` snippet for that
-  runtime).
+  (`general/policy/agent-artifact-governance`: the global agent files are
+  instrukt's; what a person writes into one by hand is replaced at the next
+  sync, and a person's own instructions belong in documentation — a snippet
+  `docs/general/index.yaml` selects, or an `agents` snippet for that runtime
+  — from which the file is rebuilt every time).
 - **Settings merge.** Only the entrypoint-loading key is set; every other key
   in the settings file, and its other values, stay as they were. A missing
   settings file is created holding only that key. A settings file that cannot
@@ -366,6 +375,11 @@ And it reads the domain's triggered procedure with the command that loads it wit
 And each configured agent runtime that needs it is set to load project instruction files
 And every other setting the developer had is unchanged
 And the agent program that is not configured receives nothing
+But when the always-on doctrine changes and publication runs while the runtime cannot be asked
+Then the rest of the documentation is published
+And no global instruction file is written, and the developer is told which runtime could not be asked and why
+When publication runs again while the runtime can be asked
+Then every configured agent runtime starts with the changed doctrine
 ```
 
 ### UC-AE3: A developer gives one agent runtime rules of its own
@@ -432,18 +446,6 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 ### UC-AE12: An operator keeps a company's knowledge separate from other doctrine (retired)
 
 ### UC-AE13: An agent runtime the developer stops using no longer receives instructions (retired)
-
-### UC-AE14: A developer whose agent runtimes could not be asked is told, and the next publication catches up
-
-```gherkin
-Given publication wrote global instructions for the agent runtimes the developer configured
-And the always-on doctrine has changed since
-When publication runs for the project that owns the always-on doctrine while the runtime cannot be asked
-Then the rest of the documentation is published
-And no global instruction file is written, and the developer is told which runtime could not be asked and why
-When publication runs again while the runtime can be asked
-Then every configured agent runtime starts with the changed doctrine
-```
 
 ## Known caveats
 

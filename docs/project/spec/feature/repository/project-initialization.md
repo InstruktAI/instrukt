@@ -38,9 +38,8 @@ commit that adopts the project carries its rendering
 (`project/instrukt/spec/feature/publication/agent-entrypoints`). Init reports
 the kept copy and that the file is now generated; the next commit through the
 hook writes the rendering over the hand-written file. Init never deletes or
-edits the file itself
-(`general/principle/trust-and-guardrails`: the copy, not a refusal, is what
-keeps the developer's words). The global agent files are instrukt's own, and
+edits the file itself: the kept copy is what holds the developer's words
+until they are placed. The global agent files are instrukt's own, and
 the sync of the project that owns `docs/general/` writes them whole
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 

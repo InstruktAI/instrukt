@@ -235,14 +235,12 @@ flowchart LR
   K[checkout] --> Q{primary checkout?}
   Q -- yes --> C
   Q -- no --> P[return to git]
-  C --> M[configuration migration before refusal or skip]
-  M --> D{main == published commit?}
-  D -- yes --> E[done]
-  D -- no --> F[claim and write general, domain and project positions]
+  C --> M[configuration migration before any refusal]
+  M --> F[validate and render main; claim and compare general, domain and project positions]
   F --> G[patch global index by owner]
   G --> H[global agent files for configured runtimes if owner of general]
   H --> J[refresh editor schemas and modelines]
-  J --> I[record published commit]
+  J --> I[write only what is missing or different; record published commit]
 ```
 
 ### Read

@@ -284,7 +284,7 @@ This context emits no events.
 ## Use cases
 
 - **project-publication** — `project/instrukt/spec/feature/publication/project-publication` — a project's committed positions reach the agents on this computer, side by side with other projects' docs, without either taking the other's.
-- **agent-entrypoints** — `project/instrukt/spec/feature/publication/agent-entrypoints` — a repository's committed `AGENTS.md` gives any agent that checks it out what the project selected, a company home's gives the company's own knowledge, and the `docs/general/` owner gives every configured agent runtime a rendered global file without overwriting one it did not write.
+- **agent-entrypoints** — `project/instrukt/spec/feature/publication/agent-entrypoints` — a repository's committed `AGENTS.md` gives any agent that checks it out what the project selected, a company home's gives the company's own knowledge, and the `docs/general/` owner gives every configured agent runtime a rendered global file, written whole over whatever the destination held.
 - **eval-fingerprint** — `project/instrukt/spec/feature/publication/eval-fingerprint` — every publishing sync leaves a digest of the evaluated doctrine for stamps to carry.
 - **editor-schemas** — `project/instrukt/spec/feature/publication/editor-schemas` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.

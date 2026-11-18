@@ -16,8 +16,9 @@ from what the committed main yields, whether or not main has moved since the
 commit it last published, so it is triggered as often as git changes main
 (`project/instrukt/spec/feature/repository/hook-sections`) and an output
 deleted or changed by hand is restored by the next sync
-(`general/principle/trust-and-guardrails`: what can be rebuilt is rebuilt, and
-a remembered commit is never a reason to skip it).
+(`general/principle/trust-and-guardrails`: reversibility is engineered into
+the state, here by every sync rebuilding what is missing; a remembered
+commit says what was published, not what is in place).
 
 ## Canonical fields
 
@@ -175,9 +176,9 @@ own folders, is used as it resolves. The one place where a link is the
 content is a runtime's link folder, where publication makes the link to the
 global file the runtime reads
 (`project/instrukt/spec/feature/publication/agent-entrypoints`;
-`general/principle/trust-and-guardrails`: the destination is instrukt's own
-and rebuilt by every sync, so a link there is replaced rather than guarded
-against).
+`general/policy/agent-artifact-governance`: generated entrypoints and
+published output are instrukt's build outputs, written by it and never
+written through to a source elsewhere).
 
 Once the new publication is in place and its commit recorded, failing to
 remove the replaced publication's leftover copy does not fail the sync: the

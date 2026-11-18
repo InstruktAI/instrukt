@@ -47,8 +47,8 @@ migration runs before refusal or skip on every path. Read-only inspection comman
 convert older configuration in memory, leave files and locks untouched, and report
 that the file migrates on the next writing command. For the files instrukt owns on
 the machine, the global layer and company home documents among them, writing commands, publication,
-installation convergence and ticks persist the conversion before proceeding; a skip
-due to unchanged publication is considered only after migration.
+installation convergence and ticks persist the conversion before proceeding; a sync
+compares its outputs only after migration, whether or not main has moved.
 
 A project layer is committed to its repository, so it changes only in a commit,
 as do the editor modelines and the repository's generated `AGENTS.md` files

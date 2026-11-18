@@ -38,9 +38,14 @@ and the report procedure itself are outside this shipped process set.
 - **Association.** State records the fingerprint per published commit, rather
   than only overwriting a current digest. The current fingerprint remains
   available to work; no separate eval log is maintained.
-- **When.** Written by every sync that publishes, as part of the same
-  publication. A sync of a commit already published computes the same
-  fingerprint and leaves the record as it is.
+- **When.** Computed by every sync that publishes, as part of the same
+  publication, from the corpus as it stands then. A record is written, with
+  the sync's time, only when what it holds differs from what was computed:
+  the per-commit record when its fingerprint or snippet count differs, the
+  current record when its fingerprint differs. A record whose content is
+  unchanged is left as it is, its time included. That a commit was published
+  before never decides it: another project may have changed evaluated
+  doctrine since, which changes the fingerprint of an unchanged commit.
 
 ## Use cases
 

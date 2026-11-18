@@ -17,27 +17,30 @@ order:
 
 1. Run `instrukt hooks install` (or add the line `instrukt hooks status`
    prints to the hook manager), so the `pre-commit` section renders.
-2. Prepare every source before anything is deleted: for the root master and
-   every nested master, remove each `@config`, `@exec` and `@include` from the
-   master and from every document its rendering holds in full — the root
-   `AGENTS.md`'s `expanded` snippets and their closure, and each nested
-   master's required reads and their closure. Move such a snippet from
-   `expanded` to `listed`, or drop the directive. Run
-   `instrukt docs render --check` until it reports no finding; it reports the
-   existing files as differing, which step 4 resolves.
-3. Remove the `AGENTS.md` lines `instrukt init` wrote to `.gitignore`.
-   instrukt no longer writes Codex's `AGENTS.override.md`, which Codex reads
-   in place of `AGENTS.md`, so a copy left behind would hide every committed
-   update. instrukt deletes none: the hook and `instrukt docs render --check`
-   report an `AGENTS.override.md` beside a root master as a finding. Delete
-   each copy an earlier release rendered, beside the primary checkout's root
-   master and in each linked worktree, and the `instrukt-entrypoints.json`
-   checkout rendering kept in each worktree's git directory
-   (`git rev-parse --git-dir`). An `AGENTS.override.md` you wrote yourself
-   stays a finding for as long as it is there.
-4. Commit through the hook: the commit carries the new renderings, written
+2. Clear the Codex override. instrukt no longer writes Codex's
+   `AGENTS.override.md`, which Codex reads in place of `AGENTS.md`, so a copy
+   left behind would hide every committed update; instrukt deletes none, and
+   the hook and `instrukt docs render --check` report one beside a root
+   master as a finding. Delete each copy an earlier release rendered, beside
+   the primary checkout's root master and in each linked worktree, and the
+   `instrukt-entrypoints.json` checkout rendering kept in each worktree's git
+   directory (`git rev-parse --git-dir`). If an `AGENTS.override.md` holds
+   instructions you wrote yourself, move them into the project's
+   documentation first (a project snippet with its entry in
+   `docs/project/index.yaml`), then delete the file.
+3. Prepare every source: for the root master and
+   every nested master, remove each `@config`, `@exec`, `@include` and each
+   reference left for an agent program to resolve from the master and from
+   every document its rendering holds in full — the root `AGENTS.md`'s
+   `expanded` snippets and their closure, and each nested master's required
+   reads and their closure. Move such a snippet from `expanded` to `listed`,
+   or drop the directive. Run `instrukt docs render --check` until it reports
+   no finding; it reports the existing files as differing, which step 5
+   resolves.
+4. Remove the `AGENTS.md` lines `instrukt init` wrote to `.gitignore`.
+5. Commit through the hook: the commit carries the new renderings, written
    over the untracked `AGENTS.md` beside each master.
-5. Add `instrukt docs render --check` to the repository's CI, so a commit made
+6. Add `instrukt docs render --check` to the repository's CI, so a commit made
    without the hook (a web editor, a cloud agent) fails naming the stale file;
    repair with `instrukt docs render` and a commit. Pin the instrukt release
    CI installs to the one the hooks run.
