@@ -24,7 +24,7 @@ roles:
   bug-hunter: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   upstream-watcher: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   event-handler: {github_app: project, class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
-  conversation: {github_app: project, class: standing, can: [read], order: [claude, codex, antigravity], tier: strong}
+  conversation: {github_app: project, class: standing, can: [read, tools], order: [claude, codex, antigravity], tier: strong}
   prd-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   architecture-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
@@ -71,6 +71,8 @@ bundles:
     - {action: secrets-write, scope: any}
     - {action: installation-write, scope: any}
     - {action: agents-write, scope: any}
+  tools:
+    - {action: mcp-access, scope: own}
   all:
     - {action: docs-read, scope: any}
     - {action: docs-write, scope: any}
@@ -102,6 +104,7 @@ bundles:
     - {action: installation-read, scope: any}
     - {action: installation-write, scope: any}
     - {action: runner-execute, scope: any}
+    - {action: mcp-access, scope: any}
 profiles:
   codex:
     instance: codex

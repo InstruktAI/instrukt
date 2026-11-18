@@ -66,8 +66,8 @@ enum Rule {
     ProjectOrCompany,
     /// A company home only (`company`).
     CompanyOnly,
-    /// A key this instrukt does not support yet in any document.
-    NotYetSupported,
+    /// The global layer or a company home (`mcp`).
+    GlobalOrCompany,
 }
 
 impl Rule {
@@ -86,7 +86,10 @@ impl Rule {
             (self, layer),
             (Rule::Every, _)
                 | (
-                    Rule::Both | Rule::GlobalOnly | Rule::ShippedAdapterInProject,
+                    Rule::Both
+                        | Rule::GlobalOnly
+                        | Rule::ShippedAdapterInProject
+                        | Rule::GlobalOrCompany,
                     LayerKind::Global
                 )
                 | (
@@ -97,7 +100,7 @@ impl Rule {
                     LayerKind::Project
                 )
                 | (
-                    Rule::ProjectOrCompany | Rule::CompanyOnly,
+                    Rule::ProjectOrCompany | Rule::CompanyOnly | Rule::GlobalOrCompany,
                     LayerKind::Company
                 )
         )
@@ -112,7 +115,7 @@ impl Rule {
             Rule::Both => "global or project layer only",
             Rule::ProjectOrCompany => "project layer or company home only",
             Rule::CompanyOnly => "company home only",
-            Rule::NotYetSupported => "not supported yet by this instrukt",
+            Rule::GlobalOrCompany => "global layer or company home only",
         }
     }
 }
@@ -124,6 +127,7 @@ enum Shape {
     Webhooks,
     Members,
     Connectors,
+    Mcp,
     Runtimes,
     MachineId,
     Port,
@@ -173,7 +177,7 @@ fn schema() -> Node {
         ("members", Leaf(Rule::CompanyOnly, Shape::Members)),
         ("connectors", Leaf(Rule::CompanyOnly, Shape::Connectors)),
         ("profiles", Leaf(Rule::CompanyOnly, Shape::StrList)),
-        ("mcp", Leaf(Rule::NotYetSupported, Shape::Str)),
+        ("mcp", Leaf(Rule::GlobalOrCompany, Shape::Mcp)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
         (
@@ -326,7 +330,7 @@ fn check_node(node: &Node, value: &Value, path: &str, layer: LayerKind, out: &mu
     match node {
         Node::Leaf(Rule::ShippedAdapterInProject, shape) => {
             if Rule::ShippedAdapterInProject.permits(layer, value) || !value.is_string() {
-                check_shape(*shape, value, path, out);
+                check_shape(*shape, value, path, layer, out);
             } else {
                 out.push(KeyFinding::new(
                     path,
@@ -339,14 +343,9 @@ fn check_node(node: &Node, value: &Value, path: &str, layer: LayerKind, out: &mu
                 ));
             }
         }
-        Node::Leaf(Rule::NotYetSupported, _) => out.push(KeyFinding::new(
-            path,
-            FindingKind::NotPermittedInLayer,
-            "not supported yet by this instrukt",
-        )),
         Node::Leaf(rule, shape) => {
             if rule.permits(layer, value) {
-                check_shape(*shape, value, path, out);
+                check_shape(*shape, value, path, layer, out);
             } else {
                 out.push(KeyFinding::new(
                     path,
@@ -409,7 +408,13 @@ enum Field {
     Domain,
 }
 
-fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
+fn check_shape(
+    shape: Shape,
+    value: &Value,
+    path: &str,
+    layer: LayerKind,
+    out: &mut Vec<KeyFinding>,
+) {
     let invalid = |message: &str| KeyFinding::new(path, FindingKind::InvalidValue, message);
     match shape {
         Shape::Runtimes => match value.as_mapping() {
@@ -433,6 +438,7 @@ fn check_shape(shape: Shape, value: &Value, path: &str, out: &mut Vec<KeyFinding
         }
         Shape::Members => super::_company::check_members(value, path, out),
         Shape::Connectors => super::_company::check_connectors(value, path, out),
+        Shape::Mcp => super::_mcp::check(value, path, layer, out),
         Shape::MachineId => {
             if value
                 .as_str()
@@ -773,7 +779,7 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
         }
         Shape::Webhooks => super::_webhooks::editor_schema(),
-        Shape::Members => json!({ "type": "object" }),
+        Shape::Members | Shape::Mcp => json!({ "type": "object" }),
         Shape::Connectors => super::_company::connectors_schema(),
         Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
         Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),
@@ -1017,11 +1023,12 @@ mod tests {
             )),
             [("webhooks", N)]
         );
-        // Keys of a later company-home slice are refused in every document.
-        for layer in [LayerKind::Global, LayerKind::Project, LayerKind::Company] {
-            let later = yaml("schema_version: 1\nmcp: {}\n");
-            assert_eq!(judged(&check(&later, layer)), [("mcp", N)]);
+        // MCP servers are declared machine-wide or in a company home.
+        let servers = yaml("schema_version: 1\nmcp: {}\n");
+        for layer in [LayerKind::Global, LayerKind::Company] {
+            assert_eq!(check(&servers, layer), []);
         }
+        assert_eq!(judged(&check(&servers, LayerKind::Project)), [("mcp", N)]);
         let people = yaml("schema_version: 1\nmembers: {}\nconnectors: {}\nprofiles: [a]\n");
         assert_eq!(check(&people, LayerKind::Company), []);
         for layer in [LayerKind::Global, LayerKind::Project] {

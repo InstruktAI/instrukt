@@ -11,6 +11,8 @@ Commands:
   bugs       Park, inspect and remove known-issue dispositions for the log bug hunter
   discuss    Open or close this native thread's conversation link
   agents     Configured profiles and expiring profile/model availability
+  mcp        Reach the MCP servers declared for this caller: list them, list one's tools, call a
+             tool
   secrets    Store or generate protected machine-local secrets
   config     Read, edit, initialize and validate `instrukt.yaml`
   docs       Validate, list and read documentation snippets
@@ -46,4 +48,4 @@ todo-orchestration:any, assignment-write:any, integration:any, session-observe:a
 history-read:any, session-recover:any, standing-bind:any, conversation-link:any, agents-read:any,
 agents-write:any, config-read:any, config-write:any, secrets-write:any, repository-read:any,
 repository-write:any, code-commit:any, publication:any, code-check:any, eval-read:any,
-events-read:any, installation-read:any, installation-write:any, runner-execute:any
+events-read:any, installation-read:any, installation-write:any, runner-execute:any, mcp-access:any

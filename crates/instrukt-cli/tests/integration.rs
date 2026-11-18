@@ -78,6 +78,8 @@ mod known_issue_suppression;
 mod layered_configuration;
 #[path = "cases/logging.rs"]
 mod logging;
+#[path = "cases/mcp-access.rs"]
+mod mcp_access;
 #[path = "cases/module-installation.rs"]
 mod module_installation;
 #[path = "cases/owned-files.rs"]

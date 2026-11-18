@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stdout(&listed)
+---
+erpnext: Operate the company's ERPNext records (declared for company acme)
+nameless: A server that does not say what it is (declared for company acme)
+search: Search the web (declared for this computer)
+shapeless: A server whose tool takes no object (declared for company acme)

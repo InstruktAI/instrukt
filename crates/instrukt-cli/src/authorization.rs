@@ -75,6 +75,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "affected" | "path" | "query" | "explain" | "status",
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
+        ["mcp", "list" | "list-tools" | "call"] => McpAccess,
         ["ticks", "status"] => InstallationRead,
         ["install"] => InstallationWrite,
         ["run"]
@@ -126,6 +127,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["todo", "list" | "show"]
             | ["todo", "artifacts", "list" | "read" | "diff"]
             | ["specs", "coverage" | "trace"]
+            | ["mcp", "list" | "list-tools" | "call"]
             | [
                 "blueprint",
                 "status" | "query" | "path" | "explain" | "affected"
@@ -219,6 +221,15 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
         SessionObserve | ConversationLink => true,
+        // `own` reaches the servers of the assignment's own company, which
+        // are all that company's sessions see; a machine-wide server that
+        // carries a login is a machine-wide object no assignment owns.
+        McpAccess => {
+            assignment.company.is_some()
+                && raw("company").is_none_or(|asked| {
+                    assignment.company.as_ref().map(|own| own.as_str()) == Some(asked)
+                })
+        }
         SessionRecover => raw("key") == Some(assignment.key.as_str()),
         StandingBind => {
             if let Some(procedure) = assignment

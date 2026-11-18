@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stderr(&whoami(&c).failure())
+---
+instrukt: the call is refused: the speaker of this session's current turn cannot be established: the runtime has no turn of this session in progress

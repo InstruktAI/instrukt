@@ -63,6 +63,9 @@ def sync_inputs():
             columns=[row[1] for row in connection.execute('PRAGMA table_info('+table+')') if row[1] in values]
             updates=','.join(column+'=excluded.'+column for column in columns)
             connection.execute('INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+') ON CONFLICT DO UPDATE SET '+updates+' WHERE payload_json!=excluded.payload_json',[values[column] for column in columns])
+        # With `lifecycle`, a run is projected as T3 projects it: active while
+        # it is the thread's running run, completed once it has ended.
+        lifecycle=(root/'lifecycle').exists()
         for thread in all_threads():
             runs=set()
             for index,message in enumerate(thread['messages']):
@@ -77,8 +80,12 @@ def sync_inputs():
                     queued=message.get('queued',False)
                     entered=not queued and thread['status'] not in ['preparing','queued']
                     status='queued' if queued else (thread['status'] if thread['status'] in ['preparing','queued'] else 'running')
-                    native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':status,'startedAt':at if entered else None,'requestedAt':at,'completedAt':None}
-                    upsert('orchestration_v2_projection_runs',dict(run_id=run,thread_id=thread['threadId'],status=native['status'],requested_at=at,completed_at=None,payload_json=json.dumps(native)))
+                    completed=None
+                    if lifecycle and status=='running' and not (run==thread.get('activeRunId') and thread['status']=='running'):
+                        status='completed'; completed=at
+                    native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':status,'startedAt':at if entered else None,'requestedAt':at,'completedAt':completed}
+                    if lifecycle: native['ordinal']=len(runs)
+                    upsert('orchestration_v2_projection_runs',dict(run_id=run,thread_id=thread['threadId'],status=native['status'],requested_at=at,completed_at=completed,payload_json=json.dumps(native)))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
     temporary.write_text(json.dumps(t)); temporary.replace(root/(t['threadId']+'.json')); sync_inputs()
@@ -185,6 +192,27 @@ impl FakeT3 {
             self.state.join(format!("{id}.json")),
         )
         .unwrap();
+    }
+    /// Projects the threads' current state into T3's store, as the T3 server
+    /// does whenever a thread changes.
+    pub fn project(&self, env: &TestEnv, id: &str) {
+        let status = std::process::Command::new(&self.script)
+            .args(["thread", "show", id, "--messages", "1"])
+            .env("HOME", env.home())
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    /// A person types `text` straight into the thread `id`, as T3's own
+    /// interface sends it; with the thread idle it opens a turn of its own.
+    pub fn person_sends(&self, env: &TestEnv, id: &str, text: &str) {
+        let status = std::process::Command::new(&self.script)
+            .args(["thread", "send", id, text])
+            .env("HOME", env.home())
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
     pub fn input_log(&self, id: &str) -> String {
         self.read(id)["messages"]

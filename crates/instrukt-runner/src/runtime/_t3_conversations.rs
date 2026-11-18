@@ -129,6 +129,61 @@ pub(super) struct NativeInput {
     pub reference: Option<String>,
 }
 
+/// The text of the input that opened `thread`'s run in progress: among the
+/// thread's runs whose projected status is `starting`, `running` or
+/// `waiting`, the one whose projection row was inserted last, and the user
+/// message its `userMessageId` names. `None` when no run has such a status.
+///
+/// T3's projection writer establishes that these statuses mark an active run
+/// and that a run's `userMessageId` is its opening input; `preparing` and
+/// `queued` runs have not started. It does not establish that a thread has at
+/// most one active run, so with several the run whose row was inserted last
+/// is taken; a later update to an older run's row keeps that row's place.
+/// That the runs of a thread move from queued to active to ended is shown by
+/// the test stand-in alone; the T3 contract suite runs no provider turn.
+pub(super) fn active_opening(
+    home: &Home,
+    env: &Env,
+    thread: &str,
+) -> Result<Option<String>, SourceError> {
+    let db = open(&T3Home::discover(home, env).database())?;
+    let mut statement = db.prepare(
+        "SELECT run_id,payload_json FROM orchestration_v2_projection_runs \
+         WHERE thread_id=?1 AND status IN ('starting','running','waiting') \
+         ORDER BY rowid DESC LIMIT 1",
+    )?;
+    let runs = statement
+        .query_map(params![thread], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some((run_id, payload)) = runs.first() else {
+        return Ok(None);
+    };
+    let run: Value = serde_json::from_str(payload)?;
+    if run["id"].as_str() != Some(run_id.as_str()) || run["threadId"] != thread {
+        return Err(source_error("run identity"));
+    }
+    let opening = run["userMessageId"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| source_error("run opening input identity"))?;
+    let message: String = db.query_row(
+        "SELECT payload_json FROM orchestration_v2_projection_messages \
+         WHERE message_id=?1 AND thread_id=?2 AND role='user'",
+        params![opening, thread],
+        |row| row.get(0),
+    )?;
+    let message: Value = serde_json::from_str(&message)?;
+    if message["id"] != opening || message["threadId"] != thread {
+        return Err(source_error("opening input identity"));
+    }
+    message["text"]
+        .as_str()
+        .map(|text| Some(text.to_owned()))
+        .ok_or_else(|| source_error("opening input text"))
+}
+
 /// Run allocation precedes entry: queued/preparing inputs already have run IDs.
 pub(super) fn inputs(
     home: &Home,

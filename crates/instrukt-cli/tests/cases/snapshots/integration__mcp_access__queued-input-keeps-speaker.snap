@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stdout(&whoami(&c).success())
+---
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "erp answered anna, carrying ${ANNA_ERP}"
+    }
+  ],
+  "isError": false
+}

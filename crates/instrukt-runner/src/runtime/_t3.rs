@@ -271,6 +271,16 @@ impl RuntimeAdapter for T3 {
             observed_at: now,
         })
     }
+    fn active_turn_input(&self, session: &SessionRef) -> Result<Option<String>, SessionsError> {
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| failure("turn observation", "machine home is unavailable"))?;
+        let home = instrukt_core::home::Home::at_user_home(user_home.into());
+        super::_t3_conversations::active_opening(&home, &self.env, session.id.as_str())
+            .map_err(|error| failure("turn observation", error.to_string()))
+    }
     fn assignment_evidence(
         &self,
         session: &SessionRef,

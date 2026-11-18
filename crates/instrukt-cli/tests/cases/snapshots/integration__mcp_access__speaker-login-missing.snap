@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stderr(&refused)
+---
+instrukt: the call is refused: speaker Steven <steven@example.com> has no `crm` login of their own in company acme
