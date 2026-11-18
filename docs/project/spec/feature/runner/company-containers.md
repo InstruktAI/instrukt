@@ -161,8 +161,9 @@ environment).
 
 - Every night the operator's home `~/.instrukt` on the host, which holds every
   company's folder, is archived and uploaded as one timestamped archive to
-  S3-compatible storage the operator sets through configuration. The last
-  ten archives are kept; older ones are removed. No separate snapshot exists
+  S3-compatible storage the operator sets through configuration. The newest
+  archives, as many as the backup's settings name, are kept and older ones are
+  removed; a night whose backup fails removes none. No separate snapshot exists
   (`sdlc/policy/state-storage`: state whose loss forces more than cheap local
   recomputation is persisted and survives restarts).
 - Each company's folder in an archive is restorable on its own, and a company
@@ -261,7 +262,7 @@ But once the operator revokes their access they are turned away on their next re
 Given an operator runs several companies on a host and has configured their backup storage
 When a night passes
 Then one new archive holding every company's folder is in the storage
-And only the last ten archives are kept
+And only the configured number of newest archives is kept
 And no company's container can read any archive
 But a night whose backup fails leaves the archives already kept in place and is reported as an anomaly where anomaly notification is configured
 ```
