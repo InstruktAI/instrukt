@@ -9,7 +9,8 @@
 # the program's, as a commit that bypassed instrukt's pre-commit section
 # leaves it, is a finding
 # (project/instrukt/spec/feature/configuration/owned-files). The throwaway
-# machine layer selects the runtime the project's modules need.
+# machine layer selects the runtime the project's modules need, and names an
+# event transport for its event responses (validation only reads the setting).
 set -eu
 instrukt="${INSTRUKT_CHECK_BIN:-}"
 if [ -z "$instrukt" ]; then
@@ -30,6 +31,7 @@ unset XDG_STATE_HOME INSTRUKT_HOME
     cd "$home"
     HOME="$home" "$instrukt" config init --global >/dev/null
     revision="$(HOME="$home" "$instrukt" config get --global --revision)"
-    HOME="$home" "$instrukt" config patch --global --revision "$revision" --yaml 'runner: {runtime: t3}'
+    HOME="$home" "$instrukt" config patch --global --revision "$revision" --yaml "runner: {runtime: t3}
+redis: {cluster: {url: 'redis://127.0.0.1:6379'}}"
 )
 HOME="$home" "$instrukt" config validate
