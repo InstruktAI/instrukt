@@ -176,9 +176,8 @@ declared client's identifier or secret no longer matches its registration,
 that registration is retired and a new one, with a new return id, is made for
 the declared client as it now is. The logins and open sign-ins of the retired
 registration become unusable: they are removed and cancelled without a
-revocation request, since their own client's credentials are no longer
-available, and the next call starts a sign-in. A code or refresh token issued
-to one client is never sent with another client's credentials.
+revocation request, and the next call starts a sign-in. A code or refresh
+token issued to one client is never sent with another client's credentials.
 
 Without a declared client instrukt registers one where the authorization
 server offers registration: a public client (`token_endpoint_auth_method:
@@ -342,8 +341,13 @@ true`; without it a call that needs a sign-in is refused naming the server and
 the missing acceptance, and once the server's metadata is known to the
 computer, `instrukt config validate --company <company>` reports the same.
 Declaring it means that the operator trusts that authorization server not to
-send a person's sign-in to another server of the same company home; a
-compromised one could capture such a sign-in.
+misuse the return path and state it learns. A compromised one can register
+that return path for a client of its own at any other authorization server
+that accepts such a registration and names no issuer on its return, whether
+or not that server belongs to the company home or is declared in instrukt at
+all; it can then send a person there to sign in, receive the code and the
+verifier at its own token endpoint, and use the person's login at that
+server.
 
 #### Exchange and who signed in
 
@@ -653,8 +657,10 @@ And a call for that person starts a new sign-in
   server that is no OpenID Provider. Each is refused with its reason.
 - A server whose authorization server does not announce that it names itself
   on the return is signed in to only on the operator's acceptance; a
-  compromised authorization server could then capture a person's sign-in to
-  another server of the same company home.
+  compromised authorization server could then capture a person's sign-in at
+  any other authorization server that accepts a registration of its return
+  path and names no issuer on its return, inside the company home or outside
+  it, declared in instrukt or not.
 - The address comparison relies on what the server reports: with OpenID
   Connect a verified address, with a declared identity request what the
   operator's declaration asserts. It does not prove that one person holds the
