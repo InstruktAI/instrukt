@@ -12,9 +12,11 @@ framework once, `uv tool install pre-commit==<version>` with the version in
 the framework's own `install` refuses while `core.hooksPath` is set. A
 `core.hooksPath` set to the relative `.githooks`, as `make hooks` sets it,
 lets each linked worktree run its own checkout's hook. The Python lint and
-type check are the framework's own hooks for ruff and mypy at pinned commits;
-the first commit check fetches them into `~/.cache/pre-commit`, which needs
-network access once. A `v*` tag builds and
+type check are the framework's own hooks for ruff and mypy at pinned commits.
+`make hooks` installs them into `~/.cache/pre-commit`, which needs network
+access, and is run again when a pinned tool changes; a commit never installs a
+tool and is refused without them, naming `make hooks`. In a clone that
+enabled the hook before this change, run `make hooks` once. A `v*` tag builds and
 publishes release binaries only after the checks `main` requires pass on the
 tagged revision.
 
