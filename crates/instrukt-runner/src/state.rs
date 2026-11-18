@@ -165,3 +165,27 @@ pub(crate) fn worker_state(home: &instrukt_core::home::Home, worker: &str, failu
         tracing::error!(event = "runner_worker_state_unrecorded", worker, error = %error);
     }
 }
+
+/// Records the run loop's last skipped wake, at `at` for `cause`; `None`
+/// removes it, as a wake that is not skipped does.
+pub(crate) fn skipped_wake(
+    home: &instrukt_core::home::Home,
+    skipped: Option<(jiff::Timestamp, &str)>,
+) {
+    use instrukt_core::state_db::rusqlite::params;
+    let state = RunnerState::new(home);
+    let result = state.write::<_, StateError>(|tx| {
+        match skipped {
+            Some((at, cause)) => tx.execute(
+                "INSERT INTO runner_skipped_wake(id,at,cause) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET at=excluded.at,cause=excluded.cause",
+                params![at.to_string(), cause],
+            ),
+            None => tx.execute("DELETE FROM runner_skipped_wake WHERE id=1", []),
+        }
+        .map_err(sql(&db_path(tx)))?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::error!(event = "runner_skipped_wake_unrecorded", error = %error);
+    }
+}

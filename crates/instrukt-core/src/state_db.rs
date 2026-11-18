@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn version_19_adds_the_worker_state_and_keeps_the_relays() {
+    fn version_19_adds_the_worker_state_and_the_skipped_wake_and_keeps_the_relays() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(18) {
             let tx = conn.transaction().unwrap();
@@ -422,6 +422,12 @@ mod tests {
             .query_row("SELECT count(*) FROM runner_workers", [], |row| row.get(0))
             .unwrap();
         assert_eq!(workers, 1);
+        conn.execute("INSERT INTO runner_skipped_wake(id,at,cause) VALUES(1,'2026-11-18T10:00:00Z','the dispatch lock is held')", []).unwrap();
+        assert!(
+            conn.execute("INSERT INTO runner_skipped_wake(id,at,cause) VALUES(2,'2026-11-18T10:01:00Z','again')", [])
+                .is_err(),
+            "one skipped wake at most"
+        );
     }
 
     #[test]

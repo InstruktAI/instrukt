@@ -70,11 +70,18 @@ pub struct AdmittedProject {
     pub slug: ProjectSlug,
     pub checkout: PathBuf,
     pub config: Configuration,
+    /// Todos or event responses switched on, admitted or not: the runner
+    /// considers the project (its `main` is kept current) whatever a finding
+    /// withholds, since a finding withholds only its module's own work.
+    pub switched: bool,
+    /// Todos switched on and admitted: no finding against `modules.todos`.
     pub todos: bool,
     /// Event responses switched on and admitted: never true while the
-    /// project's effective configuration lacks the event transport.
+    /// project's layer has a finding against `modules.events`, as it does
+    /// without the event transport.
     pub events: bool,
-    /// History switched on for the project.
+    /// History switched on and admitted: no finding against
+    /// `modules.history`, and the layer validates otherwise.
     pub history: bool,
 }
 
@@ -260,6 +267,7 @@ fn admit_project(
     record: &PublishedRecord,
     agents: &Arc<Agents>,
 ) -> Result<(AdmittedProject, Vec<Finding>), Finding> {
+    let layer = Layer::Project(record.checkout.clone());
     let document = record.checkout.join(super::CONFIG_FILE_NAME);
     let config = Configuration::load(home, Some(&record.checkout))
         .map_err(|error| unreadable(document.clone(), &error))?
@@ -274,29 +282,25 @@ fn admit_project(
         events: on(Module::Events)?,
         history: on(Module::History)?,
     };
-    let transport = config.cluster_redis_url().ok().flatten().is_some();
+    // The layer is judged as `config validate` judges it, read without
+    // converting it.
+    let findings = match read_usable(home, &layer) {
+        Ok(Some(value)) => super::_validate::findings_for(home, &layer, &document, &value)
+            .map_err(|error| unreadable(document.clone(), &error))?,
+        Ok(None) => Vec::new(),
+        Err(error) => return Err(unreadable(document, &error)),
+    };
     let Modules {
         todos,
         events,
         history,
-    } = switched.admitted(transport);
-    let mut findings = Vec::new();
-    if switched.events && !events {
-        findings.push(Finding {
-            document,
-            key: "modules.events".into(),
-            kind: FindingKind::EventsNeedTransport,
-            message: format!(
-                "event responses of project `{}` are not admitted on this computer: the event transport has no `redis.cluster.url`; set it in the global layer (`instrukt config patch --global`)",
-                record.project
-            ),
-        });
-    }
+    } = switched.admitted(&findings);
     Ok((
         AdmittedProject {
             slug: record.project.clone(),
             checkout: record.checkout.clone(),
             config,
+            switched: switched.todos || switched.events,
             todos,
             events,
             history,
@@ -314,12 +318,22 @@ struct Modules {
 }
 
 impl Modules {
-    /// What is admitted of these switches: event responses only with the
-    /// event transport they are carried on; todos and history as switched.
-    fn admitted(self, transport: bool) -> Self {
+    /// What is admitted of these switches, given the layer's findings: a
+    /// finding against a module (`modules.<module>`) withholds that module
+    /// alone; a layer that does not validate for any other reason withholds
+    /// history, which reads every adopted project, and nothing else.
+    fn admitted(self, findings: &[Finding]) -> Self {
+        let against = |module: &str| {
+            let key = format!("modules.{module}");
+            findings
+                .iter()
+                .any(|f| f.key == key || f.key.starts_with(&format!("{key}.")))
+        };
+        let invalid = findings.iter().any(|f| !f.key.starts_with("modules."));
         Self {
-            events: self.events && transport,
-            ..self
+            todos: self.todos && !against("todos"),
+            events: self.events && !against("events"),
+            history: self.history && !against("history") && !invalid,
         }
     }
 }
@@ -403,22 +417,49 @@ impl<T> Swap<T> {
 mod tests {
     use super::*;
 
+    fn finding(key: &str) -> Finding {
+        Finding {
+            document: PathBuf::from("instrukt.yaml"),
+            key: key.into(),
+            kind: FindingKind::InvalidValue,
+            message: String::new(),
+        }
+    }
+
     #[test]
-    fn event_responses_need_the_transport_and_todos_and_history_do_not() {
+    fn a_finding_withholds_its_module_and_an_invalid_layer_withholds_history() {
         let switched = Modules {
             todos: true,
             events: true,
             history: true,
         };
+        assert_eq!(switched.admitted(&[]), switched);
+        // The event transport's finding withholds event responses alone.
         assert_eq!(
-            switched.admitted(false),
+            switched.admitted(&[finding("modules.events")]),
             Modules {
                 todos: true,
                 events: false,
                 history: true,
             }
         );
-        assert_eq!(switched.admitted(true), switched);
+        // A layer that does not validate otherwise withholds history alone.
+        assert_eq!(
+            switched.admitted(&[finding("board")]),
+            Modules {
+                todos: true,
+                events: true,
+                history: false,
+            }
+        );
+        assert_eq!(
+            switched.admitted(&[finding("modules.todos")]),
+            Modules {
+                todos: false,
+                events: true,
+                history: true,
+            }
+        );
     }
 
     #[test]

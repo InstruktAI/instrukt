@@ -36,9 +36,6 @@ use crate::transport::{EventScope, ScopedTransport, TransportError};
 /// How long `instrukt run` waits for a tick in progress to finish.
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 
-/// The run loop's name in `runner_workers`, where a skipped wake is shown.
-const RUN_LOOP: &str = "run-loop";
-
 mod _holder;
 mod _service;
 pub use _service::{ServiceRecord, published_service, service_identity};
@@ -155,15 +152,15 @@ pub struct Considered {
     pub events: bool,
 }
 
-/// The published projects the admitted generation considers for `todos` or
-/// `events`. A project whose checkout is gone or whose configuration was
-/// not admitted is not among them; one whose event responses were not
-/// admitted is considered for todos alone.
+/// The published projects that switch on `todos` or `events`. A project
+/// whose checkout is gone or whose layer could not be loaded is not among
+/// them. A finding withholds only its module's own work: the project is
+/// still considered, with that module off.
 pub fn considered(admitted: &Admitted) -> Vec<Considered> {
     admitted
         .projects()
         .iter()
-        .filter(|project| project.todos || project.events)
+        .filter(|project| project.switched)
         .map(|project| Considered {
             project: ProjectRef {
                 slug: project.slug.clone(),
@@ -320,9 +317,9 @@ pub fn run(
         None => None,
     };
     tracing::info!(event = "runner_started");
-    // A wake skipped for a dispatch lock held past its wait is shown in
-    // status until a wake takes the lock again.
-    let mut skipped = false;
+    // A skipped wake stays in status until the next wake that is not skipped;
+    // one left by an earlier runner is cleared by this runner's first.
+    let mut skipped = true;
     loop {
         supervise_relay(&mut relay);
         if let Some(connections) = &mut connections {
@@ -365,7 +362,7 @@ pub fn run(
         match crate::keyed::RuntimeInvocation::acquire(cx.home, RUN_LOCK_WAIT) {
             Ok(invocation) => {
                 if std::mem::take(&mut skipped) {
-                    crate::state::worker_state(cx.home, RUN_LOOP, None);
+                    crate::state::skipped_wake(cx.home, None);
                 }
                 if let Err(err) = wake(
                     cx,
@@ -381,7 +378,7 @@ pub fn run(
             }
             Err(error) => {
                 tracing::warn!(event = "runner_wakeup_skipped", %error);
-                crate::state::worker_state(cx.home, RUN_LOOP, Some(&error.to_string()));
+                crate::state::skipped_wake(cx.home, Some((clock(), &error.to_string())));
                 skipped = true;
             }
         }
