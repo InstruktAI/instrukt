@@ -76,10 +76,37 @@ pub struct InFull {
     /// A procedure's `activation_trigger`, shown directly under its
     /// heading.
     pub trigger: Option<String>,
-    /// The reference lines the traversal reached just before this snippet:
-    /// required reads the rendering does not hold, each in the place its
-    /// body would have had, so a dependency stays before what requires it.
-    pub references: Vec<String>,
+}
+
+/// A required read a rendering does not hold, named by its line in the
+/// place its body would have had: under the heading of its own position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Named {
+    /// The position the read belongs to (a domain, `general`, `project`),
+    /// whose heading it sits under.
+    pub position: String,
+    /// Its [`reference_line`] or [`domain_reference_line`].
+    pub line: String,
+}
+
+/// One entry of a selection's traversal: a snippet in full, or a read the
+/// rendering does not hold, named. Both take the same place and open the
+/// heading of their position the same way, so a rendering that holds a read
+/// and one that names it differ only in body against line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entry {
+    InFull(InFull),
+    Named(Named),
+}
+
+impl Entry {
+    /// The position whose heading the entry sits under.
+    pub fn position(&self) -> &str {
+        match self {
+            Entry::InFull(snippet) => &snippet.position,
+            Entry::Named(named) => &named.position,
+        }
+    }
 }
 
 /// What one position's selection renders.
@@ -87,14 +114,12 @@ pub struct InFull {
 pub struct Selection {
     /// The position's name: `general`, the domain, `project`.
     pub position: String,
-    /// The snippets in full, in traversal order: each required read before
-    /// the snippet requiring it, each once.
-    pub in_full: Vec<InFull>,
-    /// What another repository publishes, named rather than copied, that
-    /// the traversal reached after the last snippet in full: one
-    /// [`reference_line`] or [`domain_reference_line`] each, in traversal
-    /// order. One reached before a snippet in full is that snippet's
-    /// ([`InFull::references`]). Only a committed rendering has any.
+    /// The traversal, in order: each required read before the entry
+    /// requiring it, each once — a snippet in full, or, in a committed
+    /// rendering, a read it does not hold, named.
+    pub in_full: Vec<Entry>,
+    /// The `listed` snippets the rendering does not hold, named by their
+    /// [`reference_line`]: only a committed rendering has any.
     pub references: Vec<String>,
     /// The `listed` snippets, in the order the index lists them.
     pub listed: Vec<Listing>,
@@ -131,32 +156,48 @@ pub fn demote_headings(text: &str) -> String {
 }
 
 impl Selection {
-    /// The rendered section: the position's heading; each snippet in full,
-    /// headings demoted, under the heading of its own position, a heading
-    /// opening wherever the traversal moves to another position; then the
-    /// reference lines and the listing lines, back under the position's
-    /// heading; then the triggered procedures neither rendered in full nor
-    /// listed.
+    /// The rendered section: the position's heading; each entry of the
+    /// traversal under the heading of its own position, a heading opening
+    /// wherever the traversal moves to another position — a snippet in full
+    /// with its headings demoted, a named read as its line, consecutive
+    /// lines as one list; then the named listed snippets and the listing
+    /// lines, back under the position's heading; then the triggered
+    /// procedures neither rendered in full nor listed.
     pub fn render(&self) -> String {
         let mut blocks: Vec<String> = vec![heading(&self.position)];
         let mut current = self.position.as_str();
         let shown: BTreeSet<&SnippetId> = self
             .in_full
             .iter()
-            .map(|s| &s.id)
+            .filter_map(|entry| match entry {
+                Entry::InFull(snippet) => Some(&snippet.id),
+                Entry::Named(_) => None,
+            })
             .chain(self.listed.iter().map(|l| &l.id))
             .collect();
-        for snippet in &self.in_full {
-            if snippet.position != current {
-                current = &snippet.position;
+        let mut listing = false;
+        for entry in &self.in_full {
+            if entry.position() != current {
+                current = entry.position();
                 blocks.push(heading(current));
+                listing = false;
             }
-            // What the traversal named just before this snippet sits under
-            // its heading, before it.
-            if !snippet.references.is_empty() {
-                blocks.push(snippet.references.join("\n"));
+            match entry {
+                Entry::InFull(snippet) => {
+                    blocks.push(in_full(snippet));
+                    listing = false;
+                }
+                Entry::Named(named) => match blocks.last_mut() {
+                    Some(lines) if listing => {
+                        lines.push('\n');
+                        lines.push_str(&named.line);
+                    }
+                    _ => {
+                        blocks.push(named.line.clone());
+                        listing = true;
+                    }
+                },
             }
-            blocks.push(in_full(snippet));
         }
         let lines: Vec<String> = self
             .references

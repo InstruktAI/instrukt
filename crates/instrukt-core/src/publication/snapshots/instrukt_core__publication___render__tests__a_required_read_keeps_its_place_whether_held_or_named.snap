@@ -17,10 +17,12 @@ The demo project.
 
 Take care.
 
-# Project
+# Sdlc
 
 - sdlc — `instrukt docs get --domain sdlc`
 - sdlc/policy/tests — `instrukt docs get sdlc/policy/tests --closure`
+
+# Project
 
 ## House — Policy
 

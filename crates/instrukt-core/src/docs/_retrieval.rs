@@ -699,7 +699,6 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
             position: position_name(&loaded.entry.id),
             body: rendered.text,
             trigger: trigger_of(loaded.entry).map(str::to_owned),
-            references: Vec::new(),
         });
     }
     let mut listed = Vec::new();
@@ -734,7 +733,10 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
     out.push(String::new());
     let section = Selection {
         position: domain.as_str().to_owned(),
-        in_full,
+        in_full: in_full
+            .into_iter()
+            .map(super::_selection::Entry::InFull)
+            .collect(),
         references: Vec::new(),
         listed,
         triggered,

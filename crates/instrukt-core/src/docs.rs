@@ -120,8 +120,8 @@ pub use _schema::{
     EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,
 };
 pub use _selection::{
-    InFull, Listing, Selection, closure_command, demote_headings, domain_reference_line, heading,
-    reference_line,
+    Entry, InFull, Listing, Named, Selection, closure_command, demote_headings,
+    domain_reference_line, heading, reference_line,
 };
 pub use _text::Directive;
 pub use _transfer::{TransferOutcome, transfer_pending};

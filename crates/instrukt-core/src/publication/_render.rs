@@ -35,9 +35,9 @@ use super::_source::{Committed, MASTER_FILE_NAME};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{
-    self, AgentCli, Corpus, DocsError, INDEX_FILE, InFull, Lens, Listing, Notice, NoticeCode,
-    Position, PositionIndex, RefTarget, Reference, RenderContext, Rendered, Selection, SourceFile,
-    Taxonomy, Values, View,
+    self, AgentCli, Corpus, DocsError, Entry, INDEX_FILE, InFull, Lens, Listing, Named, Notice,
+    NoticeCode, Position, PositionIndex, RefTarget, Reference, RenderContext, Rendered, Selection,
+    SourceFile, Taxonomy, Values, View,
 };
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug, SnippetId};
@@ -81,14 +81,14 @@ pub(super) struct Renderer<'a> {
     pub values: &'a Values<'a>,
 }
 
-/// The snippets one rendered file holds in full so far, in traversal
-/// order, the domains whose `expanded` set a bare-domain read already
-/// brought in, and the reference lines naming what the source does not
-/// hold that no snippet in full has followed yet: the next one takes them,
-/// so each keeps its place in the traversal.
+/// What one rendered file holds so far, in traversal order — each snippet
+/// in full, and each read the source does not hold, named in the place its
+/// body would have had — the domains whose `expanded` set a bare-domain
+/// read already brought in, and the listed snippets the source does not
+/// hold, named.
 #[derive(Default, Clone)]
 struct Expansion {
-    order: Vec<InFull>,
+    order: Vec<Entry>,
     seen: BTreeSet<SnippetId>,
     domains: BTreeSet<DomainName>,
     references: Vec<String>,
@@ -100,7 +100,10 @@ impl Expansion {
     fn shown<'s>(&'s self, listed: &'s [Listing]) -> BTreeSet<&'s SnippetId> {
         self.order
             .iter()
-            .map(|s| &s.id)
+            .filter_map(|entry| match entry {
+                Entry::InFull(snippet) => Some(&snippet.id),
+                Entry::Named(_) => None,
+            })
             .chain(listed.iter().map(|l| &l.id))
             .collect()
     }
@@ -187,7 +190,7 @@ impl Renderer<'_> {
             if let Some(first) = own.order.first() {
                 blocks.push(
                     Selection {
-                        position: first.position.clone(),
+                        position: first.position().to_owned(),
                         in_full: own.order,
                         references: Vec::new(),
                         listed: Vec::new(),
@@ -325,7 +328,7 @@ impl Rendering<'_> {
         if let Some(first) = expansion.order.first() {
             blocks.push(
                 Selection {
-                    position: first.position.clone(),
+                    position: first.position().to_owned(),
                     in_full: expansion.order.clone(),
                     references: expansion.references.clone(),
                     listed: Vec::new(),
@@ -333,8 +336,6 @@ impl Rendering<'_> {
                 }
                 .render(),
             );
-        } else if !expansion.references.is_empty() {
-            blocks.push(expansion.references.join("\n"));
         }
         Ok(finish(&blocks.join("\n\n")))
     }
@@ -390,7 +391,10 @@ impl Rendering<'_> {
                     return Ok(());
                 }
                 if !self.source.holds(id) {
-                    into.references.push(docs::reference_line(id));
+                    into.order.push(Entry::Named(Named {
+                        position: position_name(id),
+                        line: docs::reference_line(id),
+                    }));
                     return Ok(());
                 }
                 let Some((rendered, source)) = self.source.load(id, file)? else {
@@ -399,13 +403,12 @@ impl Rendering<'_> {
                 for nested in &rendered.required_reads {
                     self.follow(nested, &source, into)?;
                 }
-                into.order.push(InFull {
+                into.order.push(Entry::InFull(InFull {
                     id: id.clone(),
                     position: position_name(id),
                     body: rendered.text,
                     trigger: self.entry(id).and_then(trigger_of).map(str::to_owned),
-                    references: std::mem::take(&mut into.references),
-                });
+                }));
                 Ok(())
             }
             Some(RefTarget::Domain(domain)) => {
@@ -413,8 +416,10 @@ impl Rendering<'_> {
                     return Ok(());
                 }
                 if !self.source.holds_domain(domain) {
-                    into.references
-                        .push(docs::domain_reference_line(domain.as_str()));
+                    into.order.push(Entry::Named(Named {
+                        position: domain.as_str().to_owned(),
+                        line: docs::domain_reference_line(domain.as_str()),
+                    }));
                     return Ok(());
                 }
                 match self.source.domain_index(domain)? {
@@ -1118,6 +1123,36 @@ mod tests {
         );
         assert_eq!(plan.findings, []);
         insta::assert_snapshot!(root(&plan).text);
+    }
+
+    /// The position headings of a rendering, in order.
+    fn headings(text: &str) -> Vec<&str> {
+        text.lines().filter(|line| line.starts_with("# ")).collect()
+    }
+
+    #[test]
+    fn a_held_read_and_a_named_one_open_the_same_headings() {
+        let tests =
+            "---\ndescription: Tests.\n---\n\n# Tests — Policy\n\n## Rules\n\nTest first.\n";
+        let sdlc = [
+            (
+                "docs/domain/sdlc/index.yaml",
+                "description: Code work\nexpanded:\n  - sdlc/policy/tests\n",
+            ),
+            ("docs/domain/sdlc/policy/tests.md", tests),
+        ];
+        for read in ["sdlc/policy/tests", "sdlc"] {
+            let house = policy("Be kind.", &[read]);
+            let held = plan(&house, &sdlc);
+            let named = plan(&house, &[]);
+            assert_eq!(held.findings, []);
+            assert_eq!(named.findings, []);
+            assert_eq!(
+                headings(&root(&held).text),
+                headings(&root(&named).text),
+                "reading `{read}`"
+            );
+        }
     }
 
     #[test]
