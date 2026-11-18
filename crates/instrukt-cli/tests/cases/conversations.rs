@@ -456,8 +456,9 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         .unwrap();
     c.run();
     // Past the run-lock wait the wake is skipped, shown in status, and the
-    // runner goes on.
-    std::fs::write(&clock, "2026-11-18T12:03:00Z").unwrap();
+    // runner goes on. The clock moves on at every look, so it passes the wait
+    // whenever the runner began it.
+    let mut now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
     let workers = |c: &Company| -> Vec<String> {
         c.status()["workers"]
             .as_array()
@@ -467,6 +468,8 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
             .collect()
     };
     wait("the skipped wake in status", || {
+        now += jiff::SignedDuration::from_mins(3);
+        std::fs::write(&clock, now.to_string()).unwrap();
         workers(&c).contains(&"run-loop".to_owned())
     });
     assert!(c.runner_running());
