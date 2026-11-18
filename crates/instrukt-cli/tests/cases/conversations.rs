@@ -536,6 +536,40 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     next_wake(&c, "kept");
     std::fs::write(&project_layer, &readable).unwrap();
     next_wake(&c, "replaced");
+    // A start captured while T3 cannot list its threads is made again from
+    // what was captured once T3 lists again; a company document made
+    // unparseable meanwhile does not stand in its way.
+    c.runtime.flag("list-failure", true);
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who reviews it?", None);
+    wait("the retained opening's failure in status", || {
+        c.status()["conversations"]["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|conversation| {
+                conversation["failures"]
+                    .as_array()
+                    .is_some_and(|failures| !failures.is_empty())
+            })
+    });
+    let company_document = c
+        .env
+        .instrukt_home()
+        .join(format!("companies/{COMPANY}/instrukt.yaml"));
+    let parseable = std::fs::read_to_string(&company_document).unwrap();
+    std::fs::write(&company_document, "schema_version: [\n").unwrap();
+    c.runtime.flag("list-failure", false);
+    wait("the retained session", || c.sessions().len() == 2);
+    let retained = c
+        .sessions()
+        .into_iter()
+        .find(|session| *session != first)
+        .unwrap();
+    c.finish_turn(&retained, 0, "Ada reviews it.");
+    wait("the retained answer", || c.slack.posts().len() == 2);
+    std::fs::write(&company_document, &parseable).unwrap();
+    next_wake(&c, "replaced");
     // While the runner runs, the company's document is broken by hand and its
     // bot token's secret blanked.
     let company_dir = c.env.instrukt_home().join(format!("companies/{COMPANY}"));
@@ -575,11 +609,11 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     // valid connection.
     c.slack
         .mention(channel, "USTEVEN", "<@UAGENT> And the release notes?", None);
-    wait("the second session", || c.sessions().len() == 2);
+    wait("the second session", || c.sessions().len() == 3);
     let second = c
         .sessions()
         .into_iter()
-        .find(|session| *session != first)
+        .find(|session| *session != first && *session != retained)
         .unwrap();
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
     assert_eq!(
@@ -590,7 +624,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
             .instance
     );
     c.finish_turn(&second, 0, "They are ready.");
-    wait("the second answer", || c.slack.posts().len() == 2);
+    wait("the second answer", || c.slack.posts().len() == 3);
     // The machine layer is broken by hand as well: status still says why it
     // is not admitted, the runner keeps its generation, and the member is
     // answered.
@@ -605,12 +639,12 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     );
     c.slack
         .mention(channel, "USTEVEN", "<@UAGENT> And the date?", None);
-    wait("the third session", || c.sessions().len() == 3);
+    wait("the third session", || c.sessions().len() == 4);
     let third = c
         .sessions()
         .into_iter()
-        .find(|session| *session != first && *session != second)
+        .find(|session| ![&first, &retained, &second].contains(&session))
         .unwrap();
     c.finish_turn(&third, 0, "Friday the 20th.");
-    wait("the third answer", || c.slack.posts().len() == 3);
+    wait("the third answer", || c.slack.posts().len() == 4);
 }
