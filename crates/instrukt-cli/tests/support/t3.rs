@@ -42,7 +42,8 @@ if args[:3]==['auth','session','issue']:
     # failed before releasing it leaves no launch behind: it gives up after a
     # minute.
     if (root/'hold-issue').exists():
-        (root/'held-issue').write_text(str(os.getpid()))
+        held=root/'held-issues'; held.mkdir(exist_ok=True)
+        (held/str(len(list(held.iterdir()))+1)).write_text(str(os.getpid()))
         given_up=time.monotonic()+60
         while not (root/'release-issue').exists():
             if time.monotonic()>given_up: sys.exit(1)
@@ -366,10 +367,14 @@ impl FakeT3 {
         std::fs::read_to_string(self.state.join("sessions"))
             .map_or(0, |n| n.trim().parse().unwrap())
     }
-    /// Whether the held `auth session issue` launch has arrived and is still
+    /// How many `auth session issue` launches were held so far.
+    pub fn held_issues(&self) -> usize {
+        std::fs::read_dir(self.state.join("held-issues")).map_or(0, Iterator::count)
+    }
+    /// Whether the `n`th held `auth session issue` launch (from 1) is still
     /// running: its process alive, neither ended by its caller nor released.
-    pub fn held_issue_running(&self) -> bool {
-        let Ok(pid) = std::fs::read_to_string(self.state.join("held-issue")) else {
+    pub fn held_issue_running(&self, n: usize) -> bool {
+        let Ok(pid) = std::fs::read_to_string(self.state.join(format!("held-issues/{n}"))) else {
             return false;
         };
         std::process::Command::new("kill")

@@ -61,6 +61,8 @@ impl Server {
         std::fs::write(runtime,json!({"version":1,"pid":std::process::id(),"port":address.port(),"origin":format!("http://{address}"),"serverVersion":"0.1.7"}).to_string()).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
+        // Held reads, numbered in the order they arrived.
+        let held = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker = std::thread::spawn(move || {
             for stream in listener.incoming() {
                 if stopping.load(Ordering::Relaxed) {
@@ -71,7 +73,8 @@ impl Server {
                 };
                 // Each connection on its own, so a held read holds no other.
                 let dir = dir.clone();
-                std::thread::spawn(move || serve(&dir, stream));
+                let held = Arc::clone(&held);
+                std::thread::spawn(move || serve(&dir, stream, &held));
             }
         });
         Self {
@@ -124,7 +127,7 @@ fn record(dir: &Path, file: &str, line: &str) {
     clippy::result_large_err,
     reason = "tungstenite fixes the handshake callback error to an HTTP response"
 )]
-fn serve(dir: &Path, stream: TcpStream) {
+fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -167,7 +170,11 @@ fn serve(dir: &Path, stream: TcpStream) {
     // gives up first: it is recorded when it arrived, and whether the client
     // ended it.
     if dir.join("hold-read").exists() {
-        std::fs::write(dir.join("held-read"), "arrived").unwrap();
+        let record = dir
+            .join("held-reads")
+            .join((held.fetch_add(1, Ordering::SeqCst) + 1).to_string());
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::fs::write(&record, "arrived").unwrap();
         socket
             .get_mut()
             .set_read_timeout(Some(Duration::from_millis(50)))
@@ -180,12 +187,12 @@ fn serve(dir: &Path, stream: TcpStream) {
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                     ) => {}
                 _ => {
-                    std::fs::write(dir.join("held-read"), "closed").unwrap();
+                    std::fs::write(&record, "closed").unwrap();
                     return;
                 }
             }
         }
-        std::fs::write(dir.join("held-read"), "released").unwrap();
+        std::fs::write(&record, "released").unwrap();
     }
     let value: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("snapshot.json")).unwrap()).unwrap();
@@ -198,10 +205,15 @@ fn serve(dir: &Path, stream: TcpStream) {
     let _ = socket.close(None);
 }
 
-/// Whether the held read has arrived and is still open: neither ended by
-/// its client nor released.
-pub fn held_read_open(env: &TestEnv) -> bool {
-    std::fs::read_to_string(env.path("t3-readiness/held-read"))
+/// How many snapshot reads were held so far.
+pub fn held_reads(env: &TestEnv) -> usize {
+    std::fs::read_dir(env.path("t3-readiness/held-reads")).map_or(0, Iterator::count)
+}
+
+/// Whether the `n`th held read (from 1) is still open: neither ended by its
+/// client nor released.
+pub fn held_read_open(env: &TestEnv, n: usize) -> bool {
+    std::fs::read_to_string(env.path(&format!("t3-readiness/held-reads/{n}")))
         .is_ok_and(|state| state == "arrived")
 }
 

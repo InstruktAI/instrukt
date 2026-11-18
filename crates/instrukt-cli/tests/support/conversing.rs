@@ -311,6 +311,14 @@ impl Company {
         self.runner = None;
     }
 
+    /// Stops the runner as a service manager does (SIGTERM) and waits until
+    /// its process has ended.
+    pub fn stop_runner(&mut self) {
+        let runner = self.runner.as_mut().unwrap();
+        runner.signal(rustix::process::Signal::TERM);
+        wait("the runner's end", || runner.exited().is_some());
+    }
+
     /// Waits until the runner process has ended on its own.
     pub fn runner_ended(&mut self) {
         let runner = self.runner.as_mut().unwrap();

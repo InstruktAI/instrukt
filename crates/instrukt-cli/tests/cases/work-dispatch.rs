@@ -670,7 +670,8 @@ fn malformed_readiness_is_a_failed_refresh_the_start_proceeds_and_its_token_is_r
     create_change(&p);
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
-    assert!(readiness_failing(&p));
+    // The tick's readiness ended with it: no worker is shown.
+    assert!(!readiness_failing(&p));
     assert!(
         p.rt.calls()
             .iter()
@@ -753,7 +754,8 @@ fn an_unknown_readiness_descriptor_version_is_a_failed_refresh_and_the_start_pro
     create_change(&p);
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
-    assert!(readiness_failing(&p));
+    // The tick's readiness ended with it: no worker is shown.
+    assert!(!readiness_failing(&p));
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
