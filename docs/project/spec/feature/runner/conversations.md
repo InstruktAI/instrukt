@@ -45,7 +45,9 @@ nowhere else, starts no turn and accompanies no later message. Which messages
 count as
 addressed, who counts as the company's own, and what accompanies a message is
 each connector's own contract
-(`project/instrukt/spec/feature/runner/slack-connector`).
+(`project/instrukt/spec/feature/runner/slack-connector`). Everything else on this
+path is the same for every connector, whichever channel it speaks to
+(`project/instrukt/spec/domain/company`).
 
 ### The session bound to a conversation
 
@@ -84,9 +86,9 @@ each connector's own contract
 - Its role is `company-agent`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
-- Resolution is serialized per conversation. The runner keeps the binding,
-  each accepted message and each answer, so a message is not lost before it is
-  delivered and an answer is not lost before it is posted. What is stored and
+- Resolution is serialized per conversation. The company context keeps the
+  binding, each accepted message and each answer, so a message is not lost
+  before it is delivered and an answer is not lost before it is posted. What is stored and
   kept is `project/instrukt/spec/feature/work/state-database`.
 
 ### One addressed message, one turn
@@ -216,6 +218,7 @@ And no subscribed procedure is activated by that message
 
 ## See Also
 
+- [project/instrukt/spec/domain/company](../../domain/company.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/runner/slack-connector](slack-connector.md)
 - [project/instrukt/spec/feature/runner/conversation-links](conversation-links.md)

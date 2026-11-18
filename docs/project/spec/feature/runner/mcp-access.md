@@ -86,17 +86,17 @@ runner's recorded assignment for that session.
 A recognized session working in a company home is not served as any other
 caller while its assignment is not recorded: `list-tools` and `call` are
 refused there, before any secret is read or any server contacted, naming the
-company and the missing binding, until the runner has recorded the session as
-that company's. A session without an assignment outside company homes, and
+company and the missing binding, until the session's conversation binding
+records it as that company's. A session without an assignment outside company homes, and
 the local operator outside any session, are served as the table says. The
 working directory only withholds access; it never gives a session a company,
 a role or a login.
 
 ### The login a call carries
 
-The speaker is the person the runner recorded as the sender of the addressed
-message that started the calling session's current turn
-(`project/instrukt/spec/feature/runner/conversations`). The current turn is the
+The speaker is the person the company context recorded as the sender of the
+addressed message that started the calling session's current turn
+(`project/instrukt/spec/domain/company`). The current turn is the
 one the session has in progress when the command runs: a command an agent
 leaves running beyond its turn is judged by the turn then in progress, and is
 refused when the session has none or the runtime cannot say. A session with no
@@ -695,6 +695,7 @@ And a call for that person starts a new sign-in
 
 ## See Also
 
+- [project/instrukt/spec/domain/company](../../domain/company.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)

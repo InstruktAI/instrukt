@@ -1,5 +1,5 @@
 ---
-description: Module-aware work dispatch, event activation, connector conversations, session capabilities, task timing and anomaly reporting without a consumer daemon, with opt-in signed ingress.
+description: Module-aware work dispatch, event activation, session capabilities, task timing and anomaly reporting without a consumer daemon, with opt-in signed ingress.
 visibility: public
 ---
 # Runner — Spec
@@ -12,8 +12,9 @@ session inspection, event-source translation, conversation links and time
 eligibility, including anomaly reporting. It executes the enabled modules' work
 in one process, entered through `instrukt run` or `instrukt tick` and woken by
 the OS scheduler. The long-lived `instrukt run` also hosts turn-end conversation
-relay and the connectors through which people address a company's agent;
-scheduled `tick` does neither. It has no consumer daemon beside the runner;
+relay and, through hosting the company context implements, that context's
+connectors (`project/instrukt/spec/domain/company`); scheduled `tick` does
+neither. It has no consumer daemon beside the runner;
 with a company's connector declared, an owned service keeps `instrukt run`
 itself running.
 A separate opt-in loopback webhook receiver accepts signed external events,
@@ -94,19 +95,6 @@ Native agent-operation prose is supplied by configuration and rendered through `
 **Anomaly**
 : A failure requiring attention that waits in no agent thread.
 
-**Connector**
-: The code for one channel provider, declared in a company home and hosted by
-  `instrukt run`. It carries messages addressed to the company's agent in and
-  the agent's answers out.
-
-**Conversation**
-: A person talking to a company's agent in one place of a connected channel,
-  bound to exactly one agent session in the company's home.
-
-**Speaker**
-: The company member whose addressed message started a conversation session's
-  current turn.
-
 **Sign-in**
 : A speaker's one-time authorization, in their own browser, of instrukt's
   calls to an MCP server under their own login; started by the first call
@@ -124,16 +112,16 @@ Native agent-operation prose is supplied by configuration and rendered through `
   runtime capability translation, conversation-link membership, identity-envelope
   vocabulary and deterministic turn-end relay;
   unattended event/approval delivery and runner-owned execution observation; time
-  eligibility and missed-run decisions; anomaly-notification routing;
-  connectors, conversation bindings, per-message turn delivery with its
-  speaker, and posting a conversation's answers back; agents'
+  eligibility and missed-run decisions; anomaly-notification routing; resolving
+  a session's assignment from work's, its own and the company context's facts;
+  agents'
   access to declared MCP servers (which declarations a caller sees and the
   login a call carries), people's sign-ins to them and the logins kept from
   them; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, pending sign-ins and their waiting calls, and connectors' private messages, plus retained history, source positions and import provenance), whose schema is published in
+  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls, plus retained history, source positions and import provenance), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -141,7 +129,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
   session lifecycle, input delivery, restart, revival, handover,
-  live transcripts and lifecycle cleanup, owned by the runtime; instrukt's
+  live transcripts and lifecycle cleanup, owned by the runtime; connectors,
+  conversations, the speaker of a conversation turn and the conversation tables,
+  owned by company (`project/instrukt/spec/domain/company`); instrukt's
   extracted searchable history is a separate contract. instrukt calls only the adapter's
   released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
@@ -153,7 +143,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
   streams and optional notification; instrukt-owned start semantic-key discovery
-  and database locking. Every operational sessions command accepts `--json`.
+  and database locking; the hosting and the conversation assignment lookup that
+  the company context implements and the CLI wires. Every operational sessions
+  command accepts `--json`.
   Agents use configured native operations in their own conversation and
   record native child attempts through work. The adapter starts only without
   an agent or for an explicit native-capability gap. Native delegation returns
@@ -166,11 +158,12 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
   project settings and company homes; publication supplies project checkout paths; docs supplies subscribed procedures; work
   supplies records and session identity, and the state database's file,
-  writer lock and migrations; workflow supplies assignments; the runtime and
+  writer lock and migrations; workflow supplies assignments; company supplies
+  conversation hosting and conversation assignments; the runtime and
   GitHub supply execution and external observations. These
   relationships are specified in the context map position below.
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
-  `todos`, `events`, `history` and `conversations`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
+  `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
@@ -238,22 +231,6 @@ responsibility is distinct from its configured role class.
   both directions when a member closes the link. State remains runner-owned
   in the existing state database.
 
-#### Conversation binding
-
-- **Root entity:** One conversation's binding to its agent session.
-- **Contains:** Company, connector and the connector's conversation identity;
-  the session's runtime identity; accepted messages awaiting delivery with
-  their senders; the speaker of the current turn; answers awaiting posting.
-- **Invariants:** One conversation has one session and one session serves one
-  conversation. Each addressed message is one turn. A message activates no
-  subscribed procedure and emits no event. Only the answer to an addressed
-  message is posted.
-- **Identifier:** Company, connector and conversation identity.
-- **Lifecycle:** The first addressed message from a member starts the session
-  by key; later ones wake it. The binding outlives a settled thread and ends
-  with nothing instrukt does. Its contract is
-  `project/instrukt/spec/feature/runner/conversations`.
-
 #### Event activation
 
 - **Root entity:** An event's activation of a subscribed responsibility.
@@ -287,9 +264,9 @@ responsibility is distinct from its configured role class.
 Two paths bring the outside world to agents, and they never cross. Events carry
 facts: signed webhooks and observed state become events, published procedures
 subscribe to them, and standing agents answer in the home the event names.
-Conversations carry a person talking to a company's agent: a connector delivers
-each addressed message to the one session bound to that conversation and posts
-its answer back. A connector emits no event and activates no subscribed
+Conversations carry a person talking to a company's agent and belong to the
+company context (`project/instrukt/spec/domain/company`). A connector emits no
+event and activates no subscribed
 procedure: the conversation's session starts from the company-assistance procedure
 (`project/instrukt/spec/feature/runner/conversations`), and an event never
 reaches a conversation session.
@@ -430,10 +407,6 @@ has no origin, as declared in Canonical fields.
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
-- **Conversations** — [project/instrukt/spec/feature/runner/conversations](../feature/runner/conversations.md)
-  — ask a company's agent where the team talks, be answered there by the one session that knows the conversation.
-- **Slack connector** — [project/instrukt/spec/feature/runner/slack-connector](../feature/runner/slack-connector.md)
-  — connect a company's Slack workspace without a public address; only a tag reaches the agent.
 
 - **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
@@ -463,11 +436,13 @@ has no origin, as declared in Canonical fields.
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
+| company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`) |
+| runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
-The runtime adapter, the event-source boundary and the connectors form an
-**Anti-corruption layer (ACL)** translating session operations, external
-observations and channel providers' messages. These are
+The runtime adapter and the event-source boundary form an
+**Anti-corruption layer (ACL)** translating session operations and external
+observations. These are
 external boundaries, not additional bounded contexts. The runtime side is a Rust
 trait and code implementations; T3 is the first, over its host CLI and
 read-scoped `subscribeThread` stream. The explicit
@@ -496,8 +471,7 @@ per-role session bindings. Work owns validation and persistence of those writes.
   steering degrades ASAP attention to queued input or idle entry without a
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
-- Slack is the one connector. Other channels, a people registry, person homes,
-  voice, memory and help desks stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
+- A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
   harness, one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
   instrukt. GitHub-backed todos cover work movement without a separate

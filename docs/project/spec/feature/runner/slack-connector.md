@@ -10,7 +10,9 @@ opens the connection to Slack itself, so the computer needs no public address
 and no webhook. In a channel the agent hears only what is addressed to it: a
 message that tags it, with the conversation around that message. The
 conversation contract it serves is
-`project/instrukt/spec/feature/runner/conversations`.
+`project/instrukt/spec/feature/runner/conversations`; it is a connector of the
+company context and implements the connector interface that context defines
+(`project/instrukt/spec/domain/company`).
 
 ## Canonical fields
 

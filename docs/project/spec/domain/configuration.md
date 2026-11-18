@@ -83,7 +83,10 @@ be absent outside that runtime and does not change runtime selection.
   bundle and model-selection shapes and validation; GitHub App public profile
   and role-reference configuration; machine-local protected secrets and owned-file migration;
   company homes, their settings documents and their own protected secrets;
-  layer rules; validation of a layer
+  a company home's `connectors:` map and its validation against the connector
+  declarations the binary carries, which the CLI installs once when it starts,
+  before any configuration is read (a document read without them finds no
+  connector kind supported); layer rules; validation of a layer
   document; schema versions and migration; the effective configuration;
   revisions and safe patching; interpolation; validation of the explicit runtime
   choice, agent-action instruction entries and derived caller identity.
@@ -94,7 +97,9 @@ be absent outside that runtime and does not change runtime selection.
   composition reads adapter caller identity and `agents.<name>.git_author` and decides the
   commit author and trailers, including the selected App bot author for bound
   bot roles; the GitHub boundary owns installation-token issuance and actor
-  verification; blueprint, work, workflow and runner read the
+  verification; the fields each connector kind's declaration takes are
+  declared by its connector (`project/instrukt/spec/domain/company`);
+  blueprint, work, workflow, runner and company read the
   keys and module switches governing their capabilities; the flavor's
   procedures run the checks the project documents. Configuration migration
   precedes refusal or skip on every path; configuration owns its ordering and conversion.
@@ -106,7 +111,8 @@ be absent outside that runtime and does not change runtime selection.
   configuration schema type the editor schema of `instrukt.yaml` is generated
   from (`project/instrukt/spec/feature/publication/editor-schemas`); the explicit runtime selection and adapter caller-identity lookup used by
   commit composition.
-- **Allowed dependencies** — none. Configuration depends on no other context.
+- **Allowed dependencies** — the company context's connector declarations, as
+  published data; configuration depends on no other context's behavior.
   It declares the caller-identity lookup interface; CLI wiring supplies the
   selected adapter's environment-only recognition without importing runner.
 - **Implementation roots** — the configuration module of the `instrukt-core`
@@ -203,9 +209,14 @@ This context emits no events.
 - **Work, workflow, runner** — customer / supplier: configuration supplies
   board, approval gates, runtime choice and runner settings, and to runner the
   company homes with their settings and resolved secrets.
+- **Company** — customer / supplier: configuration supplies company homes with
+  their settings, members, resolved secrets and declared connectors. Published
+  language: configuration validates `connectors:` against the company
+  context's connector declarations.
 
 These are context relationships; module switches determine enablement, not
-semantic ownership. Configuration is the supplier in each relationship.
+semantic ownership. Configuration is the supplier in each relationship except
+the connector declarations, which it consumes.
 
 ## Known caveats
 

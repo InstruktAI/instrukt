@@ -1,5 +1,5 @@
 ---
-description: The one SQLite database holding a computer's work record and runner state — its tables, its migrations, and instrukt as its single, transactional writer.
+description: The one SQLite database holding a computer's work record, runner state and conversations — its tables, its migrations, and instrukt as its single, transactional writer.
 visibility: public
 ---
 # State Database — Spec
@@ -7,14 +7,15 @@ visibility: public
 ## What it is
 
 A computer keeps instrukt's operational state in one SQLite database: the
-local work record that stands in front of its GitHub reflection, and the
-runner's state. instrukt is its only writer and its only interface: agents
-work with the record through instrukt's commands. A write interrupted
+local work record that stands in front of its GitHub reflection, the
+runner's state and the company context's conversations. instrukt is its only
+writer and its only interface: agents work with the record through instrukt's commands. A write interrupted
 part-way leaves the state as the last completed change left it.
 
 The schema below describes instrukt's internal implementation, versioned by its migrations. It is not a reader API and promises no stable columns to external readers. Agents use instrukt commands; instrukt owns changes to these internal tables. The work context owns the file,
 its migrations, the writer rules and the work tables; the runner context owns
-the meaning and the writes of the runner tables.
+the meaning and the writes of the runner tables; the company context owns the
+meaning and the writes of the conversation tables.
 
 ## Canonical fields
 
@@ -24,8 +25,8 @@ the meaning and the writes of the runner tables.
   mode; SQLite keeps `instrukt.db-wal` and `instrukt.db-shm` beside it.
   instrukt creates it, at the current schema version, on the first command
   that needs it.
-- **Holds:** the work tables and the runner tables below. Nothing else is
-  stored in it.
+- **Holds:** the work tables, the runner tables and the conversation tables
+  below. Nothing else is stored in it.
 - **Protection:** the database and the files SQLite keeps beside it are
   readable and writable by their owner only.
 - **Stays outside it:** the blueprint graph store (one complete graph per
@@ -445,70 +446,6 @@ These tables realize the runner's contract in
 migration and writer boundary, not the relay decision. Native stream and send
 operations run outside local writer transactions.
 
-**Conversation tables** — what conversations through connectors keep, under
-`project/instrukt/spec/feature/runner/conversations`. A conversation's address
-is `(company, connector, conversation)`.
-
-**`connected_conversations`** — one row per conversation. Key: the address.
-
-| Column | Meaning |
-| --- | --- |
-| `semantic_key` | The key its one session is started and woken by. |
-| `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
-| `session` | The bound session; `NULL` until a start is bound. |
-| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
-| `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
-
-**`conversation_messages`** — one row per addressed message. Key: the address
-and `message`, the connector's identity of that message.
-
-| Column | Meaning |
-| --- | --- |
-| `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
-| `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
-| `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
-| `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
-| `text` | The message's text as written. |
-| `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
-| `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
-| `turn` | The native turn that answered it; `NULL` until then. |
-| `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
-
-**`conversation_answers`** — the pieces of an answer, in order. Key: the
-address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
-when the connector accepted its post, `NULL` while outstanding; `failure`, the
-cause of its last failed post, `NULL` once posted.
-
-**`conversation_refusals`** — the one fixed reply owed to a sender the agent
-does not answer (`project/instrukt/spec/feature/runner/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
-when the connector accepted the reply, `NULL` while outstanding; `failure`.
-
-**`connector_states`** — one row per declared connector. Key:
-`(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
-`failed` or `stopped`; `failure`, its cause; `updated_at`.
-
-**`conversation_relay`** — one row: `failure`, the cause while the relay that
-serves conversations is not running, `NULL` while it runs; `updated_at`.
-
-A message is stored, with its sender's connector identity, before the
-connector acknowledges it to its provider, so admission is taken up again
-after a restart. A message's `refused` state and the reply owed to its sender
-are written in one transaction.
-Reading a finished turn and the connector accepting a post are separate
-boundaries: an answer's pieces are stored in the same transaction as the
-position that read them and the message's `answered` state, and `posted_at`
-is set only when the connector accepted that piece. These tables hold no
-credential.
-
-**`connector_private_messages`** — the messages a connector posted for one
-person alone, such as a sign-in link
-(`project/instrukt/spec/feature/runner/slack-connector`). Key: `(company,
-connector, channel, message)`, the provider's identity of the posted message.
-Column: `posted_at`. These messages, and every message that carries the
-connector's private-message marker whether or not its identity was recorded,
-are left out of every range of accompanying messages.
-
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
 email address in lower case. These tables hold credentials; they are written
@@ -660,6 +597,76 @@ the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
 set for).
 
 **`wakeups`** — one row: `last_at`, the last wake-up.
+
+### Conversation tables
+
+Owned by the company context and written only through its code, in the
+transactions stated below; no other context reads them, and other contexts
+obtain conversation facts through that context's published contracts
+(`project/instrukt/spec/domain/company`). They keep what conversations through
+connectors keep, under
+`project/instrukt/spec/feature/runner/conversations`. A conversation's address
+is `(company, connector, conversation)`.
+
+**`connected_conversations`** — one row per conversation. Key: the address.
+
+| Column | Meaning |
+| --- | --- |
+| `semantic_key` | The key its one session is started and woken by. |
+| `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
+| `session` | The bound session; `NULL` until a start is bound. |
+| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
+| `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
+
+**`conversation_messages`** — one row per addressed message. Key: the address
+and `message`, the connector's identity of that message.
+
+| Column | Meaning |
+| --- | --- |
+| `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
+| `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
+| `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
+| `arrived_at` | When it was stored. |
+| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `text` | The message's text as written. |
+| `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
+| `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
+| `turn` | The native turn that answered it; `NULL` until then. |
+| `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
+
+**`conversation_answers`** — the pieces of an answer, in order. Key: the
+address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
+when the connector accepted its post, `NULL` while outstanding; `failure`, the
+cause of its last failed post, `NULL` once posted.
+
+**`conversation_refusals`** — the one fixed reply owed to a sender the agent
+does not answer (`project/instrukt/spec/feature/runner/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
+when the connector accepted the reply, `NULL` while outstanding; `failure`.
+
+**`connector_states`** — one row per declared connector. Key:
+`(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
+`failed` or `stopped`; `failure`, its cause; `updated_at`.
+
+**`conversation_relay`** — one row: `failure`, the cause while the relay that
+serves conversations is not running, `NULL` while it runs; `updated_at`.
+
+A message is stored, with its sender's connector identity, before the
+connector acknowledges it to its provider, so admission is taken up again
+after a restart. A message's `refused` state and the reply owed to its sender
+are written in one transaction.
+Reading a finished turn and the connector accepting a post are separate
+boundaries: an answer's pieces are stored in the same transaction as the
+position that read them and the message's `answered` state, and `posted_at`
+is set only when the connector accepted that piece. These tables hold no
+credential.
+
+**`connector_private_messages`** — the messages a connector posted for one
+person alone, such as a sign-in link
+(`project/instrukt/spec/feature/runner/slack-connector`). Key: `(company,
+connector, channel, message)`, the provider's identity of the posted message.
+Column: `posted_at`. These messages, and every message that carries the
+connector's private-message marker whether or not its identity was recorded,
+are left out of every range of accompanying messages.
 
 ### Retention
 
