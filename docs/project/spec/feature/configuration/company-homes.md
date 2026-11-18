@@ -170,7 +170,10 @@ Then validating the company reports the file
   company's repository — and keeping it current are the operator's, outside
   this contract.
 - Company homes on one computer are separate folders of one operating-system
-  user. A session working in one home is not prevented from reading another.
+  user. What keeps a session working for one company from reading another
+  company's home is that company's container
+  (`project/instrukt/spec/feature/runner/company-containers`), not the
+  folders.
 - There are no person homes.
 
 ## See Also
