@@ -71,6 +71,17 @@ fn todos_are_picked_up_when_a_projects_event_responses_are_not_admitted() {
     project.tick();
 
     assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
+    // The computer's status names the project's event responses as not
+    // admitted, with the setting they need.
+    let out = project
+        .env
+        .run(project.env.home(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let admission = serde_json::to_string_pretty(&status["admission"])
+        .unwrap()
+        .replace(&project.repo.path().display().to_string(), "[REPO]");
+    insta::assert_snapshot!("events-not-admitted-in-status", admission);
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1

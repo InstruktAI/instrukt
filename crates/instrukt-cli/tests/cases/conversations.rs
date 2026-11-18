@@ -444,8 +444,8 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         )],
     );
     documented::sync(&c.env, &events);
-    // The runner starts under a clock file while a tick holds the dispatch
-    // lock: its wake waits for the lock on that clock.
+    // The runner starts under a clock file while the dispatch lock is held:
+    // its wake waits for the lock on that clock.
     let clock = c.env.path("clock");
     std::fs::write(&clock, "2026-11-18T12:00:00Z").unwrap();
     c.env
@@ -455,32 +455,33 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         .unwrap()
         .unwrap();
     c.run();
-    // Past the run-lock wait the wake is skipped, shown in status, and the
-    // runner goes on. The clock moves on at every look, so it passes the wait
-    // whenever the runner began it.
+    // Past the run-lock wait the wake is skipped, shown in status with its
+    // cause, and the runner goes on. The clock moves on at every look, so
+    // it passes the wait whenever the runner began it.
     let mut now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
-    let workers = |c: &Company| -> Vec<String> {
-        c.status()["workers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|row| row["worker"].as_str().unwrap().to_owned())
-            .collect()
-    };
     wait("the skipped wake in status", || {
         now += jiff::SignedDuration::from_mins(3);
         std::fs::write(&clock, now.to_string()).unwrap();
-        workers(&c).contains(&"run-loop".to_owned())
+        c.status()["skipped_wake"]["cause"]
+            .as_str()
+            .is_some_and(|cause| !cause.is_empty())
     });
     assert!(c.runner_running());
+    // Once the lock is free, the same runner answers a member.
     drop(held);
-    // A member is answered.
     let channel = "C1";
     c.slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
     let first = c.session();
     c.finish_turn(&first, 0, "On Friday.");
     wait("the first answer", || c.slack.posts().len() == 1);
+    // The skipped wake stays until a wake takes the lock: the next one comes
+    // a minute on, so a runner started again shows it with its first.
+    c.runner_dies();
+    c.run();
+    wait("the skipped wake to clear", || {
+        c.status()["skipped_wake"].is_null()
+    });
     // Status names the project's event responses as not admitted.
     let findings = |c: &Company| -> Vec<(std::path::PathBuf, String)> {
         c.status()["admission"]["findings"]
@@ -500,6 +501,14 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         "modules.events".to_owned(),
     );
     assert_eq!(findings(&c), std::slice::from_ref(&project_events));
+    let reacting: Vec<serde_json::Value> = c.status()["admission"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["project"] == "reacting")
+        .map(|p| p["events"].clone())
+        .collect();
+    assert_eq!(reacting, [serde_json::Value::Bool(false)]);
     // While the runner runs, the company's document is broken by hand and its
     // bot token's secret blanked.
     let company_dir = c.env.instrukt_home().join(format!("companies/{COMPANY}"));
