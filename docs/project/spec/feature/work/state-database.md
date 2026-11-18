@@ -694,9 +694,15 @@ with the conversation core (`project/instrukt/spec/feature/company/conversations
 migration an existing connector's `first_seen` is its company's earliest retained
 message, or the migration time.
 
-**`runner_workers`** — one row per history worker (extraction, query responder):
-`failure` and `since`, its current outside failure, written by that worker on a
-change; current state only.
+**`runner_workers`** — one row per background worker of the runner: the history
+workers (extraction, query responder) and the readiness refresh (`readiness`,
+which keeps the runtime's provider snapshot current,
+`project/instrukt/spec/feature/runner/session-continuity`). `failure` and `since`,
+its current outside failure — for `readiness`, a refresh that failed or ran past
+its limit — written by that worker alone on a change and cleared by its next
+success; current state only. A row lives while its worker exists on this computer:
+the history rows while history is on, `readiness` while the runner runs with a
+runtime that reports provider facts.
 
 A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again

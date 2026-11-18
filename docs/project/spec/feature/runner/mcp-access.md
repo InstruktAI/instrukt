@@ -645,16 +645,16 @@ And a sign-in that person had started keeps nothing when they complete it
 And a call for that person starts a new sign-in
 ```
 
-### UC-MA11: A member's request is served by a server that answers an earlier protocol version
+### UC-MA11: An agent acting for a member uses a server that answers an earlier protocol version
 
 ```gherkin
-Given a company member asks the company's agent for something a tool of the company's declared server provides
+Given a company member's request needs a tool of the company's declared server
 And that server answers an earlier protocol version instrukt also speaks
-When the agent uses the tool for them
-Then the member gets the tool's result in the agent's answer
+When the agent calls the tool for the member
+Then the call returns the tool's result
 And every request to the server after the first names the version the server answered
 But when the server answers a version instrukt does not speak
-Then the agent's call fails naming both versions
+Then the call fails naming both versions
 ```
 
 ## Known caveats

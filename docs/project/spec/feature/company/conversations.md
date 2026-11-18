@@ -162,8 +162,8 @@ connector gives.
   cannot be found stays sent and goes to the operator, never delivered again.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
-- From the admission of an addressed message until its turn ends, the
-  connector shows in that conversation the message's state, where its provider
+- From the admission of an addressed message until it is complete — its
+  answer posted, or its turn completed with a bare `NOOP` — the connector shows in that conversation the message's state, where its provider
   has a way to: that the assistant is working on the request from its
   admission, and that the assistant is temporarily unavailable and the message
   is saved while its no-work interval is open, which happens only once a failure
@@ -171,8 +171,9 @@ connector gives.
   the notice read the same interval, the relay-wide failure included, so the
   indication never says working while the notice's minute runs. A slow but healthy
   start shows the working text. Both are fixed texts the connector words; nothing in them is
-  generated. The indication belongs to the turn, whether the turn posts an
-  answer, posts nothing or fails; it is a courtesy, and each connector states
+  generated. The indication follows the message, not its turn: through a
+  failed turn awaiting redelivery and through an answer complete but not yet
+  posted, it stays, with the text its interval gives; it is a courtesy, and each connector states
   how closely it follows the state.
 - `instrukt events status` shows each connector's connection state, the
   conversations with pending messages or answers, and failures with their

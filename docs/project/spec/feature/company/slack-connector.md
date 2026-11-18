@@ -162,8 +162,9 @@ message alike.
 
 ### While the agent works
 
-From the admission of an addressed message until its turn ends, the connector
-shows Slack's status line for it with one of two fixed texts, chosen from the
+From the admission of an addressed message until it is complete — its answer
+posted, or its turn completed with a bare `NOOP` — the connector shows Slack's
+status line for it with one of two fixed texts, chosen from the
 message's state (`project/instrukt/spec/feature/company/conversations`):
 
 | The message's state | Text |
@@ -181,6 +182,10 @@ otherwise.
 | --- | --- | --- |
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
+
+A message is unfinished until its answer is posted or its turn completes with a
+bare `NOOP`; a failed turn awaiting redelivery and an answer not yet posted leave
+it unfinished.
 
 Admitting a message wakes the connector's status pass, so the person normally
 sees at once that the request was taken on; that first setting can wait behind

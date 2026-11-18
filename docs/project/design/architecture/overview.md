@@ -131,8 +131,8 @@ lock above derives from it, so a home reached through a link keeps one authority
 a link at the database file itself is refused
 (`project/instrukt/spec/feature/work/state-database`). The state database also holds
 the read-back cursor of each connector (`connector_read_back`), each conversation
-message's no-work interval and the history workers' current state
-(`runner_workers`). Installation keeps no record of the units it wrote and the runner
+message's no-work interval and the current state of the runner's background
+workers — the history workers and the readiness refresh (`runner_workers`). Installation keeps no record of the units it wrote and the runner
 service publishes no identity: both converge by name
 (`project/instrukt/spec/feature/runner/module-installation`).
 
