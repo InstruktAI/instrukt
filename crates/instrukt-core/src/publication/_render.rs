@@ -11,6 +11,13 @@
 //! material is dropped and a pending snippet is never inlined. A required
 //! read that cannot be resolved, or a text left with a reference, fails
 //! rendering.
+//!
+//! Where the snippets and the domain indexes come from is a [`Source`]:
+//! the renderer reads a snippet, and a bare domain's `index.yaml`, only
+//! through it, and keeps selection, closure and headings to itself. Its one
+//! implementation, [`Published`], reads the publishing project's committed
+//! corpus for the domains it publishes and the computer's published tree
+//! for every other.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -231,6 +238,18 @@ impl Renderer<'_> {
         docs::render(text, Lens::Current, &cx).map_err(|e| render_error(file, &e.to_string()))
     }
 
+    /// Where this renderer's snippets and domain indexes come from.
+    fn source(&self) -> Published<'_> {
+        Published {
+            home: self.home,
+            project: self.project,
+            corpus: self.corpus,
+            owned: self.owned,
+            indexes: self.indexes,
+            values: self.values,
+        }
+    }
+
     /// Whether `entry` is one of this project's own snippets.
     fn local(&self, entry: &IndexEntry) -> bool {
         entry.scope == IndexScope::Local && &entry.source_project == self.project
@@ -276,7 +295,7 @@ impl Renderer<'_> {
                 if !into.seen.insert(id.clone()) {
                     return Ok(());
                 }
-                let Some((rendered, source)) = self.load(id, file)? else {
+                let Some((rendered, source)) = self.source().load(id, file)? else {
                     return Ok(());
                 };
                 for nested in &rendered.required_reads {
@@ -294,17 +313,90 @@ impl Renderer<'_> {
                 if !into.domains.insert(domain.clone()) {
                     return Ok(());
                 }
-                match self.indexes.get(domain) {
+                let source = self.source();
+                match source.domain_index(domain) {
                     Some(index) => self.expand(index.expanded(), file, into),
-                    None => Err(self.missing_domain(domain, file).unwrap_or_else(unresolved)),
+                    None => Err(source
+                        .missing_domain(domain, file)
+                        .unwrap_or_else(unresolved)),
                 }
             }
             Some(RefTarget::Bundle(_) | RefTarget::LocalFile(_)) | None => Err(unresolved()),
         }
     }
 
+    /// The listing line of each delivered id of `ids`.
+    fn listings(&self, ids: &[SnippetId], file: &str) -> Result<Vec<Listing>, PublicationError> {
+        let mut listed = Vec::new();
+        for id in ids {
+            let entry = self
+                .entry(id)
+                .ok_or_else(|| render_error(file, &format!("`{id}` names no published snippet")))?;
+            if entry.delivered_by.is_empty() {
+                listed.push(listing(entry));
+            }
+        }
+        Ok(listed)
+    }
+
+    /// The delivered procedures carrying an `activation_trigger` that
+    /// `in_scope` selects and `shown` does not hold yet, by id.
+    fn triggered(
+        &self,
+        in_scope: impl Fn(&IndexEntry) -> bool,
+        shown: &BTreeSet<SnippetId>,
+    ) -> Vec<Listing> {
+        let mut lines: Vec<Listing> = self
+            .index
+            .snippets
+            .iter()
+            .filter(|e| in_scope(e) && trigger_of(e).is_some() && !shown.contains(&e.id))
+            .map(listing)
+            .collect();
+        lines.sort_by(|a, b| a.id.cmp(&b.id));
+        lines
+    }
+
+    fn entry(&self, id: &SnippetId) -> Option<&IndexEntry> {
+        self.index.snippets.iter().find(|e| &e.id == id)
+    }
+}
+
+/// Where a rendering's snippets and domain indexes come from.
+trait Source {
     /// The snippet `id` through the read pipeline, with the file it is read
-    /// from; `None` when it is pending.
+    /// from; `None` when it is pending. `file` is the file whose required
+    /// read it is.
+    fn load(
+        &self,
+        id: &SnippetId,
+        file: &str,
+    ) -> Result<Option<(Rendered, String)>, PublicationError>;
+
+    /// The `index.yaml` of the position addressed by `domain`; `None` when
+    /// it has none.
+    fn domain_index(&self, domain: &DomainName) -> Option<&PositionIndex>;
+
+    /// The refusal for a read of `file` into `domain` when no adopted docs
+    /// repository publishes that domain on this computer; `None` when the
+    /// domain is published (the read is unresolved for another reason).
+    fn missing_domain(&self, domain: &DomainName, file: &str) -> Option<PublicationError>;
+}
+
+/// The published source: the publishing project's committed corpus for
+/// the domains it publishes in this sync, the computer's published tree
+/// for every other, and every published position's `index.yaml` as this
+/// sync leaves the computer.
+struct Published<'a> {
+    home: &'a Home,
+    project: &'a ProjectSlug,
+    corpus: &'a Corpus,
+    owned: &'a BTreeSet<DomainName>,
+    indexes: &'a BTreeMap<DomainName, PositionIndex>,
+    values: &'a Values<'a>,
+}
+
+impl Source for Published<'_> {
     fn load(
         &self,
         id: &SnippetId,
@@ -357,45 +449,10 @@ impl Renderer<'_> {
         Ok(Some((rendered, shown)))
     }
 
-    /// The listing line of each delivered id of `ids`.
-    fn listings(&self, ids: &[SnippetId], file: &str) -> Result<Vec<Listing>, PublicationError> {
-        let mut listed = Vec::new();
-        for id in ids {
-            let entry = self
-                .entry(id)
-                .ok_or_else(|| render_error(file, &format!("`{id}` names no published snippet")))?;
-            if entry.delivered_by.is_empty() {
-                listed.push(listing(entry));
-            }
-        }
-        Ok(listed)
+    fn domain_index(&self, domain: &DomainName) -> Option<&PositionIndex> {
+        self.indexes.get(domain)
     }
 
-    /// The delivered procedures carrying an `activation_trigger` that
-    /// `in_scope` selects and `shown` does not hold yet, by id.
-    fn triggered(
-        &self,
-        in_scope: impl Fn(&IndexEntry) -> bool,
-        shown: &BTreeSet<SnippetId>,
-    ) -> Vec<Listing> {
-        let mut lines: Vec<Listing> = self
-            .index
-            .snippets
-            .iter()
-            .filter(|e| in_scope(e) && trigger_of(e).is_some() && !shown.contains(&e.id))
-            .map(listing)
-            .collect();
-        lines.sort_by(|a, b| a.id.cmp(&b.id));
-        lines
-    }
-
-    fn entry(&self, id: &SnippetId) -> Option<&IndexEntry> {
-        self.index.snippets.iter().find(|e| &e.id == id)
-    }
-
-    /// The refusal for a read of `file` into `domain` when no adopted docs
-    /// repository publishes that domain on this computer; `None` when the
-    /// domain is published (the read is unresolved for another reason).
     fn missing_domain(&self, domain: &DomainName, file: &str) -> Option<PublicationError> {
         (!self.owned.contains(domain) && !self.home.domain_dir(domain).is_dir()).then(|| {
             PublicationError::Docs(docs::DocsError::DomainUnpublished {
