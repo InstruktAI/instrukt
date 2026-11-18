@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::_agents::{MergeRefusal, TARGETS, merge_key};
-use super::_editor::{EditorChange, OnLink, write_editor_schemas};
+use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_render::Renderer;
 use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
-use super::_tree::{self, ClaimRecord, Outputs, ProjectClaimRecord, Written};
-use super::_tx::{STAGING_PREFIX, Transaction, confined, resolved, sweep};
+use super::_tree::{self, ClaimRecord, Outputs, ProjectClaimRecord};
+use super::_tx::{STAGING_PREFIX, Transaction, destination, own_destination, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{
@@ -42,8 +42,6 @@ pub struct SyncRequest<'a> {
     /// The caller's working directory: the project it stands in is the one
     /// published.
     pub cwd: &'a Path,
-    /// Republish even when main equals the published commit.
-    pub force: bool,
     /// The optional-module implementations available to this invocation.
     /// Publication applies those the committed configuration it publishes
     /// switches on (validation reads them); the caller's working tree
@@ -63,10 +61,6 @@ pub enum Refusal {
     /// The committed tree holds a domain folder with a reserved name, by
     /// its repository directory (`docs/domain/general/`).
     ReservedDomain(Vec<String>),
-    /// User-scope instruction files the sync would write hold content
-    /// instrukt did not leave there: a file it never wrote, or one changed
-    /// since.
-    ForeignInstructions(Vec<PathBuf>),
 }
 
 impl fmt::Display for Refusal {
@@ -87,20 +81,6 @@ impl fmt::Display for Refusal {
                     named.join(" and ")
                 )
             }
-            Refusal::ForeignInstructions(paths) => {
-                let named: Vec<String> = paths
-                    .iter()
-                    .map(|path| format!("`{}`", path.display()))
-                    .collect();
-                let verb = if named.len() == 1 { "holds" } else { "hold" };
-                write!(
-                    f,
-                    "{} {verb} instructions instrukt did not write; move that content into documentation \
-                     (a snippet `docs/general/index.yaml` selects, or an `agents` snippet for that agent CLI) \
-                     or move the file out of the way, then sync again",
-                    named.join(" and ")
-                )
-            }
         }
     }
 }
@@ -113,7 +93,8 @@ pub enum SyncOutcome {
         project: ProjectSlug,
         commit: CommitSha,
     },
-    /// The selected source equals the published commit; nothing changed.
+    /// The selected source is published and every output was already
+    /// current: nothing was written.
     Unchanged {
         project: ProjectSlug,
         commit: CommitSha,
@@ -140,9 +121,36 @@ pub struct SyncReport {
     /// What a publishing sync reports without refusing: a domain without
     /// `index.yaml`, a root master without `docs/project/index.yaml`.
     pub notices: Vec<Notice>,
-    /// Global agent files a retraction left in place because their content
-    /// is no longer what instrukt wrote.
-    pub kept: Vec<PathBuf>,
+    /// Each global agent file a publishing sync wrote or found current.
+    pub global_files: Vec<GlobalDestination>,
+    /// Each symbolic link that stood at one of publication's own
+    /// destinations and was replaced by the file or directory.
+    pub replaced_links: Vec<PathBuf>,
+    /// What a publishing sync found about the agent files without
+    /// refusing: settings left untouched, references a global file keeps.
+    pub findings: Vec<SyncFinding>,
+}
+
+/// One global agent file a sync wrote or found current.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalDestination {
+    pub path: PathBuf,
+    /// The agent program that reads it.
+    pub runtime: &'static str,
+    /// Whether this sync wrote it; `false` when it already held the
+    /// rendering.
+    pub written: bool,
+}
+
+/// What a sync reports about an agent file without refusing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncFinding {
+    /// A runtime's settings file left untouched: the user's, unparseable or
+    /// a symbolic link. Its instruction file is still written.
+    SettingsLeft { path: PathBuf, reason: String },
+    /// A global agent file written with a reference left for an agent
+    /// program to resolve.
+    ReferenceKept { path: PathBuf, reference: String },
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -185,7 +193,9 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let mut leftovers = sweep(request.home.root())?;
     let mut editor = Vec::new();
     let mut notices = Vec::new();
-    let mut kept = Vec::new();
+    let mut global_files = Vec::new();
+    let mut replaced_links = Vec::new();
+    let mut findings = Vec::new();
     let attempt = (|| {
         let (branch, commit) = if request.home.is_development() {
             let branch = git::run(&project.worktree, ["rev-parse", "--abbrev-ref", "HEAD"])?;
@@ -199,21 +209,18 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         } else {
             _source::canonical_main(&project.primary)?
         };
-        let previous = PublishedRecord::load(request.home, &project.slug)?;
-        let outcome = if !request.force && previous.is_some_and(|r| r.commit == commit) {
-            SyncOutcome::Unchanged {
-                project: project.slug.clone(),
-                commit: commit.clone(),
-            }
-        } else {
-            let mut report = Reported {
-                leftovers: &mut leftovers,
-                editor: &mut editor,
-                notices: &mut notices,
-                kept: &mut kept,
-            };
-            publish(request, &project, &commit, &mut report)?
+        // Every sync converges: it validates, renders and compares, and
+        // writes only what is missing or different, whether or not main
+        // moved since the published commit.
+        let mut report = Reported {
+            leftovers: &mut leftovers,
+            editor: &mut editor,
+            notices: &mut notices,
+            global_files: &mut global_files,
+            replaced_links: &mut replaced_links,
+            findings: &mut findings,
         };
+        let outcome = publish(request, &project, &commit, &mut report)?;
         Ok::<_, PublicationError>((branch, commit, outcome))
     })();
     let (branch, commit, outcome) = match attempt {
@@ -238,7 +245,6 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         project = %project.slug,
         branch = %branch,
         commit = %commit,
-        forced = request.force,
         outcome = label,
         leftovers = leftovers.len(),
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -248,7 +254,9 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         leftovers,
         editor,
         notices,
-        kept,
+        global_files,
+        replaced_links,
+        findings,
     })
 }
 
@@ -257,7 +265,9 @@ struct Reported<'r> {
     leftovers: &'r mut Vec<PathBuf>,
     editor: &'r mut Vec<EditorChange>,
     notices: &'r mut Vec<Notice>,
-    kept: &'r mut Vec<PathBuf>,
+    global_files: &'r mut Vec<GlobalDestination>,
+    replaced_links: &'r mut Vec<PathBuf>,
+    findings: &'r mut Vec<SyncFinding>,
 }
 
 /// Everything a sync computed before it writes anything.
@@ -273,8 +283,9 @@ struct Prepared {
     owners: BTreeMap<DomainName, ProjectSlug>,
     /// Rendered `AGENTS.md` files, relative to the primary worktree.
     agents: Vec<(PathBuf, String)>,
-    /// Global agent files, relative to the user's home directory.
-    entrypoints: Vec<(PathBuf, String)>,
+    /// Global agent files, relative to the user's home directory, each with
+    /// the agent program that reads it.
+    global: Vec<(PathBuf, &'static str, String)>,
     /// Merged settings files, relative to the user's home directory.
     settings: Vec<(PathBuf, Vec<u8>)>,
 }
@@ -376,21 +387,20 @@ fn publish(
         project_index.as_ref(),
         &mut notices,
     )?;
-    let (entrypoints, settings) = if !home.is_development()
+    let GlobalPlan {
+        global,
+        settings,
+        findings,
+    } = if !home.is_development()
         && held
             .iter()
             .any(|d| Position::of_domain(d) == Position::General)
     {
         global_files(home, &renderer)?
     } else {
-        (Vec::new(), Vec::new())
+        GlobalPlan::default()
     };
-    // Before anything is written: a destination holding content instrukt
-    // did not leave there stops the sync.
-    let foreign = foreign_files(home, &Outputs::load(home, &project.slug)?, &entrypoints)?;
-    if !foreign.is_empty() {
-        return Ok(refused(Refusal::ForeignInstructions(foreign)));
-    }
+    *report.findings = findings;
     notices.sort();
     notices.dedup();
     *report.notices = notices;
@@ -402,14 +412,14 @@ fn publish(
         patched,
         owners,
         agents,
-        entrypoints,
+        global,
         settings,
     };
     preflight(home, project, commit, &prepared)?;
     // Before anything is published: a refresh that cannot write fails the
     // sync, and no commit is recorded.
     if !home.is_development() {
-        *report.editor = write_editor_schemas(&project.primary, OnLink::Refuse)?;
+        *report.editor = write_editor_schemas(&project.primary)?;
     }
     // Coordinate only publication application with checkout rendering. Validation
     // and preparation retain the separate docs lock, so a checkout inside a
@@ -417,12 +427,20 @@ fn publish(
     let _outputs = lock_outputs(home)?;
     let mut tx = Transaction::begin(home.root())?;
     match write(home, project, commit, request.now, &prepared, &mut tx) {
-        Ok(kept) => {
+        Ok(global_files) => {
+            let changed = tx.changed()
+                || report
+                    .editor
+                    .iter()
+                    .any(|change| change.kind != EditorChangeKind::Linked);
+            *report.replaced_links = tx.replaced_links().to_vec();
             report.leftovers.extend(tx.commit());
-            *report.kept = kept;
-            Ok(SyncOutcome::Published {
-                project: project.slug.clone(),
-                commit: commit.clone(),
+            *report.global_files = global_files;
+            let (project, commit) = (project.slug.clone(), commit.clone());
+            Ok(if changed {
+                SyncOutcome::Published { project, commit }
+            } else {
+                SyncOutcome::Unchanged { project, commit }
             })
         }
         Err(err) => {
@@ -445,9 +463,10 @@ pub(super) fn lock_outputs(home: &Home) -> Result<LockGuard, PublicationError> {
 /// output in the project or one recorded for retraction; in the home a
 /// published domain, a third-party doc, the index, the eval
 /// fingerprint records, the outputs record or the published record — that
-/// is, or lies behind, a symbolic link refuses the sync. An agent-CLI file
-/// in the user's home whose link leads nowhere does too. The writes check
-/// again as a backstop.
+/// lies behind a symbolic link refuses the sync; a link at the location
+/// itself is replaced by the write. An agent-CLI file in the user's home
+/// whose directory's link leads nowhere refuses too. The writes check again
+/// as a backstop.
 fn preflight(
     home: &Home,
     project: &Project,
@@ -461,17 +480,16 @@ fn preflight(
         .map(|(rel, _)| rel)
         .chain(&previous.agents)
     {
-        confined(&project.primary, rel)?;
+        own_destination(&project.primary, rel)?;
     }
     let user_home = home.user_home();
     for rel in prepared
-        .entrypoints
+        .global
         .iter()
-        .map(|(rel, _)| rel)
+        .map(|(rel, _, _)| rel)
         .chain(prepared.settings.iter().map(|(rel, _)| rel))
-        .chain(previous.entrypoints.iter().map(|w| &w.path))
     {
-        resolved(user_home, rel)?;
+        destination(user_home, rel)?;
     }
     let root = home.root();
     let mine = |owner: &ProjectSlug| owner == &project.slug;
@@ -505,7 +523,7 @@ fn preflight(
     targets.push(Outputs::record_path(home, &project.slug));
     targets.push(record_path(home, &project.slug));
     for target in targets {
-        confined(root, &relative_to(root, &target)?)?;
+        own_destination(root, &relative_to(root, &target)?)?;
     }
     Ok(())
 }
@@ -618,16 +636,24 @@ pub(super) fn committed_index(
         })
 }
 
+/// What a publishing sync writes for the agent programs installed here, and
+/// what it reports about them without refusing.
+#[derive(Default)]
+struct GlobalPlan {
+    global: Vec<(PathBuf, &'static str, String)>,
+    settings: Files<Vec<u8>>,
+    findings: Vec<SyncFinding>,
+}
+
 /// The global agent file of every supported agent CLI installed here, and
-/// the settings files that take its entrypoint-loading key. A settings file
-/// that cannot take the key fails the sync before anything is written.
-fn global_files(
-    home: &Home,
-    renderer: &Renderer<'_>,
-) -> Result<(Files<String>, Files<Vec<u8>>), PublicationError> {
+/// the settings files that take its entrypoint-loading key. Each file is
+/// written whole whatever it holds; one that keeps a reference for an
+/// agent program to resolve is written as rendered and named. A settings
+/// file that cannot take the key, or is a symbolic link, is the user's: it
+/// is left untouched and named, and the instruction file is still written.
+fn global_files(home: &Home, renderer: &Renderer<'_>) -> Result<GlobalPlan, PublicationError> {
     let user_home = home.user_home();
-    let mut entrypoints = Vec::new();
-    let mut settings = Vec::new();
+    let mut plan = GlobalPlan::default();
     for target in TARGETS {
         let dir = resolved(user_home, Path::new(target.dir))?;
         if !dir.is_dir() {
@@ -635,49 +661,55 @@ fn global_files(
             continue;
         }
         let rendered = renderer.global_file(target.cli)?;
-        entrypoints.push((Path::new(target.dir).join(target.entrypoint), rendered));
-        if let Some(loading) = target.loading {
-            let path = resolved(user_home, Path::new(loading.settings))?;
-            let existing = match std::fs::read(&path) {
-                Ok(bytes) => Some(bytes),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-                Err(source) => return Err(PublicationError::Io { path, source }),
-            };
-            match merge_key(existing.as_deref(), loading.key, (loading.value)()) {
-                Ok(Some(merged)) => settings.push((PathBuf::from(loading.settings), merged)),
-                Ok(None) => {}
-                Err(refusal) => {
-                    return Err(PublicationError::Settings {
-                        path,
-                        reason: match refusal {
-                            MergeRefusal::NotAnObject => "it is not a JSON object".to_owned(),
-                            MergeRefusal::Blocked { member } => {
-                                format!("its `{member}` is not an object")
-                            }
-                        },
-                    });
-                }
+        let rel = Path::new(target.dir).join(target.entrypoint);
+        plan.findings
+            .extend(
+                rendered
+                    .references
+                    .iter()
+                    .map(|reference| SyncFinding::ReferenceKept {
+                        path: user_home.join(&rel),
+                        reference: reference.clone(),
+                    }),
+            );
+        plan.global.push((rel, target.name, rendered.text));
+        let Some(loading) = target.loading else {
+            continue;
+        };
+        let path = destination(user_home, Path::new(loading.settings))?;
+        let left = |reason: &str| SyncFinding::SettingsLeft {
+            path: user_home.join(loading.settings),
+            reason: reason.to_owned(),
+        };
+        let existing = match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                plan.findings.push(left(
+                    "it is a symbolic link, and nothing is written through a link",
+                ));
+                continue;
+            }
+            Ok(_) => Some(std::fs::read(&path).map_err(|source| PublicationError::Io {
+                path: path.clone(),
+                source,
+            })?),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => return Err(PublicationError::Io { path, source }),
+        };
+        match merge_key(existing.as_deref(), loading.key, (loading.value)()) {
+            Ok(Some(merged)) => plan
+                .settings
+                .push((PathBuf::from(loading.settings), merged)),
+            Ok(None) => {}
+            Err(MergeRefusal::NotAnObject) => {
+                plan.findings.push(left("it is not a JSON object"));
+            }
+            Err(MergeRefusal::Blocked { member }) => {
+                plan.findings
+                    .push(left(&format!("its `{member}` is not an object")));
             }
         }
     }
-    Ok((entrypoints, settings))
-}
-
-/// The destinations among `entrypoints` that exist holding content other
-/// than what `written` records instrukt left there, by their path.
-fn foreign_files(
-    home: &Home,
-    written: &Outputs,
-    entrypoints: &Files<String>,
-) -> Result<Vec<PathBuf>, PublicationError> {
-    let user_home = home.user_home();
-    let mut foreign = Vec::new();
-    for (rel, _) in entrypoints {
-        if written.foreign(user_home, rel)? {
-            foreign.push(user_home.join(rel));
-        }
-    }
-    Ok(foreign)
+    Ok(plan)
 }
 
 /// The writes of a publishing sync, all through `tx`.
@@ -688,9 +720,9 @@ fn write(
     now: jiff::Timestamp,
     prepared: &Prepared,
     tx: &mut Transaction,
-) -> Result<Vec<PathBuf>, PublicationError> {
+) -> Result<Vec<GlobalDestination>, PublicationError> {
     let root = home.root();
-    let in_home = |path: &Path| confined(root, &relative_to(root, path)?);
+    let in_home = |path: &Path| own_destination(root, &relative_to(root, path)?);
     let staging = crate::fsx::temp_dir_in(tempfile::Builder::new().prefix(STAGING_PREFIX), root)
         .map_err(|source| PublicationError::Io {
             path: root.to_path_buf(),
@@ -768,12 +800,13 @@ fn write(
     tx.write(&in_home(&home.index_file())?, index_text.as_bytes())?;
 
     // Outside the home: the project's AGENTS.md files and, from the owner
-    // of `docs/general/`, the global agent files with their settings keys,
-    // each recorded with the content it left there.
+    // of `docs/general/`, the global agent files with their settings keys.
+    // The global files are written whole and never removed; nothing records
+    // them.
     let previous = Outputs::load(home, &project.slug)?;
     let mut outputs = Outputs::default();
     for (rel, text) in &prepared.agents {
-        tx.write(&confined(&project.primary, rel)?, text.as_bytes())?;
+        tx.write(&own_destination(&project.primary, rel)?, text.as_bytes())?;
         outputs.agents.push(rel.clone());
     }
     for old in previous
@@ -781,33 +814,24 @@ fn write(
         .iter()
         .filter(|old| !outputs.agents.contains(old))
     {
-        tx.remove_file(&confined(&project.primary, old)?)?;
+        tx.remove_file(&own_destination(&project.primary, old)?)?;
     }
     let user_home = home.user_home();
-    for (rel, text) in &prepared.entrypoints {
-        tx.write(&resolved(user_home, rel)?, text.as_bytes())?;
-        outputs.entrypoints.push(Written::of(rel, text.as_bytes()));
+    let mut global_files = Vec::new();
+    for (rel, runtime, text) in &prepared.global {
+        let written = tx.write(&destination(user_home, rel)?, text.as_bytes())?;
+        global_files.push(GlobalDestination {
+            path: user_home.join(rel),
+            runtime,
+            written,
+        });
     }
     for (rel, bytes) in &prepared.settings {
-        tx.write(&resolved(user_home, rel)?, bytes)?;
-    }
-    // A retracted global file whose content is no longer what instrukt
-    // wrote is left in place and named.
-    let mut kept = Vec::new();
-    for old in previous
-        .entrypoints
-        .iter()
-        .filter(|old| !outputs.entrypoints.iter().any(|w| w.path == old.path))
-    {
-        if previous.foreign(user_home, &old.path)? {
-            kept.push(user_home.join(&old.path));
-        } else {
-            tx.remove_file(&resolved(user_home, &old.path)?)?;
-        }
+        tx.write(&destination(user_home, rel)?, bytes)?;
     }
 
-    let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit, now)?;
-    for (path, bytes) in _fingerprint::records(home, &fingerprint)? {
+    let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
+    for (path, bytes) in _fingerprint::records(home, &fingerprint, now)? {
         tx.write(&in_home(&path)?, &bytes)?;
     }
     let (path, bytes) = outputs.rendered(home, &project.slug)?;
@@ -823,7 +847,7 @@ fn write(
         &in_home(&record_path(home, &project.slug))?,
         text.as_bytes(),
     )?;
-    Ok(kept)
+    Ok(global_files)
 }
 
 /// The URL of the `origin` remote of the repository at `dir`; `None` when

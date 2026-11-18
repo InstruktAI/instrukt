@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use super::_agents::TARGETS;
-use super::_tree::{self, Outputs};
+use super::_tree;
 use super::_tx::resolved;
 use super::PublicationError;
 use crate::docs::{GENERAL, Position, SCHEMA_FILE, is_reserved_domain_folder};
@@ -33,14 +33,11 @@ pub enum GlobalFiles {
     /// `docs/general/` is owned by another project; the sync would be
     /// refused.
     OwnedElsewhere(ProjectSlug),
-    /// The sync renders the global file of each supported agent CLI
-    /// installed here.
+    /// The sync writes the global file of each supported agent CLI
+    /// installed here, whatever the file holds.
     Rendered {
         /// Each installed agent CLI with its global file.
         agents: Vec<(&'static str, PathBuf)>,
-        /// Existing global files instrukt did not write: each would stop
-        /// the sync.
-        foreign: Vec<PathBuf>,
     },
 }
 
@@ -118,7 +115,7 @@ pub fn preview_claims(
     let global_files = match positions.iter().find(|(p, _)| *p == Position::General) {
         None => GlobalFiles::NotHeld,
         Some((_, ClaimStatus::OwnedBy(owner))) => GlobalFiles::OwnedElsewhere(owner.clone()),
-        Some(_) => rendered_global_files(home, &owners)?,
+        Some(_) => rendered_global_files(home)?,
     };
     Ok(ClaimsPreview {
         positions,
@@ -127,35 +124,20 @@ pub fn preview_claims(
     })
 }
 
-/// The installed agent CLIs' global files, and those of them holding
-/// content the current owner of `docs/general/` did not leave there — the
-/// predicate the sync's overwrite guard refuses by.
-fn rendered_global_files(
-    home: &Home,
-    owners: &std::collections::BTreeMap<DomainName, ProjectSlug>,
-) -> Result<GlobalFiles, PublicationError> {
-    let written = match DomainName::parse(GENERAL)
-        .ok()
-        .and_then(|general| owners.get(&general))
-    {
-        Some(owner) => Outputs::load(home, owner)?,
-        None => Outputs::default(),
-    };
+/// The installed agent CLIs' global files: each one the first sync writes.
+fn rendered_global_files(home: &Home) -> Result<GlobalFiles, PublicationError> {
     let user_home = home.user_home();
     let mut agents = Vec::new();
-    let mut foreign = Vec::new();
     for target in TARGETS {
         if !resolved(user_home, Path::new(target.dir))?.is_dir() {
             continue;
         }
-        let rel = Path::new(target.dir).join(target.entrypoint);
-        let path = user_home.join(&rel);
-        if written.foreign(user_home, &rel)? {
-            foreign.push(path.clone());
-        }
-        agents.push((target.name, path));
+        agents.push((
+            target.name,
+            user_home.join(target.dir).join(target.entrypoint),
+        ));
     }
-    Ok(GlobalFiles::Rendered { agents, foreign })
+    Ok(GlobalFiles::Rendered { agents })
 }
 
 /// Whether `dir` holds at least one file, at any depth.
@@ -209,7 +191,7 @@ pub fn wrote_project_file(
     project: &ProjectSlug,
     rel: &Path,
 ) -> Result<bool, PublicationError> {
-    Ok(Outputs::load(home, project)?
+    Ok(_tree::Outputs::load(home, project)?
         .agents
         .iter()
         .any(|written| written == rel))

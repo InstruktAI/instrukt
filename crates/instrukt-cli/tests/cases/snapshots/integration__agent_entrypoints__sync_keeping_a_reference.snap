@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "stdout(&env, &synced).replace(&platform.head(), \"[SHA]\")"
+---
+published platform at [SHA]
+[TMP]/home/.claude/CLAUDE.md (claude): written
+[TMP]/home/.claude/CLAUDE.md: keeps @notes/house.md for an agent program to resolve
+.instrukt/schemas/general-index.schema.json: schema written
+.instrukt/schemas/domain-index.schema.json: schema written
+.instrukt/schemas/project-index.schema.json: schema written
+.instrukt/schemas/snippet-schema.schema.json: schema written
+.instrukt/schemas/instrukt.schema.json: schema written

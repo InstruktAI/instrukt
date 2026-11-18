@@ -37,12 +37,14 @@ pub use _adoption::{
 };
 pub(crate) use _checkout::{Checkout, checkout_entrypoints};
 pub use _editor::{
-    EditorChange, EditorChangeKind, OnLink, SCHEMAS_DIR, committed_modeline,
-    editor_schema_describes, refresh_editor_schemas, write_editor_schemas,
+    EditorChange, EditorChangeKind, SCHEMAS_DIR, committed_modeline, editor_schema_describes,
+    refresh_editor_schemas, write_editor_schemas,
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
-pub use _sync::{Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest, sync};
+pub use _sync::{
+    GlobalDestination, Refusal, SyncError, SyncFinding, SyncOutcome, SyncReport, SyncRequest, sync,
+};
 
 use crate::config::ConfigError;
 use crate::docs::DocsError;

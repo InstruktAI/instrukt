@@ -174,31 +174,72 @@ fn the_modeline_changes_nothing_validation_reads_and_survives_a_configuration_wr
 }
 
 // spec: project/instrukt/spec/feature/publication/editor-schemas UC-ES1
+#[cfg(unix)]
 #[test]
-fn schemas_behind_a_symbolic_link_are_reported_by_init_and_refuse_a_sync() {
+fn linked_schemas_are_replaced_and_a_linked_file_is_left_and_named() {
     let env = TestEnv::new();
     let elsewhere = env.path("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     let repo = env.git_repo("demo");
+    let schemas_dir = repo.path().join(".instrukt/schemas");
     std::fs::create_dir_all(repo.path().join(".instrukt")).unwrap();
-    std::os::unix::fs::symlink(&elsewhere, repo.path().join(".instrukt/schemas")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &schemas_dir).unwrap();
+    // A domain index that would take a modeline, a link to a file kept
+    // elsewhere.
+    let index_copy = env.path("ops-index.yaml");
+    let index_text = "description: Operations\n";
+    std::fs::write(&index_copy, index_text).unwrap();
+    let linked_index = repo.path().join("docs/domain/ops/index.yaml");
+    std::fs::create_dir_all(linked_index.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&index_copy, &linked_index).unwrap();
+    let is_dir = |path: &std::path::Path| std::fs::symlink_metadata(path).unwrap().is_dir();
 
     let init = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("init-beside-linked-schemas", stdout(&env, &init));
+    assert!(
+        is_dir(&schemas_dir),
+        "the link is replaced by the directory"
+    );
     assert_eq!(
         std::fs::read_dir(&elsewhere).unwrap().count(),
         0,
         "nothing was written through the link"
     );
+    assert_eq!(std::fs::read_to_string(&index_copy).unwrap(), index_text);
 
-    repo.commit("adopt instrukt");
-    let refused = env.run(repo.path(), ["sync"]).failure();
-    insta::assert_snapshot!("sync-beside-linked-schemas", stderr(&env, &refused));
-    assert!(
-        !env.instrukt_home()
-            .join("state/publication/demo.yaml")
-            .exists(),
-        "no published commit is recorded"
+    // The schemas linked again before a sync.
+    std::fs::remove_dir_all(repo.path().join("docs/domain")).unwrap();
+    let sha = repo.commit("adopt instrukt");
+    std::fs::remove_dir_all(&schemas_dir).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &schemas_dir).unwrap();
+
+    let synced = env.run(repo.path(), ["sync"]).success();
+    insta::assert_snapshot!(
+        "sync-beside-linked-schemas",
+        stdout(&env, &synced).replace(&sha, "[SHA]")
+    );
+    assert!(is_dir(&schemas_dir));
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+}
+
+/// Waits, within a bound, until the detached sync of `project`'s last
+/// post-commit run has ended.
+fn wait_for_post_commit_sync(env: &TestEnv, project: &str) {
+    let record = env
+        .instrukt_home()
+        .join("state/hooks")
+        .join(project)
+        .join("post-commit.yaml");
+    common::wait_until(
+        &format!("the post-commit sync of {project}"),
+        std::time::Duration::from_secs(60),
+        || {
+            std::fs::read_to_string(&record).is_ok_and(|text| {
+                let record: instrukt_core::repository::HookRunRecord =
+                    serde_yaml_ng::from_str(&text).unwrap();
+                record.sync != Some(instrukt_core::repository::SyncOutcome::Running)
+            })
+        },
     );
 }
 
@@ -217,6 +258,9 @@ fn publication_brings_older_schemas_and_modelines_to_the_installed_instrukt() {
     let repo = authored(&env, "demo");
     env.run(repo.path(), ["init"]).success();
     repo.commit("adopt instrukt");
+    // The commit's post-commit section started a detached sync; it ends
+    // before anything below changes the schemas.
+    wait_for_post_commit_sync(&env, "demo");
     env.run(repo.path(), ["sync"]).success();
 
     // What an older instrukt left: other schema content and a modeline
@@ -226,10 +270,10 @@ fn publication_brings_older_schemas_and_modelines_to_the_installed_instrukt() {
         repo.read("instrukt.yaml")
             .replacen("instrukt.schema.json", "config.schema.json", 1);
     repo.write("instrukt.yaml", &layer);
-    let forced = env.run(repo.path(), ["sync", "--force"]).success();
+    let synced = env.run(repo.path(), ["sync"]).success();
     insta::assert_snapshot!(
-        "forced-refresh",
-        stdout(&env, &forced).replace(&repo.head(), "[SHA]")
+        "refresh-after-upgrade",
+        stdout(&env, &synced).replace(&repo.head(), "[SHA]")
     );
 
     assert_eq!(

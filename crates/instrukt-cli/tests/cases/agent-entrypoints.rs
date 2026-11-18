@@ -9,7 +9,6 @@
 use crate::common;
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use serde_json::Value;
 
 /// A snippet of `taxonomy` (policy, principle or procedure) with every
 /// required section, `extra` frontmatter lines and `reads` as its required
@@ -55,10 +54,6 @@ fn shown(env: &TestEnv, bytes: &[u8]) -> String {
 
 fn stdout(env: &TestEnv, assert: &Assert) -> String {
     shown(env, &assert.get_output().stdout)
-}
-
-fn stderr(env: &TestEnv, assert: &Assert) -> String {
-    shown(env, &assert.get_output().stderr)
 }
 
 /// A project whose root master states its purpose and whose index selects
@@ -253,99 +248,6 @@ fn general_owner(env: &TestEnv, agents: &str) -> Repo {
 
 const CLAUDE_AGENTS: &str = "agents:\n  claude:\n    - general/policy/agents/claude\n";
 
-/// Whether every member of `before` is in `after` with the same value,
-/// objects compared member by member.
-fn keeps_every_member(before: &Value, after: &Value) -> bool {
-    match (before, after) {
-        (Value::Object(before), Value::Object(after)) => before.iter().all(|(key, value)| {
-            after
-                .get(key)
-                .is_some_and(|kept| keeps_every_member(value, kept))
-        }),
-        _ => before == after,
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn every_installed_agent_cli_starts_with_the_general_section_and_keeps_its_settings() {
-    let env = TestEnv::new();
-    let home = env.home();
-    let claude_settings = serde_json::json!({
-        "theme": "dark",
-        "pluginConfigs": {"other@market": {"enabled": true}},
-        "permissions": {"defaultMode": "ask"}
-    });
-    let gemini_settings = serde_json::json!({
-        "context": {"includeDirectories": ["/"]},
-        "general": {"checkpointing": {"enabled": true}}
-    });
-    // A dotfiles user: `~/.claude` links to a directory kept elsewhere, and
-    // the Gemini settings file links to a file kept elsewhere.
-    let dotfiles = env.path("dotfiles");
-    std::fs::create_dir_all(dotfiles.join("claude")).unwrap();
-    std::fs::write(
-        dotfiles.join("claude/settings.json"),
-        serde_json::to_vec_pretty(&claude_settings).unwrap(),
-    )
-    .unwrap();
-    std::os::unix::fs::symlink(dotfiles.join("claude"), home.join(".claude")).unwrap();
-    std::fs::write(
-        dotfiles.join("gemini-settings.json"),
-        serde_json::to_vec_pretty(&gemini_settings).unwrap(),
-    )
-    .unwrap();
-    std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).unwrap();
-    std::os::unix::fs::symlink(
-        dotfiles.join("gemini-settings.json"),
-        home.join(".gemini/antigravity-cli/settings.json"),
-    )
-    .unwrap();
-    std::fs::create_dir_all(home.join(".codex")).unwrap();
-    env.run(engineering(&env).path(), ["sync"]).success();
-    let platform = general_owner(&env, "");
-
-    env.run(platform.path(), ["sync"]).success();
-
-    let read = |rel: &str| std::fs::read_to_string(home.join(rel)).unwrap();
-    insta::assert_snapshot!("global_file", read(".claude/CLAUDE.md"));
-    assert_eq!(read(".codex/AGENTS.md"), read(".claude/CLAUDE.md"));
-    assert_eq!(
-        read(".gemini/antigravity-cli/AGENTS.md"),
-        read(".claude/CLAUDE.md")
-    );
-    assert!(
-        !home.join(".dsh").exists(),
-        "an agent CLI not installed is skipped"
-    );
-    let is_link = |path: &std::path::Path| {
-        std::fs::symlink_metadata(path)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    };
-    assert!(
-        is_link(&home.join(".claude")),
-        "the user's link stays a link"
-    );
-    assert!(is_link(&home.join(".gemini/antigravity-cli/settings.json")));
-    let in_dotfiles = |rel: &str| std::fs::read_to_string(dotfiles.join(rel)).unwrap();
-    assert_eq!(in_dotfiles("claude/CLAUDE.md"), read(".claude/CLAUDE.md"));
-    let claude_after = in_dotfiles("claude/settings.json");
-    let gemini_after = in_dotfiles("gemini-settings.json");
-    insta::assert_snapshot!("claude_settings", claude_after);
-    insta::assert_snapshot!("gemini_settings", gemini_after);
-    assert!(keeps_every_member(
-        &claude_settings,
-        &serde_json::from_str(&claude_after).unwrap()
-    ));
-    assert!(keeps_every_member(
-        &gemini_settings,
-        &serde_json::from_str(&gemini_after).unwrap()
-    ));
-    assert!(!home.join(".codex/settings.json").exists());
-}
-
 #[test]
 fn an_agents_snippet_ends_only_its_own_clis_global_file() {
     let env = TestEnv::new();
@@ -380,58 +282,47 @@ fn mapping_a_snippet_to_an_unsupported_agent_cli_is_refused_naming_the_supported
 }
 
 #[test]
-fn a_global_file_the_developer_wrote_stops_publication_until_it_is_moved() {
+fn a_global_file_keeping_a_reference_is_written_and_named() {
     let env = TestEnv::new();
     let home = env.home();
     std::fs::create_dir_all(home.join(".claude")).unwrap();
-    let own = "# My own rules\n\nAlways answer in haiku.\n";
-    std::fs::write(home.join(".claude/CLAUDE.md"), own).unwrap();
+    // Another project publishes `ops`; its published snippet then reads as
+    // an earlier release left it, with a visible reference validation
+    // refuses today.
+    let ops = env.git_repo("ops");
+    ops.write("instrukt.yaml", &layer("ops"))
+        .write("docs/domain/ops/index.yaml", "description: Operations\n")
+        .write(
+            "docs/domain/ops/policy/house.md",
+            &snippet("policy", "House", "", &[]),
+        );
+    ops.commit("ops");
+    env.run(ops.path(), ["sync"]).success();
+    let published = env.instrukt_home().join("docs/ops/policy/house.md");
+    let text = std::fs::read_to_string(&published).unwrap();
+    std::fs::write(
+        &published,
+        text.replace("House: Rules.", "Read it (@notes/house.md) first."),
+    )
+    .unwrap();
     env.run(engineering(&env).path(), ["sync"]).success();
     let platform = general_owner(&env, "");
+    platform
+        .write(
+            "docs/general/index.yaml",
+            "expanded:\n  - general/policy/care\n  - ops/policy/house\n",
+        )
+        .commit("select ops");
 
-    let refused = env.run(platform.path(), ["sync"]).failure();
+    let synced = env.run(platform.path(), ["sync"]).success();
 
     insta::assert_snapshot!(
-        "foreign_global_file",
-        stderr(&env, &refused).replace(&platform.head(), "[SHA]")
+        "sync_keeping_a_reference",
+        stdout(&env, &synced).replace(&platform.head(), "[SHA]")
     );
-    assert_eq!(
-        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
-        own
-    );
-    assert!(!env.instrukt_home().join("docs/general").exists());
-
-    std::fs::rename(home.join(".claude/CLAUDE.md"), env.path("CLAUDE.mine.md")).unwrap();
-    env.run(platform.path(), ["sync"]).success();
     insta::assert_snapshot!(
-        "global_file_after_moving_own",
+        "global_file_keeping_a_reference",
         std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap()
-    );
-}
-
-#[test]
-fn a_global_file_edited_after_instrukt_wrote_it_stops_the_next_publication() {
-    let env = TestEnv::new();
-    let home = env.home();
-    std::fs::create_dir_all(home.join(".claude")).unwrap();
-    env.run(engineering(&env).path(), ["sync"]).success();
-    let platform = general_owner(&env, "");
-    env.run(platform.path(), ["sync"]).success();
-    let edited = format!(
-        "{}\nA line of my own.\n",
-        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap()
-    );
-    std::fs::write(home.join(".claude/CLAUDE.md"), &edited).unwrap();
-
-    let refused = env.run(platform.path(), ["sync", "--force"]).failure();
-
-    insta::assert_snapshot!(
-        "edited_global_file",
-        stderr(&env, &refused).replace(&platform.head(), "[SHA]")
-    );
-    assert_eq!(
-        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
-        edited
     );
 }
 
@@ -466,35 +357,6 @@ fn a_domain_without_an_index_is_published_but_absent_from_the_global_files() {
         "unindexed_domain_listing",
         common::mask_published_commits(&stdout(&env, &listed))
     );
-}
-
-#[test]
-fn retracting_the_global_files_keeps_one_the_developer_edited_and_names_it() {
-    let env = TestEnv::new();
-    let home = env.home();
-    for dir in [".claude", ".codex"] {
-        std::fs::create_dir_all(home.join(dir)).unwrap();
-    }
-    env.run(engineering(&env).path(), ["sync"]).success();
-    let platform = general_owner(&env, "");
-    env.run(platform.path(), ["sync"]).success();
-    let edited = "# Mine now\n";
-    std::fs::write(home.join(".claude/CLAUDE.md"), edited).unwrap();
-    std::fs::remove_dir_all(platform.path().join("docs/general")).unwrap();
-    platform.git(["add", "--all", "docs"]);
-    platform.git(["commit", "--quiet", "-m", "stop publishing general"]);
-
-    let synced = env.run(platform.path(), ["sync"]).success();
-
-    insta::assert_snapshot!(
-        "retraction_keeps_edited_global_file",
-        stdout(&env, &synced).replace(&platform.head(), "[SHA]")
-    );
-    assert_eq!(
-        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
-        edited
-    );
-    assert!(!home.join(".codex/AGENTS.md").exists());
 }
 
 fn checkout_machine() -> TestEnv {

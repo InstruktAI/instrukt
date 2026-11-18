@@ -102,17 +102,74 @@ fn read(path: PathBuf) -> Result<Option<EvalFingerprint>, PublicationError> {
         .map_err(|source| PublicationError::Parse { path, source })
 }
 
-/// The records a sync writes: the per-commit one and the current one, as
-/// `(path, contents)`.
+/// Which record a sync decides about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Record {
+    /// The record of the commit the sync publishes.
+    PerCommit,
+    /// The record of the fingerprint in force.
+    Current,
+}
+
+/// The record a sync writes in place of `existing`, given the fingerprint
+/// it `computed` (which carries no time); `None` when `existing` already
+/// holds that content and stays as it is, its time included. The per-commit
+/// record holds the content when its fingerprint and snippet count are the
+/// computed ones; the current record when its fingerprint is, whichever
+/// project and commit it names. A record written takes the sync's time.
+fn decide(
+    record: Record,
+    existing: Option<&EvalFingerprint>,
+    computed: &EvalFingerprint,
+    now: jiff::Timestamp,
+) -> Option<EvalFingerprint> {
+    let current = existing.is_some_and(|existing| match record {
+        Record::PerCommit => {
+            existing.fingerprint == computed.fingerprint && existing.snippets == computed.snippets
+        }
+        Record::Current => existing.fingerprint == computed.fingerprint,
+    });
+    (!current).then(|| EvalFingerprint {
+        recorded_at: Some(now),
+        ..computed.clone()
+    })
+}
+
+/// The records a sync writes, as `(path, contents)`: of the per-commit one
+/// and the current one, each that does not already hold what was computed.
+/// A record that is a symbolic link holds nothing of publication's: it is
+/// written, and the write replaces the link.
 pub(super) fn records(
     home: &Home,
-    fingerprint: &EvalFingerprint,
+    computed: &EvalFingerprint,
+    now: jiff::Timestamp,
 ) -> Result<Vec<(PathBuf, Vec<u8>)>, PublicationError> {
-    let text = serde_yaml_ng::to_string(fingerprint).map_err(PublicationError::Render)?;
-    Ok(record_paths(home, &fingerprint.commit)
-        .into_iter()
-        .map(|path| (path, text.clone().into_bytes()))
-        .collect())
+    let [per_commit, current] = record_paths(home, &computed.commit);
+    let mut writes = Vec::new();
+    for (record, path) in [(Record::PerCommit, per_commit), (Record::Current, current)] {
+        let existing = if is_link(&path)? {
+            None
+        } else {
+            read(path.clone())?
+        };
+        if let Some(next) = decide(record, existing.as_ref(), computed, now) {
+            let text = serde_yaml_ng::to_string(&next).map_err(PublicationError::Render)?;
+            writes.push((path, text.into_bytes()));
+        }
+    }
+    Ok(writes)
+}
+
+/// Whether `path` is itself a symbolic link.
+fn is_link(path: &std::path::Path) -> Result<bool, PublicationError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => Ok(meta.file_type().is_symlink()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(PublicationError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// The records a sync publishing `commit` writes: the per-commit one and
@@ -126,13 +183,13 @@ pub(super) fn record_paths(home: &Home, commit: &CommitSha) -> [PathBuf; 2] {
 
 /// Computes the fingerprint over the published corpus of the home as
 /// `index` describes it: every global entry's file read from the home,
-/// kept when its frontmatter declares `eval: true`.
+/// kept when its frontmatter declares `eval: true`. It carries no time:
+/// [`records`] decides whether a record is written, and when.
 pub(super) fn compute(
     home: &Home,
     index: &GlobalIndex,
     project: &ProjectSlug,
     commit: &CommitSha,
-    now: jiff::Timestamp,
 ) -> Result<EvalFingerprint, PublicationError> {
     let docs = home.docs_dir();
     let mut sources = Vec::new();
@@ -182,7 +239,7 @@ pub(super) fn compute(
         snippets: evaluated.len(),
         project: project.clone(),
         commit: commit.clone(),
-        recorded_at: Some(now),
+        recorded_at: None,
     })
 }
 
@@ -232,6 +289,40 @@ snippets: 2
 project: flows
 commit: 0123456789abcdef0123456789abcdef01234567
 ";
+
+    fn fingerprint(digest: &str, project: &str, at: Option<&str>) -> EvalFingerprint {
+        EvalFingerprint {
+            fingerprint: digest.to_owned(),
+            snippets: 2,
+            project: ProjectSlug::parse(project).unwrap(),
+            commit: CommitSha::parse("0123456789abcdef0123456789abcdef01234567").unwrap(),
+            recorded_at: at.map(|at| at.parse().unwrap()),
+        }
+    }
+
+    #[test]
+    fn a_record_holding_what_was_computed_is_left_with_its_time_and_any_other_is_written_now() {
+        let now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
+        let computed = fingerprint("sha256:aa", "flows", None);
+        let older = fingerprint("sha256:aa", "flows", Some("2026-11-01T08:00:00Z"));
+        assert_eq!(
+            decide(Record::PerCommit, Some(&older), &computed, now),
+            None
+        );
+        assert_eq!(decide(Record::Current, Some(&older), &computed, now), None);
+        let changed = fingerprint("sha256:bb", "flows", Some("2026-11-01T08:00:00Z"));
+        let written = fingerprint("sha256:aa", "flows", Some("2026-11-18T12:00:00Z"));
+        assert_eq!(
+            decide(Record::PerCommit, Some(&changed), &computed, now),
+            Some(written.clone())
+        );
+        assert_eq!(decide(Record::Current, None, &computed, now), Some(written));
+        let another_project = fingerprint("sha256:aa", "other", Some("2026-11-01T08:00:00Z"));
+        assert_eq!(
+            decide(Record::Current, Some(&another_project), &computed, now),
+            None
+        );
+    }
 
     #[test]
     fn a_record_written_before_the_time_was_kept_loads_with_its_time_unknown() {

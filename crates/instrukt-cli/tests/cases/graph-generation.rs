@@ -300,12 +300,12 @@ fn a_runner_fast_forward_hands_the_fetched_main_revision_to_blueprint() {
     let first = revision(&repo, "baseline", Some(&first_map()));
     repo.git(["push", "--quiet", "-u", "origin", "main"]);
     wait_generated(&env, &first);
+    env.run(repo.path(), ["sync"]).success();
     // The local runner considers the published project, even without events.
     let global = env.instrukt_home().join("instrukt.yaml");
     let mut text = std::fs::read_to_string(&global).unwrap();
     text.push_str("modules: {todos: true}\n");
     std::fs::write(global, text).unwrap();
-    env.run(repo.path(), ["sync"]).success();
     if !repo.git(["status", "--porcelain"]).is_empty() {
         repo.commit("integrator: include generated baseline files");
         repo.git(["push", "--quiet", "origin", "main"]);
