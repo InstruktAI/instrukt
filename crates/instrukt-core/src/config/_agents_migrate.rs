@@ -148,7 +148,8 @@ mod tests {
     /// The `conversation` role entry as version two spells it.
     const CONVERSATION: &str =
         "  conversation: {class: standing, can: [read, tools], order: [claude], tier: strong}\n";
-    /// The same entry already under its version-three name.
+    /// A competing entry under the version-three name, with settings of its
+    /// own: the class it shares, but other grants, order and tier.
     const COMPANY_AGENT: &str =
         "  company-agent: {class: standing, can: [read], order: [codex], tier: light}\n";
     /// What both older files convert to: the role renamed in its place,

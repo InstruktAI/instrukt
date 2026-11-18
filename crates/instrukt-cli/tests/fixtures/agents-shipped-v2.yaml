@@ -1,0 +1,185 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/InstruktAI/instrukt/main/schemas/agents.schema.json
+schema_version: 2
+default: {class: agent, can: [all], order: [claude, codex, antigravity], tier: standard}
+roles:
+  builder: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  finalizer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  drift-analyzer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  deferrer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  diagnoser: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  knowledge-author: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  project-analyst: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  third-party-researcher: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  config-assessor: {github_app: author, class: focused, can: [read, configure, worker, record], order: [claude, codex, antigravity], tier: strong}
+  prepare-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  work-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  intaker: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  architect: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  planner: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  diagnosis-driver: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  task-preparer: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  task-runner: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  integrator: {github_app: project, class: standing, can: [read, record, orchestrate, integrate], order: [claude, codex, antigravity], tier: strong}
+  coordinator: {github_app: project, class: standing, can: [read, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  bug-hunter: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
+  upstream-watcher: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
+  event-handler: {github_app: project, class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
+  conversation: {github_app: project, class: standing, can: [read, tools], order: [claude, codex, antigravity], tier: strong}
+  prd-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  architecture-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  build-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  commit-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+bundles:
+  read:
+    - {action: docs-read, scope: any}
+    - {action: todo-read, scope: any}
+    - {action: artifact-read, scope: any}
+    - {action: config-read, scope: any}
+    - {action: agents-read, scope: any}
+    - {action: events-read, scope: any}
+    - {action: code-check, scope: any}
+    - {action: eval-read, scope: any}
+    - {action: repository-read, scope: any}
+    - {action: installation-read, scope: any}
+  worker:
+    - {action: artifact-write, scope: own}
+    - {action: stamp, scope: own}
+    - {action: code-commit, scope: own}
+    - {action: docs-write, scope: own}
+  review:
+    - {action: artifact-write, scope: own}
+    - {action: stamp, scope: own}
+  record:
+    - {action: todo-write, scope: own}
+    - {action: artifact-write, scope: own}
+    - {action: stamp, scope: own}
+  orchestrate:
+    - {action: todo-orchestration, scope: own}
+    - {action: assignment-write, scope: own}
+    - {action: session-observe, scope: own}
+    - {action: session-recover, scope: own}
+    - {action: standing-bind, scope: own}
+    - {action: conversation-link, scope: own}
+  integrate:
+    - {action: integration, scope: own}
+    - {action: publication, scope: own}
+    - {action: repository-write, scope: own}
+    - {action: todo-write, scope: own}
+  configure:
+    - {action: config-write, scope: any}
+    - {action: secrets-write, scope: any}
+    - {action: installation-write, scope: any}
+    - {action: agents-write, scope: any}
+  tools:
+    - {action: mcp-access, scope: own}
+  all:
+    - {action: docs-read, scope: any}
+    - {action: docs-write, scope: any}
+    - {action: todo-read, scope: any}
+    - {action: todo-write, scope: any}
+    - {action: artifact-read, scope: any}
+    - {action: artifact-write, scope: any}
+    - {action: stamp, scope: any}
+    - {action: todo-orchestration, scope: any}
+    - {action: assignment-write, scope: any}
+    - {action: integration, scope: any}
+    - {action: session-observe, scope: any}
+    - {action: history-read, scope: any}
+    - {action: session-recover, scope: any}
+    - {action: standing-bind, scope: any}
+    - {action: conversation-link, scope: any}
+    - {action: agents-read, scope: any}
+    - {action: agents-write, scope: any}
+    - {action: config-read, scope: any}
+    - {action: config-write, scope: any}
+    - {action: secrets-write, scope: any}
+    - {action: repository-read, scope: any}
+    - {action: repository-write, scope: any}
+    - {action: code-commit, scope: any}
+    - {action: publication, scope: any}
+    - {action: code-check, scope: any}
+    - {action: eval-read, scope: any}
+    - {action: events-read, scope: any}
+    - {action: installation-read, scope: any}
+    - {action: installation-write, scope: any}
+    - {action: runner-execute, scope: any}
+    - {action: mcp-access, scope: any}
+profiles:
+  codex:
+    instance: codex
+    kind: codex
+    light: [{model: gpt-6-luna, effort: high}]
+    standard: [{model: gpt-6-sol, effort: high}]
+    strong: [{model: gpt-6.1-sol, effort: high}]
+    premium: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]
+  claude:
+    instance: claudeAgent
+    kind: claude
+    light: [{model: claude-haiku-5-5, effort: high}]
+    standard: [{model: claude-sonnet-5-5, effort: high}]
+    strong: [{model: claude-opus-5-5, effort: high}]
+    premium: [{model: claude-fable-5-1, effort: high}, {model: claude-opus-5-5, effort: high}]
+  antigravity:
+    instance: antigravity
+    kind: antigravity
+    light: [{model: gemini-3.8-flash-high, effort: high}]
+    standard: [{model: gemini-3.8-flash-high, effort: high}]
+    strong: [{model: gemini-pro-agent, effort: high}]
+    premium: [{model: gemini-pro-agent, effort: high}]
+  cursor:
+    instance: cursor
+    kind: cursor
+    light: [{model: auto, effort: high}]
+    standard: [{model: auto, effort: high}]
+    strong: [{model: auto, effort: high}]
+    premium: [{model: auto, effort: high}]
+  grok:
+    instance: grok
+    kind: grok
+    light: [{model: grok-4.6, effort: high}]
+    standard: [{model: grok-4.6, effort: high}]
+    strong: [{model: grok-4.6, effort: high}]
+    premium: [{model: grok-4.6, effort: high}]
+  fx:
+    instance: fx
+    kind: fx
+    light: [{model: default, effort: high}]
+    standard: [{model: default, effort: high}]
+    strong: [{model: default, effort: high}]
+    premium: [{model: default, effort: high}]
+  opencode:
+    instance: opencode
+    kind: opencode
+    light: [{model: anthropic/claude-sonnet-5-5, effort: high}]
+    standard: [{model: anthropic/claude-sonnet-5-5, effort: high}]
+    strong: [{model: anthropic/claude-sonnet-5-5, effort: high}]
+    premium: [{model: anthropic/claude-sonnet-5-5, effort: high}]
+  kiro:
+    instance: kiro
+    kind: kiro
+    light: [{model: claude-opus-5.5, effort: high}]
+    standard: [{model: claude-opus-5.5, effort: high}]
+    strong: [{model: claude-opus-5.5, effort: high}]
+    premium: [{model: claude-opus-5.5, effort: high}]
+  pi:
+    instance: pi
+    kind: pi
+    light: [{model: default, effort: high}]
+    standard: [{model: default, effort: high}]
+    strong: [{model: default, effort: high}]
+    premium: [{model: default, effort: high}]
+  muse:
+    instance: muse
+    kind: muse
+    light: [{model: default, effort: high}]
+    standard: [{model: default, effort: high}]
+    strong: [{model: default, effort: high}]
+    premium: [{model: default, effort: high}]
+  acpRegistry:
+    instance: acpRegistry
+    kind: acpRegistry
+    light: [{model: default}]
+    standard: [{model: default}]
+    strong: [{model: default}]
+    premium: [{model: default}]

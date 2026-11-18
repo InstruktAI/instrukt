@@ -136,6 +136,15 @@ fn open_models_accept_native_options_but_reject_malformed_shapes() {
     assert!(Agents::parse(&CONFIG.replace("kind: codex", "kind: unknown")).is_err());
     let agents = Agents::parse(CONFIG).unwrap();
     assert_eq!(agents.undeclared_roles(&[]), vec!["builder"]);
+    // The role the runner gives conversation sessions is reserved: it is not
+    // reported without an installed procedure declaring it, while an
+    // ordinary configured role still is.
+    let with_conversations = Agents::parse(&CONFIG.replace(
+        "roles:\n",
+        "roles:\n  company-agent: {class: standing, can: [read]}\n",
+    ))
+    .unwrap();
+    assert_eq!(with_conversations.undeclared_roles(&[]), vec!["builder"]);
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS4
@@ -158,7 +167,7 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), SHIPPED_AGENTS);
     let edited = format!("{prior}# user customization\n");
     std::fs::write(&file, &edited).unwrap();
-    std::fs::write(record, deployed.to_string()).unwrap();
+    std::fs::write(&record, deployed.to_string()).unwrap();
     let result = env
         .run(env.home(), ["config", "init", "--global"])
         .success();
@@ -169,7 +178,34 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
             "[TMP]"
         )
     );
-    assert_eq!(std::fs::read_to_string(file).unwrap(), edited);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
+    // The defaults a release with the version-two file shape deployed: left
+    // unedited, they still receive the new defaults through the shape's
+    // conversion, and the record names what was deployed.
+    let older = include_str!("../fixtures/agents-shipped-v2.yaml");
+    let older_record = serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(older.as_bytes()))});
+    std::fs::write(&file, older).unwrap();
+    std::fs::write(&record, older_record.to_string()).unwrap();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), SHIPPED_AGENTS);
+    let recorded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(
+        recorded,
+        serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(SHIPPED_AGENTS.as_bytes()))})
+    );
+    // Edited, the older file keeps its settings through the conversion.
+    let edited_older = older.replace("gpt-6.1-sol", "edited-strong-model");
+    std::fs::write(&file, &edited_older).unwrap();
+    std::fs::write(&record, older_record.to_string()).unwrap();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    let kept = Agents::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        kept.select(Some("prd-reviewer"), None, None, None).unwrap()[0].model,
+        "edited-strong-model"
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3

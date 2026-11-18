@@ -266,30 +266,10 @@ impl Agents {
             .map(super::_agents_migrate::current)
             .transpose()?
             .flatten();
-        let prior: Option<Deployment> = match std::fs::read(&state) {
-            Ok(bytes) => Some(
-                serde_json::from_slice(&bytes)
-                    .map_err(|_| invalid("invalid defaults deployment record"))?,
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(source) => {
-                return Err(ConfigError::Read {
-                    path: state,
-                    source,
-                });
-            }
-        };
-        if prior
+        let prior = Deployment::load(&state)?;
+        let unedited = current
             .as_ref()
-            .is_some_and(|p| p.schema_version != DEPLOYMENT_VERSION)
-        {
-            return Err(invalid("unsupported defaults deployment schema"));
-        }
-        let unedited = current.as_ref().is_none_or(|b| {
-            prior.as_ref().is_some_and(|p| {
-                p.digest == digest(b) || p.pending.as_deref() == Some(digest(b).as_str())
-            })
-        });
+            .is_none_or(|b| prior.as_ref().is_some_and(|p| p.recognises(b)));
         if unedited {
             if current.as_deref() != Some(defaults.as_bytes()) {
                 let prepared = Deployment {
@@ -361,6 +341,22 @@ impl Agents {
             source,
         })?;
         if let Some(converted) = super::_agents_migrate::current(&current)? {
+            // A deployed file left unedited stays recognisable through its
+            // conversion: its converted bytes are recorded as instrukt's own
+            // write, so the defaults upgrade still replaces it.
+            let state = home.agents_deployment_file();
+            if let Some(prior) = Deployment::load(&state)?
+                && prior.recognises(&current)
+            {
+                let carried = Deployment {
+                    pending: Some(hex::encode(Sha256::digest(&converted.bytes))),
+                    ..prior
+                };
+                atomic_write(
+                    &state,
+                    &serde_json::to_vec(&carried).map_err(|e| invalid(e.to_string()))?,
+                )?;
+            }
             atomic_write(&path, &converted.bytes)?;
             tracing::info!(
                 event = "agents_shape_migrated",
@@ -527,6 +523,34 @@ struct Deployment {
     digest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending: Option<String>,
+}
+
+impl Deployment {
+    /// The defaults deployment record at `state`; `None` before the first.
+    fn load(state: &std::path::Path) -> Result<Option<Self>, ConfigError> {
+        let prior: Self = match std::fs::read(state) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| invalid("invalid defaults deployment record"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(ConfigError::Read {
+                    path: state.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        if prior.schema_version != DEPLOYMENT_VERSION {
+            return Err(invalid("unsupported defaults deployment schema"));
+        }
+        Ok(Some(prior))
+    }
+
+    /// Whether `bytes` are what instrukt itself last wrote: the deployed
+    /// defaults, or a write it recorded before making it.
+    fn recognises(&self, bytes: &[u8]) -> bool {
+        let found = hex::encode(Sha256::digest(bytes));
+        self.digest == found || self.pending.as_deref() == Some(found.as_str())
+    }
 }
 
 /// Runtime-neutral effort vocabulary; harness membership is checked before selection.
