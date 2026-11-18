@@ -447,7 +447,14 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     // The runner starts under a clock file while the dispatch lock is held:
     // its wake waits for the lock on that clock.
     let clock = c.env.path("clock");
-    std::fs::write(&clock, "2026-11-18T12:00:00Z").unwrap();
+    // The runner reads the clock file at any moment: each new time replaces
+    // the file whole, so no read finds it half written.
+    let set_clock = |at: &str| {
+        let next = clock.with_extension("next");
+        std::fs::write(&next, at).unwrap();
+        std::fs::rename(&next, &clock).unwrap();
+    };
+    set_clock("2026-11-18T12:00:00Z");
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
     let lock = c.env.instrukt_home().join("state/runtime-dispatch.lock");
@@ -461,7 +468,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     let mut now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
     wait("the skipped wake in status", || {
         now += jiff::SignedDuration::from_mins(3);
-        std::fs::write(&clock, now.to_string()).unwrap();
+        set_clock(&now.to_string());
         c.status()["skipped_wake"]["cause"]
             .as_str()
             .is_some_and(|cause| !cause.is_empty())
@@ -516,7 +523,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         let before = runner_admission(c);
         wait(&format!("a wake that {outcome} the generation"), || {
             now += jiff::SignedDuration::from_mins(3);
-            std::fs::write(&clock, now.to_string()).unwrap();
+            set_clock(&now.to_string());
             let admission = runner_admission(c);
             admission["at"] != before["at"] && admission["outcome"] == outcome
         });
