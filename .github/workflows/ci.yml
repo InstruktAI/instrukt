@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, "wave/**", "build/**", "fix/**"]
   pull_request:
+  # A release runs these checks on the tagged revision before it builds.
+  workflow_call:
 
 permissions:
   contents: read
@@ -59,20 +61,10 @@ jobs:
           version: ${{ steps.test-tools.outputs.UV_VERSION }}
       - name: Install the commit-check framework
         run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
-      # The document and configuration checks validate with the build of the
-      # commit itself. It is built under the build lock, as the Cargo checks
-      # are: a first locked run in a checkout cleans its workspace packages,
-      # the instrukt binary among them, so that clean happens before this
-      # build and never after it.
-      - name: Build the commit's instrukt for the commit checks
-        run: |
-          scripts/with-build-lock.sh cargo build --locked --bin instrukt
-          echo "INSTRUKT_CHECK_BIN=$PWD/target/debug/instrukt" >> "$GITHUB_ENV"
-      # Every check of .pre-commit-config.yaml over every file: document and
-      # configuration validation, shellcheck, fmt, clippy and the colocated
-      # unit tests.
+      # Every check of .pre-commit-config.yaml over every file, document and
+      # configuration validation with an instrukt built from this revision.
       - name: commit checks over every file
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: scripts/commit-checks.sh --all-files
       - name: test
         run: cargo nextest run --workspace --locked --profile ci
       - name: doctests

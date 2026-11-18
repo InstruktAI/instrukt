@@ -1,5 +1,5 @@
 #!/bin/sh
-# instrukt's own section (docs/project/spec/feature/repository/hook-sections.md),
+# instrukt's own section (project/instrukt/spec/feature/repository/hook-sections),
 # with the installed instrukt as in any adopting repository; it never changes
 # git's result.
 # >>> instrukt >>>

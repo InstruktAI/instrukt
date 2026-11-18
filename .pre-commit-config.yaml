@@ -1,43 +1,62 @@
-# The checks a commit's content needs (docs/project/policy/testing.md). Each
-# check runs only when the commit changes a file its `files` pattern matches;
-# the pipeline runs every check over every file. No check here runs the
-# functional tests: they run in the pipeline. Document and configuration
-# checks build nothing: they run an instrukt that is already there
-# (scripts/instrukt-for-checks). Cargo checks take the shared target
-# directory's lock (scripts/with-build-lock.sh) and build only what the
-# staged files reach.
+# The checks a commit's content needs (project/instrukt/policy/testing). Each
+# check's `files` pattern is the one place that says which files it applies
+# to. The framework passes a check the matching files that remain in the
+# commit and never a path the commit deletes or moves away; every check
+# therefore always starts, through scripts/commit-check.py, which adds those
+# removed paths by the same pattern and runs the check's command only when a
+# matching file was added, changed, renamed or deleted. The pipeline runs every
+# check over every file. No check here runs the functional tests: they run in
+# the pipeline. Document and configuration checks build nothing: they run an
+# instrukt that is already there (scripts/instrukt-for-checks). The Rust check
+# takes the shared target directory's lock (scripts/with-build-lock.sh) and
+# builds only the crates the commit touches and those that depend on them.
 default_install_hook_types: [pre-commit]
 repos:
   - repo: local
     hooks:
       - id: docs-validate
         name: document validation
-        entry: scripts/instrukt-for-checks docs validate
+        files: &documents ^docs/
+        entry: scripts/commit-check.py
+        args: [--pattern, *documents, --run, scripts/instrukt-for-checks docs validate, --]
         language: system
-        files: ^docs/
-        pass_filenames: false
+        always_run: true
+        require_serial: true
       - id: shellcheck
         name: shellcheck
-        entry: shellcheck -x
+        files: &shell ^(scripts/[^/]+\.sh|scripts/dev-instrukt|scripts/instrukt-for-checks|\.githooks/[^/]+)$
+        entry: scripts/commit-check.py
+        args: [--pattern, *shell, --run, shellcheck -x, --takes-files, --]
         language: system
-        files: ^(scripts/[^/]+\.sh|scripts/dev-instrukt|scripts/instrukt-for-checks|\.githooks/[^/]+)$
-      - id: cargo-fmt
-        name: cargo fmt
-        entry: scripts/with-build-lock.sh cargo fmt --all -- --check
-        language: system
-        files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml|^clippy\.toml)$
-        pass_filenames: false
-      - id: cargo-clippy-and-unit-tests
-        name: cargo clippy and colocated unit tests of the crates reached
-        entry: scripts/with-build-lock.sh scripts/check-rust.sh
-        language: system
-        files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml|^clippy\.toml)$
+        always_run: true
         require_serial: true
       # The committed layer alone, under a throwaway machine layer: what this
       # computer's own configuration says does not decide a commit.
       - id: config-validate
         name: configuration validation
-        entry: scripts/instrukt-for-checks --script scripts/check-committed-config.sh
+        files: &configuration ^instrukt\.yaml$
+        entry: scripts/commit-check.py
+        args: [--pattern, *configuration, --run, scripts/instrukt-for-checks --script scripts/check-committed-config.sh, --]
         language: system
-        files: ^instrukt\.yaml$
-        pass_filenames: false
+        always_run: true
+        require_serial: true
+      # Everything a crate is built from: every file of a crate, the files
+      # compiled into the program and the snapshots its unit tests read among
+      # them, and the workspace's manifest, lock file and toolchain and clippy
+      # configuration.
+      - id: cargo-fmt
+        name: cargo fmt
+        files: &rust ^(crates/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|clippy\.toml$)
+        entry: scripts/commit-check.py
+        args: [--pattern, *rust, --run, cargo fmt --all -- --check, --]
+        language: system
+        always_run: true
+        require_serial: true
+      - id: cargo-clippy-and-unit-tests
+        name: cargo clippy and colocated unit tests of the crates reached
+        files: *rust
+        entry: scripts/commit-check.py
+        args: [--pattern, *rust, --run, scripts/with-build-lock.sh scripts/check-rust.sh, --takes-files, --with-removed, --]
+        language: system
+        always_run: true
+        require_serial: true
