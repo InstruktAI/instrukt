@@ -70,8 +70,6 @@ pub enum Observation {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionsError {
-    #[error("no runtime is chosen; set global `runner.runtime: t3`")]
-    NoRuntime,
     #[error("unknown compiled runtime adapter `{0}`")]
     UnknownRuntime(String),
     #[error("thread {0} is no longer available")]
@@ -128,8 +126,7 @@ impl SessionsError {
     pub fn start_certainly_failed(&self) -> bool {
         matches!(
             self,
-            Self::NoRuntime
-                | Self::UnknownRuntime(_)
+            Self::UnknownRuntime(_)
                 | Self::MissingCapability { .. }
                 | Self::Config(_)
                 | Self::ChangedRequest(_)
@@ -183,9 +180,7 @@ impl<'c> Sessions<'c> {
         Self { home, config, env }
     }
     pub fn runner_runtime(&self) -> Result<Runtime, SessionsError> {
-        self.config
-            .runner_runtime()?
-            .ok_or(SessionsError::NoRuntime)
+        Ok(self.config.runner_runtime()?)
     }
     pub fn adapter(&self) -> Result<Box<dyn RuntimeAdapter>, SessionsError> {
         Ok(crate::runtime::adapter(self.runner_runtime()?))
@@ -319,6 +314,7 @@ impl<'c> Sessions<'c> {
             key,
             brief: if crate::envelopes::segment(request.message).iter().all(|span| matches!(span, crate::envelopes::Span::Control) || matches!(span, crate::envelopes::Span::Ordinary(text) if text.trim().is_empty())) { request.message.into() } else { crate::envelopes::Control::Assignment.frame(request.message) },
             worktree,
+            profiles: crate::runtime::Profiles::default(),
         };
         Ok((input, project))
     }

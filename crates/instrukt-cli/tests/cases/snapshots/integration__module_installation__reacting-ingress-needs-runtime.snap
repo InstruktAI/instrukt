@@ -1,9 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/module-installation.rs
-expression: "report[\"findings\"]"
----
-[
-  "project events: standing agents need a runtime, and no runtime is chosen; choose one with `runner.runtime`",
-  "company acme: standing agents need a runtime, and no runtime is chosen; choose one with `runner.runtime`",
-  "receiver: incomplete project demand; restore unreadable projects before withdrawing receiver"
-]

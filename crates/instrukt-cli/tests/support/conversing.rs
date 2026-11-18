@@ -299,6 +299,13 @@ impl Company {
         });
     }
 
+    /// Whether the runner process is still running.
+    pub fn runner_running(&mut self) -> bool {
+        self.runner
+            .as_mut()
+            .is_some_and(|runner| runner.exited().is_none())
+    }
+
     /// The runner process dies where it stands.
     pub fn runner_dies(&mut self) {
         self.runner = None;

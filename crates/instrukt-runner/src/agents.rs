@@ -179,8 +179,17 @@ pub fn selections(
     order: &[AgentChoice],
     now: jiff::Timestamp,
 ) -> Result<Vec<instrukt_core::config::AgentSelection>, crate::sessions::SessionsError> {
+    selections_with(&config.agents()?, home, order, now)
+}
+
+/// [`selections`] over the profiles `agents`.
+fn selections_with(
+    agents: &instrukt_core::config::Agents,
+    home: &instrukt_core::home::Home,
+    order: &[AgentChoice],
+    now: jiff::Timestamp,
+) -> Result<Vec<instrukt_core::config::AgentSelection>, crate::sessions::SessionsError> {
     let marks = availability(home, now)?;
-    let agents = config.agents()?;
     let restriction = |profile: &ProfileName, model: Option<&str>| {
         marks.iter().find(|mark| {
             mark.profile == *profile
@@ -244,8 +253,12 @@ pub(crate) fn prepare_start(
     now: jiff::Timestamp,
 ) -> Result<crate::runtime::RuntimeStart, crate::sessions::SessionsError> {
     let snapshot = adapter.provider_snapshot(home)?;
-    let config = Configuration::load(home, Some(&request.checkout))?;
-    let agents = config.agents()?;
+    // A start prepared in an admitted generation carries its profiles; one
+    // read back from its record or made by a command reads them here.
+    let agents = match &request.profiles.0 {
+        Some(profiles) => (**profiles).clone(),
+        None => Configuration::load(home, Some(&request.checkout))?.agents()?,
+    };
     const QUOTA_DEFAULT_SECONDS: i64 = 3600;
     for (name, profile) in &agents.profiles {
         let Some(provider) = snapshot
@@ -313,7 +326,7 @@ pub(crate) fn prepare_start(
     let candidates = if request.preferences.is_empty() {
         request.selection.iter().cloned().collect()
     } else {
-        selections(&config, home, &request.preferences, now)?
+        selections_with(&agents, home, &request.preferences, now)?
     };
     let mut tried = Vec::new();
     for selection in candidates {

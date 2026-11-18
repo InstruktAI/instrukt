@@ -11,12 +11,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use instrukt_core::config::{ConfigError, Configuration, Env, Module};
+use instrukt_core::config::{
+    AdmissionError, Admitted, ConfigError, Configuration, Current, Env, Module, Offer,
+};
 use instrukt_core::fsx::FsError;
 use instrukt_core::github;
 use instrukt_core::home::Home;
 use instrukt_core::ids::CommitSha;
-use instrukt_core::publication::PublishedRecord;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
@@ -115,8 +116,8 @@ pub enum RunnerError {
     ServiceUnpublished(String),
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
-    #[error("the activation wake channel failed; accepted work remains pending")]
-    ActivationWakeFailed,
+    #[error(transparent)]
+    Admission(#[from] AdmissionError),
     #[error(transparent)]
     Consumer(#[from] ConsumerError),
     #[error(transparent)]
@@ -151,38 +152,31 @@ pub struct Considered {
     pub events: bool,
 }
 
-/// Every published project whose effective configuration enables `todos`
-/// or `events`. A project whose checkout is gone or whose configuration
-/// cannot be read is skipped with a warning.
+/// The published projects that switch on `todos` or `events`. A project
+/// whose checkout is gone or whose layer could not be loaded is not among
+/// them. A finding withholds only its module's own work: the project is
+/// still considered, with that module off.
+pub fn considered(admitted: &Admitted) -> Vec<Considered> {
+    admitted
+        .projects()
+        .iter()
+        .filter(|project| project.switched)
+        .map(|project| Considered {
+            project: ProjectRef {
+                slug: project.slug.clone(),
+                root: project.checkout.clone(),
+            },
+            config: project.config.clone(),
+            todos: project.todos,
+            events: project.events,
+        })
+        .collect()
+}
+
+/// [`considered`] in a generation admitted from the files now.
 pub fn considered_projects(home: &Home) -> Result<Vec<Considered>, RunnerError> {
-    let mut considered = Vec::new();
-    for record in PublishedRecord::load_all(home)? {
-        if !record.checkout.is_dir() {
-            tracing::warn!(event = "project_checkout_missing", project = %record.project, checkout = %record.checkout.display());
-            continue;
-        }
-        let config = match Configuration::load(home, Some(&record.checkout)) {
-            Ok(config) => config,
-            Err(err) => {
-                tracing::warn!(event = "project_config_unreadable", project = %record.project, error = %err);
-                continue;
-            }
-        };
-        let todos = config.module_enabled(Module::Todos)?;
-        let events = config.module_enabled(Module::Events)?;
-        if todos || events {
-            considered.push(Considered {
-                project: ProjectRef {
-                    slug: record.project,
-                    root: record.checkout,
-                },
-                config,
-                todos,
-                events,
-            });
-        }
-    }
-    Ok(considered)
+    let candidate = Admitted::load(home)?;
+    Ok(considered(&candidate.generation))
 }
 
 /// Whether a tick did its work or found the runner busy.
@@ -193,7 +187,9 @@ pub enum TickOutcome {
     Busy,
 }
 
-/// One wake-up at `now`; exits at once when the runner lock is held.
+/// One wake-up at `now`; exits at once when the runner lock is held. Its
+/// configuration is admitted at its start: an invalid machine layer or
+/// `agents.yaml` refuses it, and what was not admitted is left out.
 pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, RunnerError> {
     let state = RunnerState::new(cx.home);
     let Some(_runner) = _holder::tick(cx.home)? else {
@@ -203,8 +199,15 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
         tracing::info!(event = "tick_runner_busy");
         return Ok(TickOutcome::Busy);
     };
-    let considered = considered_projects(cx.home)?;
-    let platform = event_platform(cx, &state, &considered)?;
+    let candidate = Admitted::load(cx.home)?;
+    Admission::default().report(&candidate.findings);
+    // The wake uses what it admitted: nothing in this process reads the
+    // configuration files on its own.
+    let current = Current::new(candidate.generation);
+    instrukt_core::config::serve(cx.home, &current);
+    let admitted = current.get();
+    let considered = considered(&admitted);
+    let platform = event_platform(cx, &state, &admitted)?;
     wake(
         cx,
         &state,
@@ -217,8 +220,32 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
     Ok(TickOutcome::Done)
 }
 
+/// What the run loop last reported of its admission, so a finding is
+/// logged when it appears or changes, not on every wake.
+#[derive(Default)]
+struct Admission {
+    reported: Vec<String>,
+}
+
+impl Admission {
+    fn report(&mut self, findings: &[instrukt_core::config::Finding]) {
+        let now: Vec<String> = findings.iter().map(ToString::to_string).collect();
+        if now == self.reported {
+            return;
+        }
+        for finding in &now {
+            if !self.reported.contains(finding) {
+                tracing::warn!(event = "configuration_not_admitted", finding = %finding);
+            }
+        }
+        self.reported = now;
+    }
+}
+
 /// The long-lived runner: a wake-up each `interval` until the process is
-/// stopped, holding the runner lock throughout.
+/// stopped, holding the runner lock throughout. Its configuration is one
+/// admitted generation, built when it starts and again on every wake; what
+/// depends on something outside instrukt retries in its own thread.
 pub fn run(
     cx: &RunnerContext<'_>,
     clock: impl Fn() -> Timestamp + Send + Sync + 'static,
@@ -233,22 +260,25 @@ pub fn run(
     // Initialize the shared schema before independent workers open connections.
     drop(instrukt_core::state_db::StateDb::open(cx.home).map_err(StateError::from)?);
     let clock: Arc<dyn Fn() -> Timestamp + Send + Sync> = Arc::new(clock);
+    // The gate: nothing starts on an invalid machine layer or agents.yaml.
+    let mut admission = Admission::default();
+    let candidate = Admitted::load(cx.home)?;
+    admission.report(&candidate.findings);
+    let current = Current::new(candidate.generation);
+    // From here on every part of this runner uses the generation in force:
+    // nothing in its process reads the configuration files on its own.
+    instrukt_core::config::serve(cx.home, &current);
+    crate::state::admission_outcome(cx.home, clock(), true);
     let mut platform: Option<EventPlatform> = None;
+    // The transport settings the event platform was prepared on.
+    let mut platform_transport: Option<serde_yaml_ng::Value> = None;
     let mut _readers = None;
     let mut history = crate::history::Readers::default();
     // The relay serves links and, while a company declares a connector and
     // conversations are on, the connector destination; the connections take
     // the intake. Both report their unexpected end to this loop at once.
     let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
-    let demand = !crate::conversations::demand(cx.home)
-        .map_err(|e| RunnerError::Conversations(e.to_string()))?
-        .is_empty();
-    let runtime = Configuration::load_global(cx.home)?.runner_runtime()?;
-    if demand && runtime.is_none() {
-        return Err(RunnerError::Conversations(
-            "conversations need a runtime, and no runtime is chosen; choose one with `runner.runtime`".into(),
-        ));
-    }
+    let demand = !crate::conversations::admitted_demand(&current.get()).is_empty();
     let slack = demand
         .then(|| crate::connectors::SlackEndpoint::from_env(cx.env, Arc::clone(&clock)))
         .transpose()
@@ -258,102 +288,136 @@ pub fn run(
         slack: slack.clone(),
         arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
     });
-    let serve = || {
-        crate::links::Worker::start(
-            cx.home,
-            cx.env,
-            destinations.clone(),
-            Some(supervise.clone()),
-        )
-    };
-    // The relay is demanded whenever a runtime is chosen. One that ended or
-    // could not start stays supervised: its cause is kept where it serves,
-    // and it is started again on every supervision pass until it runs.
-    // A failure is recorded when it starts or its cause changes; unchanged
-    // repetitions are counted and reported with the recovery.
-    let mut relay_failure: Option<(String, u64)> = None;
-    let mut supervise_relay = |relay: &mut Option<crate::links::Worker>| {
-        if runtime.is_none() {
-            return;
-        }
-        let mut failed = |error: crate::links::LinkError| {
-            let cause = error.to_string();
-            match &mut relay_failure {
-                Some((current, repeated)) if *current == cause => *repeated += 1,
-                _ => {
-                    crate::links::record_failure(cx.home, &error);
-                    if demand {
-                        crate::conversations::relay_state(cx.home, Some(&cause));
-                    }
-                    relay_failure = Some((cause, 0));
-                }
-            }
-        };
+    // The relay retries T3 inside its own thread; it is started again here
+    // only when its thread ended.
+    let supervise_relay = |relay: &mut Option<crate::links::Worker>| {
         if let Some(current) = relay.as_mut() {
             match current.check() {
                 Ok(()) => return,
                 Err(error) => {
-                    failed(error);
+                    crate::links::record_failure(cx.home, &error);
                     *relay = None;
                 }
             }
         }
-        match serve() {
-            Ok(worker) => {
-                if let Some((cause, repeated)) = relay_failure.take() {
-                    tracing::info!(event = "conversation_relay_recovered", cause = %cause, repeated);
-                }
-                if demand {
-                    crate::conversations::relay_state(cx.home, None);
-                }
-                *relay = Some(worker);
-            }
-            Err(error) => failed(error),
+        match crate::links::Worker::start(
+            cx.home,
+            cx.env,
+            current.clone(),
+            destinations.clone(),
+            Some(supervise.clone()),
+        ) {
+            Ok(worker) => *relay = Some(worker),
+            Err(error) => crate::links::record_failure(cx.home, &error),
         }
     };
     let mut relay = None;
     supervise_relay(&mut relay);
     let mut connections = match &slack {
         Some(slack) => Some(
-            crate::connectors::Connections::start(cx.home, slack, arrive, supervise.clone())
-                .map_err(|e| RunnerError::Conversations(e.to_string()))?,
+            crate::connectors::Connections::start(
+                cx.home,
+                &current,
+                slack,
+                arrive,
+                supervise.clone(),
+            )
+            .map_err(|e| RunnerError::Conversations(e.to_string()))?,
         ),
         None => None,
     };
     tracing::info!(event = "runner_started");
+    // A skipped wake stays in status until the next wake that is not skipped;
+    // one left by an earlier runner is cleared by this runner's first.
+    let mut skipped = true;
     loop {
         supervise_relay(&mut relay);
         if let Some(connections) = &mut connections {
             connections.check();
         }
-        history.refresh(cx.home, cx.env)?;
-        let considered = considered_projects(cx.home)?;
-        if platform.is_none()
-            && let Some(prepared) = event_platform(cx, &state, &considered)?
-        {
-            _readers = Some(prepared.runtime.start(Arc::clone(&clock))?);
-            platform = Some(prepared);
+        // Every wake admits the files again; an invalid change leaves the
+        // current generation in force and is reported.
+        match Admitted::load(cx.home) {
+            Ok(candidate) => {
+                admission.report(&candidate.findings);
+                let offered = current.offer(candidate);
+                if offered == Offer::Kept {
+                    tracing::debug!(event = "configuration_kept");
+                }
+                crate::state::admission_outcome(cx.home, clock(), offered == Offer::Replaced);
+            }
+            Err(error) => {
+                admission.report(&[]);
+                tracing::warn!(event = "configuration_kept", error = %error);
+                crate::state::admission_outcome(cx.home, clock(), false);
+            }
         }
-        let events_enabled = Configuration::load_global(cx.home)?.module_enabled(Module::Events)?
-            || considered.iter().any(|project| project.events);
+        let admitted = current.get();
+        // An event platform holds the transport it was prepared on: a
+        // generation admitting other transport settings prepares it again.
+        let transport_settings = admitted.global().get(Some("redis"), cx.env).ok();
+        if platform.is_some() && platform_transport != transport_settings {
+            tracing::info!(
+                event = "event_platform_replaced",
+                cause = "transport settings changed"
+            );
+            _readers = None;
+            platform = None;
+        }
+        history.refresh(cx.home, cx.env, &current);
+        let considered = considered(&admitted);
+        let events_enabled = admitted.module_anywhere(Module::Events).unwrap_or(false);
+        if platform.is_none() && events_enabled {
+            match event_platform(cx, &state, &admitted) {
+                Ok(Some(prepared)) => match prepared.runtime.start(Arc::clone(&clock)) {
+                    Ok(readers) => {
+                        _readers = Some(readers);
+                        platform = Some(prepared);
+                        platform_transport = transport_settings;
+                    }
+                    Err(error) => tracing::error!(event = "event_readers_unstarted", %error),
+                },
+                Ok(None) => {}
+                Err(error) => tracing::error!(event = "event_platform_unprepared", %error),
+            }
+        }
         let enabled_platform = platform.as_ref().filter(|_| events_enabled);
-        let invocation = crate::keyed::RuntimeInvocation::acquire(cx.home, RUN_LOCK_WAIT)?;
-        if let Err(err) = wake(
-            cx,
-            &state,
-            clock(),
-            &considered,
-            enabled_platform,
-            false,
-            &invocation,
-        ) {
-            tracing::error!(event = "runner_wakeup_failed", error = %err);
+        // A dispatch lock held past its wait skips this wake; the relay,
+        // connections, readers and history go on in their own threads.
+        match crate::keyed::RuntimeInvocation::acquire(cx.home, RUN_LOCK_WAIT) {
+            Ok(invocation) => {
+                if std::mem::take(&mut skipped) {
+                    crate::state::skipped_wake(cx.home, None);
+                }
+                if let Err(err) = wake(
+                    cx,
+                    &state,
+                    clock(),
+                    &considered,
+                    enabled_platform,
+                    false,
+                    &invocation,
+                ) {
+                    tracing::error!(event = "runner_wakeup_failed", error = %err);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(event = "runner_wakeup_skipped", %error);
+                crate::state::skipped_wake(cx.home, Some((clock(), &error.to_string())));
+                skipped = true;
+            }
         }
-        drop(invocation);
         // Wait for the interval, an activation wake-up, or a supervised
         // worker's end, which is observed within a second.
+        // The interval passes in real time, or on the operator's clock when
+        // that has moved past it.
         let until = std::time::Instant::now() + interval;
-        while std::time::Instant::now() < until {
+        let woke_at = clock();
+        let interval_on_clock =
+            jiff::SignedDuration::try_from(interval).unwrap_or(jiff::SignedDuration::MAX);
+        while std::time::Instant::now() < until
+            && clock().duration_since(woke_at) < interval_on_clock
+        {
             // Supervision runs each second, independently of the wake-up.
             if supervision.try_recv().is_ok() || relay.is_none() {
                 supervise_relay(&mut relay);
@@ -362,20 +426,21 @@ pub fn run(
                 }
             }
             let slice = (until - std::time::Instant::now()).min(Duration::from_secs(1));
-            if let Some(platform) = &platform {
-                let receiver = platform
+            let woken = platform.as_ref().and_then(|platform| {
+                platform
                     .wakeups
                     .lock()
-                    .map_err(|_| RunnerError::ActivationWakeFailed)?;
-                match receiver.recv_timeout(slice) {
-                    Ok(()) => break,
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        return Err(RunnerError::ActivationWakeFailed);
-                    }
+                    .ok()
+                    .map(|receiver| receiver.recv_timeout(slice))
+            });
+            match woken {
+                Some(Ok(())) => break,
+                Some(Err(std::sync::mpsc::RecvTimeoutError::Timeout)) => {}
+                // No platform, or its wake-ups are gone: the interval alone
+                // wakes the loop.
+                Some(Err(std::sync::mpsc::RecvTimeoutError::Disconnected)) | None => {
+                    std::thread::sleep(slice)
                 }
-            } else {
-                std::thread::sleep(slice);
             }
         }
     }
@@ -387,18 +452,18 @@ struct EventPlatform {
     wakeups: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
+/// The event platform of an admitted generation: none while no event
+/// responses are admitted on the machine or any considered project. The
+/// gate guarantees the transport is configured whenever one is.
 fn event_platform(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
-    projects: &[Considered],
+    admitted: &Admitted,
 ) -> Result<Option<EventPlatform>, RunnerError> {
-    if !Configuration::load_global(cx.home)?.module_enabled(Module::Events)?
-        && !projects.iter().any(|project| project.events)
-    {
+    if !admitted.module_anywhere(Module::Events)? {
         return Ok(None);
     }
-    let transport =
-        ScopedTransport::from_config(&Configuration::load_global(cx.home)?, cx.env, state)?;
+    let transport = ScopedTransport::from_config(admitted.global(), cx.env, state)?;
     let computer = instrukt_core::machine::machine_id(cx.home)?;
     let (wakeup, wakeups) = std::sync::mpsc::sync_channel(1);
     let runtime = ConsumerRuntime::new(
@@ -477,8 +542,9 @@ fn wake(
     if let Err(error) = standing::deliver_pending(invocation, now) {
         tracing::warn!(event="standing_delivery_failed",error=%error);
     }
-    if let Some(runtime) = Configuration::load_global(cx.home)?.runner_runtime()? {
-        let adapter = crate::runtime::adapter(runtime);
+    {
+        let adapter =
+            crate::runtime::adapter(Configuration::load_global(cx.home)?.runner_runtime()?);
         if let Err(error) = crate::_attention::approvals(invocation, adapter.as_ref(), now) {
             tracing::warn!(event="approval_attention_failed",error=%error);
         }

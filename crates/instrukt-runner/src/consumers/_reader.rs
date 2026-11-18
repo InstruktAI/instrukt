@@ -319,9 +319,9 @@ impl<'a> Reader<'a> {
                     now,
                 )?;
                 let result = match &decoded {
-                    Ok(event) => {
+                    Ok(event) => caught(|| {
                         (self.consumer.reaction)(event, now).map_err(|error| error.to_string())
-                    }
+                    }),
                     Err(error) => Err(format!("decode: {error}")),
                 };
                 match result {
@@ -373,5 +373,31 @@ impl<'a> Reader<'a> {
                 .arg(&coordinate.entry_id),
         )?;
         Ok(())
+    }
+}
+
+/// Calls a reaction, turning a panic into a failed attempt: the entry counts
+/// it as any failure, and the reader thread goes on.
+fn caught<T>(reaction: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(reaction)).unwrap_or_else(|panic| {
+        let cause = panic
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".to_owned());
+        Err(format!("the reaction panicked: {cause}"))
+    })
+}
+
+#[cfg(test)]
+mod reaction_tests {
+    use super::caught;
+
+    #[test]
+    fn a_panicking_reaction_is_a_failed_attempt() {
+        // A panic is a failed attempt with a cause, as a returned failure is.
+        let failed = caught::<()>(|| panic!("broken reaction"));
+        assert!(failed.is_err_and(|cause| !cause.is_empty()));
+        assert_eq!(caught(|| Ok::<_, String>(7)), Ok(7));
     }
 }

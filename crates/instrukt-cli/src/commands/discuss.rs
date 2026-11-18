@@ -3,10 +3,7 @@ use std::process::ExitCode;
 
 use crate::{context::Ctx, wiring};
 use instrukt_core::{config::Configuration, ids::SessionRef};
-use instrukt_runner::{
-    links::{self, Discussion, Operation},
-    sessions::SessionsError,
-};
+use instrukt_runner::links::{self, Discussion, Operation};
 
 #[derive(Debug, clap::Args)]
 pub struct DiscussArgs {
@@ -28,9 +25,7 @@ enum Command {
     },
 }
 pub fn run(args: DiscussArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let runtime = Configuration::load_global(&ctx.home)?
-        .runner_runtime()?
-        .ok_or(SessionsError::NoRuntime)?;
+    let runtime = Configuration::load_global(&ctx.home)?.runner_runtime()?;
     let adapter = instrukt_runner::runtime::adapter(runtime);
     let env = wiring::environment(ctx)?;
     let target;

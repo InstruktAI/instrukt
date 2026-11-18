@@ -12,7 +12,7 @@ use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
 
 use instrukt_connector::{Accompanying, Earlier, Incoming, Sender};
-use instrukt_core::config::{Configuration, Env, SecretSource, SlackConnector};
+use instrukt_core::config::{Admitted, Current, Env, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
 use jiff::Timestamp;
@@ -246,40 +246,25 @@ fn message_ts(m: &Value) -> Option<i64> {
 }
 
 impl SlackApi {
-    pub fn for_company(
-        home: &Home,
+    /// The Web API of `company`'s Slack connector, with the tokens its
+    /// admitted generation resolved; none when the connector is not admitted.
+    pub fn admitted(
+        admitted: &Admitted,
         company: &ProjectSlug,
         endpoint: &SlackEndpoint,
     ) -> Result<Self, SlackError> {
-        let declared = Configuration::load_company(home, company)?
-            .slack_connector()?
+        let slack = admitted
+            .company(company)
+            .and_then(|company| company.slack.as_ref())
             .ok_or_else(|| SlackError::Api {
                 method: "connector".into(),
-                cause: "the company declares no slack connector".into(),
+                cause: format!("the slack connector of company `{company}` is not admitted"),
             })?;
-        Self::with(home, company, &declared, endpoint)
-    }
-
-    fn with(
-        home: &Home,
-        company: &ProjectSlug,
-        declared: &SlackConnector,
-        endpoint: &SlackEndpoint,
-    ) -> Result<Self, SlackError> {
-        let secrets = SecretSource::Company(company.clone());
         Ok(Self {
             company: company.clone(),
             endpoint: endpoint.clone(),
-            app_token: instrukt_core::config::resolve_secret_from(
-                home,
-                &secrets,
-                &declared.app_token,
-            )?,
-            bot_token: instrukt_core::config::resolve_secret_from(
-                home,
-                &secrets,
-                &declared.bot_token,
-            )?,
+            app_token: slack.app_token.clone(),
+            bot_token: slack.bot_token.clone(),
             agent: ureq::Agent::config_builder()
                 .timeout_global(Some(Duration::from_secs(30)))
                 .http_status_as_error(false)
@@ -709,9 +694,18 @@ struct Hosted {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+/// Where a connection reaches its company: the admitted generation that
+/// holds its tokens, and Slack's endpoint.
+#[derive(Clone, Copy)]
+struct Reach<'a> {
+    current: &'a Current,
+    endpoint: &'a SlackEndpoint,
+}
+
 /// The connections `instrukt run` holds open, supervised by the run loop.
 pub struct Connections {
     home: Home,
+    current: Current,
     endpoint: SlackEndpoint,
     stop: Arc<AtomicBool>,
     wake: SyncSender<()>,
@@ -725,19 +719,21 @@ impl Connections {
     /// a connection thread ended.
     pub fn start(
         home: &Home,
+        current: &Current,
         endpoint: &SlackEndpoint,
         wake: SyncSender<()>,
         supervise: SyncSender<()>,
     ) -> Result<Self, conversations::ConversationError> {
         let mut connections = Self {
             home: home.clone(),
+            current: current.clone(),
             endpoint: endpoint.clone(),
             stop: Arc::new(AtomicBool::new(false)),
             wake,
             supervise,
             hosted: Vec::new(),
         };
-        let demand = conversations::demand(home)?;
+        let demand = conversations::admitted_demand(&current.get());
         let hosted: Vec<(String, String)> = demand
             .iter()
             .map(|(company, _)| (company.to_string(), SLACK.to_owned()))
@@ -762,6 +758,7 @@ impl Connections {
         declared: &SlackConnector,
     ) -> Option<std::thread::JoinHandle<()>> {
         let home = self.home.clone();
+        let current = self.current.clone();
         let endpoint = self.endpoint.clone();
         let stop = Arc::clone(&self.stop);
         let wake = self.wake.clone();
@@ -772,7 +769,11 @@ impl Connections {
             .name(format!("slack-{company}"))
             .spawn(move || {
                 let _notice = notice;
-                connection(&home, &endpoint, &company, &declared, &stop, &wake);
+                let reach = Reach {
+                    current: &current,
+                    endpoint: &endpoint,
+                };
+                connection(&home, reach, &company, &declared, &stop, &wake);
             });
         match spawned {
             Ok(thread) => Some(thread),
@@ -840,7 +841,7 @@ fn state(home: &Home, company: &ProjectSlug, status: ConnectionState, failure: O
 /// while it is down.
 fn connection(
     home: &Home,
-    endpoint: &SlackEndpoint,
+    reach: Reach<'_>,
     company: &ProjectSlug,
     declared: &SlackConnector,
     stop: &AtomicBool,
@@ -865,7 +866,7 @@ fn connection(
             let _ended = Ended(ended);
             intake_worker(
                 home,
-                endpoint,
+                reach,
                 company,
                 declared,
                 stop,
@@ -878,13 +879,13 @@ fn connection(
         });
         scope.spawn(move || {
             let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
-            status_worker(home, endpoint, company, declared, &quit, &admissions);
+            status_worker(home, reach, company, &quit, &admissions);
         });
         let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
         let mut backoff = Duration::from_secs(1);
         while !quit() {
             state(home, company, ConnectionState::Connecting, None);
-            let failure = session(home, endpoint, company, declared, &quit, &nudge).err();
+            let failure = session(home, reach, company, &quit, &nudge).err();
             if quit() {
                 break;
             }
@@ -923,20 +924,21 @@ struct Wakes<'a> {
 /// called before its wait is over, also on a nudge.
 fn intake_worker(
     home: &Home,
-    endpoint: &SlackEndpoint,
+    reach: Reach<'_>,
     company: &ProjectSlug,
     declared: &SlackConnector,
     stop: &AtomicBool,
     wakes: Wakes<'_>,
     nudges: &std::sync::mpsc::Receiver<()>,
 ) {
+    let Reach { current, endpoint } = reach;
     let mut me = None;
     let mut failures: u32 = 0;
     let mut retry_at = Instant::now();
     let mut nudged = true;
     while !stop.load(Ordering::Acquire) {
         if nudged || Instant::now() >= retry_at {
-            let clean = match SlackApi::with(home, company, declared, endpoint) {
+            let clean = match SlackApi::admitted(&current.get(), company, endpoint) {
                 Ok(api) => {
                     if me.is_none() {
                         me = api.identity().ok();
@@ -989,16 +991,16 @@ type Place = (String, String);
 /// cleared.
 fn status_worker(
     home: &Home,
-    endpoint: &SlackEndpoint,
+    reach: Reach<'_>,
     company: &ProjectSlug,
-    declared: &SlackConnector,
     stop: &dyn Fn() -> bool,
     admitted: &std::sync::mpsc::Receiver<()>,
 ) {
+    let Reach { current, endpoint } = reach;
     let mut attempted: HashMap<Place, Instant> = HashMap::new();
     let mut failing: Option<String> = None;
     while !stop() {
-        let pass = SlackApi::with(home, company, declared, endpoint)
+        let pass = SlackApi::admitted(&current.get(), company, endpoint)
             .map_err(|error| error.to_string())
             .and_then(|api| {
                 let working =
@@ -1071,13 +1073,13 @@ fn call(api: &SlackApi, target: &Place, status: &str) {
 /// One Socket Mode connection, from opening to its drop or a disconnect.
 fn session(
     home: &Home,
-    endpoint: &SlackEndpoint,
+    reach: Reach<'_>,
     company: &ProjectSlug,
-    declared: &SlackConnector,
     quit: &dyn Fn() -> bool,
     nudge: &SyncSender<()>,
 ) -> Result<(), String> {
-    let api = SlackApi::with(home, company, declared, endpoint).map_err(|e| e.to_string())?;
+    let Reach { current, endpoint } = reach;
+    let api = SlackApi::admitted(&current.get(), company, endpoint).map_err(|e| e.to_string())?;
     let url = api.connection_url().map_err(|e| e.to_string())?;
     let me = api.identity().map_err(|e| e.to_string())?;
     let (mut socket, _) =

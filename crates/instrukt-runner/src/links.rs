@@ -142,9 +142,7 @@ fn open_plan(
             "a link needs two distinct threads in the same runtime source".into(),
         ));
     }
-    let runtime = instrukt_core::config::Configuration::load_global(home)?
-        .runner_runtime()?
-        .ok_or(crate::sessions::SessionsError::NoRuntime)?;
+    let runtime = instrukt_core::config::Configuration::load_global(home)?.runner_runtime()?;
     if request.a.runtime.as_str() != runtime.name() {
         return Err(LinkError::Runtime(
             crate::sessions::SessionsError::UnknownRuntime(request.a.runtime.to_string()),

@@ -421,3 +421,230 @@ fn a_conversation_message_activates_no_subscribed_procedure() {
     wait("the event reader's activation", || !activated().is_empty());
     assert_eq!(activated(), [barrier]);
 }
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV12
+#[test]
+fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
+    // History is off, so the conversation relay is the stand-in's only
+    // source reader while the runner runs. The machine has no Redis settings.
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
+    patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
+    // A published project switches event responses on through its committed
+    // layer; this computer has no event transport for them.
+    let events = documented::project(
+        &c.env,
+        "reacting",
+        &[(
+            "instrukt.yaml",
+            format!(
+                "schema_version: {}\nproject: reacting\nmodules: {{history: false, events: true}}\n",
+                instrukt_core::config::CURRENT_SCHEMA_VERSION
+            ),
+        )],
+    );
+    documented::sync(&c.env, &events);
+    // The runner starts under a clock file while the dispatch lock is held:
+    // its wake waits for the lock on that clock.
+    let clock = c.env.path("clock");
+    // The runner reads the clock file at any moment: each new time replaces
+    // the file whole, so no read finds it half written.
+    let set_clock = |at: &str| {
+        let next = clock.with_extension("next");
+        std::fs::write(&next, at).unwrap();
+        std::fs::rename(&next, &clock).unwrap();
+    };
+    set_clock("2026-11-18T12:00:00Z");
+    c.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    let lock = c.env.instrukt_home().join("state/runtime-dispatch.lock");
+    let held = instrukt_core::fsx::LockGuard::try_acquire(&lock)
+        .unwrap()
+        .unwrap();
+    c.run();
+    // Past the run-lock wait the wake is skipped, shown in status with its
+    // cause, and the runner goes on. The clock moves on at every look, so
+    // it passes the wait whenever the runner began it.
+    let mut now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
+    wait("the skipped wake in status", || {
+        now += jiff::SignedDuration::from_mins(3);
+        set_clock(&now.to_string());
+        c.status()["skipped_wake"]["cause"]
+            .as_str()
+            .is_some_and(|cause| !cause.is_empty())
+    });
+    assert!(c.runner_running());
+    // Once the lock is free, the same runner answers a member.
+    drop(held);
+    let channel = "C1";
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
+    let first = c.session();
+    c.finish_turn(&first, 0, "On Friday.");
+    wait("the first answer", || c.slack.posts().len() == 1);
+    // The skipped wake stays until a wake takes the lock: the next one comes
+    // a minute on, so a runner started again shows it with its first.
+    c.runner_dies();
+    c.run();
+    wait("the skipped wake to clear", || {
+        c.status()["skipped_wake"].is_null()
+    });
+    // Status names the project's event responses as not admitted.
+    let findings = |c: &Company| -> Vec<(std::path::PathBuf, String)> {
+        c.status()["admission"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    std::path::PathBuf::from(f["document"].as_str().unwrap()),
+                    f["key"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let project_events = (
+        events.path().join("instrukt.yaml"),
+        "modules.events".to_owned(),
+    );
+    assert_eq!(findings(&c), std::slice::from_ref(&project_events));
+    let reacting: Vec<serde_json::Value> = c.status()["admission"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["project"] == "reacting")
+        .map(|p| p["events"].clone())
+        .collect();
+    assert_eq!(reacting, [serde_json::Value::Bool(false)]);
+    // The runner's wakes are brought about on the clock; each admits the
+    // files again, and status shows what the last one did with them.
+    let runner_admission = |c: &Company| c.status()["admission"]["runner"].clone();
+    let mut next_wake = |c: &Company, outcome: &str| {
+        let before = runner_admission(c);
+        wait(&format!("a wake that {outcome} the generation"), || {
+            now += jiff::SignedDuration::from_mins(3);
+            set_clock(&now.to_string());
+            let admission = runner_admission(c);
+            admission["at"] != before["at"] && admission["outcome"] == outcome
+        });
+    };
+    // A published project's layer that cannot be read leaves the generation
+    // in force rather than one without that project.
+    let project_layer = events.path().join("instrukt.yaml");
+    let readable = std::fs::read_to_string(&project_layer).unwrap();
+    std::fs::write(&project_layer, "schema_version: [\n").unwrap();
+    next_wake(&c, "kept");
+    std::fs::write(&project_layer, &readable).unwrap();
+    next_wake(&c, "replaced");
+    // A start captured while T3 cannot list its threads is made again from
+    // what was captured once T3 lists again; a company document made
+    // unparseable meanwhile does not stand in its way.
+    c.runtime.flag("list-failure", true);
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who reviews it?", None);
+    wait("the retained opening's failure in status", || {
+        c.status()["conversations"]["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|conversation| {
+                conversation["failures"]
+                    .as_array()
+                    .is_some_and(|failures| !failures.is_empty())
+            })
+    });
+    let company_document = c
+        .env
+        .instrukt_home()
+        .join(format!("companies/{COMPANY}/instrukt.yaml"));
+    let parseable = std::fs::read_to_string(&company_document).unwrap();
+    std::fs::write(&company_document, "schema_version: [\n").unwrap();
+    c.runtime.flag("list-failure", false);
+    wait("the retained session", || c.sessions().len() == 2);
+    let retained = c
+        .sessions()
+        .into_iter()
+        .find(|session| *session != first)
+        .unwrap();
+    c.finish_turn(&retained, 0, "Ada reviews it.");
+    wait("the retained answer", || c.slack.posts().len() == 2);
+    std::fs::write(&company_document, &parseable).unwrap();
+    next_wake(&c, "replaced");
+    // While the runner runs, the company's document is broken by hand and its
+    // bot token's secret blanked.
+    let company_dir = c.env.instrukt_home().join(format!("companies/{COMPANY}"));
+    let document = company_dir.join("instrukt.yaml");
+    let mut text = std::fs::read_to_string(&document).unwrap();
+    text.push_str("bogus: 1\n");
+    std::fs::write(&document, text).unwrap();
+    let secrets = company_dir.join("secrets.env");
+    let blanked: String = std::fs::read_to_string(&secrets)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            if line.starts_with("SLACK_BOT_TOKEN=") {
+                "SLACK_BOT_TOKEN=\"\"\n".to_owned()
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&secrets, blanked).unwrap();
+    wait("the company's findings in status", || {
+        findings(&c).len() == 3
+    });
+    let mut found = findings(&c);
+    found.sort();
+    let mut expected = vec![
+        project_events,
+        (document.clone(), "bogus".to_owned()),
+        (document.clone(), "connectors.slack.bot_token".to_owned()),
+    ];
+    expected.sort();
+    assert_eq!(found, expected);
+    // The runner's next wake keeps the generation in force.
+    next_wake(&c, "kept");
+    // The member's next question still starts the agent on the company's
+    // profile from the last valid generation, and is answered over the last
+    // valid connection.
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> And the release notes?", None);
+    wait("the second session", || c.sessions().len() == 3);
+    let second = c
+        .sessions()
+        .into_iter()
+        .find(|session| *session != first && *session != retained)
+        .unwrap();
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    assert_eq!(
+        c.runtime.provider(&second),
+        instrukt_core::config::Agents::load(&home.for_inspection())
+            .unwrap()
+            .profiles[&profile]
+            .instance
+    );
+    c.finish_turn(&second, 0, "They are ready.");
+    wait("the second answer", || c.slack.posts().len() == 3);
+    // The machine layer is broken by hand as well: status still says why it
+    // is not admitted, the runner keeps its generation, and the member is
+    // answered.
+    let machine = c.env.instrukt_home().join("instrukt.yaml");
+    let admitted = std::fs::read_to_string(&machine).unwrap();
+    std::fs::write(&machine, format!("{admitted}modules: [\n")).unwrap();
+    next_wake(&c, "kept");
+    assert!(
+        c.status()["admission"]["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+    );
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> And the date?", None);
+    wait("the third session", || c.sessions().len() == 4);
+    let third = c
+        .sessions()
+        .into_iter()
+        .find(|session| ![&first, &retained, &second].contains(&session))
+        .unwrap();
+    c.finish_turn(&third, 0, "Friday the 20th.");
+    wait("the third answer", || c.slack.posts().len() == 4);
+}

@@ -378,54 +378,18 @@ impl Agents {
     }
 
     pub fn load(home: &Home) -> Result<Self, ConfigError> {
+        if let Some(admitted) = super::_admitted::served(home) {
+            return Ok(admitted.agents().clone());
+        }
         if home.is_inspection() {
             let path = home.agents_file();
             let existing = match std::fs::read(&path) {
-                Ok(bytes) => Some(
-                    super::_agents_migrate::current(&bytes)?
-                        .map_or(bytes, |converted| converted.bytes),
-                ),
+                Ok(bytes) => Some(bytes),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(source) => return Err(ConfigError::Read { path, source }),
             };
-            let legacy = match super::_layer::read(&home.global_config())? {
-                Some(mut doc)
-                    if doc
-                        .value
-                        .get("schema_version")
-                        .and_then(Value::as_u64)
-                        .is_some_and(|v| v < super::CURRENT_SCHEMA_VERSION) =>
-                {
-                    super::_migrate::selection(home, &super::Layer::Global, &mut doc.value, false)?
-                }
-                _ => None,
-            };
-            if let Some(value) = legacy {
-                let text = super::render_yaml(&value).map_err(|source| ConfigError::Render {
-                    path: path.clone(),
-                    source,
-                })?;
-                if let Some(existing) = existing
-                    && serde_yaml_ng::from_slice::<Value>(&existing).map_err(|source| {
-                        ConfigError::Parse {
-                            path: path.clone(),
-                            source,
-                        }
-                    })? != value
-                {
-                    return Err(ConfigError::InvalidValue {key:"configuration migration".into(),message:"agents.yaml differs from old global selection; reconcile before writing".into()});
-                }
-                return Self::parse(&text);
-            }
-            return match existing {
-                Some(bytes) => Self::parse(std::str::from_utf8(&bytes).map_err(|_| {
-                    ConfigError::InvalidValue {
-                        key: "agents.yaml".into(),
-                        message: "expected UTF-8".into(),
-                    }
-                })?),
-                None => Self::parse(SHIPPED_AGENTS),
-            };
+            let global = super::_layer::read(&home.global_config())?.map(|doc| doc.value);
+            return Self::from_documents(home, existing, global.as_ref());
         }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
         if let Some(notice) = Self::deploy(home, SHIPPED_AGENTS)? {
@@ -435,6 +399,70 @@ impl Agents {
         let text =
             std::fs::read_to_string(&path).map_err(|source| ConfigError::Read { path, source })?;
         Self::parse(&text)
+    }
+
+    /// The profiles as a read command sees them, from `agents.yaml`'s bytes
+    /// (`None` when there is no file) and the global layer as read (`None`
+    /// when there is none), without reading or writing anything: an older
+    /// `agents.yaml` converted in memory, the selection of an older global
+    /// layer carried over, the shipped profiles when neither declares any.
+    pub(crate) fn from_documents(
+        home: &Home,
+        agents: Option<Vec<u8>>,
+        global: Option<&Value>,
+    ) -> Result<Self, ConfigError> {
+        let path = home.agents_file();
+        let existing = match agents {
+            Some(bytes) => Some(
+                super::_agents_migrate::current(&bytes)?.map_or(bytes, |converted| converted.bytes),
+            ),
+            None => None,
+        };
+        let legacy = match global {
+            Some(value)
+                if value
+                    .get("schema_version")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|v| v < super::CURRENT_SCHEMA_VERSION) =>
+            {
+                let mut value = value.clone();
+                super::_migrate::selection(home, &super::Layer::Global, &mut value, false)?
+            }
+            _ => None,
+        };
+        if let Some(value) = legacy {
+            let text = super::render_yaml(&value).map_err(|source| ConfigError::Render {
+                path: path.clone(),
+                source,
+            })?;
+            if let Some(existing) = existing
+                && serde_yaml_ng::from_slice::<Value>(&existing).map_err(|source| {
+                    ConfigError::Parse {
+                        path: path.clone(),
+                        source,
+                    }
+                })? != value
+            {
+                return Err(ConfigError::InvalidValue {
+                    key: "configuration migration".into(),
+                    message:
+                        "agents.yaml differs from old global selection; reconcile before writing"
+                            .into(),
+                });
+            }
+            return Self::parse(&text);
+        }
+        match existing {
+            Some(bytes) => {
+                Self::parse(
+                    std::str::from_utf8(&bytes).map_err(|_| ConfigError::InvalidValue {
+                        key: "agents.yaml".into(),
+                        message: "expected UTF-8".into(),
+                    })?,
+                )
+            }
+            None => Self::parse(SHIPPED_AGENTS),
+        }
     }
 
     pub fn undeclared_roles<'a>(&'a self, installed: &[&str]) -> Vec<&'a str> {

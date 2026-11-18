@@ -609,12 +609,9 @@ pub fn request(
 /// Background retries retain their cause without repeating one unresolved-start finding.
 pub(crate) fn report_start_finding(
     state: &RunnerState,
-    runtime: Option<instrukt_core::config::Runtime>,
+    runtime: instrukt_core::config::Runtime,
     error: &SessionsError,
 ) -> bool {
-    let Some(runtime) = runtime else {
-        return true;
-    };
     let key = match error {
         SessionsError::Unresolved { key } | SessionsError::Uncertain { key, .. } => key,
         _ => return true,

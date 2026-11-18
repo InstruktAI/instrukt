@@ -144,3 +144,71 @@ pub(crate) fn refuse_symlink(path: &Path) -> Result<(), StateError> {
         }),
     }
 }
+
+/// Records a runner worker's current failure in `runner_workers`, keeping
+/// when it started; `None` removes the worker's row.
+pub(crate) fn worker_state(home: &instrukt_core::home::Home, worker: &str, failure: Option<&str>) {
+    use instrukt_core::state_db::rusqlite::params;
+    let state = RunnerState::new(home);
+    let result = state.write::<_, StateError>(|tx| {
+        match failure {
+            Some(failure) => tx.execute(
+                "INSERT INTO runner_workers(worker,failure,since) VALUES(?1,?2,?3) ON CONFLICT(worker) DO UPDATE SET failure=excluded.failure",
+                params![worker, failure, jiff::Timestamp::now().to_string()],
+            ),
+            None => tx.execute("DELETE FROM runner_workers WHERE worker=?1", params![worker]),
+        }
+        .map_err(sql(&db_path(tx)))?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::error!(event = "runner_worker_state_unrecorded", worker, error = %error);
+    }
+}
+
+/// Records the run loop's last skipped wake, at `at` for `cause`; `None`
+/// removes it, as a wake that is not skipped does.
+pub(crate) fn skipped_wake(
+    home: &instrukt_core::home::Home,
+    skipped: Option<(jiff::Timestamp, &str)>,
+) {
+    use instrukt_core::state_db::rusqlite::params;
+    let state = RunnerState::new(home);
+    let result = state.write::<_, StateError>(|tx| {
+        match skipped {
+            Some((at, cause)) => tx.execute(
+                "INSERT INTO runner_skipped_wake(id,at,cause) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET at=excluded.at,cause=excluded.cause",
+                params![at.to_string(), cause],
+            ),
+            None => tx.execute("DELETE FROM runner_skipped_wake WHERE id=1", []),
+        }
+        .map_err(sql(&db_path(tx)))?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::error!(event = "runner_skipped_wake_unrecorded", error = %error);
+    }
+}
+
+/// Records what the run loop did with the configuration it admitted at
+/// `at`: replaced the generation in force, or kept it.
+pub(crate) fn admission_outcome(
+    home: &instrukt_core::home::Home,
+    at: jiff::Timestamp,
+    replaced: bool,
+) {
+    use instrukt_core::state_db::rusqlite::params;
+    let state = RunnerState::new(home);
+    let outcome = if replaced { "replaced" } else { "kept" };
+    let result = state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "INSERT INTO runner_admission(id,at,outcome) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET at=excluded.at,outcome=excluded.outcome",
+            params![at.to_string(), outcome],
+        )
+        .map_err(sql(&db_path(tx)))?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::error!(event = "runner_admission_unrecorded", error = %error);
+    }
+}

@@ -68,13 +68,16 @@ impl Env {
     }
 }
 
-/// A runtime compiled into instrukt; selection is always explicit.
+/// A runtime compiled into instrukt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Runtime {
     T3,
 }
 impl Runtime {
+    /// The one runtime compiled into this instrukt: what an unset
+    /// `runner.runtime` means.
+    pub const COMPILED: Self = Self::T3;
     pub fn named(name: &str) -> Option<Self> {
         match name {
             "t3" => Some(Self::T3),

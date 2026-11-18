@@ -128,9 +128,7 @@ fn speak(ctx: &Ctx, caller: &Caller, view: &mut View) -> anyhow::Result<()> {
     let (Some(session), Some(_)) = (&caller.session, &caller.company) else {
         return Ok(());
     };
-    let Some(runtime) = Configuration::load_global(&ctx.home)?.runner_runtime()? else {
-        return Ok(());
-    };
+    let runtime = Configuration::load_global(&ctx.home)?.runner_runtime()?;
     let adapter = instrukt_runner::runtime::adapter(runtime);
     view.speaker = mcp::speaker(&ctx.home, session, adapter.as_ref())?;
     Ok(())
