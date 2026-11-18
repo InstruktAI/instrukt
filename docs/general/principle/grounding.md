@@ -22,6 +22,8 @@ This misplaced certainty points outward as readily as inward. Facing an unfamili
 ## Implications
 
 - Memory — all tiers of it — is a cache, not a database. Caches go stale.
+- Verify against the documented policies and procedures and the codebase before
+  trusting instincts.
 - Avoid baseless assumptions or conclusions. Do thorough analysis and
   evidence-based reasoning and reporting when the situation needs it. Never
   present premature findings as truth: behave like a researcher who grounds in
