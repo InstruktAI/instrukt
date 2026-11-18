@@ -493,9 +493,11 @@ The caller identity is the runtime's statement of which session a process
 belongs to, and instrukt does not authenticate a caller beyond it. Every
 process of the same operating-system user is trusted: a caller presenting
 another session's identity is served as that session, and that user can read a
-company home's files, its secrets file among them. Closing that takes
-confining the agent, which this contract does not provide
-(`project/instrukt/spec/feature/company/conversations`). The `--company` path
+company home's files, its secrets file among them. A session working for a
+company runs in that company's container, which holds no other company's
+home, logins or sessions
+(`project/instrukt/spec/feature/runner/company-containers`); inside one
+company's container, every process is trusted alike. The `--company` path
 is the local operator's.
 
 ### Commands
@@ -688,7 +690,9 @@ And a call for that person starts a new sign-in
   database until they sign out, the operator removes them, or the
   authorization server refuses a renewal.
 - Logins lie in the state database, where any process of the same
-  operating-system user can read them. With a person's own login the agent
+  operating-system user can read them; a company's container holds no other
+  company's logins
+  (`project/instrukt/spec/feature/runner/company-containers`). With a person's own login the agent
   holds that person's rights at the server, and in a channel text of other
   people accompanies the speaker's message and can steer what happens under
   the speaker's name.

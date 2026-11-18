@@ -215,9 +215,12 @@ And no subscribed procedure is activated by that message
   this contract does not provide.
 - Everyone the connector's provider knows as one of the company's own is
   served alike.
-- A conversation session reads what its home and the computer let it read,
-  the home's secrets file among it. A connector open to people outside the
-  company needs an agent that is confined; no such confinement exists here.
+- A conversation session runs in its company's container and reads what that
+  container holds, the home's secrets file among it, and nothing of another
+  company or the host
+  (`project/instrukt/spec/feature/runner/company-containers`). A company's
+  container is not confinement enough for an agent that answers people outside
+  the company, and no such agent exists here.
 
 ## See Also
 

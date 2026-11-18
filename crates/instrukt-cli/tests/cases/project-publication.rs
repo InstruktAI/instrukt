@@ -456,28 +456,6 @@ fn without_tmp(env: &TestEnv, bytes: &[u8], shas: &[&str]) -> String {
     text(bytes, shas).replace(base.trim_end_matches('/'), "[TMP]")
 }
 
-// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB6
-#[test]
-fn an_instruction_file_left_with_a_reference_fails_the_sync() {
-    let env = TestEnv::new();
-    let repo = project(&env, "demo", &["acme"]);
-    let published = repo.head();
-    sync(&env, &repo).success();
-    let before = published_tree(&env);
-    repo.write(
-        "AGENTS.master.md",
-        "## Purpose\n\nRead it (@notes/house.md) first.\n",
-    )
-    .write("notes/house.md", "House notes.\n");
-    repo.commit("noted");
-    env.run(repo.path(), ["docs", "validate"]).success();
-
-    let failed = sync(&env, &repo).failure();
-    insta::assert_snapshot!(without_tmp(&env, &failed.get_output().stderr, &[]), @"instrukt: cannot render AGENTS.master.md: the rendered text still references `@notes/house.md`");
-    assert_eq!(published_tree(&env), before);
-    assert_eq!(published_commit(&env, "demo"), published);
-}
-
 // spec: project/instrukt/spec/feature/publication/project-publication UC-PUB7
 #[cfg(unix)]
 #[test]

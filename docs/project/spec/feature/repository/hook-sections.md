@@ -40,11 +40,11 @@ projects keep their own tooling.
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 - A checkout receives its `AGENTS.md` files from git, committed at its
   revision; no section renders them after a checkout.
-- A started sync runs under the publication lock and does nothing when main
-  equals the published commit
+- A started sync runs under the publication lock and converges: it writes
+  only what is missing or different
   (`project/instrukt/spec/feature/publication/project-publication`), so
-  repeated publication triggers do not republish an unchanged revision, and
-  a primary checkout whose project was never published publishes it once.
+  repeated publication triggers rewrite nothing that is current, and a
+  primary checkout whose project was never published publishes it.
 - Publication and graph generation stay detached. No hook ever fails the git
   operation: a missing `instrukt` binary, a refused sync or a failed start
   leaves git's result unchanged.
@@ -90,7 +90,11 @@ projects keep their own tooling.
 - Per hook of the table above: the hooks directory in use (and that
   `core.hooksPath` chose it), and whether the section is current, outdated or
   absent.
-- Reports each section's last run outcome, including a refused sync.
+- Reports each section's last run outcome, including a refused sync. The
+  outcome belongs to the repository and all its worktrees, and is read
+  without reading the repository's configuration, so a finding about a root
+  `instrukt.yaml` that cannot be read is shown
+  (`project/instrukt/spec/feature/configuration/owned-files`).
 - For an absent section, prints the one line to add to the tool that manages
   that hook file — the hook-run call — so a hook manager that regenerates the
   file keeps instrukt's behaviour.

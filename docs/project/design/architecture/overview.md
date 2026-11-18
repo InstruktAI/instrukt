@@ -113,8 +113,8 @@ deleting the home is not a lossless reset.
 | `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
 | `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
 | `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
-| `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; the written record of each user-scope instruction file instrukt wrote | `sync` |
-| `state/hooks/<project>/` | each hook section's last run outcome, shown by `instrukt hooks status` | the next hook run |
+| `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
+| `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
 | `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent binding caches, pending delivery targets, start markers and per-key locks, conversation links and directional relay positions, held task failures, the last wake-up, and retained searchable conversations with their extraction positions and legacy import provenance; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state starts empty; retained history must be preserved (only conversations still held by a source can be extracted again) |
 | `state/writer.lock` | the per-computer writer lock, held only for each local state-database write transaction (the database's write-isolation unit), including migration before an older-state read; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
@@ -161,7 +161,7 @@ commands. Docs name `-h`.
 | --- | --- | --- |
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
-| Configured agent runtimes | publication | rendered global files in each configured runtime's home, never over one instrukt did not write, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
+| Configured agent runtimes | publication | rendered global files in each configured runtime's home, written whole on every sync and never removed, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
@@ -235,14 +235,12 @@ flowchart LR
   K[checkout] --> Q{primary checkout?}
   Q -- yes --> C
   Q -- no --> P[return to git]
-  C --> M[configuration migration before refusal or skip]
-  M --> D{main == published commit?}
-  D -- yes --> E[done]
-  D -- no --> F[claim and write general, domain and project positions]
+  C --> M[configuration migration before any refusal]
+  M --> F[validate and render main; claim and compare general, domain and project positions]
   F --> G[patch global index by owner]
   G --> H[global agent files for configured runtimes if owner of general]
   H --> J[refresh editor schemas and modelines]
-  J --> I[record published commit]
+  J --> I[write only what is missing or different; record published commit]
 ```
 
 ### Read
@@ -392,18 +390,16 @@ session-fixed timing through A3's bounded batch log.
 ## Failure modes
 
 - **A hook did not fire** (a reset): the next `sync` from any trigger catches
-  up, because it compares main with the published commit; `docs get` warns
-  when publication is behind main, and `instrukt sync --force` republishes on
-  demand.
+  up, because every sync converges on main; `docs get` warns when
+  publication is behind main, and `instrukt sync` republishes on demand.
 - **Committed docs fail validation:** `sync` publishes nothing for that commit;
   the previous publication stays, and `instrukt hooks status` shows the
   refusal.
 - **Two projects claim one domain, or `docs/general/`:** the second `sync` is
   refused and names the owner; the published tree is unchanged.
-- **A user-scope instruction file instrukt did not write:** the `general`
-  owner's `sync` stops before publishing and names the file; moving its
-  content into docs, or the file out of the way, and syncing again is the
-  door.
+- **The selected runtime cannot be asked:** the `general` owner's `sync`
+  writes no global agent file, publishes the rest and names the runtime and
+  the cause; the next sync of that project writes them.
 - **A hook manager regenerated a hook file** and dropped instrukt's section:
   `instrukt hooks status` reports it and prints the line to add to that tool.
 - **Graph generation fails or is interrupted:** the previous complete graph
