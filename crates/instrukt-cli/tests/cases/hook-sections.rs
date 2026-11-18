@@ -733,6 +733,18 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
     env.finished_hook_run(repo.path(), Hook::PostCommit);
     assert!(!env.instrukt_home().join("state/hooks").exists());
     insta::assert_snapshot!("status-names-the-repository", hooks_status(&env, &repo));
+    // Each run the hooks recorded names the repository it belongs to.
+    let repository =
+        PathBuf::from(repo.git(["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+            .canonicalize()
+            .unwrap();
+    for hook in [Hook::PreCommit, Hook::PostCommit, Hook::PostCheckout] {
+        assert_eq!(
+            env.finished_hook_run(repo.path(), hook).repository,
+            repository,
+            "{hook}"
+        );
+    }
 
     // A root document that cannot be read: the commit is made, and status
     // shows the finding.

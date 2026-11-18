@@ -35,8 +35,8 @@ pub const KEPT_INSTRUCTIONS: &str = ".instrukt/adopted/AGENTS.md";
 const SCHEMA_DOMAIN: &str = "sdlc";
 /// A new project index: it selects nothing yet.
 const EMPTY_INDEX: &str = "expanded: []\nlisted: []\n";
-/// The lines adoption keeps in `.gitignore`: the generated `AGENTS.md`
-/// files and instrukt's generated folder.
+/// The lines adoption keeps in `.gitignore`: instrukt's generated folder
+/// only. The generated `AGENTS.md` files are committed.
 const IGNORED: [&str; 1] = [".instrukt/"];
 
 /// A part of adoption, in the order `init` establishes them.

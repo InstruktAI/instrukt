@@ -269,9 +269,9 @@ impl Home {
         self.root.join("locks")
     }
 
-    /// `~/.instrukt/state/publication/outputs/` — per project, the files
-    /// outside the home its last publication wrote (compiled `AGENTS.md`
-    /// files, global agent entrypoints), so a later sync can retract them.
+    /// `~/.instrukt/state/publication/outputs/` — where an earlier release
+    /// kept a record per project; the first sync that publishes a project
+    /// deletes its record there unparsed.
     pub fn publication_outputs_dir(&self) -> PathBuf {
         self.publication_state_dir().join("outputs")
     }
