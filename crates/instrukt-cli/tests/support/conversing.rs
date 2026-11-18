@@ -140,18 +140,17 @@ fn open_paths(pid: u32) -> Vec<std::path::PathBuf> {
 /// taken as an empty one.
 #[cfg(target_os = "linux")]
 fn open_paths(pid: u32) -> Vec<std::path::PathBuf> {
-    let descriptors = format!("/proc/{pid}/fd");
-    std::fs::read_dir(&descriptors)
-        .unwrap_or_else(|error| panic!("cannot list {descriptors}: {error}"))
+    std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .unwrap()
         .filter_map(|entry| {
-            let entry = entry.unwrap_or_else(|error| panic!("cannot list {descriptors}: {error}"));
-            match std::fs::read_link(entry.path()) {
-                Ok(target) => Some(target),
+            match std::fs::read_link(entry.unwrap().path()) {
+                Ok(target) => Ok(Some(target)),
                 // A descriptor closed between listing and reading is no
                 // longer held.
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => panic!("cannot read {}: {error}", entry.path().display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error),
             }
+            .unwrap()
         })
         .collect()
 }
