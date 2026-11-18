@@ -426,8 +426,10 @@ impl Scrub {
 
     /// `text` with every occurrence of a login value replaced by its label:
     /// as written, and inside every JSON string in it, whatever valid JSON
-    /// spelling the value has there, Unicode and mixed escapes included, also
-    /// where JSON text sits inside a JSON string.
+    /// spelling the value has there, Unicode and mixed escapes included. JSON
+    /// text inside a JSON string is decoded the same way down to
+    /// `JSON_NESTING` levels; a value nested deeper is replaced only where
+    /// it is written as itself.
     pub fn text(&self, text: &str) -> String {
         self.within(text, JSON_NESTING)
     }
