@@ -163,8 +163,19 @@ message alike.
 ### While the agent works
 
 From the admission of an addressed message until its turn ends, the connector
-shows Slack's status line for it with the text
-`is working on your request`. Slack puts the app's name in front of it.
+shows Slack's status line for it with one of two fixed texts, chosen from the
+message's state (`project/instrukt/spec/feature/company/conversations`):
+
+| The message's state | Text |
+| --- | --- |
+| its no-work interval is open | `is temporarily unavailable — your message is saved` |
+| otherwise, from its admission | `is working on your request` |
+
+Slack puts the app's name in front of it. Each status pass sets the text that
+matches the state as it then stands, so a change of state shows at the next
+pass. Where one status serves several unfinished messages, the unavailable text
+shows while every one of them has its interval open, the working text
+otherwise.
 
 | Where | The status sits on | It stays while |
 | --- | --- | --- |
@@ -246,7 +257,7 @@ followed by no empty part. Nothing is inserted, so no part is longer than
 
 The one platform notice of `project/instrukt/spec/feature/company/conversations`
 is posted the same way, worded
-`<@member-id> The assistant is temporarily unavailable. I'll reply here as soon as it's back.`,
+`<@member-id> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.`,
 with the waiting person's Slack id. To recognise a notice whose post lost its
 response, the connector reads the conversation (`conversations.replies` for a
 thread, `conversations.history` for a direct message) from that person's epoch

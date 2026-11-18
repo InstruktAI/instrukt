@@ -37,7 +37,8 @@ name and, where the provider gives one, email address, the time the message
 was written, its text, the conversation's earlier messages its provider
 contract says accompany it, and whether that contract left earlier messages
 out. It posts the agent's answer to a conversation it carries, rendered as its
-provider contract says, and shows there that the agent is working where its
+provider contract says, and shows there the state of the person's message
+(working on it, or temporarily unavailable with the message saved) where its
 provider has a way to. It also sends a person it carries messages from a
 direct message that instrukt has for them alone, such as a sign-in link
 (`project/instrukt/spec/feature/runner/mcp-access`); that message goes
@@ -162,10 +163,15 @@ connector gives.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until its turn ends, the
-  connector shows in that conversation that the agent is working, where its
-  provider has a way to. The indication belongs to the turn, whether the turn
-  posts an answer, posts nothing or fails; it is a courtesy, and each
-  connector states how closely it follows the turn.
+  connector shows in that conversation the message's state, where its provider
+  has a way to: that the assistant is working on the request from its
+  admission, and that the assistant is temporarily unavailable and the message
+  is saved while its no-work interval is open, which happens only once a failure
+  shows the agent cannot work on it ("The minute", below). A slow but healthy
+  start shows the working text. Both are fixed texts the connector words; nothing in them is
+  generated. The indication belongs to the turn, whether the turn posts an
+  answer, posts nothing or fails; it is a courtesy, and each connector states
+  how closely it follows the state.
 - `instrukt events status` shows each connector's connection state, the
   conversations with pending messages or answers, and failures with their
   cause, without conversation text or credentials. A connector that no running
@@ -184,9 +190,10 @@ is told only what belongs to their world):
 
 | Moment | What the person sees |
 | --- | --- |
-| Their message is admitted | The connector's working indication (above), also while a start is being retried. |
-| The agent works on it, however long | The working indication. |
-| The agent cannot work on it for one minute, whatever the reason | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. I'll reply here as soon as it's back." Once per person and conversation until an answer to that person has been posted. |
+| Their message is admitted | The connector's indication of its state (above). |
+| The agent works on it, however long | The indication that the assistant is working on the request. |
+| A failure shows the agent cannot work on it | The indication that the assistant is temporarily unavailable and the message is saved, from the next status pass after its no-work interval opens. |
+| The agent has been unable to work on it for one minute | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again." Once per person and conversation until an answer to that person has been posted. |
 | The work is done | The agent's answer; the person never repeats their message. |
 | A service of theirs is unreachable or refuses, inside a turn | The agent says so in its answer (`general/procedure/company-assistance`). |
 | They are not one of the company's own | The fixed reply above. |
@@ -195,15 +202,16 @@ Nothing else is posted: no part names, no causes inside instrukt or the runtime,
 no error codes.
 
 **The minute** is measured per waiting person. Each admitted message without an
-answer has its own interval in which no observable turn does the work it waits
-on. It starts:
+answer has its own interval, which opens only on a confirmed failure that keeps
+the agent from the work it waits on; admission and a wait that is merely slow
+open nothing. It starts, if not already open:
 
-- at its admission, when no turn of the conversation's session is observed
-  running — whatever follows (waiting for a lock, context, readiness, a start or
-  send);
-- when it waits behind a running turn: at the moment that turn's end is observed;
+- when a start, send or listing for it is refused or fails;
+- when a wait for the dispatch lock or the conversation's lock times out while it
+  waits;
 - when it has been handed to a turn: at the first failed observation of that turn
-  (session state unobservable, source unreadable);
+  (session state unobservable, source unreadable) — loss of reachability for work
+  already handed over;
 - when its own turn is observed ended — with output, or failed — while its answer
   is not posted.
 
@@ -302,13 +310,13 @@ And no subscribed procedure is activated by that message
 ### UC-CV7: Hear once that the assistant is unavailable, then get the answer
 
 ```gherkin
-Given a member addresses the agent and the agent cannot work on it
-When a minute passes without the agent working on the message
-Then the member gets one message, beginning with their mention, that the assistant is temporarily unavailable
+Given a member addresses the agent and a failure shows the agent cannot work on it
+When a minute passes from that failure without the agent working on the message
+Then the member gets one message, beginning with their mention, that the assistant is temporarily unavailable, that their message is saved and that they need not send it again
 And writing again before they are answered brings no second one
 And another member waiting in the same conversation gets their own
 And the member's answer follows once the agent has done the work
-But when the agent works on the message, however long, or completes it without output
+But when the agent works on the message, however long, its start is slow but healthy, or it completes the message without output
 Then nothing but the answer is posted
 ```
 

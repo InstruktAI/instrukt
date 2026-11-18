@@ -415,11 +415,13 @@ repository has no worktree-removal hook: remove its ignored `.instrukt-home`
 when cleaning up a development worktree (before removing that worktree). No
 machine home needs removal or reseeding.
 
-Unattended starts require the adapter's supported WebSocket protocol and
-readiness response shapes. CLI/server release strings are diagnostic; a different
-compatible release remains usable. Unknown protocols or response shapes refuse startup
-with a repair reason. The adapter obtains and revokes a five-minute read-scoped
-session for each new start's provider snapshot. Quota restrictions now come from
+The provider snapshot unattended starts select from requires the adapter's
+supported WebSocket protocol and readiness response shapes. CLI/server release
+strings are diagnostic; a different compatible release remains usable. The runner
+obtains one read-scoped session when it starts, renews it before it expires, and
+refreshes the snapshot in the background; a start uses the last known snapshot.
+An unknown protocol or response shape, or a T3 CLI that is slow or fails, makes
+a refresh fail, shown in `instrukt events status`; it never refuses a start. Quota restrictions now come from
 reported usage windows, with a recorded one-hour expiry when no reset is reported;
 launch-error text supplies no quota or no-start evidence.
 

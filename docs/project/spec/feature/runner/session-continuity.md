@@ -394,25 +394,33 @@ role order or tier chains. Every T3 built-in harness has shipped defaults.
 ACP discovery and configuration remain with the configuration skill; instrukt
 creates no T3 provider instance and implements no ACP protocol.
 
-Before each instrukt-owned start, the adapter acquires and translates readiness
-facts. Generic runner policy owns quota expiry, marking and the ordered walk of
-configured profiles and tier chains; those decisions are not adapter translation.
-A failed or unknown readiness outcome refuses creation visibly. Existing keyed
-conversations retain their captured selection without a new-start probe.
+An instrukt-owned start selects from the last known readiness facts and never
+acquires them itself. The runner keeps those facts current in the background, on
+a wake of its own and never on a start; the adapter translates them. Generic
+runner policy owns quota expiry, marking and the ordered walk of configured
+profiles and tier chains; those decisions are not adapter translation. A refresh
+that fails or runs past its limit keeps the last known facts and is reported in
+`instrukt events status`; it never refuses a start. With no facts known yet, a
+start proceeds in the configured order. A refusal by the runtime at the start
+itself is the signal, handled as any refused start. Existing keyed conversations
+retain their captured selection without a new-start probe.
 
-For T3, the adapter reads the local server's `server.getConfig` WebSocket RPC and
-its `providers: ServerProvider[]` snapshot. It issues a five-minute read-scoped
-session with `t3 auth session issue --scope orchestration:read --ttl 5m
---token-only --label instrukt-readiness`, keeps its token only in memory and
-revokes that session after use. Server discovery, token framing and RPC framing
-follow T3's internal protocol. Runtime-descriptor version, negotiated orchestration
-protocol and consumed response-shape validation admit the operation; CLI/server
-release strings are diagnostics, not exact-release gates. Unknown descriptor
-version or protocol/shape and failed acquisition refuse startup with the operation and
-a safe failure category, without raw outputs or credentials. A token that cannot be
-revoked is logged and the readiness read is used: the token is read-scoped and lapses
-at the end of the TTL it was issued with.
-A hard process stop before revocation leaves the session bounded by its short TTL.
+For T3, a refresh reads the local server's `server.getConfig` WebSocket RPC and
+its `providers: ServerProvider[]` snapshot. The runner issues one read-scoped
+session when it starts, with `t3 auth session issue --scope orchestration:read
+--ttl <lifetime> --token-only --label instrukt-readiness`, keeps its token only in
+memory, issues the next one before it expires and then revokes the earlier one,
+and revokes the last one when it stops; the token's lifetime and the limit of each
+CLI launch are declared in `crates/instrukt-runner/src/runtime/_t3_readiness.rs`.
+Server discovery, token framing and RPC framing follow T3's internal protocol.
+Runtime-descriptor version, negotiated orchestration protocol and consumed
+response-shape validation admit a snapshot; CLI/server release strings are
+diagnostics, not exact-release gates. An unknown descriptor version or
+protocol/shape, a failed or slow token issue and a failed read are a failed
+refresh, reported with the operation and a safe failure category, without raw
+outputs or credentials. A token that cannot be revoked is logged: it is
+read-scoped and lapses at the end of the TTL it was issued with. A hard process
+stop before revocation leaves the session bounded by its short TTL.
 
 The same read answers publication's question which agent runtimes are
 configured (`project/instrukt/spec/feature/publication/agent-entrypoints`):
