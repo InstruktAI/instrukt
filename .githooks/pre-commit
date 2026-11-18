@@ -3,8 +3,8 @@
 # (project/instrukt/policy/testing), run by scripts/commit-checks.sh; the
 # functional suite runs in CI. Enable once per clone with `make hooks`.
 # instrukt's own section (project/instrukt/spec/feature/repository/hook-sections),
-# with the installed instrukt as in any adopting repository; it never changes
-# the commit's result.
+# with the installed instrukt as in any adopting repository: it stages what
+# instrukt generates into the commit and never refuses the commit.
 # >>> instrukt >>>
 instrukt hooks run pre-commit "$@" || true
 # <<< instrukt <<<
