@@ -275,7 +275,14 @@ fn start_hook_run(hook: Hook, args: &RunArgs, ctx: &Ctx) -> anyhow::Result<()> {
         env: &env,
         exe: &exe,
     };
-    repository::run_hook(&ctx.home, &ctx.cwd, &core_wiring(ctx)?, &invocation)?;
+    // The pre-commit run reads no configuration: module wiring is built for
+    // the post-hooks that use it.
+    let wiring = if hook == Hook::PreCommit {
+        instrukt_core::interfaces::CoreWiring::default()
+    } else {
+        core_wiring(ctx)?
+    };
+    repository::run_hook(&ctx.home, &ctx.cwd, &wiring, &invocation)?;
     Ok(())
 }
 

@@ -12,6 +12,7 @@ Commands:
   fold      Apply one delivery's pending documentation to the working tree
   index     List published snippet ids with their descriptions (phase 1)
   get       Read snippets through the read pipeline (phase 2)
+  render    Render the repository's `AGENTS.md` files from its working tree
   help      Print this message or the help of the given subcommand(s)
 
 Options:

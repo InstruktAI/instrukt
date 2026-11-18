@@ -160,6 +160,7 @@ fn run() -> ExitCode {
         None
     };
     if !authorization::strict_inspection(&matches)
+        && !authorization::untraced(&matches)
         && let Err(err) = init_tracing(&cli.command)
     {
         return report(&err);
@@ -169,9 +170,12 @@ fn run() -> ExitCode {
         .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
     let mut ctx = match if let Some(ctx) = activated.take() {
         Ok(ctx)
-    } else if deferred_patch || authorization::strict_inspection(&matches) {
+    } else if deferred_patch
+        || authorization::strict_inspection(&matches)
+        || authorization::untraced(&matches)
+    {
         Ctx::inspection()
-    } else if authorization::read_only(&matches) {
+    } else if authorization::read_only(&matches) || authorization::repository_local(&matches) {
         Ctx::configuration_read()
     } else {
         Ctx::from_process()
@@ -179,7 +183,10 @@ fn run() -> ExitCode {
         Ok(ctx) => ctx,
         Err(err) => return report(&err),
     };
-    if authorization::read_only(&matches) && !matches!(&cli.command, Command::Install(_)) {
+    if authorization::read_only(&matches)
+        && !authorization::repository_local(&matches)
+        && !matches!(&cli.command, Command::Install(_))
+    {
         let notice_result = (|| -> anyhow::Result<()> {
             let mut layers = vec![instrukt_core::config::Layer::Global];
             if let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)? {

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "stdout(&env, &finding)"
+---
+AGENTS.master.md: the root master holds only `## Purpose`; `docs/project/index.yaml` selects what the root AGENTS.md includes
