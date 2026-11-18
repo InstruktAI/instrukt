@@ -54,9 +54,14 @@ path is the same for every connector, whichever channel it speaks to
 - A conversation is identified by company, connector and the connector's
   conversation identity. It is bound to exactly one agent session, started or
   woken by key through the runtime adapter. Key discovery, ambiguous starts and
-  settled threads follow session-continuity: a failed listing, start or send
-  leaves the message pending for that same conversation and never creates a
-  second session.
+  settled threads follow session-continuity, case by case: a failed listing,
+  start or send leaves the message pending for that same conversation and is
+  retried; a lost acknowledgement, a live key conflict and an archived thread
+  start no second session and go to the operator; a thread the runtime reports
+  absent is replaced under the same key, and the conversation's messages that
+  have no posted answer are delivered to the new session in order
+  (`project/instrukt/spec/feature/runner/session-continuity`: a new actor starts
+  only where the earlier one is proven gone).
 - The session works in the company's home
   (`project/instrukt/spec/feature/configuration/company-homes`), where it
   starts with the company's own knowledge
@@ -82,9 +87,6 @@ path is the same for every connector, whichever channel it speaks to
   own documents in its home, which it may change and commit
   (`project/instrukt/spec/feature/publication/agent-entrypoints`), and
   declines anything else. Its procedure instructs it so.
-- While no published procedure declares the role `company-agent`, a
-  conversation's first message waits: no session is started, nothing is
-  delivered or replied, and the cause shows in `instrukt events status`.
 - Its role is `company-agent`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
@@ -142,6 +144,19 @@ connector gives.
   conversation source, completed-turn evidence and retained positions as
   conversation links. A position advances only after the connector accepted
   the post; a failed post stays pending and is retried.
+- Completion comes only from the conversation source. A turn running however
+  long is left to run. A turn that ended failed has its message delivered again
+  to the session after a growing delay, at the end of the conversation's queue,
+  so later messages are not held behind it; what the failed turn already did is
+  the agent's to reconcile (`general/procedure/company-assistance`). A completed
+  turn whose content the source cannot yet read whole is read again every pass;
+  nothing partial and nothing of another message is posted meanwhile. When the
+  source's identity changes, the conversation's thread is read whole from the new
+  source and matched by each message's boundary; turns already posted are
+  recognised by their turn identity and not posted again; a message whose turn
+  cannot be found stays sent and goes to the operator, never delivered again
+  (`project/instrukt/policy/checks-and-guards`: an uncertain effect stays
+  recorded and recoverable).
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until its turn ends, the
@@ -152,7 +167,90 @@ connector gives.
 - `instrukt events status` shows each connector's connection state, the
   conversations with pending messages or answers, and failures with their
   cause, without conversation text or credentials. A connector that no running
-  runner hosts is shown as stopped.
+  runner hosts is shown as stopped. What automation cannot resolve — a message no
+  turn has taken past the operator bound, a turn that keeps failing, a start that
+  stays unresolved, a key conflict, an archived thread, a message whose turn cannot
+  be found — is listed there and raised once as an anomaly
+  (`project/instrukt/spec/feature/runner/anomaly-notification`), never told to
+  the person.
+
+### What a person experiences
+
+A person in a conversation hears about their request and their own world, never
+about instrukt's internals (`project/instrukt/policy/checks-and-guards`: a person
+is told only what belongs to their world):
+
+| Moment | What the person sees |
+| --- | --- |
+| Their message is admitted | The connector's working indication (above), also while a start is being retried. |
+| The agent works on it, however long | The working indication. |
+| The agent cannot work on it for one minute, whatever the reason | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. I'll reply here as soon as it's back." Once per person and conversation until an answer to that person has been posted. |
+| The work is done | The agent's answer; the person never repeats their message. |
+| A service of theirs is unreachable or refuses, inside a turn | The agent says so in its answer (`general/procedure/company-assistance`). |
+| They are not one of the company's own | The fixed reply above. |
+
+Nothing else is posted: no part names, no causes inside instrukt or the runtime,
+no error codes.
+
+**The minute** is measured per waiting person. Each admitted message without an
+answer has its own interval in which no observable turn does the work it waits
+on. It starts:
+
+- at its admission, when no turn of the conversation's session is observed
+  running — whatever follows (waiting for a lock, context, readiness, a start or
+  send);
+- when it waits behind a running turn: at the moment that turn's end is observed;
+- when it has been handed to a turn: at the first failed observation of that turn
+  (session state unobservable, source unreadable);
+- when its own turn is observed ended — with output, or failed — while its answer
+  is not posted.
+
+It ends, for that message only: when the runtime accepts its hand-over (a
+redelivery included); when its own turn is observed running again; when a turn it
+waits behind is observed running; when its answer is posted; or when its turn
+completes with a bare `NOOP`. An answer to another person, a read showing an idle,
+archived or absent session, an empty read and a refused attempt end nothing. A
+person's interval is the earliest among their unanswered messages. While the relay
+cannot acquire the conversation source, every unanswered message counts from the
+later of its admission and the start of that failure, unless its own interval
+started earlier. The interval is evaluated by each connector's intake pass, at
+least every five seconds while an admitted message of its company has no posted
+answer, from the state database and the clock alone, so a held lock or an absent
+source never delays it.
+
+**The one notice** is once per person per epoch: from the posting of the last
+answer to that person in that conversation (or the conversation's start) until
+the next answer to them is posted.
+
+- The decision is recorded before the post (owed, posting with the attempt's time,
+  posted); the record is never taken as proof of delivery.
+- Only an answer posted to that person — one whose post the connector accepted,
+  correlated through its turn to one of that person's messages of the epoch —
+  supersedes the notice. Output that is complete but not yet posted does not.
+- The notice and the conversation's answers are posted under one short
+  per-conversation post lock, held for the decision and one post, never for a
+  read at the provider or a runtime call. An answer post cancels the person's
+  notice in the same critical section once the provider accepted it.
+- A notice whose post timed out or lost its response is not posted again before a
+  settle bound of two minutes after the attempt. After it, the connector reads the
+  conversation from the epoch's start for a post of its own that begins with that
+  person's mention and the sentence; finding one records it posted, finding none
+  posts again.
+
+If a post is committed by the provider more than two minutes after it was sent,
+the person can see the sentence twice, or once after their answer: the provider's
+methods promise neither a write deadline nor idempotent posts.
+
+### After the agent was offline
+
+A connector reads back what was written while it was not connected
+(`project/instrukt/spec/feature/company/slack-connector`). A message written
+within the last 24 hours that is addressed and not yet retained is admitted and
+answered like a live one. An older one is not answered — an answer to an old
+question arriving out of nowhere confuses more than it helps — and is named to the
+operator in `instrukt events status` for 30 days, once per message
+(`project/instrukt/policy/checks-and-guards`: what automation cannot resolve
+reaches the operator).
 
 ## Use cases
 
@@ -196,10 +294,71 @@ And no subscribed procedure is activated by that message
 
 ### UC-CV6
 
+### UC-CV7: Hear once that the assistant is unavailable, then get the answer
+
+```gherkin
+Given a member addresses the agent and the agent cannot work on it
+When a minute passes without the agent working on the message
+Then the member gets one message, beginning with their mention, that the assistant is temporarily unavailable
+And writing again before they are answered brings no second one
+And another member waiting in the same conversation gets their own
+And the member's answer follows once the agent has done the work
+But when the agent works on the message, however long, or completes it without output
+Then nothing but the answer is posted
+```
+
+### UC-CV8: Get the answer after the assistant's work failed
+
+```gherkin
+Scenario Outline: Recover the answer
+  Given a member's message reached the agent
+  When <failure>
+  Then the member gets the answer to that message
+  And nothing else is posted in the conversation
+
+  Examples:
+    | failure |
+    | the agent's turn failed |
+    | the turn's content was not yet readable |
+    | the runtime moved its conversation store |
+    | the agent's conversation was deleted in the runtime |
+    | the agent's conversation was archived in the runtime after it answered |
+```
+
+### UC-CV11: Onboard a company while the runner runs
+
+```gherkin
+Given the runner is running and no company is set up
+When an operator sets up a company with its connector and publishes its procedure
+Then its members' questions are answered without restarting the runner
+And a question written before the company was admitted is answered too
+```
+
+### UC-CV12: Be answered while a project's event responses are not admitted
+
+```gherkin
+Given a computer serves a company and a project that switches on event responses without the event transport they need
+When a member addresses the company's agent
+Then the agent's answer appears in that conversation
+And the computer's status names the project's event responses as not admitted
+```
+
+### UC-CV13: Be answered for a message written while the assistant was offline
+
+```gherkin
+Given the assistant was offline
+When a member addressed it during that time, in a direct message or in a reply to an existing thread
+Then each addressed message is answered once when the assistant is back
+And a message that did not address it gets nothing
+But a message older than a day is not answered and is named to the operator
+```
+
 ## Known caveats
 
-- A message written while a connector's connection is down is received only
-  when the provider still offers it on reconnection.
+- Read-back reads what the provider still serves; its retention, the app's
+  access and rate limits are its only limits.
+- A turn that failed may already have acted; its message is delivered again and
+  the agent checks before acting again.
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.

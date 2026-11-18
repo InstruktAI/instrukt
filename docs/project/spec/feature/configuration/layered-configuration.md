@@ -81,12 +81,20 @@ there is no project-layer `actions` key. CI required checks remain the merge gat
 
 ### Event configuration values and cross-computer agreement
 
-`redis.cluster.url` is required for enabled transport and identifies one shared
+`redis.cluster.url` is required where event responses are on and identifies one shared
 logical database/stream namespace, not a sharded Redis Cluster client. Local URL
 is Unix-socket-only; absence uses cluster visibly. `max_connections` and
 `socket_timeout` follow the port's connection settings, with timeout outlasting
 the blocking read. Credentials remain references and expanded values are masked
 in reads and findings. An unavailable configured local endpoint is not absence.
+
+Where the effective configuration turns event responses on and the machine layer
+has no `redis.cluster.url`, that is a finding at `modules.events`: `config patch`
+refuses it, `config validate` and `install --check` report it, and a project layer
+that arrives with it through a commit is not admitted for event responses on that
+computer; its todos and history are unaffected
+(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
+enters, never discovered by the running runner).
 
 `ingress.computer` is the existing stable instrukt machine ID. `ingress.reactions`
 names, by the same kind of ID, the one computer that activates procedures for
@@ -329,8 +337,13 @@ refuses the command; it never falls back to the system clock.
 RFC 3339 time and is read again each time the command asks for the time, so a
 verification can move the clock while a command runs. In this form the time
 limits instrukt gives the programs it starts are measured on that clock as
-well. A file that is missing or holds no RFC 3339 time refuses the command at
-that moment.
+well. A file that is missing or holds no RFC 3339 time when the command starts
+refuses the command. One that becomes unreadable later keeps time running from the
+last value read, advanced by the time elapsed since, for the command's clock and
+for the limits of the programs it starts alike, with one warning
+(`project/instrukt/policy/checks-and-guards`: an operator's override failing
+mid-run is no reason to end the command). Lock waits are measured on the same
+clock as those limits.
 
 ### External state declarations
 
@@ -381,7 +394,7 @@ And the commands that read it work as before
 ```gherkin
 Given a developer's configuration was written by a newer instrukt than the one they run
 When they read, change or validate that configuration
-Then each command refuses and tells them to upgrade instrukt
+Then each command refuses and prints the command that installs the current instrukt
 And the configuration is unchanged
 ```
 
@@ -426,7 +439,8 @@ But a cloned project cannot replace the machine's agent-action values
   editor schema; it is a comment and never a setting
   (`project/instrukt/spec/feature/publication/editor-schemas`).
 - Every entry path migrates older configuration before refusal or skip. All
-  commands refuse a newer schema version and direct the caller to upgrade instrukt.
+  commands refuse a newer schema version and print the command that installs the
+  current instrukt, `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`.
 - Unresolved and cyclic references are validation findings.
 - With `INSTRUKT_NOW=@<path>` real time bounds no started program: its limit
   runs out only when the time in the file moves past it, so a program that

@@ -194,7 +194,11 @@ responsibility is distinct from its configured role class.
   work selected for dispatch during that execution.
 - **Invariants:** Execution follows the enabled modules. Todo pickup mode
   controls todos only; event activation remains independently switchable.
-  One process handles those enabled responsibilities.
+  One process handles those enabled responsibilities. It runs only with the
+  prerequisites it admitted at its start or at a later wake; a part that depends
+  on a service outside instrukt retries inside itself until that service returns
+  (`project/instrukt/policy/checks-and-guards`: a prerequisite is gated, an
+  outside failure is retried).
 - **Identifier:** The invocation itself; no new durable invocation identifier
   is established by this contract.
 - **Lifecycle:** Begins at a runner entry point and ends when that invocation
@@ -217,7 +221,10 @@ responsibility is distinct from its configured role class.
   confirmed successors retain separate generation keys.
 - **Lifecycle:** A3 owns serialized discovery/start-or-wake, pending fixed targets
   and ambiguous-start recovery. List/send failure leaves work pending and starts
-  no replacement. The standing-agent and procedure-event-delivery contracts own continuing
+  no replacement. A bound session the runtime reports absent gets a successor
+  generation, with or without a subject; an archived one gets none
+  (`project/instrukt/spec/feature/runner/session-continuity`: only absence
+  proves an actor gone). The standing-agent and procedure-event-delivery contracts own continuing
   home/subject responsibility and eligible event delivery; routing itself resolves no session.
 
 #### Conversation link

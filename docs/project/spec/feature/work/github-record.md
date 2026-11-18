@@ -47,6 +47,11 @@ On each runner tick, each computer polls, with conditional requests:
   listing copies;
 - the prerequisites its own claimed work is blocked on.
 
+A list read follows pages up to its page limit (`crates/instrukt-todos/src/work/_github.rs`);
+reaching it with a full last page is stated in the command's report as an
+incomplete read, never passed off as the whole list
+(`project/instrukt/policy/checks-and-guards`: a limit reached is reported).
+
 Beyond that, a todo is refreshed implicitly, one at a time, with a
 conditional request:
 

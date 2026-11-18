@@ -2,4 +2,5 @@
 expanded:
   - project/instrukt/policy/authority-and-delivery
   - project/instrukt/policy/shared-workflows
+  - project/instrukt/policy/checks-and-guards
 listed: []

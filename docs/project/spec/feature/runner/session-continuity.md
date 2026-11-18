@@ -334,8 +334,14 @@ The same discovery and start rules govern every key, for both `start` and
 4. Listing failure, malformed output, an unknown listing shape or multiple
    exact matches leaves the assignment pending and starts nothing. Multiple
    matches report a key conflict. Failed sends retain the same target for
-   retry. A bound id that is absent, renamed or inaccessible raises an anomaly;
-   it is not a request for a replacement start or retargeted delivery.
+   retry. A bound id the runtime reports absent (an explicit unknown-thread
+   answer) is retired with its key's binding, and the start proceeds under the
+   same key. A bound id that is archived is no replacement: nothing is started,
+   its completed answers are still read, and the operator is told. A bound id
+   that is alive but no longer lists under its key (renamed) keeps being used by
+   its id. An inaccessible id is an observation error, retried
+   (`project/instrukt/policy/checks-and-guards`: a new actor starts only where the
+   earlier one is proven gone).
 
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
@@ -350,6 +356,24 @@ key. The resolved request retains its input and retry permission until retried.
 A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
+
+**Recovery by case.** Every place a start or delivery can stall is one of these;
+whether a fresh start is made depends on the actor it would share the work with,
+never on how long anyone has waited:
+
+| Case | Established by | Outcome |
+| --- | --- | --- |
+| Nothing started | Listing failed, the runtime not ready, no permitted model, rejection proven before creation | Retried every pass until it succeeds. |
+| Lost acknowledgement | An unresolved marker | Recorded; discovery reconciles every pass; `instrukt sessions resolve-start` is the operator's door. No fresh start. |
+| Proven absence | The runtime reports the bound thread absent | The binding is retired; a fresh start under the same key. |
+| Live conflict | Two or more threads under one key | Nothing chosen, nothing started; the door is to archive or delete the extra thread. |
+| Archived | The bound thread is shown archived | Nothing started; its completed answers are read; the door is to unarchive or delete it. |
+| Renamed, alive | The bound thread reads, its key no longer lists | Used by its id. |
+
+An unresolved start, a live conflict and an archived thread that persist past the
+runner's operator bound raise one anomaly each (`runner.notify`) and are listed in
+`instrukt events status` with their door, whether or not a notification command
+is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains
@@ -383,8 +407,11 @@ revokes that session after use. Server discovery, token framing and RPC framing
 follow T3's internal protocol. Runtime-descriptor version, negotiated orchestration
 protocol and consumed response-shape validation admit the operation; CLI/server
 release strings are diagnostics, not exact-release gates. Unknown descriptor
-version or protocol/shape, failed acquisition and failed token cleanup refuse startup
-with the operation and a safe failure category, without raw outputs or credentials.
+version or protocol/shape and failed acquisition refuse startup with the operation and
+a safe failure category, without raw outputs or credentials. A token that cannot be
+revoked is logged and the readiness read is used: the token is read-scoped and lapses
+after its five-minute TTL (`general/principle/trust-and-guardrails`: cleanup of a
+bounded credential is no gate on the work).
 A hard process stop before revocation leaves the session bounded by its short TTL.
 
 The same read answers publication's question which agent runtimes are
@@ -454,7 +481,7 @@ instruction prose is a separate configuration surface.
 | Todo phase orchestrator start | Preparation: `--worktree origin/main --branch <slug>/prepare`. Work: `--worktree origin/main --branch <slug>/work`; resumption on another computer: `--worktree origin/<slug>/work --branch <slug>/work`. Creation refuses an existing local phase branch. Native shared children inherit the orchestrator's recorded phase worktree. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
-| Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search. |
+| Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |
 | Recover keyed identity | `t3 thread list --project <checkout> --json`; top-level array entries carry `threadId`, `projectId`, `title`, `status`, `link`, `providerInstanceId`, `model`, `settled`, `snoozed`, and timestamps. `settled` alone does not make a thread gone. |
 | Linked-thread source | The adapter reads the T3 projection database read-only, with per-conversation fingerprints and native database change notifications, as history does. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
@@ -496,7 +523,7 @@ GitHub command creates no second attention item.
 | `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
-| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. |
+| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Only absence retires a binding. |
 
 An unrecognised status or response shape, command failure or unreachable runtime
 is an observation error, never `gone` or success. Status spellings and optional
@@ -512,7 +539,10 @@ workspace work requires a new attempt. Artifact writers and stamps retain `<runt
 step is complete only with its required artifact and stamp. For a runner-owned
 execution, after a terminal run without either, or a gone session,
 the runner attempts one recovery send to that same id; continued absence raises an anomaly. Observation failure retries
-observation instead. Release claims through work's command contract; ending
+observation instead. Such an execution is listed in `instrukt events status` until its workflow
+state advances, whether or not a notification command is configured; recovered means
+that its state advanced (`project/instrukt/policy/checks-and-guards`: what automation
+cannot resolve reaches the operator). Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
 
 ### Fresh canonical base
@@ -709,6 +739,16 @@ And old key-only titles and new readable titles are both discovered
 And duplicate old/new titles for one key are reported as a conflict
 And the existing conversation wakes without a new thread
 And the listing window has no part in that decision
+```
+
+### UC-SS22: A standing agent whose thread was deleted continues in a new one
+
+```gherkin
+Given a standing agent bound to a subject
+When its thread is deleted in the runtime and a later event for that subject arrives
+Then a successor conversation receives the event
+But when its thread was archived instead
+Then no successor starts, the event stays pending and the operator is shown the archived thread
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

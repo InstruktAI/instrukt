@@ -46,6 +46,14 @@ meaning and the writes of the conversation tables.
   Network waits and reaction execution run outside that section, so a blocked
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
+- The state directory is resolved to its canonical location once, and the database,
+  its sidecars and every lock — writer, reflection, runner, runtime-dispatch, history
+  and conversation locks — derive from it, so a home or a state directory reached
+  through a symbolic link keeps one authority. A symbolic link at the database file
+  or one of its sidecars is refused, naming the door (link the home or `state/`
+  instead): it alone would put one database under two lock domains
+  (`general/principle/trust-and-guardrails`: interference is a harm restoring state
+  cannot repair).
 - A separate per-computer reflection lock
   `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
   across GitHub requests and takes the writer lock only briefly for each local
@@ -93,8 +101,11 @@ adapter; an actor as JSON text, one of
   locked migration, then opens a current-schema reader. Current-schema reads
   do not migrate or take the writer lock.
 - A database whose version is newer than the running instrukt knows is
-  refused for reading and writing; the refusal names both versions and the
-  door: install the newer instrukt.
+  refused for writing; the refusal names both versions and prints the command
+  that installs the current instrukt. A status command reads an older database
+  through a migrated in-memory image and changes nothing on disk, and reports a
+  newer one as a finding while still reporting everything else
+  (`project/instrukt/policy/checks-and-guards`: a status command never refuses because of old state).
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
@@ -316,6 +327,13 @@ and entry ID; one occurrence can have multiple transport coordinates. Observed
 records are distinct from local publication obligations and are not republished.
 Confirmed publication records acceptance only, not reaction completion.
 
+**`consumer_sources`** — per logical consumer, each Redis source it reads and
+whether its group was prepared. `state` is `active`, `retiring` (a former source
+being drained), `retired`, or `abandoned`: a former source no longer in the
+configuration, whose pending events stay unread in that Redis and whose
+`prepared` fact is kept, so configuring it again drains its own group
+(`project/instrukt/spec/feature/runner/event-transport`).
+
 **`consumer_cursors`** — settled local accounting partitioned by logical consumer
 and transport source. It records contiguous settled progress and its associated
 transport coordinate. It neither substitutes for nor advances a Redis group's
@@ -401,7 +419,11 @@ accepted message per target is permitted. A selected or uncertain send reserves
 that slot too, so concurrent senders cannot exceed it. New items stay pending;
 only verified consumption clears the slot. Evidence retains the runtime
 capability, native reference, source and observation time; unknown/unsupported
-evidence leaves the slot occupied, rather than fabricating a transcript or run id. Wake requests coalesce per target.
+evidence leaves the slot occupied, rather than fabricating a transcript or run id,
+until the input bound (`runner/inputs.rs`): then the input is `unconfirmed` (outcome
+unknown, never sent again) and the slot is released. An item larger than the
+delivery limit on its own is `set_aside`, with its failure, and later items proceed
+(`project/instrukt/policy/checks-and-guards`: an uncertain effect stays recorded; one entry affects only itself). Wake requests coalesce per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run
 outside transactions; the fixed target and selected input commit before send.
 A lost acknowledgement can repeat input and remains distinguishable from
@@ -589,7 +611,10 @@ recovering all requested evidence. On restart, discover its exact key before
 any new start. An empty listing alone never clears it. `resolve-start` or proof
 of rejection before creation permits retry of the same key; the marker returns
 to `unresolved` before that retry calls the runtime. Removing a todo or
-releasing its execution never discards an unresolved marker.
+releasing its execution never discards an unresolved marker. When the runtime
+reports a bound session absent, its binding and marker are retired together
+under the key lock and the start proceeds under the same key; an archived session
+retires nothing (`project/instrukt/spec/feature/runner/session-continuity`).
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
@@ -633,22 +658,47 @@ and `message`, the connector's identity of that message.
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
 | `turn` | The native turn that answered it; `NULL` until then. |
 | `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
+| `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
 when the connector accepted its post, `NULL` while outstanding; `failure`, the
 cause of its last failed post, `NULL` once posted.
 
-**`conversation_refusals`** — the one fixed reply owed to a sender the agent
-does not answer (`project/instrukt/spec/feature/company/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
-when the connector accepted the reply, `NULL` while outstanding; `failure`.
+**`conversation_refusals`** — the platform's own replies owed to a sender in a
+conversation (`project/instrukt/spec/feature/company/conversations`). Key: the
+address, `sender` and `reason`: `not_own`, the one fixed reply to a sender the agent
+does not answer, or `unavailable`, the one notice of the sender's current epoch.
+Columns: `received_at`; `state` for `unavailable`: `owed`, `posting` (a post was
+sent, its effect possibly in flight) with `attempted_at`, or `posted`; `replied_at`,
+when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
+records the decision, never proof of delivery. An `unavailable` row is deleted
+when an answer to that sender is posted in the conversation; `not_own` rows stay.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
 `failed` or `stopped`; `failure`, its cause; `updated_at`.
 
 **`conversation_relay`** — one row: `failure`, the cause while the relay that
-serves conversations is not running, `NULL` while it runs; `updated_at`.
+serves conversations is not running or cannot acquire its source, `NULL` while it
+reads; `updated_at`, the start of the current failure, kept while the failure
+persists across retries.
+
+**`connector_read_back`** — one row per declared connector, owned by the
+conversation core. Key: `(company, connector)`. Columns: `retained_until`, where the
+last completed read-back started less a margin, `NULL` until one completes, written
+only by a completed read-back in the transaction of its last retention and never
+from a connection state or a retained message's time; `first_seen`, when the runner
+first saw the connector declared; `missed`, the addressed messages older than a
+day that a read-back found and did not admit (conversation, message, time, link),
+kept 30 days and one per message. The row lives as long as the declaration. On
+migration an existing connector's `first_seen` is its company's earliest retained
+message, or the migration time (`project/instrukt/policy/checks-and-guards`: what read-back must still read is
+never inferred from a timestamp).
+
+**`runner_workers`** — one row per history worker (extraction, query responder):
+`failure` and `since`, its current outside failure, written by that worker on a
+change; current state only.
 
 A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again

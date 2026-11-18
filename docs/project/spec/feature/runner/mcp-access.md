@@ -514,8 +514,13 @@ is the local operator's.
 - `list-tools` carries the login a call to that server would carry and is
   refused as that call would be; it has no identity of its own.
 - `list-tools` and `call` each open their own connection, perform the request
-  and close it. instrukt speaks the Streamable HTTP transport of MCP version
-  2025-06-18. A reply that is not a well-formed answer to the request it was
+  and close it. instrukt speaks the Streamable HTTP transport of the MCP
+  versions its client lists (`crates/instrukt-runner/src/mcp/_client.rs`): it
+  offers the newest, continues with any listed version the server answers and
+  sends that version on every later request of the connection; a version it does
+  not speak ends the call naming both
+  (`project/instrukt/policy/checks-and-guards`: a service is not unreachable
+  because it answers another published version). A reply that is not a well-formed answer to the request it was
   sent, or that lacks what the method requires, is a failure, never an empty
   result. An answer that arrives as an event completes the request without
   waiting for the stream to end.
@@ -640,6 +645,16 @@ When the operator removes that person's logins for the company
 Then none of them is kept on the computer
 And a sign-in that person had started keeps nothing when they complete it
 And a call for that person starts a new sign-in
+```
+
+### UC-MA11: Reach a server that answers an earlier protocol version
+
+```gherkin
+Given a company declares a server that answers an earlier protocol version instrukt also speaks
+When an agent lists its tools and calls one
+Then both succeed and every request after the first names the version the server answered
+But when the server answers a version instrukt does not speak
+Then the call fails naming both versions
 ```
 
 ## Known caveats

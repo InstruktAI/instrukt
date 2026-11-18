@@ -88,12 +88,16 @@ finding's named prerequisite is resolved. No separate repair installer exists.
 Successful configuration is distinct from successful installation. An interrupted
 or partially failed install reports its completed and remaining resources;
 rerunning reconciles observed state rather than assuming the prior run completed.
-The ownership journal retains both pre-write and desired definitions until the
-transition completes, so each interrupted file-write prefix remains provably
-owned and can be reconciled or withdrawn.
+An interrupted install is completed by the next one: every definition is written
+again under its name (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof).
 Reports name installed, reused, repaired, withdrawn, externally supplied or
 unmet resources, their paths/units and demanding project identities, without
 expanded credentials. A failed prerequisite never produces an overall success.
+Installation and `install --check` also report the configuration findings that
+withhold a responsibility on this computer: event responses switched on without
+`redis.cluster.url`, and a company connector without its published procedure,
+its secret values or its provider permissions
+(`project/instrukt/spec/feature/configuration/company-homes`).
 
 ### Graphify installation
 
@@ -152,18 +156,20 @@ The service's run is an ordinary `instrukt run`: it performs every enabled
 module's work, and the runner lock still admits one runner per machine. While
 it runs, the minute tick exits at once and a second `instrukt run` is refused
 naming the service. While a run started by hand holds the lock, the service's
-process waits for the lock. Installation reuses a working service, repairs a
-missing or stale definition and restarts it so the desired installed
-executable and configuration are the ones running. `install --check` reports
-a missing, stale or stopped service as unmet demand without changing it.
+process waits for the lock, at most the run-lock wait, then exits naming the
+holder and is started again by its manager. Installation writes the service's
+definition and restarts the service every time it runs, so the installed
+executable and configuration are the ones running; it keeps no record of what the
+running process executes (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). `install --check` reports
+a missing, stopped or unloaded service as unmet demand without changing it.
 
 `instrukt events status` reports the service as `runner_service` in one of
 four states, with the cause where there is one:
 
 | State | Meaning |
 | --- | --- |
-| `running` | A live owned service process runs the desired installed executable and configuration. It may be waiting for the runner lock. |
-| `unmet` | There is demand, and its service is missing, stale, stopped, in conflict with a definition instrukt does not own, or cannot be inspected. |
+| `running` | The service is loaded and its process is alive. It may be waiting for the runner lock. |
+| `unmet` | There is demand, and its service is missing, stopped, unloaded or cannot be inspected. |
 | `obsolete` | An owned service remains and there is no demand. |
 | `no_demand` | There is no demand and no owned service. |
 
@@ -182,11 +188,12 @@ Each module contributes its own Redis demand. History checks cluster-only
 request/reply permissions (lists, transactions, expiry and readiness keys).
 When history uses an existing instrukt-owned Redis as its cluster endpoint,
 installation retains and maintains that service and its shared ACL even with
-events off; it prepares no event consumers solely for history. Existing
-stream-only owned ACL assets migrate into the resource transition journal,
-which retains the before/after proof while the service restarts to load the
-request/reply permissions. Read-only inspection reports the pending repair
-without changing files or services. An unused local
+events off; it prepares no event consumers solely for history. The private
+Redis's configuration and ACL are written from the stored secret on every
+install and the service is restarted when they change; an existing secret is
+reused and a missing one is generated, and the data Redis keeps stays reachable
+with it (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Read-only inspection reports a pending repair without changing
+files or services. An unused local
 event Redis is withdrawn when history points at an external cluster.
 
 For events, reuse an explicitly configured working local Unix-socket Redis
@@ -256,16 +263,16 @@ The socket and receiver agree on loopback and configured port. A receiver exits
 before serving after loss of ingress designation; a later convergence removes
 only its obsolete owned units. Valid source edits are read per request without
 restart. Invalid changes do not replace a working validated listener config.
-Owned execution changes take effect for existing and new installations while
-receiver ownership remains proven. Same-port restarts retain the registered
-listening socket; health and inspection establish that the desired installed
-executable and configuration are running. See the
+The receiver's invocation is written on every install and the receiver is
+restarted; the receiver validates the invocation it reads at its boundary.
+Same-port restarts retain the registered listening socket; health establishes
+that the receiver rejects an unsigned request. See the
 [receiver activation implementation](../../../../../crates/instrukt-runner/src/installation/_launch.rs)
 for the concrete mechanism. A port change
 registers and checks the replacement listener before withdrawing the prior owned
 units, and reports the edge-route change for operator alignment without waiting
-for the operator. Interrupted replacement retains its recorded ownership for
-reconciliation on the next installation run.
+for the operator. An interrupted replacement is completed by the next
+installation run.
 
 Prepare all new retained groups at the current tail before admitting relevant
 producers or enabling intake. Existing groups keep their own progress; startup
@@ -305,11 +312,15 @@ qualification (`?db=0` or any other database).
 Removing the last source withdraws the receiver while retaining event transport
 for still-enabled events. Disabling events retains the wake-up if todos need it.
 
-Ownership requires the installation's recorded resource identity and matching
-owned definition. An unrelated unit, listener, socket, config or changed foreign
-definition at the desired address is a conflict with a named repair door, never
-overwritten or removed. Cron withdrawal compares the entire marked definition
-against the retained owned line and preserves the whole table on conflict.
+A unit, definition file, crontab line or private Redis file under instrukt's own
+name for this home is instrukt's: it is written, reloaded or withdrawn by that
+name, under whichever service manager present on the computer holds it. A home
+other than `~/.instrukt` carries a suffix in those names, from its canonical path;
+the default home keeps today's names. An earlier unit without the suffix that names
+this non-default home in its environment is withdrawn by this home's install; the
+default home never touches a unit naming another home. Anything under another name
+is never read or touched; an incomplete demand still withdraws nothing
+(`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Cron withdrawal replaces or removes only the line marked with this home's name.
 Withdrawal stops/unregisters owned units only; it never
 deletes the database, Redis data, streams, pending delivery records, credentials
 or foreign services, and never uninstalls a shared Redis executable. Re-enable
@@ -467,6 +478,16 @@ When they install the demanded infrastructure and the computer later restarts
 Then an owned service has the runner running again without anyone starting it
 But when the computer has no service manager that can keep a process running
 Then installation reports that prerequisite and claims no success
+```
+
+### UC-MI15: Install over definitions instrukt wrote without its records
+
+```gherkin
+Given instrukt's runner service definition exists from an earlier install, has been changed, and instrukt's records of it are gone
+When the developer installs
+Then the service is written again, restarted and running
+And a definition under another name is left as it was
+And a second instrukt home on the computer installs under its own names without touching the first
 ```
 
 ## Known caveats

@@ -29,6 +29,33 @@ events and react to them; the scheduled tick supplies time-based wake-ups.
 These are execution forms of the
 same runner, not separate services per module.
 
+**Admitted configuration.** The runner works from one admitted generation of its
+configuration: the machine layer, `agents.yaml`, each company home's document with
+the secrets its connector references resolved, and each considered project's layer,
+validated together. It is built when `run` or `tick` starts — an invalid machine
+layer or `agents.yaml` refuses the start, with the finding — and again at every
+wake. A valid result replaces the current generation for every part of the runner at
+once; an invalid one leaves the current generation in force and its findings are
+reported in `instrukt events status`. A project layer with a finding against a
+module is not admitted for that module; its other modules are unaffected. No part
+of the runner reads those files on its own
+(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
+enters, and a running process uses only what it admitted).
+
+**Parts that depend on a service outside instrukt.** The conversation relay (on
+T3's conversation source), the connectors (on the provider), the event readers (on
+Redis) and history's extraction (on T3's database) and query responder (on cluster
+Redis) each retry inside themselves until their service returns, and report their
+state in `instrukt events status`; a part never ends the runner because its
+service is away. A wake that cannot take the runtime-dispatch lock within its wait
+is skipped and the next wake tries again; lock waits are measured on the clock that
+measures the limits of started programs
+(`project/instrukt/spec/feature/configuration/layered-configuration`). The
+runner ends only when it cannot start: no home, the runner lock held by another
+runner, a state database it cannot open or one newer than it knows
+(`project/instrukt/policy/checks-and-guards`: an outside failure is retried, a
+defect is fixed in the code).
+
 | Capability | Runner responsibility |
 | --- | --- |
 | `core` | Always available; documentation, configuration and publication do not require background work. |
@@ -211,6 +238,15 @@ When they ask the runner to run, to wake up, or to start a session
 Then the command refuses and names what would enable it
 But when a company declares a connector
 Then the runner runs with work tracking and event responses off
+```
+
+### UC-RD3: Todos are picked up when a project's event responses are not admitted
+
+```gherkin
+Given a project switches on automatic pickup and event responses on a computer without event transport
+When the scheduled wake-up runs
+Then the project's eligible todo is dispatched
+And the computer's status names the project's event responses as not admitted, with the setting they need
 ```
 
 ## Known caveats

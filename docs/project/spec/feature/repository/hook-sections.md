@@ -152,6 +152,17 @@ But when the rendering reports a finding
 Then the commit is made without the changed instruction file and the finding is reported
 ```
 
+### UC-HK7: A developer whose hook file has damaged instrukt markers gets one working section
+
+```gherkin
+Given a developer's hook file has an instrukt marker without its pair, a second instrukt section and their own lines, some identical to instrukt's
+When they install instrukt's hooks
+Then the file has one working instrukt section
+And every line they wrote is kept, the damaged marker kept as a comment
+And they are told which lines were changed and which were kept
+And their other hook files are installed as usual
+```
+
 ## Known caveats
 
 - An existing non-executable hook is left non-executable and install reports it.

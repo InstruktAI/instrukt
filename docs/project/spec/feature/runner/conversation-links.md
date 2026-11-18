@@ -156,7 +156,11 @@ independent consumer with its own opaque source position; it never borrows
 history's extraction position. This reader needs no T3 session token. Native target delivery uses the adapter's supported input operation;
 read scope alone grants no send authority. Redis is transport only and owns
 neither turns, link membership nor relay decisions. There is no separate relay
-process, agent relay tool, scheduled tick relay or periodic fallback.
+process, agent relay tool, scheduled tick relay or periodic fallback. A relay pass
+that failed is tried again after a growing delay, whether or not the source changes
+meanwhile; a pass that cannot acquire the source retries the acquisition inside the
+relay (`project/instrukt/policy/checks-and-guards`: an outside failure is retried
+where it is used).
 
 Runner-owned link and direction positions live in the existing state database
 under `project/instrukt/spec/feature/work/state-database`. Each direction
@@ -218,8 +222,9 @@ And the developer can continue separately in either conversation
 ## Known caveats
 
 - Target acceptance is not target consumption. An interrupted handover with no
-  native acceptance evidence remains visibly uncertain; this contract does not
-  claim exactly-once delivery across an ambiguous external send.
+  native acceptance evidence remains visibly uncertain and is observed again on
+  each retry, never sent again; this contract does not claim exactly-once
+  delivery across an ambiguous external send.
 - Continuous relay requires `instrukt run`. A scheduled-only computer's ticks
   do not substitute for the stream reader.
 

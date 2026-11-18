@@ -111,8 +111,9 @@ entries present and inert.
 
 Removing or editing a subscription changes the index identity at publication;
 the next routed event reloads it without a separate trigger. Invalid declaration
-refuses publication and keeps the last good index. A runtime read failure clears
-the active subscription set rather than keeping stale entries. Publication
+refuses publication and keeps the last good index. How a runtime read treats an
+unreadable index or a broken entry is
+`project/instrukt/spec/feature/runner/event-consumers`'s. Publication
 registers no runtime session and executes no event reaction.
 
 ### Claims and patching

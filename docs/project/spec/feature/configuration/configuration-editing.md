@@ -165,7 +165,7 @@ Then it is kept as it was
 But when existing configuration has an older schema
 Then it is migrated to the current schema with every setting preserved
 But when existing configuration has a newer schema
-Then initialization is refused and the developer is directed to upgrade instrukt
+Then initialization is refused and prints the command that installs the current instrukt
 ```
 
 ### UC-CE4: An operator's agent learns from the program what a company home can declare
@@ -179,6 +179,16 @@ And for a service it sees the fields of a server declaration, for a person's sig
 And what it sees is exactly what validation of that document admits
 But when it asks for a key a company home cannot declare
 Then it is told which keys it can declare there
+```
+
+### UC-CE5: Switching on event responses asks for the event transport first
+
+```gherkin
+Given a developer's machine has no event transport configured
+When their agent switches on event responses
+Then the change is refused, nothing is written, and the agent is told which setting is missing
+But when the machine names its event transport
+Then switching on event responses is accepted
 ```
 
 ### UC-CE3: Know whether a module's infrastructure is ready
