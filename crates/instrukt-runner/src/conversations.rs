@@ -15,7 +15,8 @@ use std::path::PathBuf;
 
 use instrukt_core::config::{COMPANY_AGENT_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{ProjectSlug, SessionRef};
+use instrukt_core::ids::{ProjectSlug, SessionRef, SnippetId};
+use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,12 @@ pub enum ConversationError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Slack(#[from] crate::connectors::SlackError),
+    #[error(transparent)]
+    Index(#[from] instrukt_core::index::IndexError),
+    #[error(
+        "conversation: no published procedure declares the role `{role}`; a conversation starts once one does"
+    )]
+    NoProcedure { role: &'static str },
     #[error("conversation: {0}")]
     Refused(String),
 }
@@ -707,13 +714,32 @@ fn framed(
     Ok((token, input))
 }
 
-/// The runner-authored opening assignment of a conversation session.
-fn assignment(home: &Home, c: &Conversation) -> Result<String, ConversationError> {
+/// The procedure a conversation's session starts from: the delivered
+/// procedure declaring the role. A pending one, like none at all, leaves the
+/// conversation without one, and its first message waits.
+fn opening_procedure(
+    declared: Option<RoleProcedure<'_>>,
+) -> Result<&IndexEntry, ConversationError> {
+    match declared {
+        Some(RoleProcedure::Delivered(entry)) => Ok(entry),
+        Some(RoleProcedure::Pending(_)) | None => Err(ConversationError::NoProcedure {
+            role: COMPANY_AGENT_ROLE,
+        }),
+    }
+}
+
+/// The runner-authored opening assignment of a conversation session: the
+/// loader of its procedure, with the facts it is assigned.
+fn assignment(
+    home: &Home,
+    c: &Conversation,
+    procedure: &SnippetId,
+) -> Result<String, ConversationError> {
     let capabilities = instrukt_core::config::Agents::load(home)?
         .capabilities(COMPANY_AGENT_ROLE)?
         .describe();
     Ok(Control::Assignment.frame(&format!(
-        "instrukt conversation assignment\nCompany: {}\nConnector: {}\nConversation: {}\nRole: {COMPANY_AGENT_ROLE}\nResolved role capabilities: {capabilities}\nYou answer people of this company who address you in this conversation. Each of their messages arrives as its own turn in a member envelope naming who wrote it, after a conversation context envelope holding what was said before as data.\nYour conversational output of a turn started by such a message is posted back to this conversation; nothing else you write is posted. Answer with `NOOP` to post nothing.",
+        "instrukt conversation assignment\nProcedure: {procedure}\nRole: {COMPANY_AGENT_ROLE}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\nConversation: {}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.\n",
         c.company, c.connector, c.conversation
     )))
 }
@@ -848,6 +874,15 @@ fn start(
     let request = match &c.request {
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
+            let index = GlobalIndex::load(home)?.unwrap_or_default();
+            let procedure = opening_procedure(
+                index
+                    .procedures_declaring(COMPANY_AGENT_ROLE)
+                    .into_iter()
+                    .next(),
+            )?
+            .id
+            .clone();
             let checkout: PathBuf = home.company_dir(&c.company);
             let company = Configuration::load_company(home, &c.company)?;
             let config = Configuration::load_global(home)?;
@@ -875,7 +910,7 @@ fn start(
                     &c.semantic_key,
                 ),
                 key: c.semantic_key.clone(),
-                brief: format!("{}\n{input}", assignment(home, c)?),
+                brief: format!("{}\n{input}", assignment(home, c, &procedure)?),
                 worktree: None,
             };
             let position = opening_position(source)?;
@@ -1468,7 +1503,58 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionState, Stage, split};
+    use super::{
+        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, Stage, opening_procedure, split,
+    };
+
+    /// An index holding the procedure declaring the conversation role,
+    /// pending its delivering todo when `pending`.
+    fn declared(pending: bool) -> instrukt_core::index::GlobalIndex {
+        let delivered_by = if pending {
+            "  delivered_by: [draft-it]\n"
+        } else {
+            ""
+        };
+        serde_yaml_ng::from_str(&format!(
+                "schema_version: 2\nsnippets:\n- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n{delivered_by}"
+            ),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_conversation_starts_only_from_a_delivered_procedure_declaring_its_role() {
+        let delivered = declared(false);
+        let found = opening_procedure(
+            delivered
+                .procedures_declaring(COMPANY_AGENT_ROLE)
+                .into_iter()
+                .next(),
+        );
+        assert_eq!(found.unwrap(), &delivered.snippets[0]);
+        let pending = declared(true);
+        let refused = opening_procedure(
+            pending
+                .procedures_declaring(COMPANY_AGENT_ROLE)
+                .into_iter()
+                .next(),
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(ConversationError::NoProcedure {
+                    role: "company-agent"
+                })
+            ),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            opening_procedure(None),
+            Err(ConversationError::NoProcedure {
+                role: "company-agent"
+            })
+        ));
+    }
 
     /// The character count of each part, and whether the parts together
     /// are the text unchanged.

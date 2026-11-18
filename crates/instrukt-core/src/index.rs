@@ -120,7 +120,39 @@ pub struct ThirdPartyEntry {
     pub source_project: ProjectSlug,
 }
 
+/// A procedure declaring a role, as the index holds it: delivered, or still
+/// pending its delivering todo. Each consumer decides what a pending one
+/// means for it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RoleProcedure<'i> {
+    /// Delivered: its contract is current.
+    Delivered(&'i IndexEntry),
+    /// Pending: published with its pending ownership, not yet delivered.
+    Pending(&'i IndexEntry),
+}
+
 impl GlobalIndex {
+    /// The procedures of the published positions (`general` and the
+    /// domains, never a project's) that declare `role`, in index order.
+    /// Validation lets one procedure declare a role, so there is at most one.
+    pub fn procedures_declaring(&self, role: &str) -> Vec<RoleProcedure<'_>> {
+        self.snippets
+            .iter()
+            .filter(|entry| {
+                entry.taxonomy == "procedure"
+                    && entry.scope == IndexScope::Global
+                    && entry.role.as_deref() == Some(role)
+            })
+            .map(|entry| {
+                if entry.delivered_by.is_empty() {
+                    RoleProcedure::Delivered(entry)
+                } else {
+                    RoleProcedure::Pending(entry)
+                }
+            })
+            .collect()
+    }
+
     /// The home's index; `None` when nothing has been published yet.
     pub fn load(home: &Home) -> Result<Option<Self>, IndexError> {
         Self::load_from(&home.index_file())
@@ -220,6 +252,61 @@ mod tests {
             GlobalIndex::parse(Path::new("index.yaml"), old).unwrap(),
             serde_yaml_ng::from_str::<GlobalIndex>(&expected).unwrap()
         );
+    }
+
+    /// An index entry for a procedure `id` in `domain`, with `scope`,
+    /// declaring `role`, pending `pending`'s delivering todo when given.
+    fn procedure(id: &str, scope: &str, domain: &str, role: &str, pending: Option<&str>) -> String {
+        let delivered_by =
+            pending.map_or(String::new(), |slug| format!("  delivered_by: [{slug}]\n"));
+        format!(
+            "- id: {id}\n  description: A procedure.\n  type: procedure\n  scope: {scope}\n  domain: {domain}\n  path: {id}.md\n  source_project: demo\n  role: {role}\n{delivered_by}"
+        )
+    }
+
+    fn index(entries: &[String]) -> GlobalIndex {
+        GlobalIndex::parse(
+            Path::new("index.yaml"),
+            &format!("schema_version: 2\nsnippets:\n{}", entries.concat()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_role_is_answered_by_the_published_procedure_that_declares_it_and_its_pending_state() {
+        let index = index(&[
+            procedure(
+                "project/demo/procedure/local",
+                "local",
+                "project",
+                "helper",
+                None,
+            ),
+            procedure("acme/procedure/other", "global", "acme", "reviewer", None),
+            procedure(
+                "general/procedure/helping",
+                "global",
+                "general",
+                "helper",
+                None,
+            ),
+            procedure(
+                "acme/procedure/drafting",
+                "global",
+                "acme",
+                "drafter",
+                Some("draft-it"),
+            ),
+        ]);
+        assert_eq!(
+            index.procedures_declaring("helper"),
+            [RoleProcedure::Delivered(&index.snippets[2])]
+        );
+        assert_eq!(
+            index.procedures_declaring("drafter"),
+            [RoleProcedure::Pending(&index.snippets[3])]
+        );
+        assert_eq!(index.procedures_declaring("nobody"), []);
     }
 
     #[test]

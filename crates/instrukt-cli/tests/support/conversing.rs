@@ -10,6 +10,7 @@ use instrukt_runner::conversations::Status;
 use instrukt_runner::envelopes::{self, Span};
 
 use crate::common::{self, TestEnv};
+use crate::fixtures::documented;
 use crate::fixtures::history::T3Store;
 use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN, FakeSlack};
 use crate::fixtures::t3::FakeT3;
@@ -161,8 +162,49 @@ impl Company {
 
     /// The company on a computer whose global layer also sets `modules`
     /// (entries each led by `, `; history keeps its default unless one sets
-    /// it) and holds `machine` settings.
-    pub fn on(mut env: TestEnv, modules: &str, machine: &str, extra: &str) -> Self {
+    /// it) and holds `machine` settings, with the procedure its
+    /// conversations start from published.
+    pub fn on(env: TestEnv, modules: &str, machine: &str, extra: &str) -> Self {
+        let company = Self::without_procedure(env, modules, machine, extra);
+        company.publish_procedure();
+        company
+    }
+
+    /// Publishes the procedure conversations start from: one declaring the
+    /// role `company-agent`, in a domain of a docs project of its own. The
+    /// docs project keeps no history, so it adds no installation demand of
+    /// its own to the computer.
+    pub fn publish_procedure(&self) {
+        let docs = documented::project(
+            &self.env,
+            "assistance-docs",
+            &[
+                (
+                    "instrukt.yaml",
+                    format!(
+                        "schema_version: {}\nproject: assistance-docs\nmodules: {{history: false}}\n",
+                        instrukt_core::config::CURRENT_SCHEMA_VERSION
+                    ),
+                ),
+                (
+                    "docs/domain/assistance/procedure/company-assistance.md",
+                    documented::snippet(
+                        "procedure",
+                        "Company Assistance",
+                        "Assist a company's people in their conversations.",
+                        "role: company-agent\n",
+                        &[],
+                        "Carry out the message that addresses you.\n",
+                    ),
+                ),
+            ],
+        );
+        documented::sync(&self.env, &docs);
+    }
+
+    /// The company as [`Self::on`] makes it, on a computer where no
+    /// procedure declares the role its conversations start under yet.
+    pub fn without_procedure(mut env: TestEnv, modules: &str, machine: &str, extra: &str) -> Self {
         let slack = FakeSlack::start();
         env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
         let store = T3Store::new(&env);
@@ -278,6 +320,20 @@ impl Company {
                 .filter(|span| matches!(span, Span::Member { .. }))
                 .count(),
         }
+    }
+
+    /// The session's first input whole, with the delivery's boundary token
+    /// as a placeholder: what the session opens with.
+    pub fn opening(&self, session: &str) -> String {
+        let input = self.runtime.message(session, 0);
+        let boundary = envelopes::segment(&input)
+            .iter()
+            .find_map(|span| match span {
+                Span::Member { boundary, .. } => Some((*boundary).to_owned()),
+                _ => None,
+            })
+            .unwrap();
+        input.replace(&boundary, "[BOUNDARY]")
     }
 
     /// The session's `n`th input as the company's agent reads it, from its
