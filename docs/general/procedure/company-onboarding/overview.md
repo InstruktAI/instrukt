@@ -74,8 +74,13 @@ the services it touched, then step 10.
    `instrukt secrets set --company <name> <NAME>` from a file or redirected
    standard input, never from the conversation
    (`sdlc/policy/security-awareness`, secrets never enter version control,
-   logs or responses). When it has none, the company cannot be reached in its
-   messaging yet: report that as unfinished and continue with the services.
+   logs or responses). For a Slack connector, the app's bot scopes include
+   `channels:read`, `groups:read` and `im:read`; when you add a scope to an
+   app already installed, reinstall it to the workspace and store the bot
+   token it then issues. Run `instrukt config validate --company <name>`; it
+   names each token that is missing or blank, which you store and validate
+   again. When the company's provider has no kind there, the company cannot
+   be reached in its messaging yet: report that as unfinished and continue with the services.
 6. **Connect the services.** For each service from the intake that needs
    setting up for the company first, run that service's own procedure. Then
    load `general/procedure/company-onboarding/service-connection` with
@@ -86,8 +91,12 @@ the services it touched, then step 10.
 7. **Install what the company demands.** Run `instrukt install`, then
    `instrukt install --check` and `instrukt events status`. Each names what is
    unmet or not connected; correct what it names and run them again.
-8. **Publish the company's final knowledge.** In the home, run `instrukt docs
-   render --check`; it names a stale `AGENTS.md` or a reference the rendering
+8. **Publish the company's final knowledge.** Make sure this computer
+   publishes the procedure for the role `company-agent`: run `instrukt docs get
+   general/procedure/company-assistance`. When it is not found, clone the docs
+   repository that publishes it, adopt it with `instrukt init` and run
+   `instrukt sync` in it, then run step 7's checks again. In the home, run
+   `instrukt docs render --check`; it names a stale `AGENTS.md` or a reference the rendering
    refuses, which you correct and commit before going on. With the working
    tree clean, push the home's main to the company's repository and read that
    the repository's main is the home's head. The proof below runs on that
