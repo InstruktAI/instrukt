@@ -43,13 +43,13 @@ repos:
         require_serial: true
       # Everything a crate is built from and everything its unit tests read:
       # every file of a crate, the files compiled into the program and the
-      # snapshots its unit tests read among them; the workflow flavor the
-      # instrukt-todos unit tests run against, which is a document too; and
-      # the workspace's manifest, lock file and toolchain and clippy
-      # configuration.
+      # snapshots its unit tests read among them; the two inputs outside the
+      # crates' folders, the shared test support and the workflow flavor (a
+      # document too), whose readers scripts/rust-crates.py names; and the
+      # workspace's manifest, lock file and toolchain and clippy configuration.
       - id: cargo-fmt
         name: cargo fmt
-        files: &rust ^(crates/|docs/domain/sdlc/workflow/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|clippy\.toml$)
+        files: &rust ^(crates/|tests/support/|docs/domain/sdlc/workflow/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|clippy\.toml$)
         entry: scripts/commit-check.py
         args: [--pattern, *rust, --run, cargo fmt --all -- --check, --]
         language: system

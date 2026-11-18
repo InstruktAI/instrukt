@@ -3,8 +3,8 @@
 
 Each path selects the workspace crate whose directory holds it, whether the
 path still exists or the commit removed it. A path under a directory outside
-the crates that a crate's unit tests read selects that crate: the sdlc
-workflow flavor selects instrukt-todos. Any other path outside every crate,
+the crates' folders that crates compile or read selects those crates, as
+OUTSIDE_INPUTS names them. Any other path outside every crate,
 such as the workspace manifest, the lock file or the toolchain and clippy
 configuration, selects every crate. Every crate that depends on a selected
 crate is selected too. Three lines are printed, each of `-p <crate>`
@@ -42,10 +42,15 @@ class Metadata(TypedDict):
     packages: list[Package]
 
 
-# Directories outside the crates that a crate's unit tests read, with that crate.
-TESTED_AGAINST: dict[PurePath, str] = {
+# Directories outside the crates' folders that crates compile or read, with
+# those crates; each entry cites its readers.
+OUTSIDE_INPUTS: dict[PurePath, tuple[str, ...]] = {
+    # crates/instrukt-blueprint/src/lib.rs (a #[path] module of its unit tests) and
+    # crates/instrukt-cli/tests/common/mod.rs (its integration harness, which
+    # clippy checks with the crate's other targets).
+    PurePath("tests/support"): ("instrukt-blueprint", "instrukt-cli"),
     # crates/instrukt-todos/src/workflow/_testing.rs: the real flavor's authoring source.
-    PurePath("docs/domain/sdlc/workflow"): "instrukt-todos",
+    PurePath("docs/domain/sdlc/workflow"): ("instrukt-todos",),
 }
 
 
@@ -79,25 +84,21 @@ def workspace_crates() -> list[Crate]:
     ]
 
 
-def owner(path: PurePath, crates: list[Crate]) -> Crate | None:
-    reader = next((name for directory, name in TESTED_AGAINST.items() if path.is_relative_to(directory)), None)
-    return next(
-        (
-            crate
-            for crate in crates
-            if crate.name == reader or (crate.directory.parts and path.is_relative_to(crate.directory))
-        ),
-        None,
-    )
+def owners(path: PurePath, crates: list[Crate]) -> set[str]:
+    """The crates a path belongs to; empty for a path outside every crate and outside input."""
+    for directory, readers in OUTSIDE_INPUTS.items():
+        if path.is_relative_to(directory):
+            return set(readers)
+    return {crate.name for crate in crates if crate.directory.parts and path.is_relative_to(crate.directory)}
 
 
 def selected(paths: list[PurePath], crates: list[Crate]) -> set[str]:
     chosen: set[str] = set()
     for path in paths:
-        crate = owner(path, crates)
-        if crate is None:
+        found = owners(path, crates)
+        if not found:
             return {crate.name for crate in crates}
-        chosen.add(crate.name)
+        chosen |= found
     grown = True
     while grown:
         dependents = {crate.name for crate in crates if crate.name not in chosen and crate.depends_on & chosen}
